@@ -9,6 +9,7 @@ import approvalRoutes from './routes/approvals';
 import paymentRoutes from './routes/payments';
 import exceptionRoutes from './routes/exceptions';
 import paymentBatchRoutes from './routes/paymentBatches';
+import reportRoutes from './routes/reports';
 import { errorHandler } from './middleware/errorHandler';
 import { logger } from './utils/logger';
 
@@ -29,6 +30,7 @@ app.use('/api/approvals', approvalRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/exceptions', exceptionRoutes);
 app.use('/api/payment-batches', paymentBatchRoutes);
+app.use('/api/reports', reportRoutes);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

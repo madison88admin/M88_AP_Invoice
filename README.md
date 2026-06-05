@@ -183,15 +183,25 @@ npm run build
 - `GET /api/payments/scheduled` - Get scheduled payments
 - `POST /api/payments/:paymentId/process` - Process scheduled payment
 
+### Reports
+
+- `GET /api/reports/invoice-volume` - Get invoice volume report
+- `GET /api/reports/payment-status` - Get payment status report
+- `GET /api/reports/vendor-spending` - Get vendor spending report
+- `GET /api/reports/exception-rate` - Get exception rate report
+- `GET /api/reports/kpi` - Get KPI metrics
+
 ### Payment Batches
 
-- `GET /api/payment-batches` - Get all payment batches
+- `GET /api/payment-batc8es` - Get all payment batches
 - `GET /api/payment-batches/:batchId` - Get payment batch by ID
 - `POST /api/payment-batches` - Create payment batch
 - `POST /api/payment-batches/:batchId/process` - Process payment batch
 - `POST /api/payment-batches/:batchId/cancel` - Cancel payment batch
 
-## Frontend Screens
+## Frontend Screensing
+- **Reports & Analytics**: KPI Dashboard, Invoice Volume chart, Payment Status chart, Vendor Spending chart, Excepto Rate chart
+- **Accountin Review**: Posted invoices list, Invoice detail panel, Audit trail, Search and filter
 
 ### Completed (Sprint 1-7)
 

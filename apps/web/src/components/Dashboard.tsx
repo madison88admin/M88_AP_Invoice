@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Invoice, InvoiceStatus, InvoiceCategory, InvoiceType } from '@ap-invoice/shared';
 import { invoiceApi } from '../lib/api';
 import InvoiceTable from './InvoiceTable';
-import { FileText, Clock, AlertTriangle, CheckCircle, Filter, Plus, Shield, CheckSquare, XCircle, Send, AlertCircle, Package } from 'lucide-react';
+import { FileText, Clock, AlertTriangle, CheckCircle, Filter, Plus, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch } from 'lucide-react';
 
 export default function Dashboard() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -139,39 +139,61 @@ export default function Dashboard() {
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white shadow-sm border-b border-gray-200">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
+      <header className="bg-white/80 backdrop-blur-lg shadow-lg border-b border-gray-200/50 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-bold text-gray-900">AP Invoice Dashboard</h1>
-            <div className="flex items-center space-x-3">
+            <div className="flex items-center gap-3">
+              <div className="bg-gradient-to-br from-blue-600 to-indigo-600 p-2 rounded-xl shadow-lg">
+                <FileText className="h-6 w-6 text-white" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">AP Invoice Dashboard</h1>
+                <p className="text-xs text-gray-500">Madison 88 Business Solutions</p>
+              </div>
+            </div>
+            <div className="flex items-center space-x-2">
               <Link 
                 to="/approvals"
-                className="flex items-center px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+                className="group flex items-center px-4 py-2.5 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-xl hover:from-purple-600 hover:to-purple-700 transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5"
               >
                 <CheckSquare className="h-5 w-5 mr-2" />
-                Approvals
+                <span className="font-medium">Approvals</span>
               </Link>
               <Link 
                 to="/exceptions"
-                className="flex items-center px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors"
+                className="group flex items-center px-4 py-2.5 bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-xl hover:from-orange-600 hover:to-orange-700 transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5"
               >
                 <AlertCircle className="h-5 w-5 mr-2" />
-                Exceptions
+                <span className="font-medium">Exceptions</span>
               </Link>
               <Link 
                 to="/payment-batches"
-                className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                className="group flex items-center px-4 py-2.5 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl hover:from-blue-600 hover:to-blue-700 transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5"
               >
                 <Package className="h-5 w-5 mr-2" />
-                Payment Batches
+                <span className="font-medium">Batches</span>
+              </Link>
+              <Link 
+                to="/reports"
+                className="group flex items-center px-4 py-2.5 bg-gradient-to-r from-indigo-500 to-indigo-600 text-white rounded-xl hover:from-indigo-600 hover:to-indigo-700 transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5"
+              >
+                <BarChart3 className="h-5 w-5 mr-2" />
+                <span className="font-medium">Reports</span>
+              </Link>
+              <Link 
+                to="/accounting-review"
+                className="group flex items-center px-4 py-2.5 bg-gradient-to-r from-teal-500 to-teal-600 text-white rounded-xl hover:from-teal-600 hover:to-teal-700 transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5"
+              >
+                <FileSearch className="h-5 w-5 mr-2" />
+                <span className="font-medium">Review</span>
               </Link>
               <Link 
                 to="/upload"
-                className="flex items-center px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
+                className="group flex items-center px-4 py-2.5 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white rounded-xl hover:from-emerald-600 hover:to-emerald-700 transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5"
               >
                 <Plus className="h-5 w-5 mr-2" />
-                Upload Invoice
+                <span className="font-medium">Upload</span>
               </Link>
             </div>
           </div>
@@ -182,28 +204,34 @@ export default function Dashboard() {
         {/* KPI Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           {kpis.map((kpi) => (
-            <div key={kpi.label} className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-500">{kpi.label}</p>
-                  <p className="text-3xl font-bold text-gray-900 mt-2">{kpi.value}</p>
-                </div>
-                <div className={`${kpi.color} p-3 rounded-lg`}>
-                  <kpi.icon className="h-6 w-6 text-white" />
+            <div key={kpi.label} className="group bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 border border-gray-200/50 hover:border-gray-300/50 overflow-hidden">
+              <div className="relative p-6">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-gray-50 to-transparent rounded-full -mr-16 -mt-16 opacity-50 group-hover:opacity-75 transition-opacity" />
+                <div className="relative flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-600 mb-1">{kpi.label}</p>
+                    <p className="text-4xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">{kpi.value}</p>
+                  </div>
+                  <div className={`${kpi.color} p-4 rounded-2xl shadow-lg group-hover:scale-110 transition-transform duration-300`}>
+                    <kpi.icon className="h-6 w-6 text-white" />
+                  </div>
                 </div>
               </div>
+              <div className="h-1 bg-gradient-to-r from-transparent via-gray-200 to-transparent" />
             </div>
           ))}
         </div>
 
         {/* Filters */}
-        <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200 mb-6">
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border border-gray-200/50 mb-6">
           <div className="flex items-center gap-4">
-            <Filter className="h-5 w-5 text-gray-400" />
+            <div className="bg-gradient-to-br from-gray-100 to-gray-200 p-2.5 rounded-xl">
+              <Filter className="h-5 w-5 text-gray-600" />
+            </div>
             <select
               value={filters.status || ''}
               onChange={(e) => setFilters({ ...filters, status: e.target.value as InvoiceStatus | undefined })}
-              className="block w-48 pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm rounded-md border"
+              className="flex-1 px-4 py-2.5 bg-white border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all shadow-sm"
             >
               <option value="">All Statuses</option>
               {Object.values(InvoiceStatus).map((status) => (
@@ -215,7 +243,7 @@ export default function Dashboard() {
             <select
               value={filters.category || ''}
               onChange={(e) => setFilters({ ...filters, category: e.target.value as InvoiceCategory | undefined })}
-              className="block w-48 pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm rounded-md border"
+              className="flex-1 px-4 py-2.5 bg-white border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all shadow-sm"
             >
               <option value="">All Categories</option>
               {Object.values(InvoiceCategory).map((category) => (
@@ -227,7 +255,7 @@ export default function Dashboard() {
             <select
               value={filters.type || ''}
               onChange={(e) => setFilters({ ...filters, type: e.target.value as InvoiceType | undefined })}
-              className="block w-48 pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm rounded-md border"
+              className="flex-1 px-4 py-2.5 bg-white border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all shadow-sm"
             >
               <option value="">All Types</option>
               {Object.values(InvoiceType).map((type) => (
@@ -236,9 +264,9 @@ export default function Dashboard() {
             </select>
             <button
               onClick={() => setFilters({ status: undefined, category: undefined, type: undefined })}
-              className="text-sm text-gray-500 hover:text-gray-700"
+              className="px-4 py-2.5 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-colors font-medium"
             >
-              Clear Filters
+              Clear
             </button>
           </div>
         </div>

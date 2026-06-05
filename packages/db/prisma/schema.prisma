@@ -1,0 +1,174 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Invoice {
+  id                  String           @id @default(uuid())
+  invoice_number      String           @unique
+  invoice_date        DateTime
+  invoice_due_date    DateTime?
+  invoice_received_date DateTime?
+  vendor_id           String
+  vendor              Vendor           @relation(fields: [vendor_id], references: [id])
+  amount              Decimal          @db.Decimal(15, 2)
+  currency            String           @default("USD")
+  payment_terms       String
+  incoterm            String?
+  bank_charges        Decimal          @default(0) @db.Decimal(15, 2)
+  shipping_charges    Decimal          @default(0) @db.Decimal(15, 2)
+  invoice_type        InvoiceType
+  category            InvoiceCategory
+  bill_to_name        String
+  bill_to_address     String
+  status              InvoiceStatus     @default(PENDING_VALIDATION)
+  priority            String           @default("NORMAL") // NORMAL, HIGH, URGENT
+  ocr_raw_data        Json?
+  qb_invoice_id       String?
+  sharepoint_url      String?
+  signatures          Signature[]
+  audit_logs          AuditLog[]
+  exceptions          Exception[]
+  created_at          DateTime         @default(now())
+  updated_at          DateTime         @updatedAt
+
+  @@index([vendor_id])
+  @@index([status])
+  @@index([invoice_date])
+  @@index([invoice_type])
+}
+
+model Vendor {
+  id               String           @id @default(uuid())
+  name             String
+  name_aliases     String[]
+  expected_template InvoiceType
+  bank_name        String
+  bank_address     String?
+  account_usd      String
+  account_hkd      String?
+  account_eur      String?
+  swift_code       String
+  bank_code        String?
+  currency         String           @default("USD")
+  invoices         Invoice[]
+
+  @@index([name])
+}
+
+model Signature {
+  id          String         @id @default(uuid())
+  invoice_id  String
+  invoice     Invoice        @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
+  signer_name String
+  signed_at   DateTime?
+  role        SignatureRole
+  ocr_detected Boolean        @default(false)
+
+  @@index([invoice_id])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  invoice_id String
+  invoice    Invoice  @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
+  user_id    String?
+  action     String
+  metadata   Json?
+  created_at DateTime @default(now())
+
+  @@index([invoice_id])
+  @@index([created_at])
+}
+
+model Exception {
+  id               String         @id @default(uuid())
+  invoice_id       String
+  invoice          Invoice        @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
+  reason           ExceptionReason
+  detail           String
+  resolved_by      String?
+  resolution_notes String?
+  resolved_at      DateTime?
+  created_at       DateTime       @default(now())
+
+  @@index([invoice_id])
+  @@index([reason])
+  @@index([resolved_at])
+}
+
+model PaymentBatch {
+  id              String            @id @default(uuid())
+  invoice_ids     String[]
+  total_amount    Decimal           @db.Decimal(15, 2)
+  currency        String            @default("USD")
+  initiated_by    String
+  cfo_approved_by String?
+  status          PaymentBatchStatus @default(DRAFT)
+  confirmation_url String?
+  approved_at     DateTime?
+  created_at      DateTime          @default(now())
+
+  @@index([status])
+  @@index([created_at])
+}
+
+enum InvoiceType {
+  INV
+  PI
+  CI
+  SI
+  PREPAID
+}
+
+enum InvoiceCategory {
+  TRIMS
+  YARN
+  SAMPLE_CHARGES
+  SHIPPING_FREIGHT
+  LAB_TESTING
+  PROFESSIONAL_FEE
+  OTHER
+}
+
+enum InvoiceStatus {
+  PENDING_VALIDATION
+  VALIDATED
+  EXCEPTION
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  POSTED
+  PAYMENT_INITIATED
+  PAID
+}
+
+enum SignatureRole {
+  COORDINATOR
+  MANAGER
+  PLANNING_MANAGER
+  LINDSEY
+}
+
+enum ExceptionReason {
+  INVALID_BILL_TO
+  BANK_MISMATCH
+  MISSING_SIGNATURE
+  DUPLICATE_INVOICE
+  NEXTGEN_MISMATCH
+  INVALID_TEMPLATE
+  LATE_SUBMISSION
+  AMOUNT_MISMATCH
+  URGENT_PAYMENT
+}
+
+enum PaymentBatchStatus {
+  DRAFT
+  PENDING_CFO
+  APPROVED
+  PROCESSED
+}

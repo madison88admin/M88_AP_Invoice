@@ -1,0 +1,15 @@
+import { Router } from 'express';
+import { authenticate, authorize } from '../middleware/auth';
+import * as exceptionController from '../controllers/exception';
+import { UserRole } from '@ap-invoice/shared';
+
+const router = Router();
+
+router.use(authenticate);
+
+router.get('/pending', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), exceptionController.getPendingExceptionsController);
+router.get('/invoice/:invoiceId', exceptionController.getExceptionsByInvoiceController);
+router.post('/:exceptionId/resolve', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), exceptionController.resolveExceptionController);
+router.post('/:exceptionId/waive', authorize(UserRole.IT_ADMIN), exceptionController.waiveExceptionController);
+
+export default router;

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { TrendingUp, DollarSign, FileText, AlertTriangle, Clock, CheckCircle } from 'lucide-react';
+import { TrendingUp, DollarSign, FileText, AlertTriangle, Clock, CheckCircle, ArrowLeft } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { useQuery } from '@tanstack/react-query';
 
@@ -365,10 +366,22 @@ export default function Reports() {
       </div>
 
       <div className="relative z-10 max-w-7xl mx-auto p-6">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-white mb-2">Reports & Analytics</h1>
-          <p className="text-slate-400">Comprehensive insights into your invoice processing performance</p>
-        </div>
+        <header style={{ background: 'rgba(10, 14, 30, 0.6)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }} className="px-6 py-4 sticky top-0 -mx-6 mb-8">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Link to="/" className="text-slate-300 hover:text-white transition-colors">
+                <ArrowLeft className="h-6 w-6" />
+              </Link>
+              <div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, #3b82f6 0%, #6366f1 100%)', boxShadow: '0 8px 32px rgba(59,130,246,0.3)' }}>
+                <TrendingUp className="h-6 w-6 text-white" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold text-white">Reports & Analytics</h1>
+                <p className="text-xs text-slate-400">Comprehensive insights into your invoice processing performance</p>
+              </div>
+            </div>
+          </div>
+        </header>
 
         {/* Tab Navigation */}
         <div style={{ background: 'rgba(255, 255, 255, 0.04)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', border: '1px solid rgba(255, 255, 255, 0.07)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }} className="p-2 mb-6">

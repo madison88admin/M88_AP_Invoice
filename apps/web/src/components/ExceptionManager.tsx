@@ -97,160 +97,214 @@ export default function ExceptionManager() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-4 py-4">
+    <div className="min-h-screen relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%)' }}>
+      {/* Layered Background Atmosphere */}
+      <div style={{ position: 'fixed', inset: 0, zIndex: 0, overflow: 'hidden', pointerEvents: 'none' }}>
+        {/* Purple orb top-right */}
+        <div 
+          style={{ 
+            position: 'absolute', 
+            top: '-10%', 
+            right: '-5%', 
+            width: '500px', 
+            height: '500px',
+            background: 'radial-gradient(circle, rgba(139,92,246,0.25), transparent 70%)',
+            filter: 'blur(60px)', 
+            animation: 'drift1 10s ease-in-out infinite alternate'
+          }}
+        />
+        {/* Blue orb bottom-left */}
+        <div 
+          style={{ 
+            position: 'absolute', 
+            bottom: '-10%', 
+            left: '-5%', 
+            width: '600px', 
+            height: '600px',
+            background: 'radial-gradient(circle, rgba(59,130,246,0.2), transparent 70%)',
+            filter: 'blur(80px)', 
+            animation: 'drift2 13s ease-in-out infinite alternate'
+          }}
+        />
+        {/* Teal orb center */}
+        <div 
+          style={{ 
+            position: 'absolute', 
+            top: '40%', 
+            left: '35%', 
+            width: '400px', 
+            height: '400px',
+            background: 'radial-gradient(circle, rgba(20,184,166,0.12), transparent 70%)',
+            filter: 'blur(70px)', 
+            animation: 'drift3 9s ease-in-out infinite alternate'
+          }}
+        />
+      </div>
+
+      <div className="relative z-10">
+        <div style={{ background: 'rgba(10, 14, 30, 0.6)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }} className="px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
-              <Link to="/" className="text-gray-600 hover:text-gray-900">
+              <Link to="/" className="text-slate-300 hover:text-white transition-colors">
                 <ArrowLeft className="h-5 w-5" />
               </Link>
-              <h1 className="text-2xl font-bold text-gray-900">Exception Manager</h1>
+              <h1 className="text-2xl font-bold text-white">Exception Manager</h1>
             </div>
-            <div className="text-sm text-gray-600">
+            <div className="text-sm text-slate-400">
               {exceptions.length} pending exceptions
             </div>
           </div>
         </div>
-      </div>
 
-      <div className="max-w-7xl mx-auto px-4 py-6">
-        {exceptions.length === 0 ? (
-          <div className="bg-white rounded-lg shadow p-8 text-center">
-            <CheckCircle className="h-12 w-12 text-green-500 mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">No Pending Exceptions</h3>
-            <p className="text-gray-600">All exceptions have been resolved or waived.</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Exception List */}
-            <div className="bg-white rounded-lg shadow">
-              <div className="p-4 border-b">
-                <h2 className="text-lg font-semibold text-gray-900">Pending Exceptions</h2>
-              </div>
-              <div className="divide-y max-h-[600px] overflow-y-auto">
-                {exceptions.map((exception) => (
-                  <div
-                    key={exception.id}
-                    onClick={() => setSelectedException(exception)}
-                    className={`p-4 cursor-pointer hover:bg-gray-50 ${
-                      selectedException?.id === exception.id ? 'bg-blue-50' : ''
-                    }`}
-                  >
-                    <div className="flex items-start justify-between mb-2">
-                      <div className="flex items-center space-x-2">
-                        <AlertTriangle className="h-5 w-5 text-yellow-500" />
-                        <span className="font-medium text-gray-900">{exception.reason}</span>
-                      </div>
-                      <span className={`px-2 py-1 text-xs font-medium rounded ${getStatusColor(exception.status)}`}>
-                        {exception.status}
-                      </span>
-                    </div>
-                    <div className="text-sm text-gray-600 mb-2">
-                      Invoice: {exception.invoice.invoice_number}
-                    </div>
-                    <div className="text-sm text-gray-600 mb-2">
-                      Vendor: {exception.invoice.vendor.name}
-                    </div>
-                    <div className="text-sm text-gray-600">
-                      Amount: {exception.invoice.currency} {exception.invoice.amount.toFixed(2)}
-                    </div>
-                    <div className="text-xs text-gray-500 mt-2">
-                      Created: {new Date(exception.created_at).toLocaleString()}
-                    </div>
-                  </div>
-                ))}
-              </div>
+        <div className="px-6 py-6">
+          {exceptions.length === 0 ? (
+            <div style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }} className="p-8 text-center">
+              <CheckCircle className="h-12 w-12 text-green-400 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-white mb-2">No Pending Exceptions</h3>
+              <p className="text-slate-400">All exceptions have been resolved or waived.</p>
             </div>
-
-            {/* Exception Detail */}
-            {selectedException && (
-              <div className="bg-white rounded-lg shadow">
-                <div className="p-4 border-b">
-                  <h2 className="text-lg font-semibold text-gray-900">Exception Details</h2>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Exception List */}
+              <div style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }}>
+                <div className="p-4" style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                  <h2 className="text-lg font-semibold text-white">Pending Exceptions</h2>
                 </div>
-                <div className="p-4 space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Reason</label>
-                    <div className="text-gray-900">{selectedException.reason}</div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-                    <div className="text-gray-900">{selectedException.description}</div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Invoice</label>
-                    <div className="text-gray-900">{selectedException.invoice.invoice_number}</div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Vendor</label>
-                    <div className="text-gray-900">{selectedException.invoice.vendor.name}</div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Amount</label>
-                    <div className="text-gray-900">
-                      {selectedException.invoice.currency} {selectedException.invoice.amount.toFixed(2)}
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Created</label>
-                    <div className="text-gray-900">
-                      {new Date(selectedException.created_at).toLocaleString()}
-                    </div>
-                  </div>
-                  {selectedException.resolution && (
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Resolution</label>
-                      <div className="text-gray-900">{selectedException.resolution}</div>
-                    </div>
-                  )}
-                  {selectedException.resolved_at && (
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Resolved At</label>
-                      <div className="text-gray-900">
-                        {new Date(selectedException.resolved_at).toLocaleString()}
+                <div className="divide-y divide-white/5 max-h-[600px] overflow-y-auto">
+                  {exceptions.map((exception) => (
+                    <div
+                      key={exception.id}
+                      onClick={() => setSelectedException(exception)}
+                      className={`p-4 cursor-pointer transition-colors ${
+                        selectedException?.id === exception.id ? 'bg-white/5' : ''
+                      }`}
+                      style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', transition: 'background 150ms ease' }}
+                      onMouseEnter={(e) => {
+                        if (selectedException?.id !== exception.id) {
+                          e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (selectedException?.id !== exception.id) {
+                          e.currentTarget.style.background = 'transparent';
+                        }
+                      }}
+                    >
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="flex items-center space-x-2">
+                          <AlertTriangle className="h-5 w-5 text-amber-400" />
+                          <span className="font-medium text-white">{exception.reason}</span>
+                        </div>
+                        <span className={`px-2 py-1 text-xs font-medium rounded ${getStatusColor(exception.status)}`}>
+                          {exception.status}
+                        </span>
+                      </div>
+                      <div className="text-sm text-slate-400 mb-2">
+                        Invoice: {exception.invoice.invoice_number}
+                      </div>
+                      <div className="text-sm text-slate-400 mb-2">
+                        Vendor: {exception.invoice.vendor.name}
+                      </div>
+                      <div className="text-sm text-slate-400">
+                        Amount: {exception.invoice.currency} {exception.invoice.amount.toFixed(2)}
+                      </div>
+                      <div className="text-xs text-slate-500 mt-2">
+                        Created: {new Date(exception.created_at).toLocaleString()}
                       </div>
                     </div>
-                  )}
-
-                  {selectedException.status === 'PENDING' && (
-                    <div className="space-y-2 pt-4 border-t">
-                      <button
-                        onClick={() => setShowResolveModal(true)}
-                        className="w-full flex items-center justify-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-                      >
-                        <CheckCircle className="h-4 w-4 mr-2" />
-                        Resolve Exception
-                      </button>
-                      <button
-                        onClick={() => setShowWaiveModal(true)}
-                        className="w-full flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                      >
-                        <XCircle className="h-4 w-4 mr-2" />
-                        Waive Exception
-                      </button>
-                    </div>
-                  )}
+                  ))}
                 </div>
               </div>
-            )}
-          </div>
-        )}
+
+              {/* Exception Detail */}
+              {selectedException && (
+                <div style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }}>
+                  <div className="p-4" style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                    <h2 className="text-lg font-semibold text-white">Exception Details</h2>
+                  </div>
+                  <div className="p-4 space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-400 mb-1">Reason</label>
+                      <div className="text-white">{selectedException.reason}</div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-400 mb-1">Description</label>
+                      <div className="text-white">{selectedException.description}</div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-400 mb-1">Invoice</label>
+                      <div className="text-white">{selectedException.invoice.invoice_number}</div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-400 mb-1">Vendor</label>
+                      <div className="text-white">{selectedException.invoice.vendor.name}</div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-400 mb-1">Amount</label>
+                      <div className="text-white">
+                        {selectedException.invoice.currency} {selectedException.invoice.amount.toFixed(2)}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-400 mb-1">Created</label>
+                      <div className="text-white">
+                        {new Date(selectedException.created_at).toLocaleString()}
+                      </div>
+                    </div>
+                    {selectedException.resolution && (
+                      <div>
+                        <label className="block text-sm font-medium text-slate-400 mb-1">Resolution</label>
+                        <div className="text-white">{selectedException.resolution}</div>
+                      </div>
+                    )}
+                    {selectedException.resolved_at && (
+                      <div>
+                        <label className="block text-sm font-medium text-slate-400 mb-1">Resolved At</label>
+                        <div className="text-white">
+                          {new Date(selectedException.resolved_at).toLocaleString()}
+                        </div>
+                      </div>
+                    )}
+
+                    {selectedException.status === 'PENDING' && (
+                      <div className="space-y-2 pt-4" style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                        <button
+                          onClick={() => setShowResolveModal(true)}
+                          className="w-full flex items-center justify-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                        >
+                          <CheckCircle className="h-4 w-4 mr-2" />
+                          Resolve Exception
+                        </button>
+                        <button
+                          onClick={() => setShowWaiveModal(true)}
+                          className="w-full flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                        >
+                          <XCircle className="h-4 w-4 mr-2" />
+                          Waive Exception
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Resolve Modal */}
       {showResolveModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+          <div style={{ background: 'rgba(15, 23, 42, 0.9)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '16px', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }} className="max-w-md w-full mx-4">
             <div className="p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">
+              <h3 className="text-lg font-semibold text-white mb-4">
                 Resolve Exception
               </h3>
               <textarea
                 value={resolution}
                 onChange={(e) => setResolution(e.target.value)}
                 placeholder="Please describe how this exception was resolved..."
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent text-white placeholder-slate-400"
                 rows={4}
               />
               <div className="mt-4 flex justify-end space-x-3">
@@ -259,14 +313,14 @@ export default function ExceptionManager() {
                     setShowResolveModal(false);
                     setResolution('');
                   }}
-                  className="px-4 py-2 text-gray-700 hover:text-gray-900"
+                  className="px-4 py-2 text-slate-300 hover:text-white transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleResolve}
                   disabled={!resolution.trim()}
-                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
+                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:bg-slate-600 disabled:cursor-not-allowed"
                 >
                   Confirm Resolution
                 </button>
@@ -278,17 +332,17 @@ export default function ExceptionManager() {
 
       {/* Waive Modal */}
       {showWaiveModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+          <div style={{ background: 'rgba(15, 23, 42, 0.9)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '16px', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }} className="max-w-md w-full mx-4">
             <div className="p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">
+              <h3 className="text-lg font-semibold text-white mb-4">
                 Waive Exception
               </h3>
               <textarea
                 value={waiverReason}
                 onChange={(e) => setWaiverReason(e.target.value)}
                 placeholder="Please provide a reason for waiving this exception..."
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white placeholder-slate-400"
                 rows={4}
               />
               <div className="mt-4 flex justify-end space-x-3">
@@ -297,14 +351,14 @@ export default function ExceptionManager() {
                     setShowWaiveModal(false);
                     setWaiverReason('');
                   }}
-                  className="px-4 py-2 text-gray-700 hover:text-gray-900"
+                  className="px-4 py-2 text-slate-300 hover:text-white transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleWaive}
                   disabled={!waiverReason.trim()}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:bg-slate-600 disabled:cursor-not-allowed"
                 >
                   Confirm Waiver
                 </button>

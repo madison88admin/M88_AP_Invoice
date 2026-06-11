@@ -5,6 +5,104 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AP Invoice Processing - Madison 88</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      @keyframes fadeInUp {
+        from {
+          opacity: 0;
+          transform: translateY(20px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      
+      @keyframes drift {
+        0%, 100% {
+          transform: translate(0, 0);
+        }
+        50% {
+          transform: translate(30px, -20px);
+        }
+      }
+      
+      @keyframes drift1 { 
+        from { transform: translate(0,0) } 
+        to { transform: translate(-30px, 20px) } 
+      }
+      @keyframes drift2 { 
+        from { transform: translate(0,0) } 
+        to { transform: translate(25px,-25px) } 
+      }
+      @keyframes drift3 { 
+        from { transform: translate(0,0) } 
+        to { transform: translate(-15px, 30px) } 
+      }
+      @keyframes pulse-soft { 
+        0%,100%{opacity:0.4} 
+        50%{opacity:0.7} 
+      }
+      @keyframes shimmer {
+        from {
+          background-position: -200% 0;
+        }
+        to {
+          background-position: 200% 0;
+        }
+      }
+      
+      .animate-shimmer {
+        animation: shimmer 2s ease-in-out infinite;
+        background: linear-gradient(90deg, rgba(255,255,255,0.03) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.03) 75%);
+        background-size: 200% 100%;
+      }
+      
+      .card-shimmer:hover::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.06) 50%, transparent 60%);
+        background-size: 200% 100%;
+        animation: cardShimmer 0.6s ease-out;
+        pointer-events: none;
+        border-radius: inherit;
+      }
+      
+      @keyframes cardShimmer {
+        from {
+          background-position: -200% 0;
+        }
+        to {
+          background-position: 200% 0;
+        }
+      }
+      
+      /* Custom Scrollbar */
+      ::-webkit-scrollbar {
+        width: 4px;
+        height: 4px;
+      }
+      
+      ::-webkit-scrollbar-track {
+        background: rgba(255, 255, 255, 0.02);
+      }
+      
+      ::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.12);
+        border-radius: 4px;
+      }
+      
+      ::-webkit-scrollbar-thumb:hover {
+        background: rgba(255, 255, 255, 0.22);
+      }
+      
+      body {
+        font-family: 'Plus Jakarta Sans', sans-serif;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>

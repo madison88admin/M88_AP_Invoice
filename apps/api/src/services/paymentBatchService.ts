@@ -1,5 +1,146 @@
 import prisma from '../config/database';
 
+/**
+ * Get the next Wednesday date from a given date
+ */
+function getNextWednesday(date: Date = new Date()): Date {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = (3 - day + 7) % 7; // 3 is Wednesday
+  d.setDate(d.getDate() + diff);
+  return d;
+}
+
+/**
+ * Check if today is Wednesday
+ */
+function isWednesday(date: Date = new Date()): boolean {
+  return date.getDay() === 3; // 3 is Wednesday
+}
+
+/**
+ * Get payments scheduled for the next Wednesday
+ */
+export async function getPaymentsForNextWednesday() {
+  const nextWednesday = getNextWednesday();
+  const startOfDay = new Date(nextWednesday);
+  startOfDay.setHours(0, 0, 0, 0);
+  const endOfDay = new Date(nextWednesday);
+  endOfDay.setHours(23, 59, 59, 999);
+
+  const payments = await prisma.payment.findMany({
+    where: {
+      status: 'SCHEDULED',
+      payment_date: {
+        gte: startOfDay,
+        lte: endOfDay,
+      },
+      batch_id: null, // Not already in a batch
+    },
+    include: {
+      invoice: {
+        include: {
+          vendor: true,
+        },
+      },
+    },
+    orderBy: {
+      payment_date: 'asc',
+    },
+  });
+
+  return payments;
+}
+
+/**
+ * Auto-create payment batch for Wednesday processing
+ */
+export async function autoCreateWednesdayBatch(userId: string) {
+  if (!isWednesday()) {
+    throw new Error('Today is not Wednesday. Batches can only be auto-created on Wednesdays.');
+  }
+
+  const payments = await getPaymentsForNextWednesday();
+
+  if (payments.length === 0) {
+    return { message: 'No payments scheduled for today' };
+  }
+
+  const paymentIds = payments.map((p: any) => p.id);
+  return createPaymentBatch(paymentIds, userId);
+}
+
+/**
+ * Generate payment file for NextGen
+ */
+export async function generatePaymentFile(batchId: string) {
+  const batch = await prisma.paymentBatch.findUnique({
+    where: { id: batchId },
+    include: {
+      payments: {
+        include: {
+          invoice: {
+            include: {
+              vendor: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!batch) {
+    throw new Error('Payment batch not found');
+  }
+
+  // Generate payment file in NextGen format
+  const paymentFile = {
+    batch_number: batch.batch_number,
+    batch_date: batch.created_at.toISOString().split('T')[0],
+    total_amount: batch.total_amount,
+    payment_count: batch.payment_count,
+    payments: batch.payments.map((payment: any) => ({
+      payment_id: payment.id,
+      invoice_number: payment.invoice.invoice_number,
+      vendor_id: payment.invoice.vendor_id,
+      vendor_name: payment.invoice.vendor.name,
+      amount: payment.amount,
+      currency: payment.currency,
+      payment_date: payment.payment_date.toISOString().split('T')[0],
+      bank_name: payment.invoice.vendor.bank_name,
+      bank_address: payment.invoice.vendor.bank_address,
+      swift_code: payment.invoice.vendor.swift_code,
+      account_number: payment.invoice.vendor.account_usd,
+    })),
+  };
+
+  return paymentFile;
+}
+
+/**
+ * Get payment batch statistics
+ */
+export async function getPaymentBatchStatistics() {
+  const totalBatches = await prisma.paymentBatch.count();
+  const pendingBatches = await prisma.paymentBatch.count({ where: { status: 'PENDING' } });
+  const processingBatches = await prisma.paymentBatch.count({ where: { status: 'PROCESSING' } });
+  const completedBatches = await prisma.paymentBatch.count({ where: { status: 'COMPLETED' } });
+  const cancelledBatches = await prisma.paymentBatch.count({ where: { status: 'CANCELLED' } });
+
+  const totalAmount = await prisma.paymentBatch.aggregate({
+    _sum: { total_amount: true },
+  });
+
+  return {
+    total_batches: totalBatches,
+    pending_batches: pendingBatches,
+    processing_batches: processingBatches,
+    completed_batches: completedBatches,
+    cancelled_batches: cancelledBatches,
+    total_amount_processed: totalAmount._sum.total_amount || 0,
+  };
+}
+
 export async function createPaymentBatch(
   paymentIds: string[],
   userId: string
@@ -24,7 +165,7 @@ export async function createPaymentBatch(
   }
 
   // Calculate total batch amount
-  const totalAmount = payments.reduce((sum, p) => sum + p.amount, 0);
+  const totalAmount = payments.reduce((sum: number, p: any) => sum + p.amount, 0);
 
   // Create payment batch
   const batch = await prisma.paymentBatch.create({

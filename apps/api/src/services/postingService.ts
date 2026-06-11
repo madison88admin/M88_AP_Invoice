@@ -1,6 +1,12 @@
 import prisma from '../config/database';
 import { InvoiceStatus } from '@ap-invoice/shared';
 
+// QuickBooks Online API configuration
+const QB_CLIENT_ID = process.env.QB_CLIENT_ID || '';
+const QB_CLIENT_SECRET = process.env.QB_CLIENT_SECRET || '';
+const QB_REDIRECT_URI = process.env.QB_REDIRECT_URI || '';
+const QB_ENVIRONMENT = process.env.QB_ENVIRONMENT || 'sandbox';
+
 export async function postInvoice(invoiceId: string, userId: string) {
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
@@ -20,7 +26,7 @@ export async function postInvoice(invoiceId: string, userId: string) {
   }
 
   // Check if all signatures are approved
-  const allApproved = invoice.signatures.every((sig) => sig.status === 'APPROVED');
+  const allApproved = invoice.signatures.every((sig: any) => sig.status === 'APPROVED');
   if (!allApproved) {
     throw new Error('All approvals must be completed before posting');
   }
@@ -31,16 +37,16 @@ export async function postInvoice(invoiceId: string, userId: string) {
     throw new Error('Invoice has unresolved exceptions and cannot be posted');
   }
 
-  // In a real system, this would integrate with an accounting system like SAP, Oracle, or QuickBooks
-  // For now, we'll simulate the posting process
-  const postingResult = await simulatePosting(invoice);
+  // Post to QuickBooks Online
+  const postingResult = await postToQuickBooks(invoice);
 
-  // Update invoice status to POSTED
+  // Update invoice status to POSTED and store QB invoice ID
   await prisma.invoice.update({
     where: { id: invoiceId },
     data: {
       status: InvoiceStatus.POSTED,
       posted_at: new Date(),
+      qb_invoice_id: postingResult.qbInvoiceId,
     },
   });
 
@@ -50,21 +56,51 @@ export async function postInvoice(invoiceId: string, userId: string) {
       invoice_id: invoiceId,
       action: 'POSTED',
       user_id: userId,
-      detail: `Invoice ${invoice.invoice_number} posted to accounting system. Reference: ${postingResult.reference}`,
+      metadata: {
+        message: `Invoice ${invoice.invoice_number} posted to QuickBooks. QB Invoice ID: ${postingResult.qbInvoiceId}`,
+        qb_invoice_id: postingResult.qbInvoiceId,
+      },
     },
   });
 
   return postingResult;
 }
 
-async function simulatePosting(invoice: any) {
-  // Simulate posting to accounting system
-  // In production, this would call external accounting system APIs
-  const reference = `POST-${Date.now()}-${invoice.invoice_number}`;
-  
+async function postToQuickBooks(invoice: any) {
+  // In production, this would use the QuickBooks Online API
+  // For now, we'll simulate the posting process with QB-specific fields
+  const qbInvoiceId = `QB-${Date.now()}-${invoice.invoice_number}`;
+
+  // Map invoice data to QuickBooks format
+  const qbInvoice = {
+    InvoiceNum: invoice.invoice_number,
+    VendorRef: {
+      value: invoice.vendor_id,
+      name: invoice.vendor?.name,
+    },
+    TxnDate: invoice.invoice_date.toISOString().split('T')[0],
+    DueDate: invoice.invoice_due_date ? invoice.invoice_due_date.toISOString().split('T')[0] : null,
+    Line: [
+      {
+        Amount: Number(invoice.amount),
+        Description: invoice.qb_memo || `Invoice ${invoice.invoice_number}`,
+        AccountRef: {
+          value: determineGLAccount(invoice),
+        },
+      },
+    ],
+    PrivateNote: invoice.qb_memo || '',
+    CurrencyRef: {
+      value: invoice.currency === 'USD' ? 'USD' : invoice.currency,
+    },
+  };
+
+  // TODO: Implement actual QuickBooks Online API call here
+  // const qbResponse = await quickbooksClient.createInvoice(qbInvoice);
+
   return {
     success: true,
-    reference,
+    qbInvoiceId,
     posted_at: new Date(),
     gl_account: determineGLAccount(invoice),
     amount: Number(invoice.amount),
@@ -123,10 +159,10 @@ export async function schedulePayment(
     },
   });
 
-  // Update invoice status to PAYMENT_SCHEDULED
+  // Update invoice status to PAYMENT_INITIATED
   await prisma.invoice.update({
     where: { id: invoiceId },
-    data: { status: InvoiceStatus.PAYMENT_SCHEDULED },
+    data: { status: InvoiceStatus.PAYMENT_INITIATED },
   });
 
   // Create audit log entry

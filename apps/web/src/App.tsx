@@ -6,6 +6,7 @@ import ExceptionManager from './components/ExceptionManager';
 import PaymentBatchManager from './components/PaymentBatchManager';
 import Reports from './components/Reports';
 import AccountingReview from './components/AccountingReview';
+import VendorManagement from './components/VendorManagement';
 
 function App() {
   return (
@@ -18,6 +19,7 @@ function App() {
         <Route path="/payment-batches" element={<PaymentBatchManager />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/accounting-review" element={<AccountingReview />} />
+        <Route path="/vendors" element={<VendorManagement />} />
       </Routes>
     </Router>
   );

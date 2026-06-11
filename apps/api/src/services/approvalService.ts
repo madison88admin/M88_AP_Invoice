@@ -1,10 +1,10 @@
 import prisma from '../config/database';
 import { InvoiceStatus, SignatureRole, UserRole } from '@ap-invoice/shared';
 
-// Approval routing thresholds
+// Approval routing thresholds according to BRD
 const APPROVAL_THRESHOLDS = {
-  PURCHASING_MANAGER: 5000,
-  PRESIDENT: 500000,
+  TIER_2: 5000,   // Purchasing Manager threshold
+  TIER_3: 25000,  // Planning Manager + Lindsey threshold
 };
 
 interface ApprovalRoute {
@@ -12,19 +12,25 @@ interface ApprovalRoute {
   amount_threshold: number;
 }
 
-export async function determineApprovalRoute(amount: number): Promise<SignatureRole[]> {
+export function determineApprovalRoute(amount: number): SignatureRole[] {
   const route: SignatureRole[] = [];
 
-  if (amount < APPROVAL_THRESHOLDS.PURCHASING_MANAGER) {
+  // Tier 1: Purchasing Coordinator only (amount < $5,000)
+  if (amount < APPROVAL_THRESHOLDS.TIER_2) {
+    route.push(SignatureRole.COORDINATOR);
+  }
+  // Tier 2: Purchasing Coordinator + Purchasing Manager ($5,000 <= amount < $25,000)
+  else if (amount < APPROVAL_THRESHOLDS.TIER_3) {
+    route.push(SignatureRole.COORDINATOR);
     route.push(SignatureRole.MANAGER);
-  } else if (amount < APPROVAL_THRESHOLDS.PRESIDENT) {
+  }
+  // Tier 3: Purchasing Coordinator + Purchasing Manager + Planning Manager + Lindsey (amount >= $25,000)
+  else {
+    route.push(SignatureRole.COORDINATOR);
+    route.push(SignatureRole.MANAGER);
     route.push(SignatureRole.PLANNING_MANAGER);
-  } else {
     route.push(SignatureRole.LINDSEY);
   }
-
-  // All approvals require accounting supervisor endorsement
-  route.push(SignatureRole.COORDINATOR);
 
   return route;
 }
@@ -44,7 +50,7 @@ export async function createApprovalRequest(invoiceId: string, userId: string) {
   }
 
   // Determine approval route
-  const approvalRoute = await determineApprovalRoute(Number(invoice.amount));
+  const approvalRoute = determineApprovalRoute(Number(invoice.amount));
 
   // Create approval records for each role in the route
   const approvals = await Promise.all(
@@ -53,7 +59,7 @@ export async function createApprovalRequest(invoiceId: string, userId: string) {
         data: {
           invoice_id: invoiceId,
           role,
-          signer_name: null,
+          signer_name: '',
           signed_at: null,
           status: index === 0 ? 'PENDING' : 'WAITING',
           order: index + 1,
@@ -74,7 +80,9 @@ export async function createApprovalRequest(invoiceId: string, userId: string) {
       invoice_id: invoiceId,
       action: 'APPROVAL_REQUESTED',
       user_id: userId,
-      detail: `Approval requested for invoice ${invoice.invoice_number}. Route: ${approvalRoute.join(' → ')}`,
+      metadata: {
+        message: `Approval requested for invoice ${invoice.invoice_number}. Route: ${approvalRoute.join(' → ')}`,
+      },
     },
   });
 
@@ -90,9 +98,7 @@ export async function approveInvoice(
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
     include: {
-      signatures: {
-        orderBy: { order: 'asc' },
-      },
+      signatures: true,
     },
   });
 
@@ -112,7 +118,7 @@ export async function approveInvoice(
 
   // Find the pending signature for this role
   const pendingSignature = invoice.signatures.find(
-    (sig) => sig.role === signatureRole && sig.status === 'PENDING'
+    (sig: any) => sig.role === signatureRole && sig.status === 'PENDING'
   );
 
   if (!pendingSignature) {
@@ -135,13 +141,15 @@ export async function approveInvoice(
       invoice_id: invoiceId,
       action: 'APPROVED',
       user_id: userId,
-      detail: `Invoice approved by ${signerName} (${signatureRole})`,
+      metadata: {
+        message: `Invoice approved by ${signerName} (${signatureRole})`,
+      },
     },
   });
 
   // Check if there are more approvals needed
   const nextSignature = invoice.signatures.find(
-    (sig) => sig.order === pendingSignature.order + 1
+    (sig: any) => sig.order === pendingSignature.order + 1
   );
 
   if (nextSignature) {
@@ -162,7 +170,9 @@ export async function approveInvoice(
         invoice_id: invoiceId,
         action: 'FULLY_APPROVED',
         user_id: userId,
-        detail: `Invoice ${invoice.invoice_number} fully approved and ready for posting`,
+        metadata: {
+        message: `Invoice ${invoice.invoice_number} fully approved and ready for posting`,
+      },
       },
     });
   }
@@ -201,7 +211,7 @@ export async function rejectInvoice(
 
   // Find the pending signature for this role
   const pendingSignature = invoice.signatures.find(
-    (sig) => sig.role === signatureRole && sig.status === 'PENDING'
+    (sig: any) => sig.role === signatureRole && sig.status === 'PENDING'
   );
 
   if (!pendingSignature) {
@@ -228,7 +238,9 @@ export async function rejectInvoice(
       invoice_id: invoiceId,
       action: 'REJECTED',
       user_id: userId,
-      detail: `Invoice rejected by ${signatureRole}. Reason: ${reason}`,
+      metadata: {
+        message: `Invoice rejected by ${signatureRole}. Reason: ${reason}`,
+      },
     },
   });
 
@@ -245,6 +257,9 @@ function mapUserRoleToSignatureRole(userRole: UserRole): SignatureRole | null {
     [UserRole.ACCOUNTING_SUPERVISOR]: SignatureRole.COORDINATOR,
     [UserRole.CFO]: SignatureRole.LINDSEY,
     [UserRole.IT_ADMIN]: SignatureRole.COORDINATOR,
+    [UserRole.ADMIN]: SignatureRole.COORDINATOR,
+    [UserRole.LINDSEY]: SignatureRole.LINDSEY,
+    [UserRole.POLLY]: SignatureRole.COORDINATOR,
   };
 
   return mapping[userRole] || null;

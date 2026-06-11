@@ -1,9 +1,11 @@
 import { Client } from '@microsoft/microsoft-graph-client';
+import { ClientSecretCredential } from '@azure/identity';
 import { analyzeInvoice } from './ocrService';
 import { matchVendor } from './vendorMatchingService';
-import { InvoiceStatus } from '@ap-invoice/shared';
+import { InvoiceStatus, PaymentTerms, InvoiceType, InvoiceCategory, ExceptionReason, MadisonEntity } from '@ap-invoice/shared';
 import prisma from '../config/database';
 import { logger } from '../utils/logger';
+import { InvoiceType as PrismaInvoiceType, InvoiceStatus as PrismaInvoiceStatus, ExceptionReason as PrismaExceptionReason, MadisonEntity as PrismaMadisonEntity } from '@prisma/client';
 
 const clientId = process.env.GRAPH_API_CLIENT_ID || '';
 const clientSecret = process.env.GRAPH_API_CLIENT_SECRET || '';
@@ -35,14 +37,14 @@ export async function getGraphClient(): Promise<Client> {
     throw new Error('Microsoft Graph API credentials not configured');
   }
 
-  // For production, use proper OAuth2 flow with @azure/identity
-  // This is a simplified version for development
+  // Use ClientSecretCredential for service-to-service authentication
+  const credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
+
   const client = Client.init({
     authProvider: async (done) => {
       try {
-        // In production, implement proper token acquisition
-        // For now, this is a placeholder
-        done(new Error('Implement proper OAuth2 token acquisition'), null);
+        const token = await credential.getToken('https://graph.microsoft.com/.default');
+        done(null, token.token);
       } catch (error) {
         done(error as Error, null);
       }
@@ -130,7 +132,7 @@ async function processAttachment(attachment: any, message: any): Promise<void> {
       vendorId = ''; // Will be filled manually
     }
     
-    // Create invoice record
+    // Create invoice record with all fields from updated schema
     const invoice = await prisma.invoice.create({
       data: {
         invoice_number: ocrResult.invoice_number,
@@ -140,16 +142,29 @@ async function processAttachment(attachment: any, message: any): Promise<void> {
         vendor_id: vendorId || 'pending', // Use placeholder if no match
         amount: ocrResult.amount,
         currency: ocrResult.currency,
-        payment_terms: ocrResult.payment_terms,
         incoterm: ocrResult.incoterm,
-        bank_charges: 0,
-        shipping_charges: 0,
-        invoice_type: ocrResult.invoice_type,
+        bank_charges: ocrResult.bank_charges || 0,
+        shipping_charges: ocrResult.shipping_charges || 0,
+        customs_charges: ocrResult.customs_charges || 0,
+        documentation_charges: ocrResult.documentation_charges || 0,
+        surcharges: ocrResult.surcharges || 0,
+        invoice_type: ocrResult.invoice_type as PrismaInvoiceType,
         category: ocrResult.category,
+        order_type: (ocrResult as any).order_type,
+        brand: (ocrResult as any).brand,
+        season: (ocrResult as any).season,
+        mpo_number: (ocrResult as any).mpo_number,
+        po_number: (ocrResult as any).po_number,
         bill_to_name: ocrResult.bill_to_name,
         bill_to_address: ocrResult.bill_to_address,
-        status: vendorId ? InvoiceStatus.PENDING_VALIDATION : InvoiceStatus.EXCEPTION,
-        priority: ocrResult.priority,
+        bill_to_entity: (ocrResult.bill_to_entity || MadisonEntity.MADISON_88_LTD) as PrismaMadisonEntity,
+        is_handwritten: (ocrResult as any).is_handwritten || false,
+        is_priority: (ocrResult as any).is_priority || false,
+        priority_pay_date: (ocrResult as any).priority_pay_date ? new Date((ocrResult as any).priority_pay_date) : null,
+        payment_consolidation_note: (ocrResult as any).payment_consolidation_note,
+        qb_memo: (ocrResult as any).qb_memo,
+        qb_account_class: (ocrResult as any).qb_account_class,
+        status: (vendorId ? InvoiceStatus.PENDING_VALIDATION : InvoiceStatus.EXCEPTION) as PrismaInvoiceStatus,
         ocr_raw_data: {
           ...ocrResult,
           email_source: {
@@ -157,7 +172,17 @@ async function processAttachment(attachment: any, message: any): Promise<void> {
             subject: message.subject,
             received_date: message.receivedDateTime,
           },
-        },
+        } as any,
+        // Optional fields
+        ...(ocrResult.date_range_start && { date_range_start: new Date(ocrResult.date_range_start) }),
+        ...(ocrResult.date_range_end && { date_range_end: new Date(ocrResult.date_range_end) }),
+        ...(ocrResult.invoice_version && { invoice_version: ocrResult.invoice_version }),
+        ...(ocrResult.invoice_version_notes && { invoice_version_notes: ocrResult.invoice_version_notes }),
+        ...(ocrResult.amount_original && { amount_original: ocrResult.amount_original }),
+        ...(ocrResult.currency_original && { currency_original: ocrResult.currency_original }),
+        ...(ocrResult.exchange_rate_to_usd && { exchange_rate_to_usd: ocrResult.exchange_rate_to_usd }),
+        ...(ocrResult.payment_terms && { payment_terms: ocrResult.payment_terms }),
+        ...(ocrResult.payment_term_split && { payment_term_split: ocrResult.payment_term_split }),
       },
       include: {
         vendor: true,
@@ -172,9 +197,10 @@ async function processAttachment(attachment: any, message: any): Promise<void> {
             invoice_id: invoice.id,
             signer_name: sig.signer_name,
             signed_at: sig.signed_at ? new Date(sig.signed_at) : null,
-            role: sig.role,
+            role: sig.role as any,
             ocr_detected: true,
-          },
+            ...(sig.is_digital && { is_digital: sig.is_digital }),
+          } as any,
         });
       }
     }
@@ -197,7 +223,7 @@ async function processAttachment(attachment: any, message: any): Promise<void> {
       await prisma.exception.create({
         data: {
           invoice_id: invoice.id,
-          reason: 'NEXTGEN_MISMATCH',
+          reason: ExceptionReason.VENDOR_NOT_FOUND as PrismaExceptionReason,
           detail: `No vendor match found for "${ocrResult.vendor_name}". Manual vendor assignment required.`,
         },
       });

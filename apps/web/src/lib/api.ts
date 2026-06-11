@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const API_BASE_URL = (import.meta as any).env.VITE_API_URL || 'http://localhost:3001';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -63,6 +63,10 @@ export const paymentBatchApi = {
 };
 
 export const vendorApi = {
+  getAll: () => api.get('/api/vendors'),
+  getById: (id: string) => api.get(`/api/vendors/${id}`),
+  create: (data: any) => api.post('/api/vendors', data),
+  update: (id: string, data: any) => api.patch(`/api/vendors/${id}`, data),
   getSuggestions: (search: string, limit?: number) => 
     api.get('/api/vendors/suggestions', { params: { search, limit } }),
 };

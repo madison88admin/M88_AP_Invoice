@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { AppError } from './errorHandler';
 import { UserRole } from '@ap-invoice/shared';
+import { msalApp } from '../config/msal';
 
 export interface AuthRequest extends Request {
   user?: {
@@ -10,7 +11,7 @@ export interface AuthRequest extends Request {
     name: string;
     role: UserRole;
   };
-  file?: {
+  uploadedFile?: {
     buffer: Buffer;
     mimetype: string;
     originalname: string;
@@ -31,18 +32,48 @@ export const authenticate = async (
     }
 
     const token = authHeader.substring(7);
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-jwt-secret-key') as any;
     
-    req.user = {
-      id: decoded.id,
-      email: decoded.email,
-      name: decoded.name,
-      role: decoded.role,
-    };
-    
-    next();
+    // Try JWT first (for development/testing)
+    if (process.env.JWT_SECRET) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET) as any;
+        req.user = {
+          id: decoded.id,
+          email: decoded.email,
+          name: decoded.name,
+          role: decoded.role,
+        };
+        return next();
+      } catch (jwtError) {
+        // JWT failed, try MSAL
+      }
+    }
+
+    // MSAL authentication for production
+    try {
+      const oboRequest = {
+        scopes: ['https://graph.microsoft.com/.default'],
+        oboAssertion: token,
+      };
+      
+      const response = await msalApp.acquireTokenOnBehalfOf(oboRequest);
+      
+      // Extract user info from the token
+      const decoded = jwt.decode(token) as any;
+      
+      req.user = {
+        id: decoded.oid || decoded.sub,
+        email: decoded.email || decoded.upn,
+        name: decoded.name || decoded.preferred_username,
+        role: decoded.roles?.[0] || UserRole.ACCOUNTING_ASSOCIATE, // Default role if not specified
+      };
+      
+      next();
+    } catch (msalError) {
+      throw new AppError('Invalid or expired token', 401);
+    }
   } catch (error) {
-    next(new AppError('Invalid or expired token', 401));
+    next(new AppError('Authentication failed', 401));
   }
 };
 

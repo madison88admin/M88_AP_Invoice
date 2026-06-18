@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { exceptionApi } from '../lib/api';
-import { AlertTriangle, CheckCircle, XCircle, Clock, ArrowLeft } from 'lucide-react';
+import { AlertTriangle, CheckCircle, XCircle, ArrowLeft } from 'lucide-react';
 
 interface Exception {
   id: string;
@@ -15,7 +15,7 @@ interface Exception {
   invoice: {
     id: string;
     invoice_number: string;
-    amount: number;
+    total_amount: number;
     currency: string;
     vendor: {
       name: string;
@@ -206,7 +206,7 @@ export default function ExceptionManager() {
                         Vendor: {exception.invoice.vendor.name}
                       </div>
                       <div className="text-sm text-slate-400">
-                        Amount: {exception.invoice.currency} {exception.invoice.amount.toFixed(2)}
+                        Amount: {exception.invoice.currency} {exception.invoice.total_amount.toFixed(2)}
                       </div>
                       <div className="text-xs text-slate-500 mt-2">
                         Created: {new Date(exception.created_at).toLocaleString()}
@@ -242,7 +242,7 @@ export default function ExceptionManager() {
                     <div>
                       <label className="block text-sm font-medium text-slate-400 mb-1">Amount</label>
                       <div className="text-white">
-                        {selectedException.invoice.currency} {selectedException.invoice.amount.toFixed(2)}
+                        {selectedException.invoice.currency} {selectedException.invoice.total_amount.toFixed(2)}
                       </div>
                     </div>
                     <div>

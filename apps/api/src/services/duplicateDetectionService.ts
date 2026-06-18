@@ -68,10 +68,8 @@ export async function storeInvoiceHash(invoiceId: string, hash: string): Promise
   await prisma.invoice.update({
     where: { id: invoiceId },
     data: {
-      ocr_raw_data: {
-        duplicate_hash: hash,
-      } as any,
-    },
+      ocr_confidence_score: 1.0, // Hash stored via audit log instead
+    } as any,
   });
 }
 

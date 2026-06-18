@@ -5,6 +5,7 @@ import {
   getPendingExceptions,
   getExceptionsByInvoice,
   waiveException,
+  autoResolveLowRiskExceptions,
 } from '../services/exceptionService';
 
 export const resolveExceptionController = async (
@@ -59,6 +60,20 @@ export const getExceptionsByInvoiceController = async (
     const { invoiceId } = req.params;
     const exceptions = await getExceptionsByInvoice(invoiceId);
     res.json(exceptions);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const autoResolveExceptionsController = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { invoiceId } = req.params;
+    const result = await autoResolveLowRiskExceptions(invoiceId);
+    res.json(result);
   } catch (error) {
     next(error);
   }

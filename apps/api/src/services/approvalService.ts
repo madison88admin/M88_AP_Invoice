@@ -1,40 +1,109 @@
 import prisma from '../config/database';
-import { InvoiceStatus, SignatureRole, UserRole } from '@ap-invoice/shared';
+import { InvoiceStatus, SignatoryRole, SignatureType } from '@ap-invoice/shared';
+import { AppError } from '../middleware/errorHandler';
+import {
+  APPROVAL_THRESHOLDS,
+  SLA_LIMITS,
+  TOP_10_BRANDS,
+  COORDINATOR_NAMES,
+  PURCHASING_MANAGER_NAMES,
+  MLO_ACCOUNT_HOLDER_EDWIN,
+  MLO_ACCOUNT_HOLDER_GLECIE,
+  SR_MANAGER_NAME,
+  MS_POLLY_NAME,
+  isTop10Brand,
+  determineApprovalTier,
+  mapSignatoryRoleToPendingStatus,
+} from '@ap-invoice/shared';
 
-// Approval routing thresholds according to BRD
-const APPROVAL_THRESHOLDS = {
-  TIER_2: 5000,   // Purchasing Manager threshold
-  TIER_3: 25000,  // Planning Manager + Lindsey threshold
-};
-
-interface ApprovalRoute {
-  role: SignatureRole;
-  amount_threshold: number;
+interface ApprovalRouteStep {
+  role: SignatoryRole;
+  assignee_name: string;
+  sla_days: number;
 }
 
-export function determineApprovalRoute(amount: number): SignatureRole[] {
-  const route: SignatureRole[] = [];
+/**
+ * Determine the approval route based on invoice amount and brand
+ * 4-tier system per BRD v5.0:
+ * - Tier 1 (<=2000): Coordinator only
+ * - Tier 2 (2001-5000): Coordinator + Purchasing Manager + MLO Account Holder
+ * - Tier 3 (5000-100000): + MLO Planning Manager + Sr. Manager Global Production
+ * - Tier 4 (>100000): + Ms. Polly
+ */
+export function determineApprovalRoute(amount: number, brandName?: string): ApprovalRouteStep[] {
+  const tier = determineApprovalTier(amount);
+  const route: ApprovalRouteStep[] = [];
 
-  // Tier 1: Purchasing Coordinator only (amount < $5,000)
-  if (amount < APPROVAL_THRESHOLDS.TIER_2) {
-    route.push(SignatureRole.COORDINATOR);
+  // Tier 1: amount <= $2,000 → Coordinator only
+  route.push({ role: SignatoryRole.COORDINATOR, assignee_name: 'Any Coordinator', sla_days: SLA_LIMITS.COORDINATOR_DAYS });
+
+  if (tier >= 2) {
+    route.push({ role: SignatoryRole.PURCHASING_MANAGER, assignee_name: 'Any Purchasing Manager', sla_days: SLA_LIMITS.PURCHASING_MANAGER_DAYS });
+
+    // MLO Account Holder — brand-dependent: Edwin for TOP_10, Glecie for OTHER
+    const mloAccountHolder = (brandName && isTop10Brand(brandName))
+      ? MLO_ACCOUNT_HOLDER_EDWIN
+      : MLO_ACCOUNT_HOLDER_GLECIE;
+    route.push({ role: SignatoryRole.MLO_ACCOUNT_HOLDER, assignee_name: mloAccountHolder, sla_days: SLA_LIMITS.MLO_ACCOUNT_HOLDER_DAYS });
   }
-  // Tier 2: Purchasing Coordinator + Purchasing Manager ($5,000 <= amount < $25,000)
-  else if (amount < APPROVAL_THRESHOLDS.TIER_3) {
-    route.push(SignatureRole.COORDINATOR);
-    route.push(SignatureRole.MANAGER);
+
+  if (tier >= 3) {
+    route.push({ role: SignatoryRole.MLO_PLANNING_MANAGER, assignee_name: 'MLO Planning Manager', sla_days: SLA_LIMITS.MLO_PLANNING_MANAGER_DAYS });
+    route.push({ role: SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION, assignee_name: SR_MANAGER_NAME, sla_days: SLA_LIMITS.SR_MANAGER_DAYS });
   }
-  // Tier 3: Purchasing Coordinator + Purchasing Manager + Planning Manager + Lindsey (amount >= $25,000)
-  else {
-    route.push(SignatureRole.COORDINATOR);
-    route.push(SignatureRole.MANAGER);
-    route.push(SignatureRole.PLANNING_MANAGER);
-    route.push(SignatureRole.LINDSEY);
+
+  if (tier >= 4) {
+    route.push({ role: SignatoryRole.MS_POLLY, assignee_name: MS_POLLY_NAME, sla_days: SLA_LIMITS.MS_POLLY_DAYS });
   }
 
   return route;
 }
 
+/**
+ * Check if an invoice qualifies for auto-approval (low-risk Tier 1)
+ * Criteria: Tier 1 (≤$2K) + vendor bank verified + OCR confidence ≥90% + no exceptions + not duplicate
+ */
+async function isAutoApprovalEligible(invoice: any): Promise<{ eligible: boolean; reason?: string }> {
+  const amount = Number(invoice.total_amount);
+  const tier = determineApprovalTier(amount);
+
+  // Only Tier 1 invoices are eligible
+  if (tier !== 1) {
+    return { eligible: false, reason: `Tier ${tier} requires manual approval` };
+  }
+
+  // Vendor must have verified bank details
+  if (!invoice.vendor?.bank_verified_at) {
+    return { eligible: false, reason: 'Vendor bank not verified' };
+  }
+
+  // OCR confidence must be ≥ 90%
+  const ocrConfidence = invoice.ocr_confidence_score ? Number(invoice.ocr_confidence_score) : 0;
+  if (ocrConfidence < 0.90) {
+    return { eligible: false, reason: `OCR confidence ${Math.round(ocrConfidence * 100)}% below 90% threshold` };
+  }
+
+  // Must not be a duplicate
+  if (invoice.is_duplicate) {
+    return { eligible: false, reason: 'Invoice flagged as duplicate' };
+  }
+
+  // Check for any unresolved exceptions
+  const exceptions = await prisma.exception.findMany({
+    where: { invoice_id: invoice.id, status: 'PENDING' as any },
+  });
+  if (exceptions.length > 0) {
+    return { eligible: false, reason: `${exceptions.length} unresolved exception(s)` };
+  }
+
+  return { eligible: true };
+}
+
+/**
+ * Create approval request for a validated invoice
+ * Sets invoice to PENDING_COORDINATOR and creates signature records
+ * For low-risk Tier 1 invoices, auto-approves directly to APPROVED
+ */
 export async function createApprovalRequest(invoiceId: string, userId: string) {
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
@@ -42,36 +111,101 @@ export async function createApprovalRequest(invoiceId: string, userId: string) {
   });
 
   if (!invoice) {
-    throw new Error('Invoice not found');
+    throw new AppError('Invoice not found', 404);
   }
 
-  if (invoice.status !== InvoiceStatus.VALIDATED) {
-    throw new Error('Invoice must be validated before requesting approval');
+  if (invoice.status !== 'VALIDATION_PENDING') {
+    throw new AppError('Invoice must be validated before requesting approval', 400);
   }
 
-  // Determine approval route
-  const approvalRoute = determineApprovalRoute(Number(invoice.amount));
+  // Determine approval route based on amount and brand
+  const amount = Number(invoice.total_amount);
+  const brandName = invoice.brand || undefined;
+  const approvalRoute = determineApprovalRoute(amount, brandName);
+  const tier = determineApprovalTier(amount);
 
-  // Create approval records for each role in the route
-  const approvals = await Promise.all(
-    approvalRoute.map((role, index) =>
+  // Check auto-approval eligibility for low-risk Tier 1 invoices
+  const autoApproval = await isAutoApprovalEligible(invoice);
+
+  if (autoApproval.eligible) {
+    // Auto-approve: skip the approval chain entirely
+    await prisma.invoice.update({
+      where: { id: invoiceId },
+      data: {
+        status: InvoiceStatus.APPROVED as any,
+        approval_tier: tier,
+        current_approver_role: null,
+      },
+    });
+
+    // Create a single auto-signed Coordinator signature
+    await prisma.signature.create({
+      data: {
+        invoice_id: invoiceId,
+        signatory_role: SignatoryRole.COORDINATOR as any,
+        signatory_name: 'AUTO-APPROVED',
+        signature_type: SignatureType.COMPUTER_GENERATED as any,
+        signed_at: new Date(),
+      },
+    });
+
+    // Enter Accounting stage
+    await prisma.stageTimestamp.create({
+      data: {
+        invoice_id: invoiceId,
+        stage: InvoiceStatus.PENDING_ACCOUNTING as any,
+        entered_at: new Date(),
+        sla_hours: SLA_LIMITS.ACCOUNTING_DAYS * 24,
+      },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        invoice_id: invoiceId,
+        action: 'AUTO_APPROVED',
+        performed_by: 'system',
+        note: `Auto-approved: Tier ${tier}, amount $${amount.toFixed(2)}, OCR ${(invoice.ocr_confidence_score ? Math.round(Number(invoice.ocr_confidence_score) * 100) : 0)}%, vendor bank verified`,
+      },
+    });
+
+    return [{ auto_approved: true, invoice_id: invoiceId }];
+  }
+
+  // Create signature records for each step in the route
+  const signatures = await Promise.all(
+    approvalRoute.map((step) =>
       prisma.signature.create({
         data: {
           invoice_id: invoiceId,
-          role,
-          signer_name: '',
+          signatory_role: step.role as any,
+          signatory_name: '',
+          signature_type: SignatureType.DIGITAL as any,
           signed_at: null,
-          status: index === 0 ? 'PENDING' : 'WAITING',
-          order: index + 1,
         },
       })
     )
   );
 
-  // Update invoice status to PENDING_APPROVAL
+  // Create StageTimestamp for the first stage (Coordinator)
+  if (approvalRoute.length > 0) {
+    await prisma.stageTimestamp.create({
+      data: {
+        invoice_id: invoiceId,
+        stage: InvoiceStatus.PENDING_COORDINATOR as any,
+        entered_at: new Date(),
+        sla_hours: approvalRoute[0].sla_days * 24,
+      },
+    });
+  }
+
+  // Update invoice status to PENDING_COORDINATOR and set approval_tier
   await prisma.invoice.update({
     where: { id: invoiceId },
-    data: { status: InvoiceStatus.PENDING_APPROVAL },
+    data: {
+      status: InvoiceStatus.PENDING_COORDINATOR as any,
+      approval_tier: tier,
+      current_approver_role: SignatoryRole.COORDINATOR,
+    },
   });
 
   // Create audit log entry
@@ -79,60 +213,60 @@ export async function createApprovalRequest(invoiceId: string, userId: string) {
     data: {
       invoice_id: invoiceId,
       action: 'APPROVAL_REQUESTED',
-      user_id: userId,
-      metadata: {
-        message: `Approval requested for invoice ${invoice.invoice_number}. Route: ${approvalRoute.join(' → ')}`,
-      },
+      performed_by: userId,
+      note: `Approval requested. Tier ${tier}. Route: ${approvalRoute.map(s => `${s.role}(${s.assignee_name})`).join(' -> ')}`,
     },
   });
 
-  return approvals;
+  return signatures;
 }
 
+/**
+ * Approve an invoice — sign the current pending signature and advance to next stage
+ */
 export async function approveInvoice(
   invoiceId: string,
   userId: string,
-  userRole: UserRole,
+  userRole: string,
   signerName: string
 ) {
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
-    include: {
-      signatures: true,
-    },
+    include: { signatures: true },
   });
 
   if (!invoice) {
-    throw new Error('Invoice not found');
+    throw new AppError('Invoice not found', 404);
   }
 
-  if (invoice.status !== InvoiceStatus.PENDING_APPROVAL) {
-    throw new Error('Invoice is not pending approval');
+  // Map user role to signatory role
+  const signatoryRole = mapUserRoleToSignatoryRole(userRole);
+  if (!signatoryRole) {
+    throw new AppError('User does not have approval authority', 403);
   }
 
-  // Map user role to signature role
-  const signatureRole = mapUserRoleToSignatureRole(userRole);
-  if (!signatureRole) {
-    throw new Error('User does not have approval authority');
-  }
-
-  // Find the pending signature for this role
+  // Find the unsigned signature for this role
   const pendingSignature = invoice.signatures.find(
-    (sig: any) => sig.role === signatureRole && sig.status === 'PENDING'
+    (sig: any) => sig.signatory_role === signatoryRole && !sig.signed_at
   );
 
   if (!pendingSignature) {
-    throw new Error('No pending approval found for this role');
+    throw new AppError('No pending approval found for this role', 404);
   }
 
   // Update the signature
   await prisma.signature.update({
     where: { id: pendingSignature.id },
     data: {
-      signer_name: signerName,
+      signatory_name: signerName,
       signed_at: new Date(),
-      status: 'APPROVED',
     },
+  });
+
+  // Exit current stage timestamp
+  await prisma.stageTimestamp.updateMany({
+    where: { invoice_id: invoiceId, exited_at: null },
+    data: { exited_at: new Date() },
   });
 
   // Create audit log entry
@@ -140,39 +274,64 @@ export async function approveInvoice(
     data: {
       invoice_id: invoiceId,
       action: 'APPROVED',
-      user_id: userId,
-      metadata: {
-        message: `Invoice approved by ${signerName} (${signatureRole})`,
-      },
+      performed_by: userId,
+      note: `Invoice approved by ${signerName} (${signatoryRole})`,
     },
   });
 
-  // Check if there are more approvals needed
-  const nextSignature = invoice.signatures.find(
-    (sig: any) => sig.order === pendingSignature.order + 1
+  // Find next unsigned signature
+  const remainingSignatures = invoice.signatures.filter(
+    (sig: any) => !sig.signed_at && sig.id !== pendingSignature.id
   );
 
-  if (nextSignature) {
-    // Activate the next signature
-    await prisma.signature.update({
-      where: { id: nextSignature.id },
-      data: { status: 'PENDING' },
-    });
-  } else {
-    // All approvals complete - update invoice status to APPROVED
+  if (remainingSignatures.length > 0) {
+    // Advance to next approval stage
+    const nextSignature = remainingSignatures[0];
+    const nextRole = nextSignature.signatory_role as string;
+    const nextStatus = mapSignatoryRoleToPendingStatus(nextRole as SignatoryRole);
+
     await prisma.invoice.update({
       where: { id: invoiceId },
-      data: { status: InvoiceStatus.APPROVED },
+      data: {
+        status: nextStatus as any,
+        current_approver_role: nextRole,
+      },
+    });
+
+    await prisma.stageTimestamp.create({
+      data: {
+        invoice_id: invoiceId,
+        stage: nextStatus as any,
+        entered_at: new Date(),
+        sla_hours: getSLAForRole(nextRole) * 24,
+      },
+    });
+  } else {
+    // All approvals complete — update invoice status to APPROVED
+    await prisma.invoice.update({
+      where: { id: invoiceId },
+      data: {
+        status: InvoiceStatus.APPROVED as any,
+        current_approver_role: null,
+      },
+    });
+
+    // Enter Accounting stage
+    await prisma.stageTimestamp.create({
+      data: {
+        invoice_id: invoiceId,
+        stage: InvoiceStatus.PENDING_ACCOUNTING as any,
+        entered_at: new Date(),
+        sla_hours: SLA_LIMITS.ACCOUNTING_DAYS * 24,
+      },
     });
 
     await prisma.auditLog.create({
       data: {
         invoice_id: invoiceId,
         action: 'FULLY_APPROVED',
-        user_id: userId,
-        metadata: {
-        message: `Invoice ${invoice.invoice_number} fully approved and ready for posting`,
-      },
+        performed_by: userId,
+        note: `Invoice ${invoice.invoice_number} fully approved and ready for posting`,
       },
     });
   }
@@ -180,56 +339,49 @@ export async function approveInvoice(
   return { message: 'Invoice approved successfully' };
 }
 
+/**
+ * Reject an invoice
+ */
 export async function rejectInvoice(
   invoiceId: string,
   userId: string,
-  userRole: UserRole,
+  userRole: string,
   reason: string
 ) {
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
-    include: {
-      signatures: {
-        orderBy: { order: 'asc' },
-      },
-    },
+    include: { signatures: true },
   });
 
   if (!invoice) {
-    throw new Error('Invoice not found');
+    throw new AppError('Invoice not found', 404);
   }
 
-  if (invoice.status !== InvoiceStatus.PENDING_APPROVAL) {
-    throw new Error('Invoice is not pending approval');
+  // Map user role to signatory role
+  const signatoryRole = mapUserRoleToSignatoryRole(userRole);
+  if (!signatoryRole) {
+    throw new AppError('User does not have approval authority', 403);
   }
 
-  // Map user role to signature role
-  const signatureRole = mapUserRoleToSignatureRole(userRole);
-  if (!signatureRole) {
-    throw new Error('User does not have approval authority');
-  }
-
-  // Find the pending signature for this role
+  // Find the unsigned signature for this role
   const pendingSignature = invoice.signatures.find(
-    (sig: any) => sig.role === signatureRole && sig.status === 'PENDING'
+    (sig: any) => sig.signatory_role === signatoryRole && !sig.signed_at
   );
 
   if (!pendingSignature) {
-    throw new Error('No pending approval found for this role');
+    throw new AppError('No pending approval found for this role', 404);
   }
-
-  // Update the signature to rejected
-  await prisma.signature.update({
-    where: { id: pendingSignature.id },
-    data: {
-      status: 'REJECTED',
-    },
-  });
 
   // Update invoice status to REJECTED
   await prisma.invoice.update({
     where: { id: invoiceId },
-    data: { status: InvoiceStatus.REJECTED },
+    data: { status: InvoiceStatus.REJECTED as any },
+  });
+
+  // Exit current stage timestamp
+  await prisma.stageTimestamp.updateMany({
+    where: { invoice_id: invoiceId, exited_at: null },
+    data: { exited_at: new Date() },
   });
 
   // Create audit log entry
@@ -237,47 +389,73 @@ export async function rejectInvoice(
     data: {
       invoice_id: invoiceId,
       action: 'REJECTED',
-      user_id: userId,
-      metadata: {
-        message: `Invoice rejected by ${signatureRole}. Reason: ${reason}`,
-      },
+      performed_by: userId,
+      note: `Invoice rejected by ${signatoryRole}. Reason: ${reason}`,
     },
   });
 
   return { message: 'Invoice rejected successfully' };
 }
 
-function mapUserRoleToSignatureRole(userRole: UserRole): SignatureRole | null {
-  const mapping: Record<UserRole, SignatureRole> = {
-    [UserRole.PURCHASING_COORDINATOR]: SignatureRole.COORDINATOR,
-    [UserRole.PURCHASING_MANAGER]: SignatureRole.MANAGER,
-    [UserRole.PLANNING_MANAGER]: SignatureRole.PLANNING_MANAGER,
-    [UserRole.PRESIDENT]: SignatureRole.LINDSEY,
-    [UserRole.ACCOUNTING_ASSOCIATE]: SignatureRole.COORDINATOR,
-    [UserRole.ACCOUNTING_SUPERVISOR]: SignatureRole.COORDINATOR,
-    [UserRole.CFO]: SignatureRole.LINDSEY,
-    [UserRole.IT_ADMIN]: SignatureRole.COORDINATOR,
-    [UserRole.ADMIN]: SignatureRole.COORDINATOR,
-    [UserRole.LINDSEY]: SignatureRole.LINDSEY,
-    [UserRole.POLLY]: SignatureRole.COORDINATOR,
+/**
+ * Map user role to SignatoryRole
+ */
+function mapUserRoleToSignatoryRole(userRole: string): SignatoryRole | null {
+  const mapping: Record<string, SignatoryRole> = {
+    'PURCHASING_COORDINATOR': SignatoryRole.COORDINATOR,
+    'PURCHASING_MANAGER': SignatoryRole.PURCHASING_MANAGER,
+    'PLANNING_MANAGER': SignatoryRole.MLO_ACCOUNT_HOLDER,
+    'SR_MANAGER_GLOBAL_PRODUCTION': SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION,
+    'MS_POLLY': SignatoryRole.MS_POLLY,
+    'ACCOUNTING_ASSOCIATE': SignatoryRole.ACCOUNTING_REVIEWER,
+    'ACCOUNTING_SUPERVISOR': SignatoryRole.ACCOUNTING_REVIEWER,
+    'CFO': SignatoryRole.ACCOUNTING_REVIEWER,
+    'IT_ADMIN': SignatoryRole.COORDINATOR,
+    'ADMIN': SignatoryRole.COORDINATOR,
   };
 
   return mapping[userRole] || null;
 }
 
-export async function getPendingApprovals(userRole: UserRole) {
-  const signatureRole = mapUserRoleToSignatureRole(userRole);
-  if (!signatureRole) {
+function getSLAForRole(signerRole: string): number {
+  const mapping: Record<string, number> = {
+    [SignatoryRole.COORDINATOR]: SLA_LIMITS.COORDINATOR_DAYS,
+    [SignatoryRole.PURCHASING_MANAGER]: SLA_LIMITS.PURCHASING_MANAGER_DAYS,
+    [SignatoryRole.MLO_ACCOUNT_HOLDER]: SLA_LIMITS.MLO_ACCOUNT_HOLDER_DAYS,
+    [SignatoryRole.MLO_PLANNING_MANAGER]: SLA_LIMITS.MLO_PLANNING_MANAGER_DAYS,
+    [SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION]: SLA_LIMITS.SR_MANAGER_DAYS,
+    [SignatoryRole.MS_POLLY]: SLA_LIMITS.MS_POLLY_DAYS,
+    [SignatoryRole.ACCOUNTING_REVIEWER]: SLA_LIMITS.ACCOUNTING_DAYS,
+  };
+  return mapping[signerRole] || 7;
+}
+
+/**
+ * Get pending approvals for a specific user role
+ */
+export async function getPendingApprovals(userRole: string) {
+  const signatoryRole = mapUserRoleToSignatoryRole(userRole);
+  if (!signatoryRole) {
     return [];
   }
 
+  // Query across all PENDING_* statuses
+  const pendingStatuses = [
+    InvoiceStatus.PENDING_COORDINATOR,
+    InvoiceStatus.PENDING_MANAGER,
+    InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER,
+    InvoiceStatus.PENDING_MLO_PLANNING_MANAGER,
+    InvoiceStatus.PENDING_SR_MANAGER,
+    InvoiceStatus.PENDING_POLLY,
+  ];
+
   const pendingApprovals = await prisma.invoice.findMany({
     where: {
-      status: InvoiceStatus.PENDING_APPROVAL,
+      status: { in: pendingStatuses as any[] },
       signatures: {
         some: {
-          role: signatureRole,
-          status: 'PENDING',
+          signatory_role: signatoryRole as any,
+          signed_at: null,
         },
       },
     },
@@ -285,14 +463,47 @@ export async function getPendingApprovals(userRole: UserRole) {
       vendor: true,
       signatures: {
         where: {
-          role: signatureRole,
+          signatory_role: signatoryRole as any,
         },
       },
     },
-    orderBy: {
-      invoice_date: 'asc',
-    },
+    orderBy: { invoice_date: 'asc' },
   });
 
   return pendingApprovals;
+}
+
+/**
+ * Batch approve multiple invoices at once
+ * Only approves invoices where the user has pending approval authority
+ */
+export async function batchApproveInvoices(
+  invoiceIds: string[],
+  userId: string,
+  userRole: string,
+  signerName: string
+) {
+  const results: Array<{
+    invoice_id: string;
+    status: 'approved' | 'skipped' | 'error';
+    message?: string;
+  }> = [];
+
+  for (const invoiceId of invoiceIds) {
+    try {
+      const result = await approveInvoice(invoiceId, userId, userRole, signerName);
+      results.push({ invoice_id: invoiceId, status: 'approved', message: result.message });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      results.push({ invoice_id: invoiceId, status: 'error', message });
+    }
+  }
+
+  const approved = results.filter(r => r.status === 'approved').length;
+  const failed = results.filter(r => r.status === 'error').length;
+
+  return {
+    summary: { total: invoiceIds.length, approved, failed },
+    results,
+  };
 }

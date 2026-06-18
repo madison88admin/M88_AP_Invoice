@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { Upload, FileText, AlertCircle, CheckCircle, X, ArrowLeft } from 'lucide-react';
 import { invoiceApi, vendorApi } from '../lib/api';
-import { InvoiceType, InvoiceCategory, PaymentTerms, MadisonEntity } from '@ap-invoice/shared';
+import { InvoiceType, InvoiceCategory, PaymentTerms, BillToEntity } from '@ap-invoice/shared';
 
 interface OCRResult {
   invoice_number: string;
@@ -11,30 +11,27 @@ interface OCRResult {
   invoice_received_date?: string;
   date_range_start?: string;
   date_range_end?: string;
-  invoice_version?: string;
-  invoice_version_notes?: string;
   vendor_name: string;
-  amount: number;
-  amount_original?: number;
-  currency_original?: string;
-  exchange_rate_to_usd?: number;
+  total_amount: number;
   currency: string;
+  invoice_currency_original?: string;
+  exchange_rate_to_usd?: number;
   payment_terms: PaymentTerms;
-  payment_term_split?: string;
   incoterm?: string;
   bank_charges: number;
-  shipping_charges: number;
-  customs_charges: number;
-  documentation_charges: number;
-  surcharges: number;
+  freight_charges: number;
+  additional_charges: number;
+  invoice_type: InvoiceType;
   category: InvoiceCategory;
-  bill_to_name: string;
-  bill_to_address: string;
-  bill_to_entity?: MadisonEntity;
+  bill_to_entity?: BillToEntity;
   is_handwritten: boolean;
-  is_priority: boolean;
+  is_urgent: boolean;
   priority_pay_date?: string;
-  payment_consolidation_note?: string;
+  brand?: string;
+  brand_code?: string;
+  season?: string;
+  mpo_number?: string;
+  customer_po_number?: string;
   bank_info: {
     bank_name?: string;
     swift_code?: string;
@@ -49,12 +46,11 @@ interface OCRResult {
     intermediary_bank_name?: string;
     intermediary_bank_swift?: string;
   };
-  invoice_type: InvoiceType;
   signatures: Array<{
-    signer_name: string;
+    signatory_name: string;
     signed_at?: string;
-    role: string;
-    is_digital: boolean;
+    signatory_role: string;
+    signature_type: string;
   }>;
 }
 
@@ -135,31 +131,27 @@ export default function InvoiceUpload() {
         invoice_received_date: ocrResult.invoice_received_date,
         date_range_start: ocrResult.date_range_start,
         date_range_end: ocrResult.date_range_end,
-        invoice_version: ocrResult.invoice_version,
-        invoice_version_notes: ocrResult.invoice_version_notes,
         vendor_id: finalVendorId,
-        amount: ocrResult.amount,
-        amount_original: ocrResult.amount_original,
-        currency_original: ocrResult.currency_original,
+        total_amount: ocrResult.total_amount,
         exchange_rate_to_usd: ocrResult.exchange_rate_to_usd,
         currency: ocrResult.currency,
         payment_terms: String(ocrResult.payment_terms) as PaymentTerms,
-        payment_term_split: ocrResult.payment_term_split,
         incoterm: ocrResult.incoterm,
         bank_charges: ocrResult.bank_charges,
-        shipping_charges: ocrResult.shipping_charges,
-        customs_charges: ocrResult.customs_charges,
-        documentation_charges: ocrResult.documentation_charges,
-        surcharges: ocrResult.surcharges,
+        freight_charges: ocrResult.freight_charges,
+        additional_charges: ocrResult.additional_charges,
         invoice_type: ocrResult.invoice_type,
         category: ocrResult.category,
-        bill_to_name: ocrResult.bill_to_name,
-        bill_to_address: ocrResult.bill_to_address,
         bill_to_entity: ocrResult.bill_to_entity,
         is_handwritten: ocrResult.is_handwritten,
-        is_priority: ocrResult.is_priority,
+        is_urgent: ocrResult.is_urgent,
+        priority_flag: ocrResult.is_urgent,
         priority_pay_date: ocrResult.priority_pay_date,
-        payment_consolidation_note: ocrResult.payment_consolidation_note,
+        brand: ocrResult.brand,
+        brand_code: ocrResult.brand_code,
+        season: ocrResult.season,
+        mpo_number: ocrResult.mpo_number,
+        customer_po_number: ocrResult.customer_po_number,
         bank_info: ocrResult.bank_info,
         signatures: ocrResult.signatures,
       });
@@ -293,7 +285,7 @@ export default function InvoiceUpload() {
             </div>
           )}
 
-          {ocrResult.is_priority && (
+          {ocrResult.is_urgent && (
             <div className="p-4 bg-red-50 rounded-lg flex items-start">
               <AlertCircle className="h-5 w-5 text-red-600 mr-3 mt-0.5" />
               <div>
@@ -358,18 +350,8 @@ export default function InvoiceUpload() {
               <input
                 type="number"
                 step="0.01"
-                value={ocrResult.amount}
-                onChange={(e) => setOcrResult({ ...ocrResult, amount: parseFloat(e.target.value) })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Original Amount</label>
-              <input
-                type="number"
-                step="0.01"
-                value={ocrResult.amount_original || ''}
-                onChange={(e) => setOcrResult({ ...ocrResult, amount_original: parseFloat(e.target.value) })}
+                value={ocrResult.total_amount}
+                onChange={(e) => setOcrResult({ ...ocrResult, total_amount: parseFloat(e.target.value) })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
               />
             </div>
@@ -377,8 +359,8 @@ export default function InvoiceUpload() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Original Currency</label>
               <input
                 type="text"
-                value={ocrResult.currency_original || ''}
-                onChange={(e) => setOcrResult({ ...ocrResult, currency_original: e.target.value })}
+                value={ocrResult.invoice_currency_original || ''}
+                onChange={(e) => setOcrResult({ ...ocrResult, invoice_currency_original: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
               />
             </div>
@@ -415,15 +397,6 @@ export default function InvoiceUpload() {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Payment Term Split</label>
-              <input
-                type="text"
-                value={ocrResult.payment_term_split || ''}
-                onChange={(e) => setOcrResult({ ...ocrResult, payment_term_split: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-              />
-            </div>
-            <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Incoterm</label>
               <input
                 type="text"
@@ -457,31 +430,17 @@ export default function InvoiceUpload() {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Bill To Name</label>
-              <input
-                type="text"
-                value={ocrResult.bill_to_name}
-                onChange={(e) => setOcrResult({ ...ocrResult, bill_to_name: e.target.value })}
+              <label className="block text-sm font-medium text-gray-700 mb-1">Bill To Entity</label>
+              <select
+                value={ocrResult.bill_to_entity || ''}
+                onChange={(e) => setOcrResult({ ...ocrResult, bill_to_entity: e.target.value as BillToEntity })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Bill To Address</label>
-              <input
-                type="text"
-                value={ocrResult.bill_to_address}
-                onChange={(e) => setOcrResult({ ...ocrResult, bill_to_address: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Invoice Version</label>
-              <input
-                type="text"
-                value={ocrResult.invoice_version || ''}
-                onChange={(e) => setOcrResult({ ...ocrResult, invoice_version: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-              />
+              >
+                <option value="">Select Entity</option>
+                {Object.values(BillToEntity).map((entity) => (
+                  <option key={entity} value={entity}>{entity.replace(/_/g, ' ')}</option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Date Range Start</label>
@@ -521,62 +480,32 @@ export default function InvoiceUpload() {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Shipping Charges</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Freight Charges</label>
               <input
                 type="number"
                 step="0.01"
-                value={ocrResult.shipping_charges}
-                onChange={(e) => setOcrResult({ ...ocrResult, shipping_charges: parseFloat(e.target.value) })}
+                value={ocrResult.freight_charges}
+                onChange={(e) => setOcrResult({ ...ocrResult, freight_charges: parseFloat(e.target.value) })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Customs Charges</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Additional Charges</label>
               <input
                 type="number"
                 step="0.01"
-                value={ocrResult.customs_charges}
-                onChange={(e) => setOcrResult({ ...ocrResult, customs_charges: parseFloat(e.target.value) })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Documentation Charges</label>
-              <input
-                type="number"
-                step="0.01"
-                value={ocrResult.documentation_charges}
-                onChange={(e) => setOcrResult({ ...ocrResult, documentation_charges: parseFloat(e.target.value) })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Surcharges</label>
-              <input
-                type="number"
-                step="0.01"
-                value={ocrResult.surcharges}
-                onChange={(e) => setOcrResult({ ...ocrResult, surcharges: parseFloat(e.target.value) })}
+                value={ocrResult.additional_charges}
+                onChange={(e) => setOcrResult({ ...ocrResult, additional_charges: parseFloat(e.target.value) })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Invoice Version Notes</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
             <textarea
-              value={ocrResult.invoice_version_notes || ''}
-              onChange={(e) => setOcrResult({ ...ocrResult, invoice_version_notes: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-              rows={2}
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Payment Consolidation Note</label>
-            <textarea
-              value={ocrResult.payment_consolidation_note || ''}
-              onChange={(e) => setOcrResult({ ...ocrResult, payment_consolidation_note: e.target.value })}
+              value={''}
+              onChange={() => {}}
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
               rows={2}
             />

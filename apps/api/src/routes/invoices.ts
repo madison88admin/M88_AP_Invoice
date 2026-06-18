@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { authenticate, AuthRequest, authorize } from '../middleware/auth';
 import * as invoiceController from '../controllers/invoices';
 import * as uploadController from '../controllers/upload';
@@ -8,7 +8,7 @@ import * as postingController from '../controllers/posting';
 import upload from '../middleware/upload';
 import { UserRole } from '@ap-invoice/shared';
 
-const router = Router();
+const router = Router() as Router;
 
 router.use(authenticate);
 

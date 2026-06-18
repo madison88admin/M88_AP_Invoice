@@ -22,7 +22,7 @@ interface PaymentBatch {
   batch_number: string;
   total_amount: number;
   payment_count: number;
-  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'CANCELLED';
+  status: 'DRAFT' | 'PENDING_CFO' | 'APPROVED' | 'PROCESSED' | 'CANCELLED';
   created_at: string;
   processed_at?: string;
   cancelled_at?: string;
@@ -84,11 +84,13 @@ export default function PaymentBatchManager() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'PENDING':
+      case 'DRAFT':
         return 'bg-yellow-100 text-yellow-800';
-      case 'PROCESSING':
+      case 'PENDING_CFO':
         return 'bg-blue-100 text-blue-800';
-      case 'COMPLETED':
+      case 'APPROVED':
+        return 'bg-purple-100 text-purple-800';
+      case 'PROCESSED':
         return 'bg-green-100 text-green-800';
       case 'CANCELLED':
         return 'bg-red-100 text-red-800';
@@ -99,11 +101,13 @@ export default function PaymentBatchManager() {
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'PENDING':
+      case 'DRAFT':
         return <Clock className="h-4 w-4" />;
-      case 'PROCESSING':
+      case 'PENDING_CFO':
         return <Play className="h-4 w-4" />;
-      case 'COMPLETED':
+      case 'APPROVED':
+        return <CheckCircle className="h-4 w-4" />;
+      case 'PROCESSED':
         return <CheckCircle className="h-4 w-4" />;
       case 'CANCELLED':
         return <X className="h-4 w-4" />;
@@ -275,7 +279,7 @@ export default function PaymentBatchManager() {
                 </div>
               </div>
 
-              {selectedBatch.status === 'PENDING' && (
+              {selectedBatch.status === 'DRAFT' && (
                 <div className="flex items-center space-x-3 mb-6">
                   <button
                     onClick={() => handleProcessBatch(selectedBatch.id)}

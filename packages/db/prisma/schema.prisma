@@ -7,190 +7,268 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Invoice {
-  id                      String          @id @default(uuid())
-  invoice_number          String          @unique
-  invoice_date            DateTime
-  invoice_due_date        DateTime?
-  invoice_received_date   DateTime?
-  date_range_start        DateTime?
-  date_range_end          DateTime?
-  invoice_version         String?
-  invoice_version_notes   String?
-  parent_invoice_id       String?
-  vendor_id               String
-  vendor                  Vendor          @relation(fields: [vendor_id], references: [id])
-  amount                  Decimal         @db.Decimal(15, 2)
-  amount_original         Decimal?        @db.Decimal(15, 2)
-  currency_original       String?
-  exchange_rate_to_usd    Decimal?        @db.Decimal(10, 6)
-  currency                String          @default("USD")
-  payment_terms           PaymentTerms
-  payment_term_split      String?
-  incoterm                String?
-  bank_charges            Decimal         @default(0) @db.Decimal(15, 2)
-  shipping_charges        Decimal         @default(0) @db.Decimal(15, 2)
-  customs_charges         Decimal         @default(0) @db.Decimal(15, 2)
-  documentation_charges   Decimal         @default(0) @db.Decimal(15, 2)
-  surcharges              Decimal         @default(0) @db.Decimal(15, 2)
-  invoice_type            InvoiceType
-  category                InvoiceCategory
-  order_type              OrderType?
-  brand                   String?
-  season                  String?
-  mpo_number              String?
-  po_number               String?
-  bill_to_name            String
-  bill_to_address         String
-  bill_to_entity          MadisonEntity
-  final_approver_name     String?
-  final_approval_date     DateTime?
-  is_handwritten          Boolean         @default(false)
-  is_priority             Boolean         @default(false)
-  priority_pay_date       DateTime?
-  payment_consolidation_note String?
-  qb_memo                 String?
-  qb_account_class        String?
-  qb_invoice_id           String?
-  sharepoint_url          String?
-  status                  InvoiceStatus
-  ocr_raw_data            Json
-  signatures              Signature[]
-  audit_logs              AuditLog[]
-  exceptions              Exception[]
-  stage_timestamps        StageTimestamp[]
-  created_at              DateTime        @default(now())
-  updated_at              DateTime        @updatedAt
+model Vendor {
+  id                      String   @id @default(uuid())
+  name                    String
+  name_aliases            String[]
+  beneficiary_name        String?
+  supplier_location       String?
+  invoice_template_type   InvoiceTemplateType
+  
+  // Bank details
+  bank_name               String?
+  bank_address            String?
+  account_number          String?
+  swift_code              String?
+  iban                    String?
+  sort_code               String?
+  aba_routing_number      String?
+  intermediary_bank_name  String?
+  intermediary_bank_swift String?
+  
+  // Tax IDs
+  gstin_number            String?
+  bir_tin                 String?
+  vat_number              String?
+  eori_number             String?
+  
+  is_active               Boolean  @default(true)
+  onboarded_by            String?
+  bank_verified_at        DateTime?
+  created_at              DateTime @default(now())
+  updated_at              DateTime @updatedAt
+  invoices                Invoice[]
+  
+  @@index([name])
+  @@index([is_active])
+}
 
+model Invoice {
+  id                    String        @id @default(uuid())
+  invoice_number        String        @unique
+  invoice_date          DateTime?
+  invoice_received_date DateTime?
+  due_date              DateTime?
+  
+  // Amounts
+  subtotal              Decimal?
+  bank_charges          Decimal?
+  freight_charges       Decimal?
+  additional_charges    Decimal?
+  total_amount          Decimal
+  currency              String        @default("USD")
+  invoice_currency_original String?
+  exchange_rate_to_usd  Decimal?
+  
+  // Vendor
+  vendor_id             String
+  vendor                Vendor        @relation(fields: [vendor_id], references: [id])
+  vendor_name_raw       String
+  
+  // PO & order details
+  customer_po_number    String?
+  mpo_number            String?
+  brand_code            String?
+  brand                 String?
+  season                String?
+  order_type            OrderType?
+  incoterm              String?
+  
+  // Invoice classification
+  invoice_type          InvoiceType
+  invoice_template_type InvoiceTemplateType?
+  parent_invoice_id     String?
+  parent_invoice        Invoice?      @relation("PItoCI", fields: [parent_invoice_id], references: [id])
+  child_invoices        Invoice[]     @relation("PItoCI")
+  
+  // Date ranges
+  date_range_start      DateTime?
+  date_range_end        DateTime?
+  
+  // Status & routing
+  status                InvoiceStatus @default(RECEIVED)
+  approval_tier         Int?
+  current_approver_role String?
+  priority_flag         Boolean       @default(false)
+  priority_pay_date     DateTime?
+  is_urgent             Boolean       @default(false)
+  
+  // Validation
+  is_duplicate          Boolean       @default(false)
+  ocr_confidence_score  Decimal?
+  is_handwritten        Boolean       @default(false)
+  exception_reasons     ExceptionReason[]
+  
+  // QuickBooks
+  qb_memo               String?
+  qb_account_class      String?
+  qb_posted_at          DateTime?
+  
+  // Filing
+  sharepoint_folder_url String?
+  sharepoint_filed_at   DateTime?
+  
+  // Bill-to
+  bill_to_entity        BillToEntity  @default(MADISON_88_LTD)
+  
+  // Payment
+  payment_terms         String?
+  payment_penalty_rate  Decimal?
+  
+  // Meta
+  source                InvoiceSource @default(EMAIL)
+  raw_file_url          String?
+  created_at            DateTime      @default(now())
+  updated_at            DateTime      @updatedAt
+  
+  signatures            Signature[]
+  stage_timestamps      StageTimestamp[]
+  audit_logs            AuditLog[]
+  payments              Payment[]
+  exceptions            Exception[]
+  
   @@index([vendor_id])
   @@index([status])
   @@index([invoice_date])
   @@index([invoice_type])
   @@index([bill_to_entity])
-}
-
-model Vendor {
-  id                      String    @id @default(uuid())
-  name                    String
-  name_aliases            String[]
-  expected_template       InvoiceType
-  supplier_location       String?
-  bank_name               String?
-  bank_address            String?
-  account_usd             String?
-  account_hkd             String?
-  account_eur             String?
-  iban                    String?
-  sort_code               String?
-  aba_routing_number      String?
-  swift_code              String?
-  bank_code               String?
-  intermediary_bank_name  String?
-  intermediary_bank_swift String?
-  has_multiple_accounts   Boolean   @default(false)
-  default_account_id      String?
-  vat_number              String?
-  eori_number             String?
-  gstin_number            String?
-  bir_tin                 String?
-  payment_penalty_rate    Decimal?
-  currency                String    @default("USD")
-  invoices                Invoice[]
-
-  @@index([name])
+  @@index([approval_tier])
 }
 
 model Signature {
-  id           String         @id @default(uuid())
-  invoice_id   String
-  invoice      Invoice        @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
-  signer_name  String?
-  signed_at    DateTime?
-  role         SignatureRole
-  is_digital   Boolean        @default(false)
-  ocr_detected Boolean        @default(false)
-  status       String         @default("PENDING") // PENDING, APPROVED, REJECTED
-  order        Int            // Order in approval sequence
-
+  id            String        @id @default(uuid())
+  invoice_id    String
+  invoice       Invoice       @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
+  signatory_name String
+  signatory_role SignatoryRole
+  signed_at     DateTime?
+  signature_type SignatureType
+  created_at    DateTime      @default(now())
+  
   @@index([invoice_id])
-  @@index([status])
-}
-
-model AuditLog {
-  id         String   @id @default(uuid())
-  invoice_id String
-  invoice    Invoice  @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
-  user_id    String?
-  action     String
-  metadata   Json?
-  created_at DateTime @default(now())
-
-  @@index([invoice_id])
-  @@index([created_at])
-}
-
-model Exception {
-  id               String         @id @default(uuid())
-  invoice_id       String
-  invoice          Invoice        @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
-  reason           ExceptionReason
-  detail           String
-  resolved_by      String?
-  resolution_notes String?
-  resolved_at      DateTime?
-  created_at       DateTime       @default(now())
-
-  @@index([invoice_id])
-  @@index([reason])
-  @@index([resolved_at])
+  @@index([signatory_role])
 }
 
 model StageTimestamp {
   id          String        @id @default(uuid())
   invoice_id  String
   invoice     Invoice       @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
-  stage       ApprovalStage
-  entered_at  DateTime
+  stage       InvoiceStatus
+  entered_at  DateTime      @default(now())
   exited_at   DateTime?
-  duration_hours Decimal?
   sla_hours   Int
   is_breached Boolean       @default(false)
-
+  
   @@index([invoice_id])
   @@index([stage])
 }
 
+model AuditLog {
+  id          String   @id @default(uuid())
+  invoice_id  String?
+  invoice     Invoice? @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
+  action      String
+  performed_by String?
+  note        String?
+  created_at  DateTime @default(now())
+  
+  @@index([invoice_id])
+  @@index([created_at])
+}
+
+model Payment {
+  id            String        @id @default(uuid())
+  invoice_id    String
+  invoice       Invoice       @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
+  vendor_id     String?
+  amount        Decimal       @db.Decimal(15, 2)
+  currency      String        @default("USD")
+  payment_date DateTime
+  status        String        @default("SCHEDULED")
+  batch_id      String?
+  batch         PaymentBatch? @relation(fields: [batch_id], references: [id])
+  paid_at       DateTime?
+  reference     String?
+  created_at    DateTime      @default(now())
+  updated_at    DateTime      @updatedAt
+  
+  @@index([invoice_id])
+  @@index([status])
+}
+
 model PaymentBatch {
   id               String             @id @default(uuid())
-  invoice_ids      String[]
-  total_amount     Decimal
-  currency         String
-  week_due_date    DateTime?
-  initiated_by     String
-  cfo_approved_by  String?
-  status           PaymentBatchStatus
-  confirmation_url String?
-  approved_at      DateTime?
-  created_at       DateTime           @default(now())
+  batch_number          String             @unique
+  total_amount          Decimal            @db.Decimal(15, 2)
+  payment_count         Int                @default(0)
+  currency              String             @default("USD")
+  status               PaymentBatchStatus  @default(DRAFT)
+  created_by           String?
+  processed_by         String?
+  processed_at         DateTime?
+  cancelled_by         String?
+  cancelled_at         DateTime?
+  cancellation_reason  String?
+  payments             Payment[]
+  created_at           DateTime           @default(now())
 }
+
+// --- ENUMS ---
 
 enum InvoiceType {
-  INV
-  PI
-  CI
-  SI
-  PREPAID
+  INVOICE
+  PROFORMA
+  COMMERCIAL
+  SALES
   STATEMENT
+  PREPAID
+  PROTO_SAMPLE
 }
 
-enum InvoiceCategory {
-  TRIMS
-  YARN
-  SAMPLE_CHARGES
-  SHIPPING_FREIGHT
-  LAB_TESTING
-  PROFESSIONAL_FEE
-  OTHER
+enum InvoiceTemplateType {
+  PRO_FORMA
+  INVOICE
+  COMMERCIAL_INVOICE
+  SALES_INVOICE
+  PROTO_SAMPLE_INVOICE
+  PREPAID_INVOICE
+  NO_DATA
+}
+
+enum InvoiceStatus {
+  RECEIVED
+  OCR_PROCESSING
+  VALIDATION_PENDING
+  EXCEPTION_FLAGGED
+  PENDING_COORDINATOR
+  PENDING_MANAGER
+  PENDING_MLO_ACCOUNT_HOLDER
+  PENDING_MLO_PLANNING_MANAGER
+  PENDING_SR_MANAGER
+  PENDING_POLLY
+  PENDING_ACCOUNTING
+  APPROVED
+  POSTED_TO_QB
+  PAYMENT_SCHEDULED
+  PAID
+  REJECTED
+  ON_HOLD
+}
+
+enum SignatoryRole {
+  COORDINATOR
+  PURCHASING_MANAGER
+  MLO_ACCOUNT_HOLDER
+  MLO_PLANNING_MANAGER
+  SR_MANAGER_GLOBAL_PRODUCTION
+  MS_POLLY
+  ACCOUNTING_REVIEWER
+}
+
+enum SignatureType {
+  WET
+  DIGITAL
+  COMPUTER_GENERATED
 }
 
 enum OrderType {
@@ -199,75 +277,64 @@ enum OrderType {
   SAMPLE
 }
 
-enum InvoiceStatus {
-  PENDING_VALIDATION
-  VALIDATED
-  EXCEPTION
-  PENDING_APPROVAL
-  APPROVED
-  REJECTED
-  POSTED
-  PAYMENT_INITIATED
-  PAID
-  PI_PENDING_CI
-}
-
-enum PaymentTerms {
-  NET_7
-  NET_30
-  NET_45
-  NET_60
-  NET_90
-  WITHIN_15_DAYS
-  PAYMENT_IN_ADVANCE
-  TT_100_BEFORE_SHIPMENT
-  PBS
-  ARD
-  CHEQUE_30
-  SPLIT_50_50
-  PREPAID
-  COD
-  OTHER
-}
-
-enum SignatureRole {
-  COORDINATOR
-  MANAGER
-  PLANNING_MANAGER
-  LINDSEY
-  POLLY
-}
-
-enum ApprovalStage {
-  PURCHASING_COORDINATOR
-  PURCHASING_MANAGER
-  PLANNING_MANAGER
-  LINDSEY
-  POLLY
-  ACCOUNTING
-}
-
 enum ExceptionReason {
-  INVALID_BILL_TO
-  BANK_MISMATCH
-  MISSING_BANK_INFO
-  MISSING_SIGNATURE
-  DUPLICATE_INVOICE
-  VENDOR_NOT_FOUND
-  INVALID_TEMPLATE
-  LATE_SUBMISSION
   AMOUNT_MISMATCH
-  URGENT_PAYMENT
+  VENDOR_NOT_FOUND
+  DUPLICATE_INVOICE
+  MISSING_SIGNATURE
+  MISSING_BANK_INFO
+  BANK_DETAIL_MISMATCH
+  OCR_LOW_CONFIDENCE
+  LATE_SUBMISSION
   HANDWRITTEN_DOCUMENT
-  MISSING_ADDRESS
-  MULTIPLE_BANK_ACCOUNTS
+  MISSING_PO_REFERENCE
+  MULTI_PO_CONSOLIDATED
 }
 
-enum MadisonEntity {
+enum BillToEntity {
   MADISON_88_LTD
-  MADISON_88_LIMITED
-  MADISON_88_NEW_YORK
-  MADISON_88_HONG_KONG_LIMITED
+  MADISON_88_HK_LIMITED
+}
+
+enum InvoiceSource {
+  EMAIL
+  MANUAL_UPLOAD
+  PORTAL
+}
+
+enum InvoiceCategory {
+  TRIMS
+  YARN
+  SAMPLE_CHARGES
+  SHIPPING_FREIGHT
+  LAB_TESTING
+  FACTORY
+  FACTORY_AUDIT
+  PROFESSIONAL_FEE
+  SMS
+  CONSULTATION
+}
+
+model Exception {
+  id                 String          @id @default(uuid())
+  invoice_id         String
+  invoice            Invoice         @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
+  reason             ExceptionReason
+  detail             String?
+  status             ExceptionStatus @default(PENDING)
+  resolved_by        String?
+  resolution_notes   String?
+  resolved_at        DateTime?
+  created_at         DateTime        @default(now())
+  
+  @@index([invoice_id])
+  @@index([status])
+}
+
+enum ExceptionStatus {
+  PENDING
+  RESOLVED
+  WAIVED
 }
 
 enum PaymentBatchStatus {
@@ -275,4 +342,5 @@ enum PaymentBatchStatus {
   PENDING_CFO
   APPROVED
   PROCESSED
+  CANCELLED
 }

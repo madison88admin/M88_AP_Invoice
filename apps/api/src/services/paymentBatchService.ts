@@ -1,4 +1,6 @@
 import prisma from '../config/database';
+import { AppError } from '../middleware/errorHandler';
+import { PaymentBatchStatus, InvoiceStatus } from '@ap-invoice/shared';
 
 /**
  * Get the next Wednesday date from a given date
@@ -57,7 +59,7 @@ export async function getPaymentsForNextWednesday() {
  */
 export async function autoCreateWednesdayBatch(userId: string) {
   if (!isWednesday()) {
-    throw new Error('Today is not Wednesday. Batches can only be auto-created on Wednesdays.');
+    throw new AppError('Today is not Wednesday. Batches can only be auto-created on Wednesdays.', 400);
   }
 
   const payments = await getPaymentsForNextWednesday();
@@ -90,7 +92,7 @@ export async function generatePaymentFile(batchId: string) {
   });
 
   if (!batch) {
-    throw new Error('Payment batch not found');
+    throw new AppError('Payment batch not found', 404);
   }
 
   // Generate payment file in NextGen format
@@ -110,7 +112,7 @@ export async function generatePaymentFile(batchId: string) {
       bank_name: payment.invoice.vendor.bank_name,
       bank_address: payment.invoice.vendor.bank_address,
       swift_code: payment.invoice.vendor.swift_code,
-      account_number: payment.invoice.vendor.account_usd,
+      account_number: payment.invoice.vendor.account_number,
     })),
   };
 
@@ -122,10 +124,11 @@ export async function generatePaymentFile(batchId: string) {
  */
 export async function getPaymentBatchStatistics() {
   const totalBatches = await prisma.paymentBatch.count();
-  const pendingBatches = await prisma.paymentBatch.count({ where: { status: 'PENDING' } });
-  const processingBatches = await prisma.paymentBatch.count({ where: { status: 'PROCESSING' } });
-  const completedBatches = await prisma.paymentBatch.count({ where: { status: 'COMPLETED' } });
-  const cancelledBatches = await prisma.paymentBatch.count({ where: { status: 'CANCELLED' } });
+  const pendingBatches = await prisma.paymentBatch.count({ where: { status: PaymentBatchStatus.DRAFT } });
+  const pendingCfoBatches = await prisma.paymentBatch.count({ where: { status: PaymentBatchStatus.PENDING_CFO } });
+  const approvedBatches = await prisma.paymentBatch.count({ where: { status: PaymentBatchStatus.APPROVED } });
+  const processedBatches = await prisma.paymentBatch.count({ where: { status: PaymentBatchStatus.PROCESSED } });
+  const cancelledBatches = await prisma.paymentBatch.count({ where: { status: PaymentBatchStatus.CANCELLED } });
 
   const totalAmount = await prisma.paymentBatch.aggregate({
     _sum: { total_amount: true },
@@ -134,8 +137,9 @@ export async function getPaymentBatchStatistics() {
   return {
     total_batches: totalBatches,
     pending_batches: pendingBatches,
-    processing_batches: processingBatches,
-    completed_batches: completedBatches,
+    pending_cfo_batches: pendingCfoBatches,
+    approved_batches: approvedBatches,
+    processed_batches: processedBatches,
     cancelled_batches: cancelledBatches,
     total_amount_processed: totalAmount._sum.total_amount || 0,
   };
@@ -161,7 +165,7 @@ export async function createPaymentBatch(
   });
 
   if (payments.length !== paymentIds.length) {
-    throw new Error('Some payments are not found or not in SCHEDULED status');
+    throw new AppError('Some payments are not found or not in SCHEDULED status', 400);
   }
 
   // Calculate total batch amount
@@ -173,7 +177,7 @@ export async function createPaymentBatch(
       batch_number: generateBatchNumber(),
       total_amount: totalAmount,
       payment_count: payments.length,
-      status: 'PENDING',
+      status: PaymentBatchStatus.DRAFT as any,
       created_by: userId,
       payments: {
         connect: paymentIds.map((id) => ({ id })),
@@ -195,8 +199,8 @@ export async function createPaymentBatch(
   await prisma.auditLog.create({
     data: {
       action: 'PAYMENT_BATCH_CREATED',
-      user_id: userId,
-      detail: `Payment batch ${batch.batch_number} created with ${payments.length} payments totaling ${totalAmount}`,
+      performed_by: userId,
+      note: `Payment batch ${batch.batch_number} created with ${payments.length} payments totaling ${totalAmount}`,
     },
   });
 
@@ -241,7 +245,7 @@ export async function getPaymentBatchById(batchId: string) {
   });
 
   if (!batch) {
-    throw new Error('Payment batch not found');
+    throw new AppError('Payment batch not found', 404);
   }
 
   return batch;
@@ -259,18 +263,18 @@ export async function processPaymentBatch(
   });
 
   if (!batch) {
-    throw new Error('Payment batch not found');
+    throw new AppError('Payment batch not found', 404);
   }
 
-  if (batch.status !== 'PENDING') {
-    throw new Error('Batch is not in PENDING status');
+  if (batch.status !== PaymentBatchStatus.DRAFT) {
+    throw new AppError('Batch is not in DRAFT status', 400);
   }
 
   // Simulate batch processing (in real scenario, this would integrate with banking system)
-  // Update batch status to PROCESSING
+  // Update batch status to PENDING_CFO
   await prisma.paymentBatch.update({
     where: { id: batchId },
-    data: { status: 'PROCESSING' },
+    data: { status: PaymentBatchStatus.PENDING_CFO as any },
   });
 
   // Process each payment in the batch
@@ -286,7 +290,7 @@ export async function processPaymentBatch(
     // Update invoice status to PAID
     await prisma.invoice.update({
       where: { id: payment.invoice_id },
-      data: { status: 'PAID' },
+      data: { status: InvoiceStatus.PAID },
     });
 
     // Create audit log entry for each payment
@@ -294,17 +298,17 @@ export async function processPaymentBatch(
       data: {
         invoice_id: payment.invoice_id,
         action: 'PAYMENT_PROCESSED',
-        user_id: userId,
-        detail: `Payment ${payment.id} processed in batch ${batch.batch_number}`,
+        performed_by: userId,
+        note: `Payment ${payment.id} processed in batch ${batch.batch_number}`,
       },
     });
   }
 
-  // Update batch status to COMPLETED
+  // Update batch status to PROCESSED
   const updatedBatch = await prisma.paymentBatch.update({
     where: { id: batchId },
     data: {
-      status: 'COMPLETED',
+      status: PaymentBatchStatus.PROCESSED as any,
       processed_at: new Date(),
       processed_by: userId,
     },
@@ -314,8 +318,8 @@ export async function processPaymentBatch(
   await prisma.auditLog.create({
     data: {
       action: 'PAYMENT_BATCH_PROCESSED',
-      user_id: userId,
-      detail: `Payment batch ${batch.batch_number} processed successfully with ${batch.payments.length} payments`,
+      performed_by: userId,
+      note: `Payment batch ${batch.batch_number} processed successfully with ${batch.payments.length} payments`,
     },
   });
 
@@ -335,18 +339,18 @@ export async function cancelPaymentBatch(
   });
 
   if (!batch) {
-    throw new Error('Payment batch not found');
+    throw new AppError('Payment batch not found', 404);
   }
 
-  if (batch.status !== 'PENDING') {
-    throw new Error('Only PENDING batches can be cancelled');
+  if (batch.status !== PaymentBatchStatus.DRAFT) {
+    throw new AppError('Only DRAFT batches can be cancelled', 400);
   }
 
   // Update batch status to CANCELLED
   const updatedBatch = await prisma.paymentBatch.update({
     where: { id: batchId },
     data: {
-      status: 'CANCELLED',
+      status: PaymentBatchStatus.CANCELLED as any,
       cancelled_at: new Date(),
       cancelled_by: userId,
       cancellation_reason: reason,
@@ -367,8 +371,8 @@ export async function cancelPaymentBatch(
   await prisma.auditLog.create({
     data: {
       action: 'PAYMENT_BATCH_CANCELLED',
-      user_id: userId,
-      detail: `Payment batch ${batch.batch_number} cancelled: ${reason}`,
+      performed_by: userId,
+      note: `Payment batch ${batch.batch_number} cancelled: ${reason}`,
     },
   });
 

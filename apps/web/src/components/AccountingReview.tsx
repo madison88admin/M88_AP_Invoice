@@ -9,7 +9,7 @@ export default function AccountingReview() {
   const [loading, setLoading] = useState(true);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [filters, setFilters] = useState({
-    status: InvoiceStatus.POSTED,
+    status: InvoiceStatus.POSTED_TO_QB,
     search: '',
   });
 
@@ -122,9 +122,9 @@ export default function AccountingReview() {
                 onChange={(e) => setFilters({ ...filters, status: e.target.value as InvoiceStatus })}
                 className="px-4 py-3 bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all text-white"
               >
-                <option value={InvoiceStatus.POSTED}>Posted</option>
+                <option value={InvoiceStatus.POSTED_TO_QB}>Posted</option>
                 <option value={InvoiceStatus.PAID}>Paid</option>
-                <option value={InvoiceStatus.PAYMENT_INITIATED}>Payment Initiated</option>
+                <option value={InvoiceStatus.PAYMENT_SCHEDULED}>Payment Scheduled</option>
                 <option value="">All Statuses</option>
               </select>
               <button className="flex items-center px-4 py-3 text-white rounded-xl transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5" style={{ background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)' }}>
@@ -185,11 +185,11 @@ export default function AccountingReview() {
                         {invoice.vendor?.name}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-white">
-                        ${invoice.amount.toLocaleString()}
+                        ${invoice.total_amount.toLocaleString()}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                          invoice.status === InvoiceStatus.POSTED
+                          invoice.status === (InvoiceStatus.POSTED_TO_QB as any)
                             ? 'bg-blue-500/20 text-blue-300'
                             : invoice.status === InvoiceStatus.PAID
                             ? 'bg-green-500/20 text-green-300'
@@ -245,7 +245,7 @@ export default function AccountingReview() {
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-400 mb-1">Amount</label>
-                    <p className="text-sm text-white font-medium">${selectedInvoice.amount.toLocaleString()}</p>
+                    <p className="text-sm text-white font-medium">${selectedInvoice.total_amount.toLocaleString()}</p>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-400 mb-1">Currency</label>
@@ -253,13 +253,13 @@ export default function AccountingReview() {
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-400 mb-1">Invoice Date</label>
-                    <p className="text-sm text-white font-medium">{new Date(selectedInvoice.invoice_date).toLocaleDateString()}</p>
+                    <p className="text-sm text-white font-medium">{selectedInvoice.invoice_date ? new Date(selectedInvoice.invoice_date).toLocaleDateString() : 'N/A'}</p>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-400 mb-1">Due Date</label>
                     <p className="text-sm text-white font-medium">
-                      {selectedInvoice.invoice_due_date
-                        ? new Date(selectedInvoice.invoice_due_date).toLocaleDateString()
+                      {selectedInvoice.due_date
+                        ? new Date(selectedInvoice.due_date).toLocaleDateString()
                         : 'N/A'}
                     </p>
                   </div>
@@ -290,11 +290,11 @@ export default function AccountingReview() {
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-slate-400 mb-1">USD Account</label>
-                      <p className="text-sm text-white font-medium">{selectedInvoice.vendor?.account_usd || 'N/A'}</p>
+                      <p className="text-sm text-white font-medium">{selectedInvoice.vendor?.account_number || 'N/A'}</p>
                     </div>
-                    <div className="mt-4 p-3 rounded-lg" style={{ background: selectedInvoice.vendor?.swift_code && selectedInvoice.vendor?.account_usd ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)', border: selectedInvoice.vendor?.swift_code && selectedInvoice.vendor?.account_usd ? '1px solid rgba(34, 197, 94, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)' }}>
+                    <div className="mt-4 p-3 rounded-lg" style={{ background: selectedInvoice.vendor?.swift_code && selectedInvoice.vendor?.account_number ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)', border: selectedInvoice.vendor?.swift_code && selectedInvoice.vendor?.account_number ? '1px solid rgba(34, 197, 94, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)' }}>
                       <div className="flex items-center">
-                        {selectedInvoice.vendor?.swift_code && selectedInvoice.vendor?.account_usd ? (
+                        {selectedInvoice.vendor?.swift_code && selectedInvoice.vendor?.account_number ? (
                           <>
                             <CheckCircle className="h-5 w-5 mr-2 text-green-400" />
                             <span className="text-sm text-green-300 font-medium">Bank information is complete and validated</span>

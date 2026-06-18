@@ -1,27 +1,27 @@
 import prisma from '../config/database';
-import { ApprovalStage, InvoiceStatus } from '@ap-invoice/shared';
+import { InvoiceStatus } from '@ap-invoice/shared';
 
 // SLA thresholds in hours for each stage
-const SLA_THRESHOLDS: Record<ApprovalStage, number> = {
-  [ApprovalStage.PURCHASING_COORDINATOR]: 24,    // 24 hours
-  [ApprovalStage.PURCHASING_MANAGER]: 48,       // 48 hours
-  [ApprovalStage.PLANNING_MANAGER]: 72,        // 72 hours
-  [ApprovalStage.LINDSEY]: 96,                  // 96 hours
-  [ApprovalStage.POLLY]: 24,                    // 24 hours
-  [ApprovalStage.ACCOUNTING]: 48,              // 48 hours
+const SLA_THRESHOLDS: Partial<Record<InvoiceStatus, number>> = {
+  [InvoiceStatus.PENDING_COORDINATOR]: 24,
+  [InvoiceStatus.PENDING_MANAGER]: 48,
+  [InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER]: 72,
+  [InvoiceStatus.PENDING_SR_MANAGER]: 96,
+  [InvoiceStatus.PENDING_POLLY]: 24,
+  [InvoiceStatus.PENDING_ACCOUNTING]: 48,
 };
 
 /**
  * Create a stage timestamp when an invoice enters a stage
  */
-export async function enterStage(invoiceId: string, stage: ApprovalStage): Promise<void> {
+export async function enterStage(invoiceId: string, stage: InvoiceStatus): Promise<void> {
   await prisma.stageTimestamp.create({
     data: {
       invoice_id: invoiceId,
-      stage,
+      stage: stage as any,
       entered_at: new Date(),
-      sla_hours: SLA_THRESHOLDS[stage],
-      isBreached: false,
+      sla_hours: SLA_THRESHOLDS[stage] || 48,
+      is_breached: false,
     },
   });
 }
@@ -30,11 +30,11 @@ export async function enterStage(invoiceId: string, stage: ApprovalStage): Promi
  * Update a stage timestamp when an invoice exits a stage
  * Calculates duration and checks if SLA was breached
  */
-export async function exitStage(invoiceId: string, stage: ApprovalStage): Promise<void> {
+export async function exitStage(invoiceId: string, stage: InvoiceStatus): Promise<void> {
   const stageTimestamp = await prisma.stageTimestamp.findFirst({
     where: {
       invoice_id: invoiceId,
-      stage,
+      stage: stage as any,
       exited_at: null,
     },
   });
@@ -48,14 +48,13 @@ export async function exitStage(invoiceId: string, stage: ApprovalStage): Promis
   const durationMs = exitedAt.getTime() - enteredAt.getTime();
   const durationHours = durationMs / (1000 * 60 * 60);
 
-  const isBreached = durationHours > SLA_THRESHOLDS[stage];
+  const isBreached = durationHours > (SLA_THRESHOLDS[stage] || 48);
 
   await prisma.stageTimestamp.update({
     where: { id: stageTimestamp.id },
     data: {
       exited_at: exitedAt,
-      duration_hours: durationHours,
-      isBreached,
+      is_breached: isBreached,
     },
   });
 }
@@ -73,8 +72,8 @@ export async function getInvoiceStageTimestamps(invoiceId: string) {
 /**
  * Get SLA breach report for a specific stage
  */
-export async function getSLABreachReport(stage?: ApprovalStage) {
-  const where = stage ? { stage } : {};
+export async function getSLABreachReport(stage?: InvoiceStatus) {
+  const where = stage ? { stage: stage as any } : {};
   
   const breachedStages = await prisma.stageTimestamp.findMany({
     where: {
@@ -97,8 +96,8 @@ export async function getSLABreachReport(stage?: ApprovalStage) {
 /**
  * Get SLA statistics for a specific stage or all stages
  */
-export async function getSLAStatistics(stage?: ApprovalStage) {
-  const where = stage ? { stage } : {};
+export async function getSLAStatistics(stage?: InvoiceStatus) {
+  const where = stage ? { stage: stage as any } : {};
   
   const totalStages = await prisma.stageTimestamp.count({
     where: {
@@ -120,7 +119,7 @@ export async function getSLAStatistics(stage?: ApprovalStage) {
       exited_at: { not: null },
     },
     _avg: {
-      duration_hours: true,
+      sla_hours: true,
     },
   });
 
@@ -128,7 +127,7 @@ export async function getSLAStatistics(stage?: ApprovalStage) {
     total_stages: totalStages,
     breached_stages: breachedStages,
     breach_rate: totalStages > 0 ? (breachedStages / totalStages) * 100 : 0,
-    average_duration_hours: avgDuration._avg.duration_hours || 0,
+    average_sla_hours: avgDuration._avg?.sla_hours || 0,
   };
 }
 

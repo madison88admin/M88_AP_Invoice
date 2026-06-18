@@ -3,7 +3,7 @@ import { authenticate, authorize } from '../middleware/auth';
 import * as postingController from '../controllers/posting';
 import { UserRole } from '@ap-invoice/shared';
 
-const router = Router();
+const router: Router = Router();
 
 router.use(authenticate);
 

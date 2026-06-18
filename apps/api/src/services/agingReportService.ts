@@ -50,9 +50,9 @@ export async function generateAgingReport(): Promise<AgingReport> {
   const unpaidInvoices = await prisma.invoice.findMany({
     where: {
       status: {
-        in: [InvoiceStatus.APPROVED, InvoiceStatus.POSTED, InvoiceStatus.PAYMENT_INITIATED],
+        in: [InvoiceStatus.APPROVED, InvoiceStatus.POSTED_TO_QB, InvoiceStatus.PAYMENT_SCHEDULED],
       },
-      invoice_due_date: {
+      due_date: {
         not: null,
       },
     },
@@ -60,7 +60,7 @@ export async function generateAgingReport(): Promise<AgingReport> {
       vendor: true,
     },
     orderBy: {
-      invoice_due_date: 'asc',
+      due_date: 'asc',
     },
   });
 
@@ -75,18 +75,18 @@ export async function generateAgingReport(): Promise<AgingReport> {
   let totalCount = 0;
 
   for (const invoice of unpaidInvoices) {
-    if (!invoice.invoice_due_date) continue;
+    if (!invoice.due_date) continue;
 
-    const daysOverdue = calculateDaysOverdue(invoice.invoice_due_date);
+    const daysOverdue = calculateDaysOverdue(invoice.due_date);
     const bucket = getAgingBucket(daysOverdue);
 
     const invoiceData = {
       invoice_id: invoice.id,
       invoice_number: invoice.invoice_number,
       vendor_name: invoice.vendor?.name || 'Unknown',
-      amount: Number(invoice.amount),
+      amount: Number(invoice.total_amount),
       currency: invoice.currency,
-      due_date: invoice.invoice_due_date,
+      due_date: invoice.due_date,
       days_overdue: daysOverdue,
     };
 
@@ -114,9 +114,9 @@ export async function generateVendorAgingReport(vendorId: string): Promise<Aging
     where: {
       vendor_id: vendorId,
       status: {
-        in: [InvoiceStatus.APPROVED, InvoiceStatus.POSTED, InvoiceStatus.PAYMENT_INITIATED],
+        in: [InvoiceStatus.APPROVED, InvoiceStatus.POSTED_TO_QB, InvoiceStatus.PAYMENT_SCHEDULED],
       },
-      invoice_due_date: {
+      due_date: {
         not: null,
       },
     },
@@ -124,7 +124,7 @@ export async function generateVendorAgingReport(vendorId: string): Promise<Aging
       vendor: true,
     },
     orderBy: {
-      invoice_due_date: 'asc',
+      due_date: 'asc',
     },
   });
 
@@ -139,18 +139,18 @@ export async function generateVendorAgingReport(vendorId: string): Promise<Aging
   let totalCount = 0;
 
   for (const invoice of unpaidInvoices) {
-    if (!invoice.invoice_due_date) continue;
+    if (!invoice.due_date) continue;
 
-    const daysOverdue = calculateDaysOverdue(invoice.invoice_due_date);
+    const daysOverdue = calculateDaysOverdue(invoice.due_date);
     const bucket = getAgingBucket(daysOverdue);
 
     const invoiceData = {
       invoice_id: invoice.id,
       invoice_number: invoice.invoice_number,
       vendor_name: invoice.vendor?.name || 'Unknown',
-      amount: Number(invoice.amount),
+      amount: Number(invoice.total_amount),
       currency: invoice.currency,
-      due_date: invoice.invoice_due_date,
+      due_date: invoice.due_date,
       days_overdue: daysOverdue,
     };
 
@@ -197,9 +197,9 @@ export async function getAgingReportByDateRange(startDate: Date, endDate: Date):
   const unpaidInvoices = await prisma.invoice.findMany({
     where: {
       status: {
-        in: [InvoiceStatus.APPROVED, InvoiceStatus.POSTED, InvoiceStatus.PAYMENT_INITIATED],
+        in: [InvoiceStatus.APPROVED, InvoiceStatus.POSTED_TO_QB, InvoiceStatus.PAYMENT_SCHEDULED],
       },
-      invoice_due_date: {
+      due_date: {
         not: null,
         gte: startDate,
         lte: endDate,
@@ -209,7 +209,7 @@ export async function getAgingReportByDateRange(startDate: Date, endDate: Date):
       vendor: true,
     },
     orderBy: {
-      invoice_due_date: 'asc',
+      due_date: 'asc',
     },
   });
 
@@ -224,18 +224,18 @@ export async function getAgingReportByDateRange(startDate: Date, endDate: Date):
   let totalCount = 0;
 
   for (const invoice of unpaidInvoices) {
-    if (!invoice.invoice_due_date) continue;
+    if (!invoice.due_date) continue;
 
-    const daysOverdue = calculateDaysOverdue(invoice.invoice_due_date);
+    const daysOverdue = calculateDaysOverdue(invoice.due_date);
     const bucket = getAgingBucket(daysOverdue);
 
     const invoiceData = {
       invoice_id: invoice.id,
       invoice_number: invoice.invoice_number,
       vendor_name: invoice.vendor?.name || 'Unknown',
-      amount: Number(invoice.amount),
+      amount: Number(invoice.total_amount),
       currency: invoice.currency,
-      due_date: invoice.invoice_due_date,
+      due_date: invoice.due_date,
       days_overdue: daysOverdue,
     };
 

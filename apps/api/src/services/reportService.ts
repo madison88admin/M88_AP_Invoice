@@ -1,6 +1,5 @@
-import { PrismaClient, InvoiceStatus } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import prisma from '../config/database';
+import { InvoiceStatus } from '@ap-invoice/shared';
 
 export interface InvoiceVolumeReport {
   date: string;
@@ -53,7 +52,7 @@ export async function getInvoiceVolumeReport(startDate: Date, endDate: Date): Pr
     select: {
       created_at: true,
       status: true,
-      amount: true,
+      total_amount: true,
     },
   });
 
@@ -75,7 +74,7 @@ export async function getInvoiceVolumeReport(startDate: Date, endDate: Date): Pr
 
     const report = reportMap.get(date)!;
     report.total_invoices++;
-    report.total_amount += Number(invoice.amount);
+    report.total_amount += Number(invoice.total_amount);
 
     switch (invoice.status) {
       case InvoiceStatus.APPROVED:
@@ -84,8 +83,8 @@ export async function getInvoiceVolumeReport(startDate: Date, endDate: Date): Pr
       case InvoiceStatus.REJECTED:
         report.rejected_invoices++;
         break;
-      case InvoiceStatus.PENDING_VALIDATION:
-      case InvoiceStatus.PENDING_APPROVAL:
+      case InvoiceStatus.VALIDATION_PENDING:
+      case InvoiceStatus.PENDING_COORDINATOR:
         report.pending_invoices++;
         break;
     }
@@ -128,17 +127,17 @@ export async function getVendorSpendingReport(limit: number = 20): Promise<Vendo
       id: true,
     },
     _sum: {
-      amount: true,
+      total_amount: true,
     },
     orderBy: {
       _sum: {
-        amount: 'desc',
+        total_amount: 'desc',
       },
     },
     take: limit,
   });
 
-  const vendorIds = invoices.map(i => i.vendor_id);
+  const vendorIds = invoices.map(i => i.vendor_id).filter((id): id is string => id !== null);
   const vendors = await prisma.vendor.findMany({
     where: {
       id: {
@@ -153,13 +152,15 @@ export async function getVendorSpendingReport(limit: number = 20): Promise<Vendo
 
   const vendorMap = new Map(vendors.map(v => [v.id, v.name]));
 
-  return invoices.map(invoice => ({
-    vendor_id: invoice.vendor_id,
-    vendor_name: vendorMap.get(invoice.vendor_id) || 'Unknown',
-    total_invoices: invoice._count.id,
-    total_amount: Number(invoice._sum.amount || 0),
-    average_amount: invoice._sum.amount ? Number(invoice._sum.amount) / invoice._count.id : 0,
-  }));
+  return invoices
+    .filter(invoice => invoice.vendor_id !== null)
+    .map(invoice => ({
+      vendor_id: invoice.vendor_id as string,
+      vendor_name: vendorMap.get(invoice.vendor_id as string) || 'Unknown',
+      total_invoices: (invoice._count as any)?.id || 0,
+      total_amount: Number(invoice._sum?.total_amount || 0),
+      average_amount: invoice._sum?.total_amount ? Number(invoice._sum.total_amount) / ((invoice._count as any)?.id || 1) : 0,
+    }));
 }
 
 export async function getExceptionRateReport(startDate: Date, endDate: Date): Promise<ExceptionRateReport[]> {
@@ -212,7 +213,7 @@ export async function getKPIMetrics(): Promise<KPIMetrics> {
     rejectedInvoices,
   ] = await Promise.all([
     prisma.invoice.count(),
-    prisma.invoice.count({ where: { status: InvoiceStatus.PENDING_APPROVAL } }),
+    prisma.invoice.count({ where: { status: InvoiceStatus.PENDING_COORDINATOR } }),
     prisma.exception.count({ where: { resolved_at: null } }),
     prisma.paymentBatch.count({ where: { status: 'DRAFT' } }),
     prisma.invoice.count({ where: { status: InvoiceStatus.APPROVED } }),

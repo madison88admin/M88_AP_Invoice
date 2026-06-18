@@ -24,7 +24,7 @@ export async function getSOAReconciliationQueue(year: number, month: number): Pr
   const invoices = await prisma.invoice.findMany({
     where: {
       status: {
-        in: [InvoiceStatus.POSTED, InvoiceStatus.PAYMENT_INITIATED, InvoiceStatus.PAID],
+        in: [InvoiceStatus.POSTED_TO_QB, InvoiceStatus.PAYMENT_SCHEDULED, InvoiceStatus.PAID],
       },
       invoice_date: {
         gte: startDate,
@@ -54,12 +54,12 @@ export async function getSOAReconciliationQueue(year: number, month: number): Pr
       invoice_amount: Number(invoice.amount),
       soa_amount: soaAmount,
       discrepancy,
-      status: discrepancy < 0.01 ? 'MATCHED' : 'DISCREPANCY',
+      status: (discrepancy < 0.01 ? 'MATCHED' : 'DISCREPANCY') as 'MATCHED' | 'DISCREPANCY' | 'MISSING_IN_SOA' | 'MISSING_IN_SYSTEM',
       reconciliation_date: new Date(),
     };
   });
 
-  return reconciliationItems;
+  return reconciliationItems as SOAReconciliationItem[];
 }
 
 /**
@@ -100,11 +100,8 @@ export async function markAsReviewed(invoiceId: string, userId: string, notes?: 
     data: {
       invoice_id: invoiceId,
       action: 'SOA_RECONCILIATION_REVIEWED',
-      user_id: userId,
-      metadata: {
-        message: `SOA reconciliation reviewed for invoice ${invoice.invoice_number}`,
-        notes: notes || '',
-      },
+      performed_by: userId,
+      note: `SOA reconciliation reviewed for invoice ${invoice.invoice_number}`,
     },
   });
 
@@ -124,7 +121,7 @@ export async function getVendorsWithPendingSOA(year: number, month: number) {
       invoices: {
         some: {
           status: {
-            in: [InvoiceStatus.POSTED, InvoiceStatus.PAYMENT_INITIATED, InvoiceStatus.PAID],
+            in: [InvoiceStatus.POSTED_TO_QB, InvoiceStatus.PAYMENT_SCHEDULED, InvoiceStatus.PAID],
           },
           invoice_date: {
             gte: startDate,
@@ -139,7 +136,7 @@ export async function getVendorsWithPendingSOA(year: number, month: number) {
           invoices: {
             where: {
               status: {
-                in: [InvoiceStatus.POSTED, InvoiceStatus.PAYMENT_INITIATED, InvoiceStatus.PAID],
+                in: [InvoiceStatus.POSTED_TO_QB, InvoiceStatus.PAYMENT_SCHEDULED, InvoiceStatus.PAID],
               },
               invoice_date: {
                 gte: startDate,
@@ -184,14 +181,8 @@ export async function recordSOASubmission(
     data: {
       invoice_id: '', // No specific invoice for SOA submission
       action: 'SOA_SUBMITTED',
-      user_id: userId,
-      metadata: {
-        message: `SOA submitted by vendor ${vendor.name} for ${year}-${month.toString().padStart(2, '0')}`,
-        vendor_id: vendorId,
-        year,
-        month,
-        file_url: fileUrl,
-      },
+      performed_by: userId,
+      note: `SOA submitted by vendor ${vendor.name} for ${year}-${month.toString().padStart(2, '0')}`,
     },
   });
 

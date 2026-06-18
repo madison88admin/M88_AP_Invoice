@@ -49,13 +49,13 @@ export function generateQBMemo(input: QBMemoInput): string {
  */
 function getInvoiceTypeAbbreviation(invoiceType: InvoiceType): string {
   switch (invoiceType) {
-    case InvoiceType.INV:
+    case InvoiceType.INVOICE:
       return 'INV';
-    case InvoiceType.PI:
+    case InvoiceType.PROFORMA:
       return 'PI';
-    case InvoiceType.CI:
+    case InvoiceType.COMMERCIAL:
       return 'CI';
-    case InvoiceType.SI:
+    case InvoiceType.SALES:
       return 'SI';
     case InvoiceType.STATEMENT:
       return 'STMT';

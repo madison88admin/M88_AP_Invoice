@@ -185,7 +185,7 @@ export default function VendorManagement() {
                         <div>
                           <h3 className="text-sm font-semibold text-white">{vendor.name}</h3>
                           <div className="flex items-center gap-2 mt-1">
-                            <span className="text-xs text-slate-400">{vendor.currency}</span>
+                            <span className="text-xs text-slate-400">{vendor.name_aliases.length > 0 ? vendor.name_aliases.length + ' aliases' : 'No aliases'}</span>
                             {vendor.name_aliases.length > 0 && (
                               <span className="text-xs text-slate-500">
                                 Aliases: {vendor.name_aliases.join(', ')}
@@ -231,12 +231,8 @@ export default function VendorManagement() {
                     <p className="text-sm font-medium text-white">{selectedVendor.name}</p>
                   </div>
                   <div>
-                    <p className="text-sm text-slate-400">Currency</p>
-                    <p className="text-sm font-medium text-white">{selectedVendor.currency}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-slate-400">Expected Template</p>
-                    <p className="text-sm font-medium text-white">{selectedVendor.expected_template}</p>
+                    <p className="text-sm text-slate-400">Invoice Template Type</p>
+                    <p className="text-sm font-medium text-white">{selectedVendor.invoice_template_type}</p>
                   </div>
                   <div>
                     <p className="text-sm text-slate-400">Name Aliases</p>
@@ -257,28 +253,16 @@ export default function VendorManagement() {
                     <p className="text-sm font-medium text-white">{selectedVendor.swift_code}</p>
                   </div>
                   <div>
-                    <p className="text-sm text-slate-400">USD Account</p>
-                    <p className="text-sm font-medium text-white">{selectedVendor.account_usd}</p>
+                    <p className="text-sm text-slate-400">Account Number</p>
+                    <p className="text-sm font-medium text-white">{selectedVendor.account_number || 'N/A'}</p>
                   </div>
-                  {selectedVendor.account_hkd && (
-                    <div>
-                      <p className="text-sm text-slate-400">HKD Account</p>
-                      <p className="text-sm font-medium text-white">{selectedVendor.account_hkd}</p>
-                    </div>
-                  )}
-                  {selectedVendor.account_eur && (
-                    <div>
-                      <p className="text-sm text-slate-400">EUR Account</p>
-                      <p className="text-sm font-medium text-white">{selectedVendor.account_eur}</p>
-                    </div>
-                  )}
                   <div>
                     <p className="text-sm text-slate-400">Bank Address</p>
                     <p className="text-sm font-medium text-white">{selectedVendor.bank_address || 'N/A'}</p>
                   </div>
                   <div>
-                    <p className="text-sm text-slate-400">Bank Code</p>
-                    <p className="text-sm font-medium text-white">{selectedVendor.bank_code || 'N/A'}</p>
+                    <p className="text-sm text-slate-400">Sort Code</p>
+                    <p className="text-sm font-medium text-white">{selectedVendor.sort_code || 'N/A'}</p>
                   </div>
                 </div>
               </div>
@@ -315,19 +299,10 @@ export default function VendorManagement() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-400 mb-1">Currency</label>
-                  <input
-                    type="text"
-                    value={editingVendor.currency || ''}
-                    onChange={(e) => setEditingVendor({ ...editingVendor, currency: e.target.value })}
-                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-400 mb-1">Expected Template</label>
+                  <label className="block text-sm font-medium text-slate-400 mb-1">Invoice Template Type</label>
                   <select
-                    value={editingVendor.expected_template || ''}
-                    onChange={(e) => setEditingVendor({ ...editingVendor, expected_template: e.target.value as InvoiceType })}
+                    value={editingVendor.invoice_template_type || ''}
+                    onChange={(e) => setEditingVendor({ ...editingVendor, invoice_template_type: e.target.value as any })}
                     className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent text-white"
                   >
                     {Object.values(InvoiceType).map(type => (
@@ -386,29 +361,11 @@ export default function VendorManagement() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-400 mb-1">USD Account</label>
+                  <label className="block text-sm font-medium text-slate-400 mb-1">Account Number</label>
                   <input
                     type="text"
-                    value={editingVendor.account_usd || ''}
-                    onChange={(e) => setEditingVendor({ ...editingVendor, account_usd: e.target.value })}
-                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-400 mb-1">HKD Account</label>
-                  <input
-                    type="text"
-                    value={editingVendor.account_hkd || ''}
-                    onChange={(e) => setEditingVendor({ ...editingVendor, account_hkd: e.target.value })}
-                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-400 mb-1">EUR Account</label>
-                  <input
-                    type="text"
-                    value={editingVendor.account_eur || ''}
-                    onChange={(e) => setEditingVendor({ ...editingVendor, account_eur: e.target.value })}
+                    value={editingVendor.account_number || ''}
+                    onChange={(e) => setEditingVendor({ ...editingVendor, account_number: e.target.value })}
                     className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent text-white"
                   />
                 </div>
@@ -422,11 +379,11 @@ export default function VendorManagement() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-400 mb-1">Bank Code</label>
+                  <label className="block text-sm font-medium text-slate-400 mb-1">Sort Code</label>
                   <input
                     type="text"
-                    value={editingVendor.bank_code || ''}
-                    onChange={(e) => setEditingVendor({ ...editingVendor, bank_code: e.target.value })}
+                    value={editingVendor.sort_code || ''}
+                    onChange={(e) => setEditingVendor({ ...editingVendor, sort_code: e.target.value })}
                     className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent text-white"
                   />
                 </div>

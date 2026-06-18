@@ -1,5 +1,6 @@
 import { DocumentAnalysisClient, AzureKeyCredential } from '@azure/ai-form-recognizer';
-import { InvoiceType, InvoiceCategory, PaymentTerms, MadisonEntity, OrderType } from '@ap-invoice/shared';
+import { InvoiceType, InvoiceCategory, PaymentTerms, BillToEntity, OrderType, SignatoryRole, SignatureType } from '@ap-invoice/shared';
+import { parsePOReference, matchSignerToRole, TOP_10_BRANDS, isTop10Brand } from '@ap-invoice/shared';
 
 const endpoint = process.env.AZURE_FORM_RECOGNIZER_ENDPOINT || '';
 const apiKey = process.env.AZURE_FORM_RECOGNIZER_KEY || '';
@@ -32,10 +33,10 @@ export interface BankInfo {
 }
 
 export interface SignatureInfo {
-  signer_name: string;
+  signatory_name: string;
   signed_at?: Date;
-  role: string;
-  is_digital: boolean;
+  signatory_role: SignatoryRole;
+  signature_type: SignatureType;
 }
 
 export interface OCRResult {
@@ -45,37 +46,31 @@ export interface OCRResult {
   invoice_received_date?: Date;
   date_range_start?: Date;
   date_range_end?: Date;
-  invoice_version?: string;
-  invoice_version_notes?: string;
-  parent_invoice_id?: string;
   vendor_name: string;
-  amount: number;
-  amount_original?: number;
-  currency_original?: string;
-  exchange_rate_to_usd?: number;
+  total_amount: number;
+  subtotal?: number;
   currency: string;
+  invoice_currency_original?: string;
+  exchange_rate_to_usd?: number;
   payment_terms: PaymentTerms;
-  payment_term_split?: string;
   incoterm?: string;
   bank_charges: number;
-  shipping_charges: number;
-  customs_charges: number;
-  documentation_charges: number;
-  surcharges: number;
+  freight_charges: number;
+  additional_charges: number;
   invoice_type: InvoiceType;
+  invoice_template_type?: string;
   category: InvoiceCategory;
   order_type?: OrderType;
   brand?: string;
+  brand_code?: string;
   season?: string;
   mpo_number?: string;
-  po_number?: string;
-  bill_to_name: string;
-  bill_to_address: string;
-  bill_to_entity?: MadisonEntity;
+  customer_po_number?: string;
+  bill_to_entity?: BillToEntity;
   is_handwritten: boolean;
-  is_priority: boolean;
+  is_urgent: boolean;
   priority_pay_date?: Date;
-  payment_consolidation_note?: string;
+  ocr_confidence_score?: number;
   qb_memo?: string;
   qb_account_class?: string;
   bank_info: BankInfo;
@@ -92,16 +87,22 @@ function parseDate(dateString: string): Date {
   // Month name mappings
   const monthNames: Record<string, number> = { JANUARY: 0, FEBRUARY: 1, MARCH: 2, APRIL: 3, MAY: 4, JUNE: 5, JULY: 6, AUGUST: 7, SEPTEMBER: 8, OCTOBER: 9, NOVEMBER: 10, DECEMBER: 11, JAN: 0, FEB: 1, MAR: 2, APR: 3, JUN: 5, JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11 };
   
-  // DD/MM/YYYY
+  // DD/MM/YYYY vs MM/DD/YYYY — use heuristic to disambiguate
+  // If first number > 12, it must be the day (DD/MM/YYYY)
+  // If second number > 12, first must be month (MM/DD/YYYY)
   const ddmmyyyy = dateString.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (ddmmyyyy) {
-    return new Date(parseInt(ddmmyyyy[3]), parseInt(ddmmyyyy[2]) - 1, parseInt(ddmmyyyy[1]));
-  }
-  
-  // MM/DD/YYYY
-  const mmddyyyy = dateString.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (mmddyyyy) {
-    return new Date(parseInt(mmddyyyy[3]), parseInt(mmddyyyy[1]) - 1, parseInt(mmddyyyy[2]));
+    const p1 = parseInt(ddmmyyyy[1]);
+    const p2 = parseInt(ddmmyyyy[2]);
+    if (p1 > 12) {
+      // First part can't be month → DD/MM/YYYY
+      return new Date(parseInt(ddmmyyyy[3]), p2 - 1, p1);
+    } else if (p2 > 12) {
+      // Second part can't be day in DD/MM → must be MM/DD/YYYY
+      return new Date(parseInt(ddmmyyyy[3]), p1 - 1, p2);
+    }
+    // Both <= 12 — ambiguous, default to MM/DD/YYYY
+    return new Date(parseInt(ddmmyyyy[3]), p1 - 1, p2);
   }
   
   // YYYY/MM/DD
@@ -209,15 +210,15 @@ function detectInvoiceType(fullText: string): InvoiceType {
   const upperText = fullText.toUpperCase();
   
   if (upperText.includes('PROFORMA INVOICE') || upperText.includes('PRO-FORMA') || upperText.includes('PI NO.')) {
-    return InvoiceType.PI;
+    return InvoiceType.PROFORMA;
   }
   
   if (upperText.includes('COMMERCIAL INVOICE')) {
-    return InvoiceType.CI;
+    return InvoiceType.COMMERCIAL;
   }
   
   if (upperText.includes('SALES INVOICE')) {
-    return InvoiceType.SI;
+    return InvoiceType.SALES;
   }
   
   if (upperText.includes('STATEMENT') || upperText.includes('MONTHLY STATEMENT')) {
@@ -228,8 +229,12 @@ function detectInvoiceType(fullText: string): InvoiceType {
     return InvoiceType.PREPAID;
   }
   
-  // Default to INV
-  return InvoiceType.INV;
+  if (upperText.includes('PROTO SAMPLE')) {
+    return InvoiceType.PROTO_SAMPLE;
+  }
+  
+  // Default to INVOICE
+  return InvoiceType.INVOICE;
 }
 
 // Detect payment terms according to BRD specifications
@@ -324,7 +329,23 @@ function detectCategory(fullText: string): InvoiceCategory {
     return InvoiceCategory.PROFESSIONAL_FEE;
   }
   
-  return InvoiceCategory.OTHER;
+  if (upperText.includes('FACTORY AUDIT') || upperText.includes('AUDIT')) {
+    return InvoiceCategory.FACTORY_AUDIT;
+  }
+  
+  if (upperText.includes('FACTORY')) {
+    return InvoiceCategory.FACTORY;
+  }
+  
+  if (upperText.includes('SMS') || upperText.includes('STOCK MAKE SPECIAL')) {
+    return InvoiceCategory.SMS;
+  }
+  
+  if (upperText.includes('CONSULTATION') || upperText.includes('CONSULTING')) {
+    return InvoiceCategory.CONSULTATION;
+  }
+  
+  return InvoiceCategory.TRIMS; // safe default
 }
 
 // Detect order type from invoice text
@@ -446,7 +467,7 @@ function detectPONumber(fullText: string): string | undefined {
 }
 
 // Detect Madison entity from bill-to information
-function detectMadisonEntity(billToName: string, billToAddress: string): MadisonEntity | undefined {
+function detectMadisonEntity(billToName: string, billToAddress: string): BillToEntity | undefined {
   const upperName = billToName.toUpperCase();
   const upperAddress = billToAddress.toUpperCase();
   
@@ -454,23 +475,23 @@ function detectMadisonEntity(billToName: string, billToAddress: string): Madison
   if (upperName.includes('MADISON 88 LTD') || upperName.includes('MADISON 88, LTD') || 
       upperName.includes('MADISON 88 LIMITED') || upperName.includes('MADISON LIMITED') ||
       upperName.includes('MADISON88, LTD') || upperName.includes('MADISON 88, LTD')) {
-    return MadisonEntity.MADISON_88_LTD;
+    return BillToEntity.MADISON_88_LTD;
   }
   
-  // MADISON_88_NEW_YORK
-  if (upperAddress.includes('15 WEST 36TH STREET') || upperAddress.includes('NEW YORK') || 
-      upperAddress.includes('NY 10018') || upperAddress.includes('15W 36TH STREET')) {
-    return MadisonEntity.MADISON_88_NEW_YORK;
+  // MADISON_88_HK_LIMITED
+  if (upperName.includes('MADISON 88 HONG KONG') || upperName.includes('MADISON 88 HONG KONG LIMITED') ||
+      upperName.includes('MADISON 88 HK LIMITED')) {
+    return BillToEntity.MADISON_88_HK_LIMITED;
   }
   
-  // MADISON_88_HONG_KONG_LIMITED
-  if (upperName.includes('MADISON 88 HONG KONG') || upperName.includes('MADISON 88 HONG KONG LIMITED')) {
-    return MadisonEntity.MADISON_88_HONG_KONG_LIMITED;
-  }
-  
-  // Buyer code "APH1009 Madison" | "Madison88" (no address) → MADISON_88_LTD (flag MISSING_ADDRESS)
+  // Buyer code "APH1009 Madison" | "Madison88" (no address) → MADISON_88_LTD
   if (upperName.includes('MADISON88') || upperName.includes('APH1009 MADISON')) {
-    return MadisonEntity.MADISON_88_LTD;
+    return BillToEntity.MADISON_88_LTD;
+  }
+  
+  // Denver address → MADISON_88_LTD
+  if (upperAddress.includes('CURTIS STREET') || upperAddress.includes('DENVER')) {
+    return BillToEntity.MADISON_88_LTD;
   }
   
   return undefined;
@@ -664,9 +685,32 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string): Prom
     const incoterm = incoterm_match ? incoterm_match[1].toUpperCase() : undefined;
     const bill_to_entity = detectMadisonEntity(bill_to_name, bill_to_address);
     const { is_priority, priority_pay_date } = detectUrgentPayment(fullText);
-    const { invoice_version, invoice_version_notes } = detectInvoiceVersion(invoice_number, fullText);
-    const payment_consolidation_note = detectPaymentConsolidation(fullText);
     const invoice_received_date = detectReceivedDate(fullText);
+
+    // PO Reference parsing — try to parse from PO field or full text
+    let po_reference_raw: string | undefined;
+    const poRefPatterns = [
+      /(?:PO\s*(?:REF)?[:\s]*)([A-Z]{2,4}_\S+)/i,
+      /(?:P\.?O\.?\s*(?:REF)?[:\s]*)([A-Z]{2,4}_\S+)/i,
+    ];
+    for (const pattern of poRefPatterns) {
+      const match = fullText.match(pattern);
+      if (match) {
+        po_reference_raw = match[1].trim();
+        break;
+      }
+    }
+    const poParsed = po_reference_raw ? parsePOReference(po_reference_raw) : {};
+
+    // Override brand/season/order_type/mpo_number/po_number from PO reference if available
+    const final_brand = poParsed.brand_code
+      ? (TOP_10_BRANDS[poParsed.brand_code] || poParsed.brand_code)
+      : brand;
+    const final_brand_code = poParsed.brand_code || (brand && TOP_10_BRANDS[brand] ? brand : undefined);
+    const final_season = poParsed.season || season;
+    const final_order_type = (poParsed.order_type as OrderType | undefined) || order_type;
+    const final_mpo_number = poParsed.mpo_number || mpo_number;
+    const final_po_number = poParsed.po_number || po_number;
 
     // Currency conversion for non-USD invoices
     let amount_original: number | undefined;
@@ -689,45 +733,36 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string): Prom
 
     // Extract charges
     const bank_charges = extractCharge(fullText, 'bank charge');
-    const shipping_charges = extractCharge(fullText, 'shipping') || extractCharge(fullText, 'freight');
-    const customs_charges = extractCharge(fullText, 'customs');
-    const documentation_charges = extractCharge(fullText, 'documentation');
-    const surcharges = extractCharge(fullText, 'surcharge');
+    const freight_charges = extractCharge(fullText, 'shipping') || extractCharge(fullText, 'freight');
+    const additional_charges = extractCharge(fullText, 'surcharge') + extractCharge(fullText, 'customs') + extractCharge(fullText, 'documentation');
 
     return {
       invoice_number,
       invoice_date,
       due_date,
       invoice_received_date,
-      invoice_version,
-      invoice_version_notes,
       vendor_name,
-      amount,
-      amount_original,
-      currency_original,
-      exchange_rate_to_usd,
+      total_amount: amount,
       currency,
+      invoice_currency_original: currency_original,
+      exchange_rate_to_usd,
       payment_terms,
       incoterm,
       bank_charges,
-      shipping_charges,
-      customs_charges,
-      documentation_charges,
-      surcharges,
+      freight_charges,
+      additional_charges,
       invoice_type,
       category,
-      order_type,
-      brand,
-      season,
-      mpo_number,
-      po_number,
-      bill_to_name,
-      bill_to_address,
+      order_type: final_order_type,
+      brand: final_brand,
+      brand_code: final_brand_code,
+      season: final_season,
+      mpo_number: final_mpo_number,
+      customer_po_number: final_po_number,
       bill_to_entity,
       is_handwritten,
-      is_priority,
+      is_urgent: is_priority,
       priority_pay_date,
-      payment_consolidation_note,
       bank_info,
       signatures,
       raw_data: result,
@@ -834,7 +869,7 @@ function extractSignatures(fields: any, fullText: string): SignatureInfo[] {
   // Form Recognizer may detect signatures
   if (fields?.Signatures) {
     // This would need to be implemented based on actual Form Recognizer output
-    // For now, return empty array
+    // For now, return empty array from this source
   }
 
   // Custom parsing for signature blocks
@@ -846,7 +881,12 @@ function extractSignatures(fields: any, fullText: string): SignatureInfo[] {
     
     // Detect signature block patterns
     if (upperLine.includes('SIGNED BY') || upperLine.includes('APPROVED BY') || upperLine.includes('AUTHORIZED BY')) {
-      if (currentSignature.signer_name) {
+      if (currentSignature.signatory_name) {
+        // Try to map to a known role
+        if (!currentSignature.signatory_role) {
+          currentSignature.signatory_role = matchSignerToRole(currentSignature.signatory_name) || SignatoryRole.COORDINATOR;
+        }
+        currentSignature.signature_type = currentSignature.signature_type || SignatureType.WET;
         signatures.push(currentSignature as SignatureInfo);
       }
       currentSignature = {};
@@ -854,8 +894,15 @@ function extractSignatures(fields: any, fullText: string): SignatureInfo[] {
 
     // Extract signer name
     if (upperLine.includes('NAME') || upperLine.match(/^[A-Z\s]+$/)) {
-      if (!currentSignature.signer_name && line.trim().length > 2) {
-        currentSignature.signer_name = line.trim();
+      if (!currentSignature.signatory_name && line.trim().length > 2) {
+        currentSignature.signatory_name = line.trim();
+        // Attempt role mapping from name
+        if (!currentSignature.signatory_role) {
+          const mappedRole = matchSignerToRole(line.trim());
+          if (mappedRole) {
+            currentSignature.signatory_role = mappedRole;
+          }
+        }
       }
     }
 
@@ -865,26 +912,23 @@ function extractSignatures(fields: any, fullText: string): SignatureInfo[] {
       currentSignature.signed_at = parseDate(dateMatch[1]);
     }
 
-    // Extract role
-    if (upperLine.includes('COORDINATOR')) {
-      currentSignature.role = 'COORDINATOR';
-    } else if (upperLine.includes('MANAGER')) {
-      currentSignature.role = 'MANAGER';
-    } else if (upperLine.includes('PLANNING')) {
-      currentSignature.role = 'PLANNING_MANAGER';
-    } else if (upperLine.includes('LINDSEY')) {
-      currentSignature.role = 'LINDSEY';
-    }
-
     // Detect digital signatures
     if (upperLine.includes('DIGITAL') || upperLine.includes('ELECTRONIC')) {
-      currentSignature.is_digital = true;
+      currentSignature.signature_type = SignatureType.DIGITAL;
+    }
+
+    // Detect computer-generated signatures
+    if (upperLine.includes('COMPUTER GENERATED') || upperLine.includes('AUTO GENERATED')) {
+      currentSignature.signature_type = SignatureType.COMPUTER_GENERATED;
     }
   }
 
-  if (currentSignature.signer_name) {
-    if (!currentSignature.is_digital) {
-      currentSignature.is_digital = false;
+  if (currentSignature.signatory_name) {
+    if (!currentSignature.signature_type) {
+      currentSignature.signature_type = SignatureType.WET;
+    }
+    if (!currentSignature.signatory_role) {
+      currentSignature.signatory_role = matchSignerToRole(currentSignature.signatory_name) || SignatoryRole.COORDINATOR;
     }
     signatures.push(currentSignature as SignatureInfo);
   }

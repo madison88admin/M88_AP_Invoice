@@ -8,7 +8,7 @@ import { useDashboardStats } from '../hooks/useDashboardStats';
 import { useInvoices } from '../hooks/useInvoices';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { useQueryClient } from '@tanstack/react-query';
-import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, PenTool, DollarSign, TrendingUp, Search, Bell, Settings, User, LayoutDashboard, Building2, ChevronLeft } from 'lucide-react';
+import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, PenTool, TrendingUp, Search, Bell, Settings, User, LayoutDashboard, Building2, ChevronLeft } from 'lucide-react';
 
 // Custom hook for number count-up animation
 function useCountUp(end: number, duration: number = 1200, start: boolean = true) {
@@ -78,6 +78,8 @@ export default function Dashboard() {
     status: undefined as InvoiceStatus | undefined,
     category: undefined as InvoiceCategory | undefined,
     type: undefined as InvoiceType | undefined,
+    brand: undefined as string | undefined,
+    brand_code: undefined as string | undefined,
   });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -142,7 +144,7 @@ export default function Dashboard() {
   const awaitingApprovalCount = useCountUp(dashboardStats?.awaitingApproval || 0, 1200, countUpStarted && !statsLoading);
   const urgentPaymentsCount = useCountUp(dashboardStats?.urgentPayments || 0, 1200, countUpStarted && !statsLoading);
   const handwrittenDocsCount = useCountUp(dashboardStats?.handwrittenDocs || 0, 1200, countUpStarted && !statsLoading);
-  const nonUsdInvoicesCount = useCountUp(dashboardStats?.nonUsdInvoices || 0, 1200, countUpStarted && !statsLoading);
+  const slaAtRiskCount = useCountUp(dashboardStats?.slaAtRisk || 0, 1200, countUpStarted && !statsLoading);
   const paidThisWeekCount = useCountUp(dashboardStats?.paidThisWeek || 0, 1200, countUpStarted && !statsLoading);
   const totalAmountCount = useCountUp(Math.floor(dashboardStats?.totalAmount || 0), 1200, countUpStarted && !statsLoading);
   const exceptionsCount = useCountUp(dashboardStats?.exceptions || 0, 1200, countUpStarted && !statsLoading);
@@ -311,14 +313,16 @@ export default function Dashboard() {
       color: '#F59E0B',
       trend: dashboardStats ? formatTrend(dashboardStats.handwrittenDocsTrend) : '+8%',
       trendUp: dashboardStats ? dashboardStats.handwrittenDocsTrend >= 0 : true,
+      subtitle: 'Awaiting manual review',
     },
     {
-      label: 'Non-USD Invoices',
-      value: nonUsdInvoicesCount.count,
-      icon: DollarSign,
-      color: '#0891B2',
-      trend: dashboardStats ? formatTrend(dashboardStats.nonUsdInvoicesTrend) : '+15%',
-      trendUp: dashboardStats ? dashboardStats.nonUsdInvoicesTrend >= 0 : true,
+      label: 'SLA at Risk',
+      value: slaAtRiskCount.count,
+      icon: AlertCircle,
+      color: '#DC2626',
+      trend: dashboardStats ? formatTrend(dashboardStats.slaAtRiskTrend) : '+5%',
+      trendUp: dashboardStats ? dashboardStats.slaAtRiskTrend >= 0 : false,
+      subtitle: 'invoices need immediate action',
     },
     {
       label: 'Paid This Week',
@@ -439,7 +443,16 @@ export default function Dashboard() {
             }}
           >
             <CheckSquare className="h-5 w-5 flex-shrink-0" />
-            {!sidebarCollapsed && <span className="font-medium">Approvals</span>}
+            {!sidebarCollapsed && (
+              <div className="flex items-center justify-between flex-1">
+                <span className="font-medium">Approvals</span>
+                {(dashboardStats?.awaitingApproval ?? 0) > 0 && (
+                  <span className="bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
+                    {dashboardStats?.awaitingApproval ?? 0}
+                  </span>
+                )}
+              </div>
+            )}
           </Link>
           <Link
             to="/exceptions"
@@ -458,7 +471,16 @@ export default function Dashboard() {
             }}
           >
             <AlertTriangle className="h-5 w-5 flex-shrink-0" />
-            {!sidebarCollapsed && <span className="font-medium">Exceptions</span>}
+            {!sidebarCollapsed && (
+              <div className="flex items-center justify-between flex-1">
+                <span className="font-medium">Exceptions</span>
+                {(dashboardStats?.exceptions ?? 0) > 0 && (
+                  <span className="bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
+                    {dashboardStats?.exceptions ?? 0}
+                  </span>
+                )}
+              </div>
+            )}
           </Link>
           <Link
             to="/vendors"
@@ -726,6 +748,9 @@ export default function Dashboard() {
                       <div className="flex-1">
                         <p className="text-sm font-medium text-slate-300 mb-1">{kpi.label}</p>
                         <p className="text-2xl font-bold text-white">{kpi.value}</p>
+                        {kpi.subtitle && (
+                          <p className="text-xs text-slate-400 mt-1">{kpi.subtitle}</p>
+                        )}
                         <div className="flex items-center gap-1 mt-2">
                           {kpi.trend && (
                             <>
@@ -819,8 +844,44 @@ export default function Dashboard() {
                   <option key={type} value={type} className="bg-[#0f172a]">{type}</option>
                 ))}
               </select>
+              <select
+                value={filters.brand || ''}
+                onChange={(e) => setFilters({ ...filters, brand: e.target.value || undefined })}
+                className="w-full md:w-auto px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent text-white"
+              >
+                <option value="" className="bg-[#0f172a]">All Brands</option>
+                <option value="Columbia Sportswear" className="bg-[#0f172a]">Columbia Sportswear</option>
+                <option value="The North Face" className="bg-[#0f172a]">The North Face</option>
+                <option value="Vans" className="bg-[#0f172a]">Vans</option>
+                <option value="Arc'teryx" className="bg-[#0f172a]">Arc'teryx</option>
+                <option value="Under Armour" className="bg-[#0f172a]">Under Armour</option>
+                <option value="Helly Hansen" className="bg-[#0f172a]">Helly Hansen</option>
+                <option value="Burton" className="bg-[#0f172a]">Burton</option>
+                <option value="Travis Mathew" className="bg-[#0f172a]">Travis Mathew</option>
+                <option value="Fjallraven" className="bg-[#0f172a]">Fjallraven</option>
+                <option value="On Running" className="bg-[#0f172a]">On Running</option>
+                <option value="Prana" className="bg-[#0f172a]">Prana</option>
+                <option value="Other" className="bg-[#0f172a]">Other brands</option>
+              </select>
+              <select
+                value={filters.brand_code || ''}
+                onChange={(e) => setFilters({ ...filters, brand_code: e.target.value as string | undefined })}
+                className="w-full md:w-auto px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent text-white"
+              >
+                <option value="" className="bg-[#0f172a]">All Brand Codes</option>
+                <option value="CSC" className="bg-[#0f172a]">CSC</option>
+                <option value="TNF" className="bg-[#0f172a]">TNF</option>
+                <option value="VNS" className="bg-[#0f172a]">VNS</option>
+                <option value="ARC" className="bg-[#0f172a]">ARC</option>
+                <option value="UA" className="bg-[#0f172a]">UA</option>
+                <option value="HH" className="bg-[#0f172a]">HH</option>
+                <option value="BUR" className="bg-[#0f172a]">BUR</option>
+                <option value="TM" className="bg-[#0f172a]">TM</option>
+                <option value="FR" className="bg-[#0f172a]">FR</option>
+                <option value="ON" className="bg-[#0f172a]">ON</option>
+              </select>
               <button
-                onClick={() => setFilters({ status: undefined, category: undefined, type: undefined })}
+                onClick={() => setFilters({ status: undefined, category: undefined, type: undefined, brand: undefined, brand_code: undefined })}
                 className="w-full md:w-auto px-4 py-2 border border-white/10 text-slate-300 rounded-lg hover:bg-white/10 transition-colors font-medium"
               >
                 Clear
@@ -851,6 +912,151 @@ export default function Dashboard() {
             
             {/* Sentinel for infinite scroll */}
             <div ref={sentinelRef} className="h-1" />
+          </div>
+
+          {/* Supplier Balance Analysis */}
+          <div className="mt-6" style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }}>
+            <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-white">Supplier balance</h2>
+                <p className="text-sm text-slate-400">Received vs recorded — real-time gap analysis</p>
+              </div>
+              <Link to="/vendors" className="text-sm text-[#6366f1] hover:text-[#818cf8]">View all vendors →</Link>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-white/5">
+                <thead style={{ background: 'rgba(255,255,255,0.05)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
+                      Vendor Name
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
+                      Invoices Received
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
+                      Invoices Recorded
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
+                      Gap
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
+                      Total Outstanding (USD)
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {[
+                    { name: 'Avery Dennison Paxar (China) Ltd', received: 12, recorded: 12, outstanding: 1956.17 },
+                    { name: 'UPW Limited', received: 8, recorded: 7, outstanding: 174.87 },
+                    { name: 'Avery Dennison Hong Kong B.V.', received: 15, recorded: 15, outstanding: 37.94 },
+                    { name: 'Amass International Limited', received: 5, recorded: 5, outstanding: 422.25 },
+                  ].map((vendor, i) => {
+                    const gap = vendor.received - vendor.recorded;
+                    return (
+                      <tr key={i} className="hover:bg-white/5 transition-colors">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-200">{vendor.name}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-white">{vendor.received}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-white">{vendor.recorded}</td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          {gap > 0 ? (
+                            <div className="flex items-center gap-2">
+                              <AlertCircle className="h-4 w-4 text-red-500" />
+                              <span className="text-sm font-semibold text-red-400">{gap}</span>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <CheckCircle className="h-4 w-4 text-green-500" />
+                              <span className="text-sm text-green-400">0</span>
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-white font-medium">${vendor.outstanding.toLocaleString()}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Payables Aging */}
+          <div className="mt-6" style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }}>
+            <div className="px-6 py-4 border-b border-white/10">
+              <h2 className="text-lg font-semibold text-white">Payables aging</h2>
+              <p className="text-sm text-slate-400">Outstanding invoices by age bucket</p>
+            </div>
+            <div className="p-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {[
+                  { label: 'Current (not yet due)', count: 5, amount: 3190.29, color: '#059669' },
+                  { label: '1–30 days overdue', count: 2, amount: 752.07, color: '#F59E0B' },
+                  { label: '31–60 days overdue', count: 0, amount: 0, color: '#F97316' },
+                  { label: '60+ days overdue', count: 0, amount: 0, color: '#DC2626' },
+                ].map((bucket, i) => (
+                  <div
+                    key={i}
+                    className="p-4 rounded-lg"
+                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
+                  >
+                    <p className="text-xs font-medium text-slate-400 mb-2">{bucket.label}</p>
+                    <p className="text-2xl font-bold text-white mb-1">{bucket.count}</p>
+                    <p className="text-sm text-slate-300">${bucket.amount.toLocaleString()}</p>
+                    <button
+                      className="mt-3 text-xs text-[#6366f1] hover:text-[#818cf8]"
+                      onClick={() => setFilters({ ...filters, status: undefined })}
+                    >
+                      View →
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Processing Time per Stage */}
+          <div className="mt-6" style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }}>
+            <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-white">Processing time per stage</h2>
+                <p className="text-sm text-slate-400">Average hours at each approval stage vs SLA target</p>
+              </div>
+              <div className="text-right">
+                <p className="text-sm text-slate-400">SLA compliance</p>
+                <p className="text-lg font-bold text-green-400">87%</p>
+              </div>
+            </div>
+            <div className="p-6">
+              <div className="space-y-4">
+                {[
+                  { stage: 'Purchasing Coordinator', avg: 24, sla: 168 },
+                  { stage: 'Purchasing Manager', avg: 48, sla: 168 },
+                  { stage: 'Planning Manager', avg: 72, sla: 96 },
+                  { stage: 'Lindsey Schindler', avg: 36, sla: 72 },
+                  { stage: 'Accounting', avg: 96, sla: 168 },
+                ].map((item, i) => {
+                  const percentage = (item.avg / item.sla) * 100;
+                  const status = percentage < 80 ? '✓' : percentage < 100 ? '⚠' : '✗';
+                  const barColor = percentage < 80 ? '#059669' : percentage < 100 ? '#F59E0B' : '#DC2626';
+                  return (
+                    <div key={i}>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm text-slate-200">{item.stage}</span>
+                        <div className="flex items-center gap-4">
+                          <span className="text-sm text-slate-400">{item.avg}h / {item.sla}h SLA</span>
+                          <span className="text-lg font-bold" style={{ color: barColor }}>{status}</span>
+                        </div>
+                      </div>
+                      <div className="h-2 rounded-full bg-white/10 overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all duration-500"
+                          style={{ width: `${Math.min(percentage, 100)}%`, backgroundColor: barColor }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         </main>
       </div>
@@ -918,7 +1124,7 @@ export default function Dashboard() {
               <div>
                 <p className="text-sm text-slate-400">Amount</p>
                 <p className="text-sm font-medium text-white">
-                  {selectedInvoice.currency} {Number(selectedInvoice.amount).toFixed(2)}
+                  {selectedInvoice.currency} {Number(selectedInvoice.total_amount).toFixed(2)}
                 </p>
               </div>
               <div>
@@ -937,12 +1143,11 @@ export default function Dashboard() {
               )}
               <div>
                 <p className="text-sm text-slate-400">Bill To</p>
-                <p className="text-sm font-medium text-white">{selectedInvoice.bill_to_name}</p>
-                <p className="text-xs text-slate-500">{selectedInvoice.bill_to_address}</p>
+                <p className="text-sm font-medium text-white">{selectedInvoice.bill_to_entity}</p>
               </div>
               
               {/* Validation Button */}
-              {selectedInvoice.status === InvoiceStatus.PENDING_VALIDATION && (
+              {selectedInvoice.status === (InvoiceStatus.VALIDATION_PENDING as any) && (
                 <button
                   onClick={handleValidate}
                   disabled={validating}
@@ -955,7 +1160,7 @@ export default function Dashboard() {
               )}
 
               {/* Approval Actions */}
-              {selectedInvoice.status === InvoiceStatus.PENDING_APPROVAL && (
+              {selectedInvoice.status === (InvoiceStatus.PENDING_COORDINATOR as any) && (
                 <div className="space-y-2">
                   <button
                     onClick={() => handleApprove(selectedInvoice.id)}
@@ -988,7 +1193,7 @@ export default function Dashboard() {
               )}
 
               {/* Payment Scheduling */}
-              {selectedInvoice.status === InvoiceStatus.POSTED && (
+              {selectedInvoice.status === (InvoiceStatus.POSTED_TO_QB as any) && (
                 <button
                   onClick={() => setShowSchedulePaymentModal(true)}
                   className="w-full flex items-center justify-center px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"

@@ -9,7 +9,7 @@ export interface LowValueInvoice {
   vendor_name: string;
   amount: number;
   currency: string;
-  invoice_date: Date;
+  invoice_date: Date | null;
   status: InvoiceStatus;
 }
 
@@ -18,7 +18,7 @@ export interface LowValueInvoice {
  * Invoices below $100 that have passed validation are eligible
  */
 export function isLowValueInvoice(amount: number, status: InvoiceStatus): boolean {
-  return amount < LOW_VALUE_THRESHOLD && status === InvoiceStatus.VALIDATED;
+  return amount < LOW_VALUE_THRESHOLD && status === InvoiceStatus.VALIDATION_PENDING;
 }
 
 /**
@@ -28,10 +28,10 @@ export function isLowValueInvoice(amount: number, status: InvoiceStatus): boolea
 export async function getLowValueQueue(): Promise<LowValueInvoice[]> {
   const invoices = await prisma.invoice.findMany({
     where: {
-      amount: {
+      total_amount: {
         lt: LOW_VALUE_THRESHOLD,
       },
-      status: InvoiceStatus.VALIDATED,
+      status: InvoiceStatus.VALIDATION_PENDING,
     },
     include: {
       vendor: {
@@ -49,7 +49,7 @@ export async function getLowValueQueue(): Promise<LowValueInvoice[]> {
     id: invoice.id,
     invoice_number: invoice.invoice_number,
     vendor_name: invoice.vendor?.name || 'Unknown',
-    amount: Number(invoice.amount),
+    amount: Number(invoice.total_amount),
     currency: invoice.currency,
     invoice_date: invoice.invoice_date,
     status: invoice.status as InvoiceStatus,
@@ -73,7 +73,7 @@ export async function confirmLowValueInvoice(
     throw new Error('Invoice not found');
   }
 
-  if (!isLowValueInvoice(Number(invoice.amount), invoice.status as InvoiceStatus)) {
+  if (!isLowValueInvoice(Number(invoice.total_amount), invoice.status as InvoiceStatus)) {
     throw new Error('Invoice does not qualify for low-value confirmation');
   }
 
@@ -90,10 +90,8 @@ export async function confirmLowValueInvoice(
     data: {
       invoice_id: invoiceId,
       action: 'LOW_VALUE_CONFIRMED',
-      user_id: userId,
-      metadata: {
-        notes: notes || `Low-value invoice confirmed by ${userId}`,
-      },
+      performed_by: userId,
+      note: notes || `Low-value invoice confirmed by ${userId}`,
     },
   });
 }
@@ -115,7 +113,7 @@ export async function rejectLowValueInvoice(
     throw new Error('Invoice not found');
   }
 
-  if (!isLowValueInvoice(Number(invoice.amount), invoice.status as InvoiceStatus)) {
+  if (!isLowValueInvoice(Number(invoice.total_amount), invoice.status as InvoiceStatus)) {
     throw new Error('Invoice does not qualify for low-value confirmation');
   }
 
@@ -123,7 +121,7 @@ export async function rejectLowValueInvoice(
   await prisma.invoice.update({
     where: { id: invoiceId },
     data: {
-      status: InvoiceStatus.EXCEPTION,
+      status: InvoiceStatus.EXCEPTION_FLAGGED,
     },
   });
 
@@ -141,10 +139,8 @@ export async function rejectLowValueInvoice(
     data: {
       invoice_id: invoiceId,
       action: 'LOW_VALUE_REJECTED',
-      user_id: userId,
-      metadata: {
-        rejection_reason: rejectionReason,
-      },
+      performed_by: userId,
+      note: rejectionReason,
     },
   });
 }
@@ -155,28 +151,28 @@ export async function rejectLowValueInvoice(
 export async function getLowValueQueueStats() {
   const total = await prisma.invoice.count({
     where: {
-      amount: {
+      total_amount: {
         lt: LOW_VALUE_THRESHOLD,
       },
-      status: InvoiceStatus.VALIDATED,
+      status: InvoiceStatus.VALIDATION_PENDING,
     },
   });
 
   const totalAmount = await prisma.invoice.aggregate({
     where: {
-      amount: {
+      total_amount: {
         lt: LOW_VALUE_THRESHOLD,
       },
-      status: InvoiceStatus.VALIDATED,
+      status: InvoiceStatus.VALIDATION_PENDING,
     },
     _sum: {
-      amount: true,
+      total_amount: true,
     },
   });
 
   return {
     count: total,
-    total_amount: Number(totalAmount._sum.amount || 0),
+    total_amount: Number(totalAmount._sum.total_amount || 0),
     threshold: LOW_VALUE_THRESHOLD,
   };
 }

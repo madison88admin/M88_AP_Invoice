@@ -4,9 +4,23 @@ import { getVendorSuggestions } from '../services/vendorMatchingService';
 import prisma from '../config/database';
 import { UserRole } from '@ap-invoice/shared';
 
-const router = Router();
+const router: Router = Router();
 
 router.use(authenticate);
+
+// IMPORTANT: /suggestions must come BEFORE /:id to avoid route collision
+router.get('/suggestions', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { search, limit } = req.query;
+    const suggestions = await getVendorSuggestions(
+      search as string || '',
+      limit ? parseInt(limit as string) : 5
+    );
+    res.json(suggestions);
+  } catch (error) {
+    next(error);
+  }
+});
 
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -33,7 +47,7 @@ router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
   }
 });
 
-router.post('/', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const vendor = await prisma.vendor.create({
       data: req.body,
@@ -44,26 +58,13 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
   }
 });
 
-router.patch('/:id', async (req: Request, res: Response, next: NextFunction) => {
+router.patch('/:id', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const vendor = await prisma.vendor.update({
       where: { id: req.params.id },
       data: req.body,
     });
     res.json(vendor);
-  } catch (error) {
-    next(error);
-  }
-});
-
-router.get('/suggestions', async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const { search, limit } = req.query;
-    const suggestions = await getVendorSuggestions(
-      search as string || '',
-      limit ? parseInt(limit as string) : 5
-    );
-    res.json(suggestions);
   } catch (error) {
     next(error);
   }

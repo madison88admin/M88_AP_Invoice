@@ -28,20 +28,20 @@ async function calculateAveragePaymentDays(vendorId: string): Promise<number> {
     where: {
       vendor_id: vendorId,
       status: InvoiceStatus.PAID,
-      invoice_date: { not: null },
-      posted_at: { not: null },
+      invoice_date: { not: undefined },
+      qb_posted_at: { not: undefined },
     },
     select: {
       invoice_date: true,
-      posted_at: true,
+      qb_posted_at: true,
     },
   });
 
   if (paidInvoices.length === 0) return 0;
 
   const totalDays = paidInvoices.reduce((sum: number, invoice: any) => {
-    if (!invoice.invoice_date || !invoice.posted_at) return sum;
-    const days = Math.floor((invoice.posted_at.getTime() - invoice.invoice_date.getTime()) / (1000 * 60 * 60 * 24));
+    if (!invoice.invoice_date || !invoice.qb_posted_at) return sum;
+    const days = Math.floor((invoice.qb_posted_at.getTime() - invoice.invoice_date.getTime()) / (1000 * 60 * 60 * 24));
     return sum + days;
   }, 0);
 
@@ -56,17 +56,17 @@ async function getLastPaymentDate(vendorId: string): Promise<Date | undefined> {
     where: {
       vendor_id: vendorId,
       status: InvoiceStatus.PAID,
-      posted_at: { not: null },
+      qb_posted_at: { not: null },
     },
     orderBy: {
-      posted_at: 'desc',
+      qb_posted_at: 'desc',
     },
     select: {
-      posted_at: true,
+      qb_posted_at: true,
     },
   });
 
-  return lastPayment?.posted_at || undefined;
+  return lastPayment?.qb_posted_at || undefined;
 }
 
 /**
@@ -78,7 +78,7 @@ export async function generateSupplierBalanceReport(): Promise<SupplierBalanceRe
       invoices: {
         where: {
           status: {
-            in: [InvoiceStatus.APPROVED, InvoiceStatus.POSTED, InvoiceStatus.PAYMENT_INITIATED, InvoiceStatus.PAID],
+            in: [InvoiceStatus.APPROVED, InvoiceStatus.POSTED_TO_QB, InvoiceStatus.PAYMENT_SCHEDULED, InvoiceStatus.PAID],
           },
         },
       },
@@ -93,7 +93,7 @@ export async function generateSupplierBalanceReport(): Promise<SupplierBalanceRe
     const paidInvoices = invoices.filter((inv: any) => inv.status === InvoiceStatus.PAID);
     const pendingInvoices = invoices.filter((inv: any) => inv.status !== InvoiceStatus.PAID);
     
-    const outstandingBalance = pendingInvoices.reduce((sum: number, inv: any) => sum + Number(inv.amount), 0);
+    const outstandingBalance = pendingInvoices.reduce((sum: number, inv: any) => sum + Number(inv.total_amount), 0);
     const averagePaymentDays = await calculateAveragePaymentDays(vendor.id);
     const lastPaymentDate = await getLastPaymentDate(vendor.id);
 
@@ -130,7 +130,7 @@ export async function getSupplierBalance(vendorId: string): Promise<SupplierBala
       invoices: {
         where: {
           status: {
-            in: [InvoiceStatus.APPROVED, InvoiceStatus.POSTED, InvoiceStatus.PAYMENT_INITIATED, InvoiceStatus.PAID],
+            in: [InvoiceStatus.APPROVED, InvoiceStatus.POSTED_TO_QB, InvoiceStatus.PAYMENT_SCHEDULED, InvoiceStatus.PAID],
           },
         },
       },
@@ -145,7 +145,7 @@ export async function getSupplierBalance(vendorId: string): Promise<SupplierBala
   const paidInvoices = invoices.filter((inv: any) => inv.status === InvoiceStatus.PAID);
   const pendingInvoices = invoices.filter((inv: any) => inv.status !== InvoiceStatus.PAID);
   
-  const outstandingBalance = pendingInvoices.reduce((sum: number, inv: any) => sum + Number(inv.amount), 0);
+  const outstandingBalance = pendingInvoices.reduce((sum: number, inv: any) => sum + Number(inv.total_amount), 0);
   const averagePaymentDays = await calculateAveragePaymentDays(vendor.id);
   const lastPaymentDate = await getLastPaymentDate(vendor.id);
 

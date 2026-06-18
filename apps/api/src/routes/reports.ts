@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { authenticate } from '../middleware/auth';
 import {
   getInvoiceVolume,
   getPaymentStatus,
@@ -7,7 +8,9 @@ import {
   getKPI,
 } from '../controllers/reports';
 
-const router = Router();
+const router: Router = Router();
+
+router.use(authenticate);
 
 router.get('/invoice-volume', getInvoiceVolume);
 router.get('/payment-status', getPaymentStatus);

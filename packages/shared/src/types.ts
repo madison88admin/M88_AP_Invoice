@@ -1,10 +1,23 @@
+// ─── ENUMS (aligned with BRD v5.0 + Prisma schema) ───
+
 export enum InvoiceType {
-  INV = 'INV',
-  PI = 'PI',
-  CI = 'CI',
-  SI = 'SI',
-  PREPAID = 'PREPAID',
+  INVOICE = 'INVOICE',
+  PROFORMA = 'PROFORMA',
+  COMMERCIAL = 'COMMERCIAL',
+  SALES = 'SALES',
   STATEMENT = 'STATEMENT',
+  PREPAID = 'PREPAID',
+  PROTO_SAMPLE = 'PROTO_SAMPLE',
+}
+
+export enum InvoiceTemplateType {
+  PRO_FORMA = 'PRO_FORMA',
+  INVOICE = 'INVOICE',
+  COMMERCIAL_INVOICE = 'COMMERCIAL_INVOICE',
+  SALES_INVOICE = 'SALES_INVOICE',
+  PROTO_SAMPLE_INVOICE = 'PROTO_SAMPLE_INVOICE',
+  PREPAID_INVOICE = 'PREPAID_INVOICE',
+  NO_DATA = 'NO_DATA',
 }
 
 export enum InvoiceCategory {
@@ -13,8 +26,11 @@ export enum InvoiceCategory {
   SAMPLE_CHARGES = 'SAMPLE_CHARGES',
   SHIPPING_FREIGHT = 'SHIPPING_FREIGHT',
   LAB_TESTING = 'LAB_TESTING',
+  FACTORY = 'FACTORY',
+  FACTORY_AUDIT = 'FACTORY_AUDIT',
   PROFESSIONAL_FEE = 'PROFESSIONAL_FEE',
-  OTHER = 'OTHER',
+  SMS = 'SMS',
+  CONSULTATION = 'CONSULTATION',
 }
 
 export enum OrderType {
@@ -24,16 +40,78 @@ export enum OrderType {
 }
 
 export enum InvoiceStatus {
-  PENDING_VALIDATION = 'PENDING_VALIDATION',
-  VALIDATED = 'VALIDATED',
-  EXCEPTION = 'EXCEPTION',
-  PENDING_APPROVAL = 'PENDING_APPROVAL',
+  RECEIVED = 'RECEIVED',
+  OCR_PROCESSING = 'OCR_PROCESSING',
+  VALIDATION_PENDING = 'VALIDATION_PENDING',
+  EXCEPTION_FLAGGED = 'EXCEPTION_FLAGGED',
+  PENDING_COORDINATOR = 'PENDING_COORDINATOR',
+  PENDING_MANAGER = 'PENDING_MANAGER',
+  PENDING_MLO_ACCOUNT_HOLDER = 'PENDING_MLO_ACCOUNT_HOLDER',
+  PENDING_MLO_PLANNING_MANAGER = 'PENDING_MLO_PLANNING_MANAGER',
+  PENDING_SR_MANAGER = 'PENDING_SR_MANAGER',
+  PENDING_POLLY = 'PENDING_POLLY',
+  PENDING_ACCOUNTING = 'PENDING_ACCOUNTING',
   APPROVED = 'APPROVED',
-  REJECTED = 'REJECTED',
-  POSTED = 'POSTED',
-  PAYMENT_INITIATED = 'PAYMENT_INITIATED',
+  POSTED_TO_QB = 'POSTED_TO_QB',
+  PAYMENT_SCHEDULED = 'PAYMENT_SCHEDULED',
   PAID = 'PAID',
-  PI_PENDING_CI = 'PI_PENDING_CI',
+  REJECTED = 'REJECTED',
+  ON_HOLD = 'ON_HOLD',
+}
+
+export enum SignatoryRole {
+  COORDINATOR = 'COORDINATOR',
+  PURCHASING_MANAGER = 'PURCHASING_MANAGER',
+  MLO_ACCOUNT_HOLDER = 'MLO_ACCOUNT_HOLDER',
+  MLO_PLANNING_MANAGER = 'MLO_PLANNING_MANAGER',
+  SR_MANAGER_GLOBAL_PRODUCTION = 'SR_MANAGER_GLOBAL_PRODUCTION',
+  MS_POLLY = 'MS_POLLY',
+  ACCOUNTING_REVIEWER = 'ACCOUNTING_REVIEWER',
+}
+
+export enum SignatureType {
+  WET = 'WET',
+  DIGITAL = 'DIGITAL',
+  COMPUTER_GENERATED = 'COMPUTER_GENERATED',
+}
+
+export enum ExceptionReason {
+  AMOUNT_MISMATCH = 'AMOUNT_MISMATCH',
+  VENDOR_NOT_FOUND = 'VENDOR_NOT_FOUND',
+  DUPLICATE_INVOICE = 'DUPLICATE_INVOICE',
+  MISSING_SIGNATURE = 'MISSING_SIGNATURE',
+  MISSING_BANK_INFO = 'MISSING_BANK_INFO',
+  BANK_DETAIL_MISMATCH = 'BANK_DETAIL_MISMATCH',
+  OCR_LOW_CONFIDENCE = 'OCR_LOW_CONFIDENCE',
+  LATE_SUBMISSION = 'LATE_SUBMISSION',
+  HANDWRITTEN_DOCUMENT = 'HANDWRITTEN_DOCUMENT',
+  MISSING_PO_REFERENCE = 'MISSING_PO_REFERENCE',
+  MULTI_PO_CONSOLIDATED = 'MULTI_PO_CONSOLIDATED',
+}
+
+export enum ExceptionStatus {
+  PENDING = 'PENDING',
+  RESOLVED = 'RESOLVED',
+  WAIVED = 'WAIVED',
+}
+
+export enum BillToEntity {
+  MADISON_88_LTD = 'MADISON_88_LTD',
+  MADISON_88_HK_LIMITED = 'MADISON_88_HK_LIMITED',
+}
+
+export enum InvoiceSource {
+  EMAIL = 'EMAIL',
+  MANUAL_UPLOAD = 'MANUAL_UPLOAD',
+  PORTAL = 'PORTAL',
+}
+
+export enum PaymentBatchStatus {
+  DRAFT = 'DRAFT',
+  PENDING_CFO = 'PENDING_CFO',
+  APPROVED = 'APPROVED',
+  PROCESSED = 'PROCESSED',
+  CANCELLED = 'CANCELLED',
 }
 
 export enum PaymentTerms {
@@ -54,61 +132,6 @@ export enum PaymentTerms {
   OTHER = 'OTHER',
 }
 
-export enum SignatureRole {
-  COORDINATOR = 'COORDINATOR',
-  MANAGER = 'MANAGER',
-  PLANNING_MANAGER = 'PLANNING_MANAGER',
-  LINDSEY = 'LINDSEY',
-  POLLY = 'POLLY',
-}
-
-export enum ApprovalStage {
-  PURCHASING_COORDINATOR = 'PURCHASING_COORDINATOR',
-  PURCHASING_MANAGER = 'PURCHASING_MANAGER',
-  PLANNING_MANAGER = 'PLANNING_MANAGER',
-  LINDSEY = 'LINDSEY',
-  POLLY = 'POLLY',
-  ACCOUNTING = 'ACCOUNTING',
-}
-
-export enum ExceptionReason {
-  INVALID_BILL_TO = 'INVALID_BILL_TO',
-  BANK_MISMATCH = 'BANK_MISMATCH',
-  MISSING_BANK_INFO = 'MISSING_BANK_INFO',
-  MISSING_SIGNATURE = 'MISSING_SIGNATURE',
-  DUPLICATE_INVOICE = 'DUPLICATE_INVOICE',
-  VENDOR_NOT_FOUND = 'VENDOR_NOT_FOUND',
-  INVALID_TEMPLATE = 'INVALID_TEMPLATE',
-  LATE_SUBMISSION = 'LATE_SUBMISSION',
-  AMOUNT_MISMATCH = 'AMOUNT_MISMATCH',
-  URGENT_PAYMENT = 'URGENT_PAYMENT',
-  HANDWRITTEN_DOCUMENT = 'HANDWRITTEN_DOCUMENT',
-  MISSING_ADDRESS = 'MISSING_ADDRESS',
-  MULTIPLE_BANK_ACCOUNTS = 'MULTIPLE_BANK_ACCOUNTS',
-  INVALID_INVOICE_NUMBER = 'INVALID_INVOICE_NUMBER',
-  INVALID_INVOICE_DATE = 'INVALID_INVOICE_DATE',
-  INVALID_DUE_DATE = 'INVALID_DUE_DATE',
-  INVALID_AMOUNT = 'INVALID_AMOUNT',
-  INVALID_CURRENCY = 'INVALID_CURRENCY',
-  INVALID_PAYMENT_TERMS = 'INVALID_PAYMENT_TERMS',
-  INVALID_INCOTERM = 'INVALID_INCOTERM',
-  ENTITY_MISMATCH = 'ENTITY_MISMATCH',
-}
-
-export enum MadisonEntity {
-  MADISON_88_LTD = 'MADISON_88_LTD',
-  MADISON_88_LIMITED = 'MADISON_88_LIMITED',
-  MADISON_88_NEW_YORK = 'MADISON_88_NEW_YORK',
-  MADISON_88_HONG_KONG_LIMITED = 'MADISON_88_HONG_KONG_LIMITED',
-}
-
-export enum PaymentBatchStatus {
-  DRAFT = 'DRAFT',
-  PENDING_CFO = 'PENDING_CFO',
-  APPROVED = 'APPROVED',
-  PROCESSED = 'PROCESSED',
-}
-
 export enum UserRole {
   ADMIN = 'ADMIN',
   ACCOUNTING_ASSOCIATE = 'ACCOUNTING_ASSOCIATE',
@@ -116,65 +139,70 @@ export enum UserRole {
   PURCHASING_COORDINATOR = 'PURCHASING_COORDINATOR',
   PURCHASING_MANAGER = 'PURCHASING_MANAGER',
   PLANNING_MANAGER = 'PLANNING_MANAGER',
-  LINDSEY = 'LINDSEY',
-  POLLY = 'POLLY',
+  SR_MANAGER_GLOBAL_PRODUCTION = 'SR_MANAGER_GLOBAL_PRODUCTION',
+  MS_POLLY = 'MS_POLLY',
   CFO = 'CFO',
   PRESIDENT = 'PRESIDENT',
   IT_ADMIN = 'IT_ADMIN',
 }
 
+// ─── INTERFACES ───
+
 export interface Invoice {
   id: string;
   invoice_number: string;
-  invoice_date: Date;
-  invoice_due_date?: Date;
+  invoice_date?: Date;
   invoice_received_date?: Date;
+  due_date?: Date;
   date_range_start?: Date;
   date_range_end?: Date;
-  invoice_version?: string;
-  invoice_version_notes?: string;
   parent_invoice_id?: string;
-  vendor_id: string;
+  vendor_id?: string;
   vendor?: Vendor;
-  amount: number;
-  amount_original?: number;
-  currency_original?: string;
-  exchange_rate_to_usd?: number;
+  vendor_name_raw: string;
+  total_amount: number;
+  subtotal?: number;
   currency: string;
-  payment_terms: PaymentTerms;
-  payment_term_split?: string;
+  invoice_currency_original?: string;
+  exchange_rate_to_usd?: number;
+  payment_terms?: string;
+  payment_penalty_rate?: number;
   incoterm?: string;
-  bank_charges: number;
-  shipping_charges: number;
-  customs_charges: number;
-  documentation_charges: number;
-  surcharges: number;
+  bank_charges?: number;
+  freight_charges?: number;
+  additional_charges?: number;
   invoice_type: InvoiceType;
-  category: InvoiceCategory;
+  invoice_template_type?: InvoiceTemplateType;
+  category?: InvoiceCategory;
   order_type?: OrderType;
   brand?: string;
+  brand_code?: string;
   season?: string;
   mpo_number?: string;
-  po_number?: string;
-  bill_to_name: string;
-  bill_to_address: string;
-  bill_to_entity: MadisonEntity;
-  final_approver_name?: string;
-  final_approval_date?: Date;
-  is_handwritten: boolean;
-  is_priority: boolean;
+  customer_po_number?: string;
+  bill_to_entity: BillToEntity;
+  approval_tier?: number;
+  current_approver_role?: string;
+  priority_flag: boolean;
   priority_pay_date?: Date;
-  payment_consolidation_note?: string;
+  is_urgent: boolean;
+  is_duplicate: boolean;
+  ocr_confidence_score?: number;
+  is_handwritten: boolean;
+  exception_reasons: ExceptionReason[];
   qb_memo?: string;
   qb_account_class?: string;
-  qb_invoice_id?: string;
-  sharepoint_url?: string;
+  qb_posted_at?: Date;
+  sharepoint_folder_url?: string;
+  sharepoint_filed_at?: Date;
+  source: InvoiceSource;
+  raw_file_url?: string;
   status: InvoiceStatus;
-  ocr_raw_data: any;
   signatures?: Signature[];
   audit_logs?: AuditLog[];
   exceptions?: Exception[];
   stage_timestamps?: StageTimestamp[];
+  payments?: Payment[];
   created_at: Date;
   updated_at: Date;
 }
@@ -183,47 +211,44 @@ export interface Vendor {
   id: string;
   name: string;
   name_aliases: string[];
-  expected_template: InvoiceType;
+  beneficiary_name?: string;
   supplier_location?: string;
+  invoice_template_type: InvoiceTemplateType;
   bank_name?: string;
   bank_address?: string;
-  account_usd?: string;
-  account_hkd?: string;
-  account_eur?: string;
+  account_number?: string;
+  swift_code?: string;
   iban?: string;
   sort_code?: string;
   aba_routing_number?: string;
-  swift_code?: string;
-  bank_code?: string;
   intermediary_bank_name?: string;
   intermediary_bank_swift?: string;
-  has_multiple_accounts: boolean;
-  default_account_id?: string;
-  vat_number?: string;
-  eori_number?: string;
   gstin_number?: string;
   bir_tin?: string;
-  payment_penalty_rate?: number;
-  currency: string;
+  vat_number?: string;
+  eori_number?: string;
+  is_active: boolean;
+  onboarded_by?: string;
+  bank_verified_at?: Date;
   invoices?: Invoice[];
 }
 
 export interface Signature {
   id: string;
   invoice_id: string;
-  signer_name: string;
+  signatory_name: string;
+  signatory_role: SignatoryRole;
   signed_at?: Date;
-  role: SignatureRole;
-  is_digital: boolean;
-  ocr_detected: boolean;
+  signature_type: SignatureType;
+  created_at?: Date;
 }
 
 export interface AuditLog {
   id: string;
-  invoice_id: string;
-  user_id?: string;
+  invoice_id?: string;
   action: string;
-  metadata?: any;
+  performed_by?: string;
+  note?: string;
   created_at: Date;
 }
 
@@ -231,7 +256,8 @@ export interface Exception {
   id: string;
   invoice_id: string;
   reason: ExceptionReason;
-  detail: string;
+  detail?: string;
+  status: ExceptionStatus;
   resolved_by?: string;
   resolution_notes?: string;
   resolved_at?: Date;
@@ -241,25 +267,42 @@ export interface Exception {
 export interface StageTimestamp {
   id: string;
   invoice_id: string;
-  stage: ApprovalStage;
+  stage: InvoiceStatus;
   entered_at: Date;
   exited_at?: Date;
-  duration_hours?: number;
   sla_hours: number;
   is_breached: boolean;
 }
 
+export interface Payment {
+  id: string;
+  invoice_id: string;
+  vendor_id?: string;
+  amount: number;
+  currency: string;
+  payment_date: Date;
+  status: string;
+  batch_id?: string;
+  paid_at?: Date;
+  reference?: string;
+  created_at?: Date;
+  updated_at?: Date;
+}
+
 export interface PaymentBatch {
   id: string;
-  invoice_ids: string[];
+  batch_number: string;
   total_amount: number;
+  payment_count: number;
   currency: string;
-  week_due_date?: Date;
-  initiated_by: string;
-  cfo_approved_by?: string;
   status: PaymentBatchStatus;
-  confirmation_url?: string;
-  approved_at?: Date;
+  created_by?: string;
+  processed_by?: string;
+  processed_at?: Date;
+  cancelled_by?: string;
+  cancelled_at?: Date;
+  cancellation_reason?: string;
+  payments: Payment[];
   created_at: Date;
 }
 
@@ -277,51 +320,49 @@ export interface OCRResult {
   invoice_received_date?: Date;
   date_range_start?: Date;
   date_range_end?: Date;
-  invoice_version?: string;
-  invoice_version_notes?: string;
   vendor_name: string;
-  amount: number;
-  amount_original?: number;
-  currency_original?: string;
-  exchange_rate_to_usd?: number;
+  total_amount: number;
+  subtotal?: number;
   currency: string;
-  payment_terms: string;
-  payment_term_split?: string;
+  invoice_currency_original?: string;
+  exchange_rate_to_usd?: number;
+  payment_terms?: string;
   incoterm?: string;
   bank_charges?: number;
-  shipping_charges?: number;
-  customs_charges?: number;
-  documentation_charges?: number;
-  surcharges?: number;
-  category: InvoiceCategory;
+  freight_charges?: number;
+  additional_charges?: number;
+  invoice_type: InvoiceType;
+  invoice_template_type?: InvoiceTemplateType;
+  category?: InvoiceCategory;
   order_type?: OrderType;
   brand?: string;
+  brand_code?: string;
   season?: string;
   mpo_number?: string;
-  po_number?: string;
-  bill_to_name: string;
-  bill_to_address: string;
-  bill_to_entity?: MadisonEntity;
+  customer_po_number?: string;
+  bill_to_entity?: BillToEntity;
   is_handwritten?: boolean;
-  is_priority?: boolean;
+  is_urgent?: boolean;
   priority_pay_date?: Date;
-  payment_consolidation_note?: string;
+  ocr_confidence_score?: number;
   qb_memo?: string;
   qb_account_class?: string;
   bank_info: {
     bank_name: string;
     swift_code: string;
-    account_usd: string;
-    account_hkd?: string;
-    account_eur?: string;
+    account_number: string;
     bank_address?: string;
+    iban?: string;
+    sort_code?: string;
+    aba_routing_number?: string;
+    intermediary_bank_name?: string;
+    intermediary_bank_swift?: string;
   };
-  invoice_type: InvoiceType;
   signatures: Array<{
-    signer_name: string;
+    signatory_name: string;
     signed_at?: Date;
-    role: SignatureRole;
-    is_digital?: boolean;
+    signatory_role: SignatoryRole;
+    signature_type: SignatureType;
   }>;
   raw_data: any;
 }

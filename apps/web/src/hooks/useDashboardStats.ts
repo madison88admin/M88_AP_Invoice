@@ -6,7 +6,7 @@ interface DashboardStats {
   awaitingApproval: number;
   urgentPayments: number;
   handwrittenDocs: number;
-  nonUsdInvoices: number;
+  slaAtRisk: number;
   paidThisWeek: number;
   totalAmount: number;
   exceptions: number;
@@ -14,7 +14,7 @@ interface DashboardStats {
   awaitingApprovalTrend: number;
   urgentPaymentsTrend: number;
   handwrittenDocsTrend: number;
-  nonUsdInvoicesTrend: number;
+  slaAtRiskTrend: number;
   paidThisWeekTrend: number;
   totalAmountTrend: number;
   exceptionsTrend: number;
@@ -26,7 +26,7 @@ const mockDashboardStats: DashboardStats = {
   awaitingApproval: 8,
   urgentPayments: 5,
   handwrittenDocs: 3,
-  nonUsdInvoices: 7,
+  slaAtRisk: 4,
   paidThisWeek: 24,
   totalAmount: 125000,
   exceptions: 2,
@@ -34,7 +34,7 @@ const mockDashboardStats: DashboardStats = {
   awaitingApprovalTrend: 5,
   urgentPaymentsTrend: -3,
   handwrittenDocsTrend: 8,
-  nonUsdInvoicesTrend: 15,
+  slaAtRiskTrend: 5,
   paidThisWeekTrend: 22,
   totalAmountTrend: 18,
   exceptionsTrend: -7,
@@ -95,7 +95,10 @@ export function useDashboardStats() {
           return dueDate <= threeDaysFromNow && i.status !== 'paid';
         }).length || 0,
         handwrittenDocs: currentData?.filter(i => i.is_handwritten).length || 0,
-        nonUsdInvoices: currentData?.filter(i => i.currency !== 'USD').length || 0,
+        slaAtRisk: currentData?.filter(i => {
+          // Mock logic for SLA at risk - will need real implementation with stage_timestamps
+          return i.status === 'pending_validation' || i.status === 'awaiting_approval';
+        }).length || 0,
         paidThisWeek: currentData?.filter(i => {
           if (!i.created_at) return false;
           const createdAt = new Date(i.created_at);
@@ -117,7 +120,9 @@ export function useDashboardStats() {
           return dueDate <= threeDaysFromNow && i.status !== 'paid';
         }).length || 0,
         handwrittenDocs: previousData?.filter(i => i.is_handwritten).length || 0,
-        nonUsdInvoices: previousData?.filter(i => i.currency !== 'USD').length || 0,
+        slaAtRisk: previousData?.filter(i => {
+          return i.status === 'pending_validation' || i.status === 'awaiting_approval';
+        }).length || 0,
         paidThisWeek: previousData?.filter(i => i.status === 'paid').length || 0,
         totalAmount: previousData?.reduce((sum, i) => sum + (Number(i.amount) || 0), 0) || 0,
         exceptions: previousData?.filter(i => i.status === 'exception').length || 0,
@@ -135,7 +140,7 @@ export function useDashboardStats() {
         awaitingApprovalTrend: calculateTrend(currentStats.awaitingApproval, previousStats.awaitingApproval),
         urgentPaymentsTrend: calculateTrend(currentStats.urgentPayments, previousStats.urgentPayments),
         handwrittenDocsTrend: calculateTrend(currentStats.handwrittenDocs, previousStats.handwrittenDocs),
-        nonUsdInvoicesTrend: calculateTrend(currentStats.nonUsdInvoices, previousStats.nonUsdInvoices),
+        slaAtRiskTrend: calculateTrend(currentStats.slaAtRisk, previousStats.slaAtRisk),
         paidThisWeekTrend: calculateTrend(currentStats.paidThisWeek, previousStats.paidThisWeek),
         totalAmountTrend: calculateTrend(currentStats.totalAmount, previousStats.totalAmount),
         exceptionsTrend: calculateTrend(currentStats.exceptions, previousStats.exceptions),

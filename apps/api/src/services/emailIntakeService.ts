@@ -2,10 +2,11 @@ import { Client } from '@microsoft/microsoft-graph-client';
 import { ClientSecretCredential } from '@azure/identity';
 import { analyzeInvoice } from './ocrService';
 import { matchVendor } from './vendorMatchingService';
-import { InvoiceStatus, PaymentTerms, InvoiceType, InvoiceCategory, ExceptionReason, MadisonEntity } from '@ap-invoice/shared';
+import { validateInvoice } from './validationService';
+import { InvoiceStatus, InvoiceType, InvoiceSource, SignatureType, ExceptionReason, determineApprovalTier } from '@ap-invoice/shared';
 import prisma from '../config/database';
 import { logger } from '../utils/logger';
-import { InvoiceType as PrismaInvoiceType, InvoiceStatus as PrismaInvoiceStatus, ExceptionReason as PrismaExceptionReason, MadisonEntity as PrismaMadisonEntity } from '@prisma/client';
+import { AppError } from '../middleware/errorHandler';
 
 const clientId = process.env.GRAPH_API_CLIENT_ID || '';
 const clientSecret = process.env.GRAPH_API_CLIENT_SECRET || '';
@@ -34,10 +35,9 @@ export interface EmailMessage {
 
 export async function getGraphClient(): Promise<Client> {
   if (!clientId || !clientSecret || !tenantId) {
-    throw new Error('Microsoft Graph API credentials not configured');
+    throw new AppError('Microsoft Graph API credentials not configured', 500);
   }
 
-  // Use ClientSecretCredential for service-to-service authentication
   const credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
 
   const client = Client.init({
@@ -83,14 +83,12 @@ async function processEmailMessage(message: any): Promise<void> {
   try {
     const client = await getGraphClient();
     
-    // Get attachments
     const attachments = await client
       .api(`/messages/${message.id}/attachments`)
       .get();
 
     if (attachments.value && attachments.value.length > 0) {
       for (const attachment of attachments.value) {
-        // Process only PDF and image files
         if (isInvoiceAttachment(attachment)) {
           await processAttachment(attachment, message);
         }
@@ -122,67 +120,68 @@ async function processAttachment(attachment: any, message: any): Promise<void> {
     const ocrResult = await analyzeInvoice(buffer, attachment.contentType);
     
     // Match vendor
-    let vendorId: string;
+    let vendorId: string | undefined;
     try {
       const vendorMatch = await matchVendor(ocrResult.vendor_name);
       vendorId = vendorMatch.vendor_id;
     } catch (error) {
-      // If vendor not found, create exception and continue
       logger.warn(`No vendor match found for ${ocrResult.vendor_name}, creating exception`);
-      vendorId = ''; // Will be filled manually
+      vendorId = undefined;
     }
-    
-    // Create invoice record with all fields from updated schema
+
+    // Determine approval tier from amount
+    const tier = determineApprovalTier(ocrResult.total_amount || 0);
+
+    // Generate QB memo: brand_season_ordertype_MPO_approvaldate
+    const memoParts = [
+      ocrResult.brand_code || ocrResult.brand || '',
+      ocrResult.season || '',
+      ocrResult.order_type || '',
+      ocrResult.mpo_number || '',
+    ].filter(Boolean);
+    const qbMemo = memoParts.length > 0 ? memoParts.join('_') : undefined;
+
+    // Create invoice record with BRD v5.0 schema fields
     const invoice = await prisma.invoice.create({
       data: {
         invoice_number: ocrResult.invoice_number,
         invoice_date: ocrResult.invoice_date,
-        invoice_due_date: ocrResult.due_date,
+        due_date: ocrResult.due_date ? new Date(ocrResult.due_date) : null,
         invoice_received_date: new Date(),
-        vendor_id: vendorId || 'pending', // Use placeholder if no match
-        amount: ocrResult.amount,
+        vendor_id: vendorId as any,
+        vendor_name_raw: ocrResult.vendor_name,
+        total_amount: ocrResult.total_amount,
+        subtotal: ocrResult.subtotal || undefined,
         currency: ocrResult.currency,
+        invoice_currency_original: ocrResult.invoice_currency_original,
+        exchange_rate_to_usd: ocrResult.exchange_rate_to_usd ? ocrResult.exchange_rate_to_usd : undefined,
         incoterm: ocrResult.incoterm,
         bank_charges: ocrResult.bank_charges || 0,
-        shipping_charges: ocrResult.shipping_charges || 0,
-        customs_charges: ocrResult.customs_charges || 0,
-        documentation_charges: ocrResult.documentation_charges || 0,
-        surcharges: ocrResult.surcharges || 0,
-        invoice_type: ocrResult.invoice_type as PrismaInvoiceType,
-        category: ocrResult.category,
-        order_type: (ocrResult as any).order_type,
-        brand: (ocrResult as any).brand,
-        season: (ocrResult as any).season,
-        mpo_number: (ocrResult as any).mpo_number,
-        po_number: (ocrResult as any).po_number,
-        bill_to_name: ocrResult.bill_to_name,
-        bill_to_address: ocrResult.bill_to_address,
-        bill_to_entity: (ocrResult.bill_to_entity || MadisonEntity.MADISON_88_LTD) as PrismaMadisonEntity,
-        is_handwritten: (ocrResult as any).is_handwritten || false,
-        is_priority: (ocrResult as any).is_priority || false,
-        priority_pay_date: (ocrResult as any).priority_pay_date ? new Date((ocrResult as any).priority_pay_date) : null,
-        payment_consolidation_note: (ocrResult as any).payment_consolidation_note,
-        qb_memo: (ocrResult as any).qb_memo,
-        qb_account_class: (ocrResult as any).qb_account_class,
-        status: (vendorId ? InvoiceStatus.PENDING_VALIDATION : InvoiceStatus.EXCEPTION) as PrismaInvoiceStatus,
-        ocr_raw_data: {
-          ...ocrResult,
-          email_source: {
-            from: message.from?.emailAddress?.address,
-            subject: message.subject,
-            received_date: message.receivedDateTime,
-          },
-        } as any,
-        // Optional fields
+        freight_charges: ocrResult.freight_charges || 0,
+        additional_charges: ocrResult.additional_charges || 0,
+        invoice_type: (ocrResult.invoice_type || InvoiceType.INVOICE) as any,
+        invoice_template_type: (ocrResult as any).invoice_template_type as any,
+        order_type: ocrResult.order_type as any,
+        brand: ocrResult.brand,
+        brand_code: ocrResult.brand_code,
+        season: ocrResult.season,
+        mpo_number: ocrResult.mpo_number,
+        customer_po_number: ocrResult.customer_po_number,
+        bill_to_entity: (ocrResult.bill_to_entity || 'MADISON_88_LTD') as any,
+        is_handwritten: ocrResult.is_handwritten || false,
+        is_urgent: ocrResult.is_urgent || false,
+        priority_flag: ocrResult.is_urgent || false,
+        priority_pay_date: ocrResult.priority_pay_date ? new Date(ocrResult.priority_pay_date) : null,
+        is_duplicate: false,
+        ocr_confidence_score: ocrResult.ocr_confidence_score || undefined,
+        qb_memo: qbMemo,
+        qb_account_class: ocrResult.qb_account_class,
+        status: (vendorId ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,
+        source: InvoiceSource.EMAIL as any,
+        approval_tier: tier,
+        payment_terms: ocrResult.payment_terms,
         ...(ocrResult.date_range_start && { date_range_start: new Date(ocrResult.date_range_start) }),
         ...(ocrResult.date_range_end && { date_range_end: new Date(ocrResult.date_range_end) }),
-        ...(ocrResult.invoice_version && { invoice_version: ocrResult.invoice_version }),
-        ...(ocrResult.invoice_version_notes && { invoice_version_notes: ocrResult.invoice_version_notes }),
-        ...(ocrResult.amount_original && { amount_original: ocrResult.amount_original }),
-        ...(ocrResult.currency_original && { currency_original: ocrResult.currency_original }),
-        ...(ocrResult.exchange_rate_to_usd && { exchange_rate_to_usd: ocrResult.exchange_rate_to_usd }),
-        ...(ocrResult.payment_terms && { payment_terms: ocrResult.payment_terms }),
-        ...(ocrResult.payment_term_split && { payment_term_split: ocrResult.payment_term_split }),
       },
       include: {
         vendor: true,
@@ -195,12 +194,11 @@ async function processAttachment(attachment: any, message: any): Promise<void> {
         await prisma.signature.create({
           data: {
             invoice_id: invoice.id,
-            signer_name: sig.signer_name,
+            signatory_name: sig.signatory_name,
             signed_at: sig.signed_at ? new Date(sig.signed_at) : null,
-            role: sig.role as any,
-            ocr_detected: true,
-            ...(sig.is_digital && { is_digital: sig.is_digital }),
-          } as any,
+            signatory_role: sig.signatory_role as any,
+            signature_type: (sig.signature_type || SignatureType.DIGITAL) as any,
+          },
         });
       }
     }
@@ -210,11 +208,8 @@ async function processAttachment(attachment: any, message: any): Promise<void> {
       data: {
         invoice_id: invoice.id,
         action: 'EMAIL_INTAKE',
-        metadata: {
-          email_from: message.from?.emailAddress?.address,
-          email_subject: message.subject,
-          attachment_name: attachment.name,
-        },
+        performed_by: 'email_poller',
+        note: `Email intake from ${message.from?.emailAddress?.address}: ${attachment.name}`,
       },
     });
     
@@ -223,12 +218,26 @@ async function processAttachment(attachment: any, message: any): Promise<void> {
       await prisma.exception.create({
         data: {
           invoice_id: invoice.id,
-          reason: ExceptionReason.VENDOR_NOT_FOUND as PrismaExceptionReason,
+          reason: ExceptionReason.VENDOR_NOT_FOUND as any,
           detail: `No vendor match found for "${ocrResult.vendor_name}". Manual vendor assignment required.`,
         },
       });
     }
     
+    // Auto-trigger validation if invoice was created in RECEIVED status (vendor matched)
+    if (vendorId && invoice.status === InvoiceStatus.RECEIVED as any) {
+      try {
+        const validationResult = await validateInvoice(invoice.id);
+        logger.info(
+          `Auto-validation completed for ${invoice.invoice_number}: ` +
+          `${validationResult.passed ? 'PASSED' : 'FAILED'} ` +
+          `(${validationResult.exceptions.length} exceptions)`
+        );
+      } catch (validationError) {
+        logger.error(`Auto-validation failed for ${invoice.invoice_number}:`, validationError);
+      }
+    }
+
     logger.info(`Successfully processed invoice ${invoice.invoice_number} from email`);
     
   } catch (error) {

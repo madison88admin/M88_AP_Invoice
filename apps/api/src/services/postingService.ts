@@ -1,5 +1,6 @@
 import prisma from '../config/database';
 import { InvoiceStatus } from '@ap-invoice/shared';
+import { AppError } from '../middleware/errorHandler';
 
 // QuickBooks Online API configuration
 const QB_CLIENT_ID = process.env.QB_CLIENT_ID || '';
@@ -18,35 +19,36 @@ export async function postInvoice(invoiceId: string, userId: string) {
   });
 
   if (!invoice) {
-    throw new Error('Invoice not found');
+    throw new AppError('Invoice not found', 404);
   }
 
-  if (invoice.status !== InvoiceStatus.APPROVED) {
-    throw new Error('Invoice must be approved before posting');
+  if (invoice.status !== InvoiceStatus.APPROVED as any) {
+    throw new AppError('Invoice must be approved before posting', 400);
   }
 
-  // Check if all signatures are approved
-  const allApproved = invoice.signatures.every((sig: any) => sig.status === 'APPROVED');
-  if (!allApproved) {
-    throw new Error('All approvals must be completed before posting');
+  // Check if all signatures are signed
+  const allSigned = invoice.signatures.every((sig: any) => sig.signed_at !== null);
+  if (!allSigned) {
+    throw new AppError('All approvals must be completed before posting', 400);
   }
 
   // Check for any unresolved exceptions
-  const hasExceptions = invoice.exceptions.length > 0;
-  if (hasExceptions) {
-    throw new Error('Invoice has unresolved exceptions and cannot be posted');
+  const unresolvedExceptions = invoice.exceptions.filter(
+    (exc: any) => exc.status === 'PENDING'
+  );
+  if (unresolvedExceptions.length > 0) {
+    throw new AppError('Invoice has unresolved exceptions and cannot be posted', 400);
   }
 
   // Post to QuickBooks Online
   const postingResult = await postToQuickBooks(invoice);
 
-  // Update invoice status to POSTED and store QB invoice ID
+  // Update invoice status to POSTED_TO_QB
   await prisma.invoice.update({
     where: { id: invoiceId },
     data: {
-      status: InvoiceStatus.POSTED,
-      posted_at: new Date(),
-      qb_invoice_id: postingResult.qbInvoiceId,
+      status: InvoiceStatus.POSTED_TO_QB as any,
+      qb_posted_at: new Date(),
     },
   });
 
@@ -55,21 +57,52 @@ export async function postInvoice(invoiceId: string, userId: string) {
     data: {
       invoice_id: invoiceId,
       action: 'POSTED',
-      user_id: userId,
-      metadata: {
-        message: `Invoice ${invoice.invoice_number} posted to QuickBooks. QB Invoice ID: ${postingResult.qbInvoiceId}`,
-        qb_invoice_id: postingResult.qbInvoiceId,
-      },
+      performed_by: userId,
+      note: `Invoice ${invoice.invoice_number} posted to QuickBooks. QB Invoice ID: ${postingResult.qbInvoiceId}`,
     },
   });
 
-  return postingResult;
+  // Auto-schedule payment after QB posting
+  try {
+    const paymentDate = invoice.due_date || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // due_date or +30 days
+    const payment = await schedulePayment(invoiceId, paymentDate, userId);
+    await prisma.auditLog.create({
+      data: {
+        invoice_id: invoiceId,
+        action: 'AUTO_PAYMENT_SCHEDULED',
+        performed_by: 'system',
+        note: `Payment auto-scheduled after QB posting for ${invoice.currency} ${Number(invoice.total_amount).toFixed(2)} on ${paymentDate.toISOString().split('T')[0]}`,
+      },
+    });
+    return { ...postingResult, payment_scheduled: true, payment_id: payment.id, payment_date: paymentDate };
+  } catch (scheduleError) {
+    // Log but don't fail the posting
+    await prisma.auditLog.create({
+      data: {
+        invoice_id: invoiceId,
+        action: 'AUTO_PAYMENT_SCHEDULE_FAILED',
+        performed_by: 'system',
+        note: `Auto-schedule payment failed after QB posting: ${scheduleError instanceof Error ? scheduleError.message : 'unknown error'}`,
+      },
+    });
+    return { ...postingResult, payment_scheduled: false };
+  }
 }
 
 async function postToQuickBooks(invoice: any) {
   // In production, this would use the QuickBooks Online API
   // For now, we'll simulate the posting process with QB-specific fields
   const qbInvoiceId = `QB-${Date.now()}-${invoice.invoice_number}`;
+
+  // Generate QB memo: brand_season_ordertype_MPO_approvaldate
+  const memoParts = [
+    invoice.brand_code || invoice.brand || '',
+    invoice.season || '',
+    invoice.order_type || '',
+    invoice.mpo_number || '',
+    new Date().toISOString().split('T')[0],
+  ].filter(Boolean);
+  const qbMemo = invoice.qb_memo || memoParts.join('_');
 
   // Map invoice data to QuickBooks format
   const qbInvoice = {
@@ -78,21 +111,24 @@ async function postToQuickBooks(invoice: any) {
       value: invoice.vendor_id,
       name: invoice.vendor?.name,
     },
-    TxnDate: invoice.invoice_date.toISOString().split('T')[0],
-    DueDate: invoice.invoice_due_date ? invoice.invoice_due_date.toISOString().split('T')[0] : null,
+    TxnDate: invoice.invoice_date ? invoice.invoice_date.toISOString().split('T')[0] : null,
+    DueDate: invoice.due_date ? invoice.due_date.toISOString().split('T')[0] : null,
     Line: [
       {
-        Amount: Number(invoice.amount),
-        Description: invoice.qb_memo || `Invoice ${invoice.invoice_number}`,
+        Amount: Number(invoice.total_amount),
+        Description: qbMemo || `Invoice ${invoice.invoice_number}`,
         AccountRef: {
           value: determineGLAccount(invoice),
         },
       },
     ],
-    PrivateNote: invoice.qb_memo || '',
+    PrivateNote: qbMemo || '',
     CurrencyRef: {
       value: invoice.currency === 'USD' ? 'USD' : invoice.currency,
     },
+    ClassRef: invoice.vendor?.supplier_location ? {
+      value: invoice.vendor.supplier_location,
+    } : undefined,
   };
 
   // TODO: Implement actual QuickBooks Online API call here
@@ -103,30 +139,28 @@ async function postToQuickBooks(invoice: any) {
     qbInvoiceId,
     posted_at: new Date(),
     gl_account: determineGLAccount(invoice),
-    amount: Number(invoice.amount),
+    amount: Number(invoice.total_amount),
     currency: invoice.currency,
     vendor_id: invoice.vendor_id,
+    qb_memo: qbMemo,
   };
 }
 
 function determineGLAccount(invoice: any) {
-  // Determine the appropriate GL account based on invoice category
-  const category = invoice.category;
+  // Determine the appropriate GL account based on invoice type / category
+  const invoiceType = invoice.invoice_type;
   
   const glAccounts: Record<string, string> = {
-    'OPERATIONAL': '6000-Operational Expenses',
-    'CAPITAL': '1000-Capital Assets',
-    'MAINTENANCE': '6100-Maintenance Expenses',
-    'SERVICES': '6200-Service Expenses',
-    'RENT': '6300-Rent Expenses',
-    'UTILITIES': '6400-Utility Expenses',
-    'INSURANCE': '6500-Insurance Expenses',
-    'TRAVEL': '6600-Travel Expenses',
-    'MARKETING': '6700-Marketing Expenses',
-    'OTHER': '6900-Miscellaneous Expenses',
+    'INVOICE': '6000-Operational Expenses',
+    'PROFORMA': '6000-Operational Expenses',
+    'COMMERCIAL': '6000-Operational Expenses',
+    'SALES': '6200-Service Expenses',
+    'STATEMENT': '6900-Miscellaneous Expenses',
+    'PREPAID': '1000-Capital Assets',
+    'PROTO_SAMPLE': '6100-Maintenance Expenses',
   };
 
-  return glAccounts[category] || '6900-Miscellaneous Expenses';
+  return glAccounts[invoiceType] || '6900-Miscellaneous Expenses';
 }
 
 export async function schedulePayment(
@@ -140,29 +174,29 @@ export async function schedulePayment(
   });
 
   if (!invoice) {
-    throw new Error('Invoice not found');
+    throw new AppError('Invoice not found', 404);
   }
 
-  if (invoice.status !== InvoiceStatus.POSTED) {
-    throw new Error('Invoice must be posted before scheduling payment');
+  if (invoice.status !== InvoiceStatus.POSTED_TO_QB as any) {
+    throw new AppError('Invoice must be posted before scheduling payment', 400);
   }
 
   // Create payment record
   const payment = await prisma.payment.create({
     data: {
       invoice_id: invoiceId,
-      amount: Number(invoice.amount),
+      amount: Number(invoice.total_amount),
       currency: invoice.currency,
       payment_date: paymentDate,
       status: 'SCHEDULED',
-      vendor_id: invoice.vendor_id,
+      vendor_id: invoice.vendor_id || undefined,
     },
   });
 
-  // Update invoice status to PAYMENT_INITIATED
+  // Update invoice status to PAYMENT_SCHEDULED
   await prisma.invoice.update({
     where: { id: invoiceId },
-    data: { status: InvoiceStatus.PAYMENT_INITIATED },
+    data: { status: InvoiceStatus.PAYMENT_SCHEDULED as any },
   });
 
   // Create audit log entry
@@ -170,8 +204,8 @@ export async function schedulePayment(
     data: {
       invoice_id: invoiceId,
       action: 'PAYMENT_SCHEDULED',
-      user_id: userId,
-      detail: `Payment of ${invoice.currency} ${Number(invoice.amount).toFixed(2)} scheduled for ${paymentDate.toISOString().split('T')[0]}`,
+      performed_by: userId,
+      note: `Payment of ${invoice.currency} ${Number(invoice.total_amount).toFixed(2)} scheduled for ${paymentDate.toISOString().split('T')[0]}`,
     },
   });
 
@@ -185,15 +219,14 @@ export async function processPayment(paymentId: string, userId: string) {
   });
 
   if (!payment) {
-    throw new Error('Payment not found');
+    throw new AppError('Payment not found', 404);
   }
 
   if (payment.status !== 'SCHEDULED') {
-    throw new Error('Payment must be scheduled to be processed');
+    throw new AppError('Payment must be scheduled to be processed', 400);
   }
 
   // Simulate payment processing
-  // In production, this would integrate with banking/payment systems
   const paymentResult = await simulatePaymentProcessing(payment);
 
   // Update payment status
@@ -209,7 +242,7 @@ export async function processPayment(paymentId: string, userId: string) {
   // Update invoice status to PAID
   await prisma.invoice.update({
     where: { id: payment.invoice_id },
-    data: { status: InvoiceStatus.PAID },
+    data: { status: InvoiceStatus.PAID as any },
   });
 
   // Create audit log entry
@@ -217,8 +250,8 @@ export async function processPayment(paymentId: string, userId: string) {
     data: {
       invoice_id: payment.invoice_id,
       action: 'PAYMENT_PROCESSED',
-      user_id: userId,
-      detail: `Payment processed successfully. Reference: ${paymentResult.reference}`,
+      performed_by: userId,
+      note: `Payment processed successfully. Reference: ${paymentResult.reference}`,
     },
   });
 
@@ -226,8 +259,6 @@ export async function processPayment(paymentId: string, userId: string) {
 }
 
 async function simulatePaymentProcessing(payment: any) {
-  // Simulate payment processing
-  // In production, this would call banking APIs
   const reference = `PAY-${Date.now()}-${payment.id}`;
   
   return {

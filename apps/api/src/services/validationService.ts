@@ -1,6 +1,8 @@
 import prisma from '../config/database';
-import { ExceptionReason, InvoiceStatus, InvoiceType, MadisonEntity, SignatureRole } from '@ap-invoice/shared';
+import { ExceptionReason, InvoiceStatus, InvoiceType, BillToEntity, SignatoryRole, APPROVAL_THRESHOLDS, determineApprovalTier } from '@ap-invoice/shared';
 import { createApprovalRequest } from './approvalService';
+import { AppError } from '../middleware/errorHandler';
+import { logger } from '../utils/logger';
 import crypto from 'crypto';
 
 export interface ValidationResult {
@@ -34,7 +36,7 @@ export async function validateInvoice(invoiceId: string): Promise<InvoiceValidat
   });
 
   if (!invoice) {
-    throw new Error('Invoice not found');
+    throw new AppError('Invoice not found', 404);
   }
 
   const results: ValidationResult[] = [];
@@ -51,49 +53,49 @@ export async function validateInvoice(invoiceId: string): Promise<InvoiceValidat
   const invoiceNumberResult = validateInvoiceNumber(invoice.invoice_number);
   results.push(invoiceNumberResult);
   if (!invoiceNumberResult.passed) {
-    exceptions.push({ reason: ExceptionReason.INVALID_INVOICE_NUMBER, detail: invoiceNumberResult.detail || '' });
+    exceptions.push({ reason: ExceptionReason.MISSING_PO_REFERENCE, detail: invoiceNumberResult.detail || '' });
   }
 
   // RULE 3 — Invoice date validity
   const invoiceDateResult = validateInvoiceDate(invoice.invoice_date);
   results.push(invoiceDateResult);
   if (!invoiceDateResult.passed) {
-    exceptions.push({ reason: ExceptionReason.INVALID_INVOICE_DATE, detail: invoiceDateResult.detail || '' });
+    exceptions.push({ reason: ExceptionReason.OCR_LOW_CONFIDENCE, detail: invoiceDateResult.detail || '' });
   }
 
   // RULE 4 — Due date validity
-  const dueDateResult = validateDueDate(invoice.invoice_due_date, invoice.invoice_date);
+  const dueDateResult = validateDueDate(invoice.due_date, invoice.invoice_date);
   results.push(dueDateResult);
   if (!dueDateResult.passed) {
-    exceptions.push({ reason: ExceptionReason.INVALID_DUE_DATE, detail: dueDateResult.detail || '' });
+    exceptions.push({ reason: ExceptionReason.OCR_LOW_CONFIDENCE, detail: dueDateResult.detail || '' });
   }
 
   // RULE 5 — Amount validity
-  const amountResult = validateAmount(Number(invoice.amount));
+  const amountResult = validateAmount(Number(invoice.total_amount));
   results.push(amountResult);
   if (!amountResult.passed) {
-    exceptions.push({ reason: ExceptionReason.INVALID_AMOUNT, detail: amountResult.detail || '' });
+    exceptions.push({ reason: ExceptionReason.AMOUNT_MISMATCH, detail: amountResult.detail || '' });
   }
 
   // RULE 6 — Currency validity
-  const currencyResult = validateCurrency(invoice.currency, invoice.currency_original || undefined, invoice.exchange_rate_to_usd ? Number(invoice.exchange_rate_to_usd) : undefined);
+  const currencyResult = validateCurrency(invoice.currency, invoice.invoice_currency_original || undefined, invoice.exchange_rate_to_usd ? Number(invoice.exchange_rate_to_usd) : undefined);
   results.push(currencyResult);
   if (!currencyResult.passed) {
-    exceptions.push({ reason: ExceptionReason.INVALID_CURRENCY, detail: currencyResult.detail || '' });
+    exceptions.push({ reason: ExceptionReason.AMOUNT_MISMATCH, detail: currencyResult.detail || '' });
   }
 
   // RULE 7 — Payment terms validity
   const paymentTermsResult = validatePaymentTerms(invoice.payment_terms || '');
   results.push(paymentTermsResult);
   if (!paymentTermsResult.passed) {
-    exceptions.push({ reason: ExceptionReason.INVALID_PAYMENT_TERMS, detail: paymentTermsResult.detail || '' });
+    exceptions.push({ reason: ExceptionReason.AMOUNT_MISMATCH, detail: paymentTermsResult.detail || '' });
   }
 
   // RULE 8 — Incoterm validity
   const incotermResult = validateIncoterm(invoice.incoterm);
   results.push(incotermResult);
   if (!incotermResult.passed) {
-    exceptions.push({ reason: ExceptionReason.INVALID_INCOTERM, detail: incotermResult.detail || '' });
+    exceptions.push({ reason: ExceptionReason.AMOUNT_MISMATCH, detail: incotermResult.detail || '' });
   }
 
   // RULE 9 — Bank info completeness
@@ -104,17 +106,52 @@ export async function validateInvoice(invoiceId: string): Promise<InvoiceValidat
   }
 
   // RULE 10 — Signature presence
-  const signatureResult = validateSignatures(Number(invoice.amount), invoice.signatures);
+  const signatureResult = validateSignatures(Number(invoice.total_amount), invoice.signatures);
   results.push(signatureResult);
   if (!signatureResult.passed) {
     exceptions.push({ reason: ExceptionReason.MISSING_SIGNATURE, detail: signatureResult.detail || '' });
   }
 
-  // RULE 11 — Bill-to entity match
-  const billToResult = validateBillToEntity(invoice.bill_to_name, invoice.bill_to_address, (invoice as any).bill_to_entity);
-  results.push(billToResult);
-  if (!billToResult.passed) {
-    exceptions.push({ reason: ExceptionReason.ENTITY_MISMATCH, detail: billToResult.detail || '' });
+  // RULE 11 — Duplicate detection
+  const duplicateResult = await checkDuplicateInvoice(invoice);
+  results.push(duplicateResult);
+  if (!duplicateResult.passed) {
+    exceptions.push({ reason: duplicateResult.reason || ExceptionReason.DUPLICATE_INVOICE, detail: duplicateResult.detail || '' });
+  }
+
+  // RULE 12 — Late submission check
+  const lateResult = checkLateSubmission(invoice);
+  results.push(lateResult);
+  if (!lateResult.passed) {
+    exceptions.push({ reason: ExceptionReason.LATE_SUBMISSION, detail: lateResult.detail || '' });
+  }
+
+  // RULE 13 — Urgent payment flag
+  const urgentResult = checkUrgentPayment(invoice);
+  results.push(urgentResult);
+  if (!urgentResult.passed) {
+    exceptions.push({ reason: ExceptionReason.LATE_SUBMISSION, detail: urgentResult.detail || '' });
+  }
+
+  // RULE 14 — Handwritten document
+  const handwrittenResult = validateHandwrittenDocument(invoice);
+  results.push(handwrittenResult);
+  if (!handwrittenResult.passed) {
+    exceptions.push({ reason: ExceptionReason.HANDWRITTEN_DOCUMENT, detail: handwrittenResult.detail || '' });
+  }
+
+  // RULE 15 — Missing bank info (vendor-level)
+  const bankInfoResult = await checkMissingBankInfo(invoice);
+  results.push(bankInfoResult);
+  if (!bankInfoResult.passed) {
+    exceptions.push({ reason: ExceptionReason.MISSING_BANK_INFO, detail: bankInfoResult.detail || '' });
+  }
+
+  // RULE 16 — Invoice template validation
+  const templateResult = validateInvoiceTemplate(invoice.invoice_type as InvoiceType, invoice.invoice_template_type as any);
+  results.push(templateResult);
+  if (!templateResult.passed) {
+    exceptions.push({ reason: ExceptionReason.HANDWRITTEN_DOCUMENT, detail: templateResult.detail || '' });
   }
 
   const passed = results.every(r => r.passed);
@@ -131,16 +168,16 @@ export async function validateInvoice(invoiceId: string): Promise<InvoiceValidat
       });
     }
 
-    // Update invoice status to EXCEPTION
+    // Update invoice status to EXCEPTION_FLAGGED
     await prisma.invoice.update({
       where: { id: invoiceId },
-      data: { status: InvoiceStatus.EXCEPTION },
+      data: { status: InvoiceStatus.EXCEPTION_FLAGGED as any },
     });
   } else {
-    // Update invoice status to VALIDATED
+    // Update invoice status to VALIDATION_PENDING
     await prisma.invoice.update({
       where: { id: invoiceId },
-      data: { status: InvoiceStatus.VALIDATED },
+      data: { status: InvoiceStatus.VALIDATION_PENDING as any },
     });
 
     // Auto-create approval request when validation passes
@@ -148,7 +185,7 @@ export async function validateInvoice(invoiceId: string): Promise<InvoiceValidat
       await createApprovalRequest(invoiceId, 'system');
     } catch (error) {
       // Log error but don't fail validation if approval request fails
-      console.error('Failed to create approval request:', error);
+      logger.error('Failed to create approval request:', error);
     }
   }
 
@@ -182,7 +219,7 @@ function validateInvoiceNumber(invoiceNumber: string): ValidationResult {
   if (!invoiceNumber || invoiceNumber.trim().length === 0) {
     return {
       passed: false,
-      reason: ExceptionReason.INVALID_INVOICE_NUMBER,
+      reason: ExceptionReason.MISSING_PO_REFERENCE,
       message: 'Invoice number is missing',
       detail: 'Invoice number is required',
     };
@@ -193,7 +230,7 @@ function validateInvoiceNumber(invoiceNumber: string): ValidationResult {
   if (!validFormat) {
     return {
       passed: false,
-      reason: ExceptionReason.INVALID_INVOICE_NUMBER,
+      reason: ExceptionReason.MISSING_PO_REFERENCE,
       message: 'Invalid invoice number format',
       detail: `Invoice number "${invoiceNumber}" contains invalid characters`,
     };
@@ -206,11 +243,11 @@ function validateInvoiceNumber(invoiceNumber: string): ValidationResult {
 }
 
 // RULE 3 — Invoice date validity
-function validateInvoiceDate(invoiceDate: Date): ValidationResult {
+function validateInvoiceDate(invoiceDate: Date | null): ValidationResult {
   if (!invoiceDate) {
     return {
       passed: false,
-      reason: ExceptionReason.INVALID_INVOICE_DATE,
+      reason: ExceptionReason.OCR_LOW_CONFIDENCE,
       message: 'Invoice date is missing',
       detail: 'Invoice date is required',
     };
@@ -220,7 +257,7 @@ function validateInvoiceDate(invoiceDate: Date): ValidationResult {
   if (isNaN(date.getTime())) {
     return {
       passed: false,
-      reason: ExceptionReason.INVALID_INVOICE_DATE,
+      reason: ExceptionReason.OCR_LOW_CONFIDENCE,
       message: 'Invalid invoice date',
       detail: `Invoice date "${invoiceDate}" is not a valid date`,
     };
@@ -231,7 +268,7 @@ function validateInvoiceDate(invoiceDate: Date): ValidationResult {
   if (date > now) {
     return {
       passed: false,
-      reason: ExceptionReason.INVALID_INVOICE_DATE,
+      reason: ExceptionReason.OCR_LOW_CONFIDENCE,
       message: 'Invoice date is in the future',
       detail: `Invoice date cannot be in the future (date: ${date.toISOString()})`,
     };
@@ -244,7 +281,7 @@ function validateInvoiceDate(invoiceDate: Date): ValidationResult {
 }
 
 // RULE 4 — Due date validity
-function validateDueDate(dueDate: Date | null, invoiceDate: Date): ValidationResult {
+function validateDueDate(dueDate: Date | null, invoiceDate: Date | null): ValidationResult {
   if (!dueDate) {
     return {
       passed: true,
@@ -256,21 +293,23 @@ function validateDueDate(dueDate: Date | null, invoiceDate: Date): ValidationRes
   if (isNaN(date.getTime())) {
     return {
       passed: false,
-      reason: ExceptionReason.INVALID_DUE_DATE,
+      reason: ExceptionReason.OCR_LOW_CONFIDENCE,
       message: 'Invalid due date',
       detail: `Due date "${dueDate}" is not a valid date`,
     };
   }
 
   // Due date should be after invoice date
-  const invDate = new Date(invoiceDate);
-  if (date < invDate) {
-    return {
-      passed: false,
-      reason: ExceptionReason.INVALID_DUE_DATE,
-      message: 'Due date is before invoice date',
-      detail: `Due date (${date.toISOString()}) cannot be before invoice date (${invDate.toISOString()})`,
-    };
+  if (invoiceDate) {
+    const invDate = new Date(invoiceDate);
+    if (date < invDate) {
+      return {
+        passed: false,
+        reason: ExceptionReason.OCR_LOW_CONFIDENCE,
+        message: 'Due date is before invoice date',
+        detail: `Due date (${date.toISOString()}) cannot be before invoice date (${invDate.toISOString()})`,
+      };
+    }
   }
 
   return {
@@ -284,7 +323,7 @@ function validateAmount(amount: number): ValidationResult {
   if (!amount || amount <= 0) {
     return {
       passed: false,
-      reason: ExceptionReason.INVALID_AMOUNT,
+      reason: ExceptionReason.AMOUNT_MISMATCH,
       message: 'Invoice amount must be positive',
       detail: `Invalid amount: ${amount}`,
     };
@@ -294,7 +333,7 @@ function validateAmount(amount: number): ValidationResult {
   if (amount > 10000000) {
     return {
       passed: false,
-      reason: ExceptionReason.INVALID_AMOUNT,
+      reason: ExceptionReason.AMOUNT_MISMATCH,
       message: 'Invoice amount is unreasonably large',
       detail: `Amount ${amount} exceeds reasonable threshold`,
     };
@@ -311,7 +350,7 @@ function validateCurrency(currency: string | undefined, currencyOriginal?: strin
   if (!currency || currency.trim().length === 0) {
     return {
       passed: false,
-      reason: ExceptionReason.INVALID_CURRENCY,
+      reason: ExceptionReason.AMOUNT_MISMATCH,
       message: 'Currency is missing',
       detail: 'Currency is required',
     };
@@ -321,7 +360,7 @@ function validateCurrency(currency: string | undefined, currencyOriginal?: strin
   if (currency !== 'USD') {
     return {
       passed: false,
-      reason: ExceptionReason.INVALID_CURRENCY,
+      reason: ExceptionReason.AMOUNT_MISMATCH,
       message: 'Primary currency must be USD',
       detail: `Currency "${currency}" is not USD. Original amount should be stored and converted to USD.`,
     };
@@ -331,7 +370,7 @@ function validateCurrency(currency: string | undefined, currencyOriginal?: strin
   if (currencyOriginal && currencyOriginal !== 'USD' && !exchangeRate) {
     return {
       passed: false,
-      reason: ExceptionReason.INVALID_CURRENCY,
+      reason: ExceptionReason.AMOUNT_MISMATCH,
       message: 'Exchange rate missing for non-USD currency',
       detail: `Original currency ${currencyOriginal} requires exchange_rate_to_usd`,
     };
@@ -348,7 +387,7 @@ function validatePaymentTerms(paymentTerms: string): ValidationResult {
   if (!paymentTerms || paymentTerms.trim().length === 0) {
     return {
       passed: false,
-      reason: ExceptionReason.INVALID_PAYMENT_TERMS,
+      reason: ExceptionReason.AMOUNT_MISMATCH,
       message: 'Payment terms are missing',
       detail: 'Payment terms are required',
     };
@@ -375,7 +414,7 @@ function validateIncoterm(incoterm: string | null): ValidationResult {
   if (!validIncoterms.includes(upperIncoterm)) {
     return {
       passed: false,
-      reason: ExceptionReason.INVALID_INCOTERM,
+      reason: ExceptionReason.AMOUNT_MISMATCH,
       message: 'Invalid incoterm',
       detail: `Incoterm "${incoterm}" is not a valid incoterm`,
     };
@@ -387,109 +426,25 @@ function validateIncoterm(incoterm: string | null): ValidationResult {
   };
 }
 
-// RULE 11 — Bill-to entity match
-function validateBillToEntity(billToName: string, billToAddress: string, billToEntity?: MadisonEntity): ValidationResult {
-  const upperName = billToName.toUpperCase();
-  const upperAddress = billToAddress.toUpperCase();
-
-  // Valid Madison 88 entity names
-  const validEntities = [
-    'MADISON 88 LTD',
-    'MADISON 88 LIMITED',
-    'MADISON 88, LTD',
-    'MADISON LIMITED',
-    'MADISON88, LTD',
-    'MADISON 88, LTD',
-    '15 WEST 36TH STREET',
-    'NEW YORK',
-    'NY 10018',
-    '15W 36TH STREET',
-    'MADISON 88 HONG KONG',
-    'MADISON 88 HONG KONG LIMITED',
-    'MADISON88',
-    'APH1009 MADISON',
-  ];
-
-  // Check if bill-to matches valid entities
-  const isValidEntity = validEntities.some(entity => upperName.includes(entity) || upperAddress.includes(entity));
-
-  if (!isValidEntity) {
-    return {
-      passed: false,
-      reason: ExceptionReason.INVALID_BILL_TO,
-      message: 'Bill-to entity does not match valid Madison 88 entities',
-      detail: `Invalid bill-to: "${billToName}" at "${billToAddress}". Expected Madison 88 entity.`,
-    };
-  }
-
-  // Check for missing address
-  if (!billToAddress || billToAddress.trim().length === 0) {
-    return {
-      passed: false,
-      reason: ExceptionReason.MISSING_ADDRESS,
-      message: 'Bill-to address is missing',
-      detail: 'Bill-to address is required for validation',
-    };
-  }
-
-  // Validate specific addresses
-  const validDenver = ['2433 CURTIS STREET', '2423 CURTIS STREET'];
-  const validNewYork = ['15 WEST 36TH STREET', '15W 36TH STREET', '14TH FLOOR'];
-  const validHongKong = ['香港灣仔告士打道160號'];
-
-  if (upperAddress.includes('DENVER') && !validDenver.some(addr => upperAddress.includes(addr))) {
-    return {
-      passed: false,
-      reason: ExceptionReason.INVALID_BILL_TO,
-      message: 'Invalid Denver address',
-      detail: `Address "${billToAddress}" does not match valid Denver addresses`,
-    };
-  }
-
-  if (upperAddress.includes('NEW YORK') && !validNewYork.some(addr => upperAddress.includes(addr))) {
-    return {
-      passed: false,
-      reason: ExceptionReason.INVALID_BILL_TO,
-      message: 'Invalid New York address',
-      detail: `Address "${billToAddress}" does not match valid New York addresses`,
-    };
-  }
-
-  return {
-    passed: true,
-    message: 'Bill-to entity and address are valid',
-  };
-}
-
-// RULE 2 — Invoice template validation
-function validateInvoiceTemplate(invoiceType: InvoiceType, expectedTemplate?: InvoiceType): ValidationResult {
+// RULE 16 — Invoice template validation
+function validateInvoiceTemplate(invoiceType: InvoiceType, expectedTemplate?: any): ValidationResult {
   // STATEMENT type: flag for manual review — do not auto-post
   if (invoiceType === InvoiceType.STATEMENT) {
     return {
       passed: false,
-      reason: ExceptionReason.INVALID_TEMPLATE,
+      reason: ExceptionReason.HANDWRITTEN_DOCUMENT,
       message: 'Statement type requires manual review',
       detail: 'STATEMENT type invoices should not be auto-posted to QuickBooks',
     };
   }
 
-  // PI type must NOT be posted to QuickBooks directly
-  if (invoiceType === InvoiceType.PI) {
+  // PROFORMA type must NOT be posted to QuickBooks directly
+  if (invoiceType === InvoiceType.PROFORMA) {
     return {
       passed: false,
-      reason: ExceptionReason.INVALID_TEMPLATE,
+      reason: ExceptionReason.HANDWRITTEN_DOCUMENT,
       message: 'PI type requires Purchasing Coordinator confirmation',
       detail: 'Proforma invoices require confirmation from Purchasing Coordinator before processing',
-    };
-  }
-
-  // Check if invoice type matches vendor's expected template
-  if (expectedTemplate && invoiceType !== expectedTemplate) {
-    return {
-      passed: false,
-      reason: ExceptionReason.INVALID_TEMPLATE,
-      message: 'Invoice type does not match vendor expected template',
-      detail: `Invoice type ${invoiceType} does not match expected template ${expectedTemplate}`,
     };
   }
 
@@ -499,7 +454,7 @@ function validateInvoiceTemplate(invoiceType: InvoiceType, expectedTemplate?: In
   };
 }
 
-// RULE 3 — Bank details validation
+// RULE 9 — Bank details validation
 async function validateBankDetails(invoice: any): Promise<ValidationResult> {
   if (!invoice.vendor) {
     return {
@@ -510,10 +465,10 @@ async function validateBankDetails(invoice: any): Promise<ValidationResult> {
     };
   }
 
-  const ocrBankInfo = invoice.ocr_raw_data?.bank_info;
+  const ocrBankInfo = (invoice as any).ocr_raw_data?.bank_info;
 
   // If OCR didn't extract bank info, flag as missing
-  if (!ocrBankInfo || !ocrBankInfo.swift_code || !ocrBankInfo.account_usd) {
+  if (!ocrBankInfo || !ocrBankInfo.swift_code || !ocrBankInfo.account_number) {
     return {
       passed: false,
       reason: ExceptionReason.MISSING_BANK_INFO,
@@ -524,7 +479,7 @@ async function validateBankDetails(invoice: any): Promise<ValidationResult> {
 
   // Compare with vendor records
   const vendorSwift = invoice.vendor.swift_code;
-  const vendorAccountUsd = invoice.vendor.account_usd;
+  const vendorAccount = invoice.vendor.account_number;
 
   // Normalize SWIFT codes for comparison
   const normalizeSwift = (swift: string) => swift.toUpperCase().replace(/\s/g, '').replace(/X+$/, '');
@@ -535,7 +490,7 @@ async function validateBankDetails(invoice: any): Promise<ValidationResult> {
   if (vendorSwift && ocrSwiftNormalized && vendorSwiftNormalized !== ocrSwiftNormalized) {
     return {
       passed: false,
-      reason: ExceptionReason.BANK_MISMATCH,
+      reason: ExceptionReason.BANK_DETAIL_MISMATCH,
       message: 'SWIFT code does not match vendor records',
       detail: `OCR SWIFT: "${ocrBankInfo.swift_code}" vs Vendor SWIFT: "${vendorSwift}"`,
     };
@@ -543,15 +498,15 @@ async function validateBankDetails(invoice: any): Promise<ValidationResult> {
 
   // Compare account numbers (normalize by removing spaces and dashes)
   const normalizeAccount = (account: string) => account.replace(/[\s-]/g, '');
-  const ocrAccountNormalized = normalizeAccount(ocrBankInfo.account_usd || '');
-  const vendorAccountNormalized = normalizeAccount(vendorAccountUsd || '');
+  const ocrAccountNormalized = normalizeAccount(ocrBankInfo.account_number || '');
+  const vendorAccountNormalized = normalizeAccount(vendorAccount || '');
 
-  if (vendorAccountUsd && ocrAccountNormalized && vendorAccountNormalized !== ocrAccountNormalized) {
+  if (vendorAccount && ocrAccountNormalized && vendorAccountNormalized !== ocrAccountNormalized) {
     return {
       passed: false,
-      reason: ExceptionReason.BANK_MISMATCH,
+      reason: ExceptionReason.BANK_DETAIL_MISMATCH,
       message: 'Account number does not match vendor records',
-      detail: `OCR Account: "${ocrBankInfo.account_usd}" vs Vendor Account: "${vendorAccountUsd}"`,
+      detail: `OCR Account: "${ocrBankInfo.account_number}" vs Vendor Account: "${vendorAccount}"`,
     };
   }
 
@@ -561,11 +516,11 @@ async function validateBankDetails(invoice: any): Promise<ValidationResult> {
   };
 }
 
-// RULE 4 — Signature validation
+// RULE 10 — Signature validation (4-tier per BRD v5.0)
 function validateSignatures(amount: number, signatures: any[]): ValidationResult {
   // Check for "Computer-generated, no signature required" exemption
-  if (signatures && signatures.some(sig => 
-    sig.signer_name && sig.signer_name.toLowerCase().includes('computer-generated')
+  if (signatures && signatures.some((sig: any) =>
+    sig.signatory_name && sig.signatory_name.toLowerCase().includes('computer-generated')
   )) {
     return {
       passed: true,
@@ -573,53 +528,72 @@ function validateSignatures(amount: number, signatures: any[]): ValidationResult
     };
   }
 
-  // Count digital signatures (they count)
-  const digitalSignatures = signatures?.filter(sig => sig.is_digital) || [];
-  const physicalSignatures = signatures?.filter(sig => !sig.is_digital && sig.signer_name) || [];
-  const totalSignatures = digitalSignatures.length + physicalSignatures.length;
+  // Count signed signatures
+  const signedSignatures = signatures?.filter((sig: any) => sig.signed_at) || [];
+  const signedRoles = signedSignatures.map((sig: any) => sig.signatory_role as string);
 
-  // Determine required signature count based on amount
-  const requiredSignatures = amount < 5000 ? 2 : 4;
+  const tier = determineApprovalTier(amount);
 
-  if (totalSignatures < requiredSignatures) {
+  // Tier 1: Coordinator required for all invoices
+  if (!signedRoles.includes(SignatoryRole.COORDINATOR)) {
     return {
       passed: false,
       reason: ExceptionReason.MISSING_SIGNATURE,
-      message: 'Insufficient signatures',
-      detail: `Invoice requires ${requiredSignatures} signatures (${amount < 5000 ? 'COORDINATOR + MANAGER' : 'COORDINATOR + MANAGER + PLANNING_MANAGER + LINDSEY'}), found ${totalSignatures}`,
+      message: 'Missing Coordinator signature',
+      detail: 'A Purchasing Coordinator signature is required for all invoices',
     };
   }
 
-  // Check for required signature roles
-  const roles = signatures?.map(sig => sig.role) || [];
-  const uniqueRoles = [...new Set(roles)];
-
-  if (amount < 5000) {
-    // Require COORDINATOR + MANAGER
-    const hasCoordinator = uniqueRoles.includes('COORDINATOR');
-    const hasManager = uniqueRoles.includes('MANAGER');
-    
-    if (!hasCoordinator || !hasManager) {
+  // Tier 2+: Purchasing Manager + MLO Account Holder
+  if (tier >= 2) {
+    if (!signedRoles.includes(SignatoryRole.PURCHASING_MANAGER)) {
       return {
         passed: false,
         reason: ExceptionReason.MISSING_SIGNATURE,
-        message: 'Missing required signature roles',
-        detail: 'Invoices under $5,000 require COORDINATOR and MANAGER signatures',
+        message: 'Missing Purchasing Manager signature',
+        detail: 'A Purchasing Manager signature is required for invoices above $2,000',
       };
     }
-  } else {
-    // Require COORDINATOR + MANAGER + PLANNING_MANAGER + LINDSEY
-    const hasCoordinator = uniqueRoles.includes('COORDINATOR');
-    const hasManager = uniqueRoles.includes('MANAGER');
-    const hasPlanningManager = uniqueRoles.includes('PLANNING_MANAGER');
-    const hasLindsey = uniqueRoles.includes('LINDSEY');
-    
-    if (!hasCoordinator || !hasManager || !hasPlanningManager || !hasLindsey) {
+
+    if (!signedRoles.includes(SignatoryRole.MLO_ACCOUNT_HOLDER)) {
       return {
         passed: false,
         reason: ExceptionReason.MISSING_SIGNATURE,
-        message: 'Missing required signature roles',
-        detail: 'Invoices $5,000+ require COORDINATOR, MANAGER, PLANNING_MANAGER, and LINDSEY signatures',
+        message: 'Missing MLO Account Holder signature',
+        detail: 'An MLO Account Holder signature is required for invoices above $2,000',
+      };
+    }
+  }
+
+  // Tier 3+: MLO Planning Manager + Sr. Manager Global Production
+  if (tier >= 3) {
+    if (!signedRoles.includes(SignatoryRole.MLO_PLANNING_MANAGER)) {
+      return {
+        passed: false,
+        reason: ExceptionReason.MISSING_SIGNATURE,
+        message: 'Missing MLO Planning Manager signature',
+        detail: 'An MLO Planning Manager signature is required for invoices above $5,000',
+      };
+    }
+
+    if (!signedRoles.includes(SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION)) {
+      return {
+        passed: false,
+        reason: ExceptionReason.MISSING_SIGNATURE,
+        message: 'Missing Sr. Manager Global Production signature',
+        detail: 'Sr. Manager of Global Production Operations signature required for invoices above $5,000',
+      };
+    }
+  }
+
+  // Tier 4: Ms. Polly
+  if (tier >= 4) {
+    if (!signedRoles.includes(SignatoryRole.MS_POLLY)) {
+      return {
+        passed: false,
+        reason: ExceptionReason.MISSING_SIGNATURE,
+        message: 'Missing Ms. Polly signature',
+        detail: 'Invoices over $100,000 require Ms. Polly signature',
       };
     }
   }
@@ -630,13 +604,13 @@ function validateSignatures(amount: number, signatures: any[]): ValidationResult
   };
 }
 
-// RULE 5 — Duplicate detection
+// RULE 11 — Duplicate detection
 async function checkDuplicateInvoice(invoice: any): Promise<ValidationResult> {
   // Hash: SHA-256(invoice_number + vendor_id + amount + invoice_date)
-  const hashInput = `${invoice.invoice_number}${invoice.vendor_id}${invoice.amount}${invoice.invoice_date}`;
+  const hashInput = `${invoice.invoice_number}${invoice.vendor_id || ''}${invoice.total_amount}${invoice.invoice_date || ''}`;
   const hash = crypto.createHash('sha256').update(hashInput).digest('hex');
 
-  // Check for existing invoice with same hash
+  // Check for existing invoice with same invoice_number + vendor
   const duplicate = await prisma.invoice.findFirst({
     where: {
       invoice_number: invoice.invoice_number,
@@ -660,7 +634,7 @@ async function checkDuplicateInvoice(invoice: any): Promise<ValidationResult> {
   };
 }
 
-// RULE 6 — Late submission
+// RULE 12 — Late submission
 function checkLateSubmission(invoice: any): ValidationResult {
   if (!invoice.invoice_received_date) {
     return {
@@ -710,16 +684,16 @@ function checkLateSubmission(invoice: any): ValidationResult {
   };
 }
 
-// RULE 7 — Urgent payment
+// RULE 13 — Urgent payment
 function checkUrgentPayment(invoice: any): ValidationResult {
-  // Check is_priority flag from OCR
-  if (invoice.is_priority) {
+  // Check priority_flag
+  if (invoice.priority_flag) {
     return {
       passed: false,
-      reason: ExceptionReason.URGENT_PAYMENT,
+      reason: ExceptionReason.LATE_SUBMISSION,
       message: 'Urgent payment flag detected',
       detail: invoice.priority_pay_date 
-        ? `Priority payment requested by ${invoice.priority_pay_date.toLocaleDateString()}`
+        ? `Priority payment requested by ${new Date(invoice.priority_pay_date).toLocaleDateString()}`
         : 'Priority payment requested - immediate attention required',
     };
   }
@@ -730,45 +704,7 @@ function checkUrgentPayment(invoice: any): ValidationResult {
   };
 }
 
-// RULE 8 — Currency handling
-function validateCurrencyAndAmount(invoice: any): ValidationResult {
-  // Validate amount is positive
-  if (invoice.amount <= 0) {
-    return {
-      passed: false,
-      reason: ExceptionReason.AMOUNT_MISMATCH,
-      message: 'Invoice amount must be positive',
-      detail: `Invalid amount: ${invoice.amount}`,
-    };
-  }
-
-  // Primary currency must be USD
-  if (invoice.currency !== 'USD') {
-    return {
-      passed: false,
-      reason: ExceptionReason.AMOUNT_MISMATCH,
-      message: 'Primary currency must be USD',
-      detail: `Currency "${invoice.currency}" is not USD. Original amount should be stored and converted to USD.`,
-    };
-  }
-
-  // Validate exchange rate is present for non-USD original currency
-  if (invoice.currency_original && invoice.currency_original !== 'USD' && !invoice.exchange_rate_to_usd) {
-    return {
-      passed: false,
-      reason: ExceptionReason.AMOUNT_MISMATCH,
-      message: 'Exchange rate missing for non-USD currency',
-      detail: `Original currency ${invoice.currency_original} requires exchange_rate_to_usd`,
-    };
-  }
-
-  return {
-    passed: true,
-    message: 'Currency and amount are valid',
-  };
-}
-
-// RULE 9 — Handwritten document
+// RULE 14 — Handwritten document
 function validateHandwrittenDocument(invoice: any): ValidationResult {
   if (invoice.is_handwritten) {
     return {
@@ -785,7 +721,7 @@ function validateHandwrittenDocument(invoice: any): ValidationResult {
   };
 }
 
-// RULE 10 — Missing bank info
+// RULE 15 — Missing bank info
 async function checkMissingBankInfo(invoice: any): Promise<ValidationResult> {
   if (!invoice.vendor) {
     return {
@@ -806,13 +742,13 @@ async function checkMissingBankInfo(invoice: any): Promise<ValidationResult> {
     };
   }
 
-  // Check if vendor has USD account
-  if (!invoice.vendor.account_usd) {
+  // Check if vendor has account number
+  if (!invoice.vendor.account_number) {
     return {
       passed: false,
       reason: ExceptionReason.MISSING_BANK_INFO,
-      message: 'Vendor missing USD account',
-      detail: `Vendor "${invoice.vendor.name}" does not have USD account on file - route to Purchasing Coordinator to obtain from vendor`,
+      message: 'Vendor missing account number',
+      detail: `Vendor "${invoice.vendor.name}" does not have account number on file - route to Purchasing Coordinator to obtain from vendor`,
     };
   }
 

@@ -18,7 +18,7 @@ export async function getQBSyncStatus(): Promise<SyncStatus[]> {
   const invoices = await prisma.invoice.findMany({
     where: {
       status: {
-        in: [InvoiceStatus.POSTED, InvoiceStatus.PAYMENT_INITIATED, InvoiceStatus.PAID],
+        in: [InvoiceStatus.POSTED_TO_QB, InvoiceStatus.PAYMENT_SCHEDULED, InvoiceStatus.PAID],
       },
     },
     include: {
@@ -48,9 +48,9 @@ export async function getFailedSyncs(): Promise<SyncStatus[]> {
   // For now, we'll return invoices that are POSTED but don't have a QB invoice ID
   const invoices = await prisma.invoice.findMany({
     where: {
-      status: InvoiceStatus.POSTED,
+      status: InvoiceStatus.POSTED_TO_QB,
       qb_invoice_id: null,
-    },
+    } as any,
     include: {
       vendor: true,
     },
@@ -87,7 +87,7 @@ export async function retrySync(invoiceId: string, userId: string): Promise<Sync
     throw new Error('Invoice not found');
   }
 
-  if (invoice.status !== InvoiceStatus.POSTED) {
+  if (invoice.status !== InvoiceStatus.POSTED_TO_QB) {
     throw new Error('Invoice must be posted before syncing to QuickBooks');
   }
 
@@ -99,7 +99,7 @@ export async function retrySync(invoiceId: string, userId: string): Promise<Sync
     where: { id: invoiceId },
     data: {
       qb_invoice_id: qbInvoiceId,
-    },
+    } as any,
   });
 
   // Create audit log entry
@@ -107,11 +107,8 @@ export async function retrySync(invoiceId: string, userId: string): Promise<Sync
     data: {
       invoice_id: invoiceId,
       action: 'QB_SYNC_RETRY',
-      user_id: userId,
-      metadata: {
-        message: `QuickBooks sync retry successful. QB Invoice ID: ${qbInvoiceId}`,
-        qb_invoice_id: qbInvoiceId,
-      },
+      performed_by: userId,
+      note: `QuickBooks sync retry successful. QB Invoice ID: ${qbInvoiceId}`,
     },
   });
 
@@ -133,7 +130,7 @@ export async function getSyncStatistics() {
   const totalPosted = await prisma.invoice.count({
     where: {
       status: {
-        in: [InvoiceStatus.POSTED, InvoiceStatus.PAYMENT_INITIATED, InvoiceStatus.PAID],
+        in: [InvoiceStatus.POSTED_TO_QB, InvoiceStatus.PAYMENT_SCHEDULED, InvoiceStatus.PAID],
       },
     },
   });
@@ -141,17 +138,17 @@ export async function getSyncStatistics() {
   const synced = await prisma.invoice.count({
     where: {
       status: {
-        in: [InvoiceStatus.POSTED, InvoiceStatus.PAYMENT_INITIATED, InvoiceStatus.PAID],
+        in: [InvoiceStatus.POSTED_TO_QB, InvoiceStatus.PAYMENT_SCHEDULED, InvoiceStatus.PAID],
       },
       qb_invoice_id: { not: null },
-    },
+    } as any,
   });
 
   const failed = await prisma.invoice.count({
     where: {
-      status: InvoiceStatus.POSTED,
+      status: InvoiceStatus.POSTED_TO_QB,
       qb_invoice_id: null,
-    },
+    } as any,
   });
 
   return {
@@ -185,7 +182,7 @@ export async function forceSync(invoiceId: string, userId: string): Promise<Sync
     where: { id: invoiceId },
     data: {
       qb_invoice_id: qbInvoiceId,
-    },
+    } as any,
   });
 
   // Create audit log entry
@@ -193,11 +190,8 @@ export async function forceSync(invoiceId: string, userId: string): Promise<Sync
     data: {
       invoice_id: invoiceId,
       action: 'QB_FORCE_SYNC',
-      user_id: userId,
-      metadata: {
-        message: `QuickBooks force sync successful. QB Invoice ID: ${qbInvoiceId}`,
-        qb_invoice_id: qbInvoiceId,
-      },
+      performed_by: userId,
+      note: `QuickBooks force sync successful. QB Invoice ID: ${qbInvoiceId}`,
     },
   });
 

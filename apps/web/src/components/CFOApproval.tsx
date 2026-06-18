@@ -7,7 +7,7 @@ interface PaymentBatch {
   batch_number: string;
   total_amount: number;
   payment_count: number;
-  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'CANCELLED';
+  status: 'DRAFT' | 'PENDING_CFO' | 'APPROVED' | 'PROCESSED' | 'CANCELLED';
   created_at: Date;
   processed_at?: Date;
   payments: Array<{
@@ -29,7 +29,7 @@ export default function CFOApproval() {
   const [loading, setLoading] = useState(true);
   const [selectedBatch, setSelectedBatch] = useState<PaymentBatch | null>(null);
   const [filters, setFilters] = useState({
-    status: 'PENDING',
+    status: 'DRAFT',
     search: '',
   });
 
@@ -167,9 +167,10 @@ export default function CFOApproval() {
                 onChange={(e) => setFilters({ ...filters, status: e.target.value })}
                 className="px-4 py-3 bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all text-white"
               >
-                <option value="PENDING">Pending</option>
-                <option value="PROCESSING">Processing</option>
-                <option value="COMPLETED">Completed</option>
+                <option value="DRAFT">Draft</option>
+                <option value="PENDING_CFO">Pending CFO</option>
+                <option value="APPROVED">Approved</option>
+                <option value="PROCESSED">Processed</option>
                 <option value="CANCELLED">Cancelled</option>
                 <option value="">All Statuses</option>
               </select>
@@ -235,15 +236,15 @@ export default function CFOApproval() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                          batch.status === 'PENDING'
+                          batch.status === 'DRAFT'
                             ? 'bg-yellow-500/20 text-yellow-300'
-                            : batch.status === 'PROCESSING'
+                            : batch.status === 'PENDING_CFO'
                             ? 'bg-blue-500/20 text-blue-300'
-                            : batch.status === 'COMPLETED'
+                            : batch.status === 'PROCESSED'
                             ? 'bg-green-500/20 text-green-300'
                             : 'bg-red-500/20 text-red-300'
                         }`}>
-                          {batch.status}
+                          {batch.status === 'DRAFT' ? 'Draft' : batch.status === 'PENDING_CFO' ? 'Pending CFO' : batch.status === 'APPROVED' ? 'Approved' : batch.status === 'PROCESSED' ? 'Processed' : batch.status === 'CANCELLED' ? 'Cancelled' : batch.status}
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-white">
@@ -256,7 +257,7 @@ export default function CFOApproval() {
                         >
                           <Eye className="h-5 w-5" />
                         </button>
-                        {batch.status === 'PENDING' && (
+                        {batch.status === 'DRAFT' && (
                           <>
                             <button
                               onClick={() => handleApprove(batch.id)}
@@ -348,7 +349,7 @@ export default function CFOApproval() {
                   </div>
                 </div>
 
-                {selectedBatch.status === 'PENDING' && (
+                {selectedBatch.status === 'DRAFT' && (
                   <div className="mt-6 pt-6 flex gap-3" style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}>
                     <button
                       onClick={() => handleApprove(selectedBatch.id)}

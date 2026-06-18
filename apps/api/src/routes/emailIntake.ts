@@ -3,7 +3,7 @@ import { authenticate, authorize } from '../middleware/auth';
 import { startEmailPoller } from '../services/emailIntakeService';
 import { UserRole } from '@ap-invoice/shared';
 
-const router = Router();
+const router: Router = Router();
 
 router.use(authenticate);
 

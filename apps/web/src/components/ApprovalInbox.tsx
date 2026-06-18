@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Invoice, InvoiceStatus } from '@ap-invoice/shared';
+import { Invoice } from '@ap-invoice/shared';
 import { approvalApi, invoiceApi } from '../lib/api';
-import { CheckCircle, XCircle, Clock, FileText, ArrowLeft } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, ArrowLeft } from 'lucide-react';
 
 export default function ApprovalInbox() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -65,12 +65,12 @@ export default function ApprovalInbox() {
   const getApprovalStatus = (invoice: Invoice) => {
     if (!invoice.signatures || invoice.signatures.length === 0) return 'No approvals';
     
-    const approved = invoice.signatures.filter(s => s.status === 'APPROVED').length;
+    const approved = invoice.signatures.filter(s => s.signed_at !== null).length;
     const total = invoice.signatures.length;
-    const pending = invoice.signatures.find(s => s.status === 'PENDING');
+    const pending = invoice.signatures.find(s => !s.signed_at);
     
     if (pending) {
-      return `Awaiting: ${pending.role}`;
+      return `Awaiting: ${pending.signatory_role}`;
     }
     
     return `${approved}/${total} approved`;
@@ -184,7 +184,7 @@ export default function ApprovalInbox() {
                           </div>
                           <div className="text-right">
                             <p className="text-sm font-medium text-white">
-                              {invoice.currency} {Number(invoice.amount).toFixed(2)}
+                              {invoice.currency} {Number(invoice.total_amount).toFixed(2)}
                             </p>
                             <p className="text-xs text-slate-400">
                               {getApprovalStatus(invoice)}
@@ -223,14 +223,14 @@ export default function ApprovalInbox() {
                     <div>
                       <p className="text-sm text-slate-400">Amount</p>
                       <p className="text-sm font-medium text-white">
-                        {selectedInvoice.currency} {Number(selectedInvoice.amount).toFixed(2)}
+                        {selectedInvoice.currency} {Number(selectedInvoice.total_amount).toFixed(2)}
                       </p>
                     </div>
                     <div>
                       <p className="text-sm text-slate-400">Due Date</p>
                       <p className="text-sm font-medium text-white">
-                        {selectedInvoice.invoice_due_date
-                          ? new Date(selectedInvoice.invoice_due_date).toLocaleDateString()
+                        {selectedInvoice.due_date
+                          ? new Date(selectedInvoice.due_date).toLocaleDateString()
                           : 'N/A'}
                       </p>
                     </div>
@@ -243,33 +243,27 @@ export default function ApprovalInbox() {
                         </p>
                         <div className="space-y-2">
                           {selectedInvoice.signatures
-                            .sort((a, b) => a.order - b.order)
                             .map((sig) => (
                               <div
                                 key={sig.id}
                                 className="flex items-center justify-between text-sm"
                               >
-                                <span className="text-slate-300">{sig.role}</span>
+                                <span className="text-slate-300">{sig.signatory_role}</span>
                                 <div className="flex items-center">
-                                  {sig.status === 'APPROVED' && (
+                                  {sig.signed_at && (
                                     <CheckCircle className="h-4 w-4 text-green-400 mr-1" />
                                   )}
-                                  {sig.status === 'REJECTED' && (
-                                    <XCircle className="h-4 w-4 text-red-400 mr-1" />
-                                  )}
-                                  {sig.status === 'PENDING' && (
+                                  {!sig.signed_at && (
                                     <Clock className="h-4 w-4 text-amber-400 mr-1" />
                                   )}
                                   <span
                                     className={`${
-                                      sig.status === 'APPROVED'
+                                      sig.signed_at
                                         ? 'text-green-400'
-                                        : sig.status === 'REJECTED'
-                                        ? 'text-red-400'
                                         : 'text-amber-400'
                                     }`}
                                   >
-                                    {sig.status.toLowerCase()}
+                                    {sig.signed_at ? 'Signed' : 'Pending'}
                                   </span>
                                 </div>
                               </div>

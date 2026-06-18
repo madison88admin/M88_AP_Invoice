@@ -3,7 +3,7 @@ import { AuthRequest } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
 import { analyzeInvoice } from '../services/ocrService';
 import { matchVendor } from '../services/vendorMatchingService';
-import { InvoiceStatus } from '@ap-invoice/shared';
+import { InvoiceStatus, SignatureType } from '@ap-invoice/shared';
 
 export const uploadInvoice = async (
   req: AuthRequest,
@@ -63,47 +63,47 @@ export const confirmOCR = async (
       invoice_date,
       due_date,
       vendor_id,
-      amount,
+      total_amount,
       currency,
       payment_terms,
       incoterm,
       bank_charges,
-      shipping_charges,
+      freight_charges,
       invoice_type,
       category,
-      bill_to_name,
-      bill_to_address,
+      bill_to_entity,
       bank_info,
       signatures,
-      priority,
+      is_urgent,
+      priority_flag,
     } = req.body;
 
     // Import invoice service dynamically to avoid circular dependency
     const invoiceService = await import('../services/invoiceService');
 
-    // Create invoice record with PENDING_VALIDATION status
+    // Create invoice record with RECEIVED status
     const invoice = await invoiceService.createInvoice(
       {
         invoice_number,
         invoice_date,
-        invoice_due_date: due_date,
+        due_date,
         invoice_received_date: new Date(),
         vendor_id,
-        amount,
+        total_amount,
         currency,
         payment_terms,
         incoterm,
         bank_charges: bank_charges || 0,
-        shipping_charges: shipping_charges || 0,
+        freight_charges: freight_charges || 0,
         invoice_type,
         category,
-        bill_to_name,
-        bill_to_address,
+        bill_to_entity: bill_to_entity || 'MADISON_88_LTD',
         ocr_raw_data: {
           bank_info,
           signatures,
         },
-        priority,
+        is_urgent: is_urgent || false,
+        priority_flag: priority_flag || false,
       },
       req.user!.id
     );
@@ -115,10 +115,10 @@ export const confirmOCR = async (
         await prisma.signature.create({
           data: {
             invoice_id: invoice.id,
-            signer_name: sig.signer_name,
+            signatory_name: sig.signatory_name || sig.signer_name,
             signed_at: sig.signed_at ? new Date(sig.signed_at) : null,
-            role: sig.role,
-            ocr_detected: true,
+            signatory_role: (sig.signatory_role || sig.role || 'COORDINATOR') as any,
+            signature_type: (sig.signature_type || SignatureType.DIGITAL) as any,
           },
         });
       }

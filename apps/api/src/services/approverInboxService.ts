@@ -1,22 +1,32 @@
 import prisma from '../config/database';
-import { InvoiceStatus, UserRole, SignatureRole } from '@ap-invoice/shared';
+import { InvoiceStatus, UserRole, SignatoryRole } from '@ap-invoice/shared';
+
+// All approval-pending statuses (used to query invoices awaiting approval)
+const PENDING_APPROVAL_STATUSES = [
+  InvoiceStatus.PENDING_COORDINATOR,
+  InvoiceStatus.PENDING_MANAGER,
+  InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER,
+  InvoiceStatus.PENDING_MLO_PLANNING_MANAGER,
+  InvoiceStatus.PENDING_SR_MANAGER,
+  InvoiceStatus.PENDING_POLLY,
+];
 
 /**
  * Get pending approvals for a specific user role
  */
 export async function getApproverInbox(userRole: UserRole) {
-  const signatureRole = mapUserRoleToSignatureRole(userRole);
-  if (!signatureRole) {
+  const signatoryRoles = mapUserRoleToSignatoryRoles(userRole);
+  if (signatoryRoles.length === 0) {
     return [];
   }
 
   const pendingApprovals = await prisma.invoice.findMany({
     where: {
-      status: InvoiceStatus.PENDING_APPROVAL,
+      status: { in: PENDING_APPROVAL_STATUSES as any[] },
       signatures: {
         some: {
-          role: signatureRole,
-          status: 'PENDING',
+          signatory_role: { in: signatoryRoles as any[] },
+          signed_at: null,
         },
       },
     },
@@ -24,7 +34,7 @@ export async function getApproverInbox(userRole: UserRole) {
       vendor: true,
       signatures: {
         where: {
-          role: signatureRole,
+          signatory_role: { in: signatoryRoles as any[] },
         },
       },
     },
@@ -40,23 +50,22 @@ export async function getApproverInbox(userRole: UserRole) {
  * Get approval statistics for a specific user role
  */
 export async function getApproverStatistics(userRole: UserRole) {
-  const signatureRole = mapUserRoleToSignatureRole(userRole);
-  if (!signatureRole) {
+  const signatoryRoles = mapUserRoleToSignatoryRoles(userRole);
+  if (signatoryRoles.length === 0) {
     return {
       pending: 0,
       approved: 0,
-      rejected: 0,
       total: 0,
     };
   }
 
   const pending = await prisma.invoice.count({
     where: {
-      status: InvoiceStatus.PENDING_APPROVAL,
+      status: { in: PENDING_APPROVAL_STATUSES as any[] },
       signatures: {
         some: {
-          role: signatureRole,
-          status: 'PENDING',
+          signatory_role: { in: signatoryRoles as any[] },
+          signed_at: null,
         },
       },
     },
@@ -64,23 +73,15 @@ export async function getApproverStatistics(userRole: UserRole) {
 
   const approved = await prisma.signature.count({
     where: {
-      role: signatureRole,
-      status: 'APPROVED',
-    },
-  });
-
-  const rejected = await prisma.signature.count({
-    where: {
-      role: signatureRole,
-      status: 'REJECTED',
+      signatory_role: { in: signatoryRoles as any[] },
+      signed_at: { not: null },
     },
   });
 
   return {
     pending,
     approved,
-    rejected,
-    total: pending + approved + rejected,
+    total: pending + approved,
   };
 }
 
@@ -88,17 +89,15 @@ export async function getApproverStatistics(userRole: UserRole) {
  * Get approval history for a specific user role
  */
 export async function getApprovalHistory(userRole: UserRole, limit = 50) {
-  const signatureRole = mapUserRoleToSignatureRole(userRole);
-  if (!signatureRole) {
+  const signatoryRoles = mapUserRoleToSignatoryRoles(userRole);
+  if (signatoryRoles.length === 0) {
     return [];
   }
 
   const signatures = await prisma.signature.findMany({
     where: {
-      role: signatureRole,
-      status: {
-        in: ['APPROVED', 'REJECTED'],
-      },
+      signatory_role: { in: signatoryRoles as any[] },
+      signed_at: { not: null },
     },
     include: {
       invoice: {
@@ -120,18 +119,18 @@ export async function getApprovalHistory(userRole: UserRole, limit = 50) {
  * Get invoices that are waiting for this role's approval
  */
 export async function getWaitingForApproval(userRole: UserRole) {
-  const signatureRole = mapUserRoleToSignatureRole(userRole);
-  if (!signatureRole) {
+  const signatoryRoles = mapUserRoleToSignatoryRoles(userRole);
+  if (signatoryRoles.length === 0) {
     return [];
   }
 
   const invoices = await prisma.invoice.findMany({
     where: {
-      status: InvoiceStatus.PENDING_APPROVAL,
+      status: { in: PENDING_APPROVAL_STATUSES as any[] },
       signatures: {
         some: {
-          role: signatureRole,
-          status: 'WAITING',
+          signatory_role: { in: signatoryRoles as any[] },
+          signed_at: null,
         },
       },
     },
@@ -139,7 +138,7 @@ export async function getWaitingForApproval(userRole: UserRole) {
       vendor: true,
       signatures: {
         where: {
-          role: signatureRole,
+          signatory_role: { in: signatoryRoles as any[] },
         },
       },
     },
@@ -157,13 +156,13 @@ export async function getWaitingForApproval(userRole: UserRole) {
 export async function getAllPendingApprovals() {
   const pendingApprovals = await prisma.invoice.findMany({
     where: {
-      status: InvoiceStatus.PENDING_APPROVAL,
+      status: { in: PENDING_APPROVAL_STATUSES as any[] },
     },
     include: {
       vendor: true,
       signatures: {
         where: {
-          status: 'PENDING',
+          signed_at: null,
         },
       },
     },
@@ -176,22 +175,23 @@ export async function getAllPendingApprovals() {
 }
 
 /**
- * Map user role to signature role
+ * Map user role to signatory roles
+ * MLO_ACCOUNT_HOLDER is a single role (brand-dependent routing handled at approval time)
  */
-function mapUserRoleToSignatureRole(userRole: UserRole): SignatureRole | null {
-  const mapping: Record<UserRole, SignatureRole> = {
-    [UserRole.PURCHASING_COORDINATOR]: SignatureRole.COORDINATOR,
-    [UserRole.PURCHASING_MANAGER]: SignatureRole.MANAGER,
-    [UserRole.PLANNING_MANAGER]: SignatureRole.PLANNING_MANAGER,
-    [UserRole.PRESIDENT]: SignatureRole.LINDSEY,
-    [UserRole.ACCOUNTING_ASSOCIATE]: SignatureRole.COORDINATOR,
-    [UserRole.ACCOUNTING_SUPERVISOR]: SignatureRole.COORDINATOR,
-    [UserRole.CFO]: SignatureRole.LINDSEY,
-    [UserRole.IT_ADMIN]: SignatureRole.COORDINATOR,
-    [UserRole.ADMIN]: SignatureRole.COORDINATOR,
-    [UserRole.LINDSEY]: SignatureRole.LINDSEY,
-    [UserRole.POLLY]: SignatureRole.COORDINATOR,
+function mapUserRoleToSignatoryRoles(userRole: UserRole): SignatoryRole[] {
+  const mapping: Record<UserRole, SignatoryRole[]> = {
+    [UserRole.PURCHASING_COORDINATOR]: [SignatoryRole.COORDINATOR],
+    [UserRole.PURCHASING_MANAGER]: [SignatoryRole.PURCHASING_MANAGER],
+    [UserRole.PLANNING_MANAGER]: [SignatoryRole.MLO_ACCOUNT_HOLDER, SignatoryRole.MLO_PLANNING_MANAGER],
+    [UserRole.SR_MANAGER_GLOBAL_PRODUCTION]: [SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION],
+    [UserRole.MS_POLLY]: [SignatoryRole.MS_POLLY],
+    [UserRole.ACCOUNTING_ASSOCIATE]: [SignatoryRole.ACCOUNTING_REVIEWER],
+    [UserRole.ACCOUNTING_SUPERVISOR]: [SignatoryRole.ACCOUNTING_REVIEWER],
+    [UserRole.CFO]: [SignatoryRole.ACCOUNTING_REVIEWER],
+    [UserRole.IT_ADMIN]: [SignatoryRole.COORDINATOR],
+    [UserRole.ADMIN]: [SignatoryRole.COORDINATOR],
+    [UserRole.PRESIDENT]: [SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION],
   };
 
-  return mapping[userRole] || null;
+  return mapping[userRole] || [];
 }

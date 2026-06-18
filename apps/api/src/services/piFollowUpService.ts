@@ -21,7 +21,7 @@ export interface PIFollowUpItem {
 export async function getPIPendingInvoices(): Promise<PIFollowUpItem[]> {
   const invoices = await prisma.invoice.findMany({
     where: {
-      status: InvoiceStatus.PI_PENDING_CI,
+      status: InvoiceStatus.VALIDATION_PENDING,
     },
     include: {
       vendor: true,
@@ -36,9 +36,9 @@ export async function getPIPendingInvoices(): Promise<PIFollowUpItem[]> {
     invoice_number: invoice.invoice_number,
     vendor_id: invoice.vendor_id,
     vendor_name: invoice.vendor?.name || 'Unknown',
-    amount: Number(invoice.amount),
+    amount: Number(invoice.total_amount),
     currency: invoice.currency,
-    invoice_date: invoice.invoice_date,
+    invoice_date: invoice.invoice_date || new Date(),
     pi_status: 'PENDING_CI',
     follow_up_count: 0,
     last_follow_up_date: undefined,
@@ -61,7 +61,7 @@ export async function sendCIFollowUp(invoiceId: string, userId: string): Promise
     throw new Error('Invoice not found');
   }
 
-  if (invoice.status !== InvoiceStatus.PI_PENDING_CI) {
+  if (invoice.status !== InvoiceStatus.VALIDATION_PENDING) {
     throw new Error('Invoice must be in PI_PENDING_CI status to send CI follow-up');
   }
 
@@ -70,11 +70,8 @@ export async function sendCIFollowUp(invoiceId: string, userId: string): Promise
     data: {
       invoice_id: invoiceId,
       action: 'CI_FOLLOW_UP_SENT',
-      user_id: userId,
-      metadata: {
-        message: `CI follow-up sent to vendor ${invoice.vendor?.name} for invoice ${invoice.invoice_number}`,
-        vendor_id: invoice.vendor_id,
-      },
+      performed_by: userId,
+      note: `CI follow-up sent to vendor ${invoice.vendor?.name} for invoice ${invoice.invoice_number}`,
     },
   });
 
@@ -84,11 +81,11 @@ export async function sendCIFollowUp(invoiceId: string, userId: string): Promise
   return {
     invoice_id: invoice.id,
     invoice_number: invoice.invoice_number,
-    vendor_id: invoice.vendor_id,
+    vendor_id: invoice.vendor_id || '',
     vendor_name: invoice.vendor?.name || 'Unknown',
-    amount: Number(invoice.amount),
+    amount: Number(invoice.total_amount),
     currency: invoice.currency,
-    invoice_date: invoice.invoice_date,
+    invoice_date: invoice.invoice_date || new Date(),
     pi_status: 'PENDING_CI',
     follow_up_count: 1,
     last_follow_up_date: new Date(),
@@ -115,7 +112,7 @@ export async function recordCIReceived(
     throw new Error('Invoice not found');
   }
 
-  if (invoice.status !== InvoiceStatus.PI_PENDING_CI) {
+  if (invoice.status !== InvoiceStatus.VALIDATION_PENDING) {
     throw new Error('Invoice must be in PI_PENDING_CI status to record CI');
   }
 
@@ -132,23 +129,19 @@ export async function recordCIReceived(
     data: {
       invoice_id: invoiceId,
       action: 'CI_RECEIVED',
-      user_id: userId,
-      metadata: {
-        message: `Commercial Invoice received from vendor ${invoice.vendor?.name} for invoice ${invoice.invoice_number}`,
-        ci_file_url: ciFileUrl,
-        vendor_id: invoice.vendor_id,
-      },
+      performed_by: userId,
+      note: `Commercial Invoice received from vendor ${invoice.vendor?.name} for invoice ${invoice.invoice_number}`,
     },
   });
 
   return {
     invoice_id: invoice.id,
     invoice_number: invoice.invoice_number,
-    vendor_id: invoice.vendor_id,
+    vendor_id: invoice.vendor_id || '',
     vendor_name: invoice.vendor?.name || 'Unknown',
-    amount: Number(invoice.amount),
+    amount: Number(invoice.total_amount),
     currency: invoice.currency,
-    invoice_date: invoice.invoice_date,
+    invoice_date: invoice.invoice_date || new Date(),
     pi_status: 'CI_RECEIVED',
     follow_up_count: 0,
     last_follow_up_date: undefined,
@@ -162,7 +155,7 @@ export async function recordCIReceived(
 export async function getPIFollowUpStatistics() {
   const pendingCI = await prisma.invoice.count({
     where: {
-      status: InvoiceStatus.PI_PENDING_CI,
+      status: InvoiceStatus.VALIDATION_PENDING,
     },
   });
 
@@ -174,17 +167,17 @@ export async function getPIFollowUpStatistics() {
 
   const totalAmountPending = await prisma.invoice.aggregate({
     where: {
-      status: InvoiceStatus.PI_PENDING_CI,
+      status: InvoiceStatus.VALIDATION_PENDING,
     },
     _sum: {
-      amount: true,
+      total_amount: true,
     },
   });
 
   return {
     pending_ci: pendingCI,
     ci_received: ciReceived,
-    total_amount_pending: totalAmountPending._sum.amount || 0,
+    total_amount_pending: totalAmountPending._sum.total_amount || 0,
   };
 }
 
@@ -236,7 +229,7 @@ export async function markAsPendingCI(invoiceId: string, userId: string, reason:
   await prisma.invoice.update({
     where: { id: invoiceId },
     data: {
-      status: InvoiceStatus.PI_PENDING_CI,
+      status: InvoiceStatus.VALIDATION_PENDING,
     },
   });
 
@@ -245,11 +238,8 @@ export async function markAsPendingCI(invoiceId: string, userId: string, reason:
     data: {
       invoice_id: invoiceId,
       action: 'MARKED_PENDING_CI',
-      user_id: userId,
-      metadata: {
-        message: `Invoice ${invoice.invoice_number} marked as pending CI. Reason: ${reason}`,
-        reason,
-      },
+      performed_by: userId,
+      note: `Invoice ${invoice.invoice_number} marked as pending CI. Reason: ${reason}`,
     },
   });
 

@@ -1,6 +1,6 @@
-import { ConfidentialClientApplication, ConfidentialClientApplicationConfig } from '@azure/msal-node';
+import { ConfidentialClientApplication } from '@azure/msal-node';
 
-const msalConfig: ConfidentialClientApplicationConfig = {
+const msalConfig: any = {
   auth: {
     clientId: process.env.AZURE_CLIENT_ID || '',
     authority: process.env.AZURE_AUTHORITY || 'https://login.microsoftonline.com/common',
@@ -8,7 +8,7 @@ const msalConfig: ConfidentialClientApplicationConfig = {
   },
   system: {
     loggerOptions: {
-      loggerCallback: (logLevel, message) => {
+      loggerCallback: (logLevel: any, message: any) => {
         console.log(message);
       },
       piiLoggingEnabled: false,

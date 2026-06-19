@@ -8,6 +8,60 @@
   }
 }
 
+/* Theme CSS Variables */
+:root.dark {
+  --bg-base: #0f0e1a;
+  --bg-card: #1a1730;
+  --bg-card-hover: #211e3a;
+  --border-color: rgba(255,255,255,0.08);
+  --text-primary: #e2e8f0;
+  --text-muted: #94a3b8;
+  --text-subtle: #64748b;
+  --input-bg: #12102a;
+  --input-border: rgba(255,255,255,0.10);
+  --input-placeholder: #475569;
+  --accent-purple: #7c3aed;
+  --accent-purple-hover: #6d28d9;
+  --logo-bg: #4f46e5;
+  --metric-card-bg: #1e1b4b;
+}
+
+:root.light {
+  --bg-base: #f1f5f9;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f8fafc;
+  --border-color: rgba(0,0,0,0.08);
+  --text-primary: #0f172a;
+  --text-muted: #475569;
+  --text-subtle: #94a3b8;
+  --input-bg: #f8fafc;
+  --input-border: rgba(0,0,0,0.12);
+  --input-placeholder: #94a3b8;
+  --accent-purple: #6d28d9;
+  --accent-purple-hover: #5b21b6;
+  --logo-bg: #4f46e5;
+  --metric-card-bg: #ede9fe;
+}
+
+/* Theme Toggle Button */
+.theme-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+.theme-toggle-btn:hover {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+}
+
 /* Custom Scrollbar Styling */
 ::-webkit-scrollbar {
   width: 8px;

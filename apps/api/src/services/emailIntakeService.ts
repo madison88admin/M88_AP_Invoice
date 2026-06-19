@@ -3,6 +3,7 @@ import { ClientSecretCredential } from '@azure/identity';
 import { analyzeInvoice } from './ocrService';
 import { matchVendor } from './vendorMatchingService';
 import { validateInvoice } from './validationService';
+import { uploadInvoiceToStructuredFolder } from './sharePointService';
 import { InvoiceStatus, InvoiceType, InvoiceSource, SignatureType, ExceptionReason, determineApprovalTier } from '@ap-invoice/shared';
 import prisma from '../config/database';
 import { logger } from '../utils/logger';
@@ -141,6 +142,26 @@ async function processAttachment(attachment: any, message: any): Promise<void> {
     ].filter(Boolean);
     const qbMemo = memoParts.length > 0 ? memoParts.join('_') : undefined;
 
+    // Upload to structured SharePoint folder
+    let sharepointUrl: string | undefined;
+    if (vendorId) {
+      try {
+        const uploadResult = await uploadInvoiceToStructuredFolder(
+          ocrResult.vendor_name,
+          ocrResult.invoice_number,
+          ocrResult.invoice_date || new Date(),
+          buffer,
+          attachment.name
+        );
+        if (uploadResult.success && uploadResult.webUrl) {
+          sharepointUrl = uploadResult.webUrl;
+        }
+      } catch (uploadError) {
+        logger.warn(`Failed to upload invoice to SharePoint for ${ocrResult.invoice_number}:`, uploadError);
+        // Continue without SharePoint upload - don't block the entire process
+      }
+    }
+
     // Create invoice record with BRD v5.0 schema fields
     const invoice = await prisma.invoice.create({
       data: {
@@ -180,6 +201,8 @@ async function processAttachment(attachment: any, message: any): Promise<void> {
         source: InvoiceSource.EMAIL as any,
         approval_tier: tier,
         payment_terms: ocrResult.payment_terms,
+        sharepoint_folder_url: sharepointUrl,
+        sharepoint_filed_at: sharepointUrl ? new Date() : null,
         ...(ocrResult.date_range_start && { date_range_start: new Date(ocrResult.date_range_start) }),
         ...(ocrResult.date_range_end && { date_range_end: new Date(ocrResult.date_range_end) }),
       },
@@ -209,7 +232,7 @@ async function processAttachment(attachment: any, message: any): Promise<void> {
         invoice_id: invoice.id,
         action: 'EMAIL_INTAKE',
         performed_by: 'email_poller',
-        note: `Email intake from ${message.from?.emailAddress?.address}: ${attachment.name}`,
+        note: `Email intake from ${message.from?.emailAddress?.address}: ${attachment.name}${sharepointUrl ? `. Uploaded to SharePoint: ${sharepointUrl}` : ''}`,
       },
     });
     

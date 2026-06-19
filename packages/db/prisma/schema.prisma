@@ -25,6 +25,7 @@ model Vendor {
   aba_routing_number      String?
   intermediary_bank_name  String?
   intermediary_bank_swift String?
+  has_multiple_accounts   Boolean  @default(false)
   
   // Tax IDs
   gstin_number            String?
@@ -99,6 +100,13 @@ model Invoice {
   is_handwritten        Boolean       @default(false)
   exception_reasons     ExceptionReason[]
   
+  // Duplicate detection hash
+  invoice_hash          String?       @unique
+  
+  // Bank matching
+  bank_match_status     String?
+  bank_match_details    Json?
+  
   // QuickBooks
   qb_memo               String?
   qb_account_class      String?
@@ -126,6 +134,7 @@ model Invoice {
   audit_logs            AuditLog[]
   payments              Payment[]
   exceptions            Exception[]
+  follow_up_tasks       FollowUpTask[]
   
   @@index([vendor_id])
   @@index([status])
@@ -133,6 +142,7 @@ model Invoice {
   @@index([invoice_type])
   @@index([bill_to_entity])
   @@index([approval_tier])
+  @@index([invoice_hash])
 }
 
 model Signature {
@@ -211,6 +221,27 @@ model PaymentBatch {
   cancellation_reason  String?
   payments             Payment[]
   created_at           DateTime           @default(now())
+}
+
+model FollowUpTask {
+  id               String   @id @default(uuid())
+  invoice_id       String
+  invoice          Invoice  @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
+  task_type        String
+  assigned_to      String
+  due_date         DateTime
+  status           String   @default("PENDING")
+  reminder_count   Int      @default(0)
+  last_reminded_at DateTime?
+  completed_at     DateTime?
+  notes            String?
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+  
+  @@index([invoice_id])
+  @@index([assigned_to])
+  @@index([status])
+  @@index([due_date])
 }
 
 // --- ENUMS ---

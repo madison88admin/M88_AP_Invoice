@@ -1,51 +1,44 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Vendor, InvoiceType } from '@ap-invoice/shared';
-import { vendorApi } from '../lib/api';
+import { useMockData } from '../contexts/MockDataContext';
+import { useAuth } from '../contexts/AuthContext';
 import { Building2, Search, Plus, Edit, Trash2, ArrowLeft, Building, Save, X } from 'lucide-react';
+import { MockVendor } from '../lib/mockData';
 
 export default function VendorManagement() {
-  const [vendors, setVendors] = useState<Vendor[]>([]);
+  const { vendors } = useMockData();
+  const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [selectedVendor, setSelectedVendor] = useState<Vendor | null>(null);
+  const [selectedVendor, setSelectedVendor] = useState<MockVendor | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
-  const [editingVendor, setEditingVendor] = useState<Partial<Vendor>>({});
+  const [editingVendor, setEditingVendor] = useState<Partial<MockVendor>>({});
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    loadVendors();
-  }, []);
-
-  const loadVendors = async () => {
-    try {
-      setLoading(true);
-      const response = await vendorApi.getAll();
-      setVendors(response.data);
-    } catch (error) {
-      console.error('Failed to load vendors:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    setLoading(false);
+  }, [vendors]);
 
   const filteredVendors = vendors.filter(vendor =>
     vendor.name.toLowerCase().includes(search.toLowerCase()) ||
     vendor.name_aliases.some(alias => alias.toLowerCase().includes(search.toLowerCase()))
   );
 
-  const handleEdit = (vendor: Vendor) => {
+  const handleEdit = (vendor: MockVendor) => {
     setEditingVendor(vendor);
     setShowEditModal(true);
   };
 
   const handleSave = async () => {
-    if (!editingVendor.id) return;
+    if (!editingVendor.id || !user) return;
 
     try {
       setSaving(true);
-      await vendorApi.update(editingVendor.id, editingVendor);
-      await loadVendors();
+      // Update vendor in mock data
+      const vendorIndex = vendors.findIndex(v => v.id === editingVendor.id);
+      if (vendorIndex !== -1) {
+        vendors[vendorIndex] = { ...vendors[vendorIndex], ...editingVendor } as MockVendor;
+      }
       setShowEditModal(false);
       setEditingVendor({});
     } catch (error) {
@@ -231,10 +224,6 @@ export default function VendorManagement() {
                     <p className="text-sm font-medium text-white">{selectedVendor.name}</p>
                   </div>
                   <div>
-                    <p className="text-sm text-slate-400">Invoice Template Type</p>
-                    <p className="text-sm font-medium text-white">{selectedVendor.invoice_template_type}</p>
-                  </div>
-                  <div>
                     <p className="text-sm text-slate-400">Name Aliases</p>
                     <div className="flex flex-wrap gap-1 mt-1">
                       {selectedVendor.name_aliases.map((alias, idx) => (
@@ -255,14 +244,6 @@ export default function VendorManagement() {
                   <div>
                     <p className="text-sm text-slate-400">Account Number</p>
                     <p className="text-sm font-medium text-white">{selectedVendor.account_number || 'N/A'}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-slate-400">Bank Address</p>
-                    <p className="text-sm font-medium text-white">{selectedVendor.bank_address || 'N/A'}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-slate-400">Sort Code</p>
-                    <p className="text-sm font-medium text-white">{selectedVendor.sort_code || 'N/A'}</p>
                   </div>
                 </div>
               </div>
@@ -297,18 +278,6 @@ export default function VendorManagement() {
                     onChange={(e) => setEditingVendor({ ...editingVendor, name: e.target.value })}
                     className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent text-white"
                   />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-400 mb-1">Invoice Template Type</label>
-                  <select
-                    value={editingVendor.invoice_template_type || ''}
-                    onChange={(e) => setEditingVendor({ ...editingVendor, invoice_template_type: e.target.value as any })}
-                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent text-white"
-                  >
-                    {Object.values(InvoiceType).map(type => (
-                      <option key={type} value={type}>{type}</option>
-                    ))}
-                  </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-400 mb-1">Name Aliases</label>
@@ -366,24 +335,6 @@ export default function VendorManagement() {
                     type="text"
                     value={editingVendor.account_number || ''}
                     onChange={(e) => setEditingVendor({ ...editingVendor, account_number: e.target.value })}
-                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-400 mb-1">Bank Address</label>
-                  <textarea
-                    value={editingVendor.bank_address || ''}
-                    onChange={(e) => setEditingVendor({ ...editingVendor, bank_address: e.target.value })}
-                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent text-white"
-                    rows={2}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-400 mb-1">Sort Code</label>
-                  <input
-                    type="text"
-                    value={editingVendor.sort_code || ''}
-                    onChange={(e) => setEditingVendor({ ...editingVendor, sort_code: e.target.value })}
                     className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent text-white"
                   />
                 </div>

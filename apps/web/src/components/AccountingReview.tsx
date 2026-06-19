@@ -1,37 +1,26 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Invoice, InvoiceStatus } from '@ap-invoice/shared';
-import { invoiceApi } from '../lib/api';
+import { InvoiceStatus } from '@ap-invoice/shared';
+import { useMockData } from '../contexts/MockDataContext';
+import { MockInvoice } from '../lib/mockData';
 import { FileText, Search, Filter, Download, Eye, CheckCircle, XCircle, Calendar, FileSearch } from 'lucide-react';
 
 export default function AccountingReview() {
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const { invoices } = useMockData();
   const [loading, setLoading] = useState(true);
-  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+  const [selectedInvoice, setSelectedInvoice] = useState<MockInvoice | null>(null);
   const [filters, setFilters] = useState({
     status: InvoiceStatus.POSTED_TO_QB,
     search: '',
   });
 
   useEffect(() => {
-    loadInvoices();
-  }, [filters]);
-
-  const loadInvoices = async () => {
-    try {
-      setLoading(true);
-      const response = await invoiceApi.getAll({ status: filters.status });
-      setInvoices(response.data);
-    } catch (error) {
-      console.error('Failed to load invoices:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    setLoading(false);
+  }, [invoices]);
 
   const filteredInvoices = invoices.filter(invoice =>
     invoice.invoice_number.toLowerCase().includes(filters.search.toLowerCase()) ||
-    invoice.vendor?.name.toLowerCase().includes(filters.search.toLowerCase())
+    invoice.vendor_name.toLowerCase().includes(filters.search.toLowerCase())
   );
 
   return (
@@ -182,7 +171,7 @@ export default function AccountingReview() {
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-white">
-                        {invoice.vendor?.name}
+                        {invoice.vendor_name}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-white">
                         ${invoice.total_amount.toLocaleString()}
@@ -199,7 +188,7 @@ export default function AccountingReview() {
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-white">
-                        {new Date(invoice.updated_at).toLocaleDateString()}
+                        {invoice.updated_at ? new Date(invoice.updated_at).toLocaleDateString() : 'N/A'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                         <button
@@ -241,7 +230,7 @@ export default function AccountingReview() {
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-400 mb-1">Vendor</label>
-                    <p className="text-sm text-white font-medium">{selectedInvoice.vendor?.name}</p>
+                    <p className="text-sm text-white font-medium">{selectedInvoice.vendor_name}</p>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-400 mb-1">Amount</label>
@@ -269,7 +258,7 @@ export default function AccountingReview() {
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-400 mb-1">Posted Date</label>
-                    <p className="text-sm text-white font-medium">{new Date(selectedInvoice.updated_at).toLocaleDateString()}</p>
+                    <p className="text-sm text-white font-medium">{selectedInvoice.updated_at ? new Date(selectedInvoice.updated_at).toLocaleDateString() : 'N/A'}</p>
                   </div>
                 </div>
 
@@ -278,23 +267,19 @@ export default function AccountingReview() {
                   <div className="space-y-3">
                     <div>
                       <label className="block text-sm font-medium text-slate-400 mb-1">Bank Name</label>
-                      <p className="text-sm text-white font-medium">{selectedInvoice.vendor?.bank_name || 'N/A'}</p>
+                      <p className="text-sm text-white font-medium">{selectedInvoice.bank_name || 'N/A'}</p>
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-slate-400 mb-1">Bank Address</label>
-                      <p className="text-sm text-white font-medium">{selectedInvoice.vendor?.bank_address || 'N/A'}</p>
+                      <label className="block text-sm font-medium text-slate-400 mb-1">Account Number</label>
+                      <p className="text-sm text-white font-medium">{selectedInvoice.account_number || 'N/A'}</p>
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-slate-400 mb-1">SWIFT Code</label>
-                      <p className="text-sm text-white font-medium">{selectedInvoice.vendor?.swift_code || 'N/A'}</p>
+                      <p className="text-sm text-white font-medium">{selectedInvoice.swift_code || 'N/A'}</p>
                     </div>
-                    <div>
-                      <label className="block text-sm font-medium text-slate-400 mb-1">USD Account</label>
-                      <p className="text-sm text-white font-medium">{selectedInvoice.vendor?.account_number || 'N/A'}</p>
-                    </div>
-                    <div className="mt-4 p-3 rounded-lg" style={{ background: selectedInvoice.vendor?.swift_code && selectedInvoice.vendor?.account_number ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)', border: selectedInvoice.vendor?.swift_code && selectedInvoice.vendor?.account_number ? '1px solid rgba(34, 197, 94, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)' }}>
+                    <div className="mt-4 p-3 rounded-lg" style={{ background: selectedInvoice.swift_code && selectedInvoice.account_number ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)', border: selectedInvoice.swift_code && selectedInvoice.account_number ? '1px solid rgba(34, 197, 94, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)' }}>
                       <div className="flex items-center">
-                        {selectedInvoice.vendor?.swift_code && selectedInvoice.vendor?.account_number ? (
+                        {selectedInvoice.swift_code && selectedInvoice.account_number ? (
                           <>
                             <CheckCircle className="h-5 w-5 mr-2 text-green-400" />
                             <span className="text-sm text-green-300 font-medium">Bank information is complete and validated</span>
@@ -315,11 +300,11 @@ export default function AccountingReview() {
                   <div className="space-y-2">
                     <div className="flex items-center text-sm text-slate-400">
                       <CheckCircle className="h-4 w-4 mr-2 text-green-400" />
-                      <span>Posted on {new Date(selectedInvoice.updated_at).toLocaleString()}</span>
+                      <span>Posted on {selectedInvoice.updated_at ? new Date(selectedInvoice.updated_at).toLocaleString() : 'N/A'}</span>
                     </div>
                     <div className="flex items-center text-sm text-slate-400">
                       <Calendar className="h-4 w-4 mr-2 text-blue-400" />
-                      <span>Created on {new Date(selectedInvoice.created_at).toLocaleString()}</span>
+                      <span>Created on {selectedInvoice.created_at ? new Date(selectedInvoice.created_at).toLocaleString() : 'N/A'}</span>
                     </div>
                   </div>
                 </div>

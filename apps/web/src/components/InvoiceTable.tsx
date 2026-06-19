@@ -1,10 +1,11 @@
-import { Invoice, InvoiceStatus, OrderType } from '@ap-invoice/shared';
+import { InvoiceStatus, OrderType } from '@ap-invoice/shared';
 import { formatCurrency, formatDate, cn } from '../lib/utils';
 import { FileText, Calendar, DollarSign, Eye, Check, Flag } from 'lucide-react';
+import { MockInvoice } from '../lib/mockData';
 
 interface InvoiceTableProps {
-  invoices: Invoice[];
-  onInvoiceClick?: (invoice: Invoice) => void;
+  invoices: MockInvoice[];
+  onInvoiceClick?: (invoice: MockInvoice) => void;
   loading?: boolean;
 }
 
@@ -35,12 +36,8 @@ const orderTypeColors: Record<OrderType, { bg: string; text: string }> = {
 };
 
 export default function InvoiceTable({ invoices, onInvoiceClick, loading = false }: InvoiceTableProps) {
-  // Sort priority invoices to the top
-  const sortedInvoices = [...invoices].sort((a, b) => {
-    if (a.priority_flag && !b.priority_flag) return -1;
-    if (!a.priority_flag && b.priority_flag) return 1;
-    return 0;
-  });
+  // Use invoices as-is for mock data
+  const sortedInvoices = invoices;
 
   if (loading) {
     return (
@@ -117,7 +114,7 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
               style={{
                 borderBottom: '1px solid rgba(255,255,255,0.04)',
                 transition: 'background 150ms ease',
-                borderLeft: invoice.priority_flag ? '3px solid #DC2626' : '3px solid transparent'
+                borderLeft: '3px solid transparent'
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
@@ -131,9 +128,7 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
                 <input type="checkbox" className="rounded border-white/20 text-[#6366f1] focus:ring-[#6366f1]" />
               </td>
               <td className="px-4 py-4 whitespace-nowrap" style={{ width: '32px' }}>
-                {invoice.priority_flag && (
-                  <Flag className="h-4 w-4 text-red-500" fill="currentColor" />
-                )}
+                {/* Priority flag removed for mock data */}
               </td>
               <td className="px-6 py-4 whitespace-nowrap">
                 <div className="flex items-center">
@@ -144,17 +139,17 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
                 </div>
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-200">
-                {invoice.vendor?.name || 'Unknown'}
+                {invoice.vendor_name || 'Unknown'}
               </td>
               <td className="px-4 py-4 whitespace-nowrap text-sm text-slate-200" style={{ width: '140px' }}>
                 {invoice.brand || '—'}
               </td>
               <td className="px-4 py-4 whitespace-nowrap" style={{ width: '80px' }}>
-                {invoice.brand_code && (
+                {invoice.brand_tier && (
                   <span
                     className="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-500/20 text-blue-400"
                   >
-                    {invoice.brand_code}
+                    {invoice.brand_tier}
                   </span>
                 )}
               </td>
@@ -163,8 +158,8 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
                   <span
                     className={cn(
                       'px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full',
-                      orderTypeColors[invoice.order_type]?.bg,
-                      orderTypeColors[invoice.order_type]?.text
+                      orderTypeColors[invoice.order_type as OrderType]?.bg,
+                      orderTypeColors[invoice.order_type as OrderType]?.text
                     )}
                   >
                     {invoice.order_type}
@@ -180,7 +175,7 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
               <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-400">
                 <div className="flex items-center">
                   <Calendar className="h-4 w-4 text-slate-400 mr-2" />
-                  {invoice.due_date ? formatDate(invoice.due_date) : (invoice.invoice_date ? formatDate(invoice.invoice_date) : '—')}
+                  {invoice.invoice_date ? formatDate(invoice.invoice_date) : '—'}
                 </div>
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm text-white font-medium">

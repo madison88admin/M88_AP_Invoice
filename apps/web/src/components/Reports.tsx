@@ -1,9 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { TrendingUp, DollarSign, FileText, AlertTriangle, Clock, CheckCircle, ArrowLeft } from 'lucide-react';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { useQuery } from '@tanstack/react-query';
+import { useMockData } from '../contexts/MockDataContext';
 
 interface KPIMetrics {
   total_invoices: number;
@@ -48,277 +47,63 @@ interface ExceptionRateData {
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8'];
 
 export default function Reports() {
-  const [dateRange, setDateRange] = useState({ startDate: '', endDate: '' });
+  const { invoices } = useMockData();
   const [activeTab, setActiveTab] = useState<'kpi' | 'volume' | 'payments' | 'vendors' | 'exceptions' | 'activity'>('kpi');
 
-  // Set default date range (last 30 days)
-  useEffect(() => {
-    const endDate = new Date();
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - 30);
-    setDateRange({
-      startDate: startDate.toISOString().split('T')[0],
-      endDate: endDate.toISOString().split('T')[0],
-    });
-  }, []);
+  // Calculate KPI metrics from mock data
+  const kpiMetrics: KPIMetrics = {
+    total_invoices: invoices.length,
+    pending_approvals: invoices.filter(i => i.status === 'PENDING_MANAGER' || i.status === 'PENDING_MLO_PLANNING_MANAGER' || i.status === 'PENDING_SR_MANAGER' || i.status === 'PENDING_POLLY').length,
+    pending_exceptions: invoices.filter(i => i.exceptions.length > 0).length,
+    scheduled_payments: invoices.filter(i => i.status === 'PAYMENT_SCHEDULED').length,
+    total_amount_pending: invoices.filter(i => i.status !== 'PAID').reduce((sum, i) => sum + i.total_amount, 0),
+    approval_rate: invoices.length > 0 ? (invoices.filter(i => i.status === 'PAID').length / invoices.length) * 100 : 0,
+    average_processing_time: 3.5, // Mock value
+  };
 
-  // Fetch KPI metrics from Supabase
-  const { data: kpiMetrics, isLoading: kpiLoading } = useQuery({
-    queryKey: ['reports-kpi', dateRange],
-    queryFn: async (): Promise<KPIMetrics> => {
-      // Return mock data if Supabase is not configured
-      if (!isSupabaseConfigured || !supabase) {
-        return {
-          total_invoices: 45,
-          pending_approvals: 12,
-          pending_exceptions: 3,
-          scheduled_payments: 8,
-          total_amount_pending: 75000,
-          approval_rate: 85.5,
-          average_processing_time: 3.5,
-        };
-      }
+  // Calculate invoice volume data from mock data
+  const invoiceVolumeData: InvoiceVolumeData[] = [
+    { date: '2024-01-01', total_invoices: 5, approved_invoices: 3, rejected_invoices: 0, pending_invoices: 2, total_amount: 15000 },
+    { date: '2024-01-08', total_invoices: 8, approved_invoices: 5, rejected_invoices: 1, pending_invoices: 2, total_amount: 22000 },
+    { date: '2024-01-15', total_invoices: 12, approved_invoices: 8, rejected_invoices: 1, pending_invoices: 3, total_amount: 35000 },
+    { date: '2024-01-22', total_invoices: 10, approved_invoices: 7, rejected_invoices: 0, pending_invoices: 3, total_amount: 28000 },
+    { date: '2024-01-29', total_invoices: 15, approved_invoices: 10, rejected_invoices: 2, pending_invoices: 3, total_amount: 42000 },
+  ];
 
-      const { data, error } = await supabase
-        .from('invoices')
-        .select('*')
-        .gte('created_at', dateRange.startDate)
-        .lte('created_at', dateRange.endDate);
+  // Calculate payment status data from mock data
+  const paymentStatusData: PaymentStatusData[] = [
+    { status: 'Paid', count: invoices.filter(i => i.status === 'PAID').length, total_amount: invoices.filter(i => i.status === 'PAID').reduce((sum, i) => sum + i.total_amount, 0) },
+    { status: 'Pending', count: invoices.filter(i => i.status === 'PENDING_MANAGER' || i.status === 'PENDING_MLO_PLANNING_MANAGER' || i.status === 'PENDING_SR_MANAGER' || i.status === 'PENDING_POLLY').length, total_amount: invoices.filter(i => i.status === 'PENDING_MANAGER' || i.status === 'PENDING_MLO_PLANNING_MANAGER' || i.status === 'PENDING_SR_MANAGER' || i.status === 'PENDING_POLLY').reduce((sum, i) => sum + i.total_amount, 0) },
+    { status: 'Scheduled', count: invoices.filter(i => i.status === 'PAYMENT_SCHEDULED').length, total_amount: invoices.filter(i => i.status === 'PAYMENT_SCHEDULED').reduce((sum, i) => sum + i.total_amount, 0) },
+  ];
 
-      if (error) throw error;
+  // Calculate vendor spending data from mock data
+  const vendorSpendingData: VendorSpendingData[] = invoices.reduce((acc: VendorSpendingData[], invoice) => {
+    const existing = acc.find(v => v.vendor_name === invoice.vendor_name);
+    if (existing) {
+      existing.total_invoices++;
+      existing.total_amount += invoice.total_amount;
+      existing.average_amount = existing.total_amount / existing.total_invoices;
+    } else {
+      acc.push({
+        vendor_id: invoice.id,
+        vendor_name: invoice.vendor_name,
+        total_invoices: 1,
+        total_amount: invoice.total_amount,
+        average_amount: invoice.total_amount,
+      });
+    }
+    return acc;
+  }, []).slice(0, 10);
 
-      const invoices = data || [];
-      const totalInvoices = invoices.length;
-      const pendingApprovals = invoices.filter(i => i.status === 'pending_approval').length;
-      const pendingExceptions = invoices.filter(i => i.status === 'exception').length;
-      const scheduledPayments = invoices.filter(i => i.status === 'scheduled').length;
-      const totalAmountPending = invoices
-        .filter(i => i.status !== 'paid')
-        .reduce((sum, i) => sum + (Number(i.amount) || 0), 0);
-      const approvedInvoices = invoices.filter(i => i.status === 'paid').length;
-      const approvalRate = totalInvoices > 0 ? (approvedInvoices / totalInvoices) * 100 : 0;
-
-      // Calculate average processing time (simplified)
-      const averageProcessingTime = 3.5; // Placeholder
-
-      return {
-        total_invoices: totalInvoices,
-        pending_approvals: pendingApprovals,
-        pending_exceptions: pendingExceptions,
-        scheduled_payments: scheduledPayments,
-        total_amount_pending: totalAmountPending,
-        approval_rate: approvalRate,
-        average_processing_time: averageProcessingTime,
-      };
-    },
-  });
-
-  // Fetch invoice volume data from Supabase
-  const { data: invoiceVolume, isLoading: volumeLoading } = useQuery({
-    queryKey: ['reports-volume', dateRange],
-    queryFn: async (): Promise<InvoiceVolumeData[]> => {
-      // Return mock data if Supabase is not configured
-      if (!isSupabaseConfigured || !supabase) {
-        return [
-          { date: '2024-01-01', total_invoices: 5, approved_invoices: 3, rejected_invoices: 0, pending_invoices: 2, total_amount: 15000 },
-          { date: '2024-01-08', total_invoices: 8, approved_invoices: 5, rejected_invoices: 1, pending_invoices: 2, total_amount: 22000 },
-          { date: '2024-01-15', total_invoices: 12, approved_invoices: 8, rejected_invoices: 1, pending_invoices: 3, total_amount: 35000 },
-          { date: '2024-01-22', total_invoices: 10, approved_invoices: 7, rejected_invoices: 0, pending_invoices: 3, total_amount: 28000 },
-          { date: '2024-01-29', total_invoices: 15, approved_invoices: 10, rejected_invoices: 2, pending_invoices: 3, total_amount: 42000 },
-        ];
-      }
-
-      const { data, error } = await supabase
-        .from('invoices')
-        .select('created_at, status, amount')
-        .gte('created_at', dateRange.startDate)
-        .lte('created_at', dateRange.endDate)
-        .order('created_at', { ascending: true });
-
-      if (error) throw error;
-
-      const invoices = data || [];
-      // Group by date
-      const grouped = invoices.reduce((acc, invoice) => {
-        const date = new Date(invoice.created_at).toISOString().split('T')[0];
-        if (!acc[date]) {
-          acc[date] = { date, total_invoices: 0, approved_invoices: 0, rejected_invoices: 0, pending_invoices: 0, total_amount: 0 };
-        }
-        acc[date].total_invoices++;
-        acc[date].total_amount += Number(invoice.amount) || 0;
-        if (invoice.status === 'paid') acc[date].approved_invoices++;
-        else if (invoice.status === 'rejected') acc[date].rejected_invoices++;
-        else acc[date].pending_invoices++;
-        return acc;
-      }, {} as Record<string, InvoiceVolumeData>);
-
-      return Object.values(grouped);
-    },
-  });
-
-  // Fetch payment status data from Supabase
-  const { data: paymentStatus, isLoading: paymentLoading } = useQuery({
-    queryKey: ['reports-payment-status', dateRange],
-    queryFn: async (): Promise<PaymentStatusData[]> => {
-      // Return mock data if Supabase is not configured
-      if (!isSupabaseConfigured || !supabase) {
-        return [
-          { status: 'paid', count: 25, total_amount: 85000 },
-          { status: 'pending_approval', count: 12, total_amount: 45000 },
-          { status: 'pending_validation', count: 8, total_amount: 22000 },
-          { status: 'exception', count: 3, total_amount: 8000 },
-          { status: 'scheduled', count: 5, total_amount: 15000 },
-        ];
-      }
-
-      const { data, error } = await supabase
-        .from('invoices')
-        .select('status, amount')
-        .gte('created_at', dateRange.startDate)
-        .lte('created_at', dateRange.endDate);
-
-      if (error) throw error;
-
-      const invoices = data || [];
-      const statusGroups = invoices.reduce((acc, invoice) => {
-        const status = invoice.status || 'unknown';
-        if (!acc[status]) {
-          acc[status] = { status, count: 0, total_amount: 0 };
-        }
-        acc[status].count++;
-        acc[status].total_amount += Number(invoice.amount) || 0;
-        return acc;
-      }, {} as Record<string, PaymentStatusData>);
-
-      return Object.values(statusGroups);
-    },
-  });
-
-  // Fetch vendor spending data from Supabase
-  const { data: vendorSpending, isLoading: vendorLoading } = useQuery({
-    queryKey: ['reports-vendor-spending', dateRange],
-    queryFn: async (): Promise<VendorSpendingData[]> => {
-      // Return mock data if Supabase is not configured
-      if (!isSupabaseConfigured || !supabase) {
-        return [
-          { vendor_id: '1', vendor_name: 'Acme Corporation', total_invoices: 12, total_amount: 45000, average_amount: 3750 },
-          { vendor_id: '2', vendor_name: 'Tech Solutions Inc', total_invoices: 8, total_amount: 32000, average_amount: 4000 },
-          { vendor_id: '3', vendor_name: 'Global Supplies', total_invoices: 15, total_amount: 28000, average_amount: 1866.67 },
-          { vendor_id: '4', vendor_name: 'Digital Agency', total_invoices: 6, total_amount: 24000, average_amount: 4000 },
-          { vendor_id: '5', vendor_name: 'Local Services', total_invoices: 10, total_amount: 18000, average_amount: 1800 },
-        ];
-      }
-
-      const { data, error } = await supabase
-        .from('invoices')
-        .select('vendor_name, amount')
-        .gte('created_at', dateRange.startDate)
-        .lte('created_at', dateRange.endDate);
-
-      if (error) throw error;
-
-      const invoices = data || [];
-      const vendorGroups = invoices.reduce((acc, invoice) => {
-        const vendor = invoice.vendor_name || 'Unknown';
-        if (!acc[vendor]) {
-          acc[vendor] = { vendor_id: vendor, vendor_name: vendor, total_invoices: 0, total_amount: 0, average_amount: 0 };
-        }
-        acc[vendor].total_invoices++;
-        acc[vendor].total_amount += Number(invoice.amount) || 0;
-        return acc;
-      }, {} as Record<string, VendorSpendingData>);
-
-      // Calculate average and sort by total amount
-      const result = Object.values(vendorGroups).map(v => ({
-        ...v,
-        average_amount: v.total_invoices > 0 ? v.total_amount / v.total_invoices : 0,
-      })).sort((a, b) => b.total_amount - a.total_amount).slice(0, 10);
-
-      return result;
-    },
-  });
-
-  // Fetch recent activity from Supabase
-  const { data: recentActivity, isLoading: activityLoading } = useQuery({
-    queryKey: ['reports-recent-activity'],
-    queryFn: async () => {
-      // Return mock data if Supabase is not configured
-      if (!isSupabaseConfigured || !supabase) {
-        return [
-          { id: '1', invoice_number: 'INV-2024-005', vendor_name: 'Digital Agency', amount: 8900, currency: 'USD', status: 'pending_approval', created_at: '2024-01-18T10:00:00Z' },
-          { id: '2', invoice_number: 'INV-2024-004', vendor_name: 'Local Services', amount: 1500, currency: 'USD', status: 'exception', created_at: '2024-01-17T10:00:00Z' },
-          { id: '3', invoice_number: 'INV-2024-003', vendor_name: 'Global Supplies', amount: 3200, currency: 'EUR', status: 'paid', created_at: '2024-01-16T10:00:00Z' },
-          { id: '4', invoice_number: 'INV-2024-002', vendor_name: 'Tech Solutions Inc', amount: 7500, currency: 'USD', status: 'awaiting_approval', created_at: '2024-01-15T10:00:00Z' },
-          { id: '5', invoice_number: 'INV-2024-001', vendor_name: 'Acme Corporation', amount: 5000, currency: 'USD', status: 'pending_validation', created_at: '2024-01-14T10:00:00Z' },
-        ];
-      }
-
-      const { data, error } = await supabase
-        .from('invoices')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(10);
-
-      if (error) throw error;
-      return data || [];
-    },
-  });
-
-  // Fetch exception rate data from Supabase
-  const { data: exceptionRate, isLoading: exceptionLoading } = useQuery({
-    queryKey: ['reports-exception-rate', dateRange],
-    queryFn: async (): Promise<ExceptionRateData[]> => {
-      // Return mock data if Supabase is not configured
-      if (!isSupabaseConfigured || !supabase) {
-        return [
-          { date: '2024-01-01', total_invoices: 5, invoices_with_exceptions: 0, exception_rate: 0 },
-          { date: '2024-01-08', total_invoices: 8, invoices_with_exceptions: 1, exception_rate: 12.5 },
-          { date: '2024-01-15', total_invoices: 12, invoices_with_exceptions: 1, exception_rate: 8.33 },
-          { date: '2024-01-22', total_invoices: 10, invoices_with_exceptions: 0, exception_rate: 0 },
-          { date: '2024-01-29', total_invoices: 15, invoices_with_exceptions: 2, exception_rate: 13.33 },
-        ];
-      }
-
-      const { data, error } = await supabase
-        .from('invoices')
-        .select('created_at, status')
-        .gte('created_at', dateRange.startDate)
-        .lte('created_at', dateRange.endDate)
-        .order('created_at', { ascending: true });
-
-      if (error) throw error;
-
-      const invoices = data || [];
-      // Group by date and calculate exception rate
-      const grouped = invoices.reduce((acc, invoice) => {
-        const date = new Date(invoice.created_at).toISOString().split('T')[0];
-        if (!acc[date]) {
-          acc[date] = { date, total_invoices: 0, invoices_with_exceptions: 0, exception_rate: 0 };
-        }
-        acc[date].total_invoices++;
-        if (invoice.status === 'exception') {
-          acc[date].invoices_with_exceptions++;
-        }
-        return acc;
-      }, {} as Record<string, ExceptionRateData>);
-
-      // Calculate exception rate for each date
-      return Object.values(grouped).map(d => ({
-        ...d,
-        exception_rate: d.total_invoices > 0 ? (d.invoices_with_exceptions / d.total_invoices) * 100 : 0,
-      }));
-    },
-  });
-
-  const loading = kpiLoading || volumeLoading || paymentLoading || vendorLoading || activityLoading || exceptionLoading;
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="text-gray-600">Loading reports...</div>
-      </div>
-    );
-  }
+  // Calculate exception rate data from mock data
+  const exceptionRateData: ExceptionRateData[] = [
+    { date: '2024-01-01', total_invoices: 5, invoices_with_exceptions: 1, exception_rate: 20 },
+    { date: '2024-01-08', total_invoices: 8, invoices_with_exceptions: 2, exception_rate: 25 },
+    { date: '2024-01-15', total_invoices: 12, invoices_with_exceptions: 1, exception_rate: 8.3 },
+    { date: '2024-01-22', total_invoices: 10, invoices_with_exceptions: 0, exception_rate: 0 },
+    { date: '2024-01-29', total_invoices: 15, invoices_with_exceptions: 2, exception_rate: 13.3 },
+  ];
 
   return (
     <div className="min-h-screen relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%)' }}>
@@ -468,7 +253,7 @@ export default function Reports() {
           <div style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }} className="p-6">
             <h2 className="text-xl font-semibold text-white mb-4">Invoice Volume Over Time</h2>
             <ResponsiveContainer width="100%" height={400}>
-              <BarChart data={invoiceVolume}>
+              <BarChart data={invoiceVolumeData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
                 <XAxis dataKey="date" stroke="#94a3b8" />
                 <YAxis stroke="#94a3b8" />
@@ -490,7 +275,7 @@ export default function Reports() {
             <ResponsiveContainer width="100%" height={400}>
               <PieChart>
                 <Pie
-                  data={paymentStatus}
+                  data={paymentStatusData}
                   cx="50%"
                   cy="50%"
                   labelLine={false}
@@ -499,7 +284,7 @@ export default function Reports() {
                   fill="#8884d8"
                   dataKey="count"
                 >
-                  {paymentStatus?.map((_, index) => (
+                  {paymentStatusData.map((_, index) => (
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Pie>
@@ -514,7 +299,7 @@ export default function Reports() {
           <div style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }} className="p-6">
             <h2 className="text-xl font-semibold text-white mb-4">Top 10 Vendors by Spending</h2>
             <ResponsiveContainer width="100%" height={400}>
-              <BarChart data={vendorSpending}>
+              <BarChart data={vendorSpendingData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
                 <XAxis dataKey="vendor_name" angle={-45} textAnchor="end" height={100} stroke="#94a3b8" />
                 <YAxis stroke="#94a3b8" />
@@ -531,7 +316,7 @@ export default function Reports() {
           <div style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }} className="p-6">
             <h2 className="text-xl font-semibold text-white mb-4">Exception Rate Over Time</h2>
             <ResponsiveContainer width="100%" height={400}>
-              <LineChart data={exceptionRate}>
+              <LineChart data={exceptionRateData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
                 <XAxis dataKey="date" stroke="#94a3b8" />
                 <YAxis stroke="#94a3b8" />
@@ -547,38 +332,36 @@ export default function Reports() {
         {activeTab === 'activity' && (
           <div style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }} className="p-6">
             <h2 className="text-xl font-semibold text-white mb-4">Recent Activity</h2>
-            {recentActivity && recentActivity.length > 0 ? (
+            {invoices && invoices.length > 0 ? (
               <div className="space-y-3">
-                {recentActivity.map((activity: any) => (
+                {invoices.slice(0, 10).map((invoice) => (
                   <div
-                    key={activity.id}
+                    key={invoice.id}
                     className="flex items-center justify-between p-4 rounded-lg transition-colors hover:bg-white/5"
                     style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}
                   >
                     <div className="flex items-center gap-4">
                       <div className={`p-2 rounded-lg ${
-                        activity.status === 'paid' ? 'bg-green-500/20' :
-                        activity.status === 'exception' ? 'bg-red-500/20' :
-                        activity.status === 'pending_approval' ? 'bg-amber-500/20' :
+                        invoice.status === 'PAID' ? 'bg-green-500/20' :
+                        invoice.status === 'EXCEPTION_FLAGGED' ? 'bg-red-500/20' :
+                        invoice.status.includes('PENDING') ? 'bg-amber-500/20' :
                         'bg-blue-500/20'
                       }`}>
                         <FileText className="h-4 w-4 ${
-                          activity.status === 'paid' ? 'text-green-400' :
-                          activity.status === 'exception' ? 'text-red-400' :
-                          activity.status === 'pending_approval' ? 'text-amber-400' :
+                          invoice.status === 'PAID' ? 'text-green-400' :
+                          invoice.status === 'EXCEPTION_FLAGGED' ? 'text-red-400' :
+                          invoice.status.includes('PENDING') ? 'text-amber-400' :
                           'text-blue-400'
                         }" />
                       </div>
                       <div>
-                        <p className="text-sm font-medium text-white">{activity.invoice_number}</p>
-                        <p className="text-xs text-slate-400">{activity.vendor_name || 'Unknown Vendor'}</p>
+                        <p className="text-sm font-medium text-white">{invoice.invoice_number}</p>
+                        <p className="text-xs text-slate-400">{invoice.vendor_name || 'Unknown Vendor'}</p>
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className="text-sm font-medium text-white">{activity.currency} {Number(activity.amount).toFixed(2)}</p>
-                      <p className="text-xs text-slate-400">
-                        {new Date(activity.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                      </p>
+                      <p className="text-sm font-medium text-white">${invoice.total_amount.toLocaleString()}</p>
+                      <p className="text-xs text-slate-400">{invoice.status}</p>
                     </div>
                   </div>
                 ))}

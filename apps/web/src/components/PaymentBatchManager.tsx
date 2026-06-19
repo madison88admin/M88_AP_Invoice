@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { paymentBatchApi } from '../lib/api';
+import { useMockData } from '../contexts/MockDataContext';
 import { Package, Play, X, AlertCircle, CheckCircle, Clock, DollarSign, ArrowLeft } from 'lucide-react';
 
 interface Payment {
@@ -31,6 +31,7 @@ interface PaymentBatch {
 }
 
 export default function PaymentBatchManager() {
+  const { invoices } = useMockData();
   const [batches, setBatches] = useState<PaymentBatch[]>([]);
   const [selectedBatch, setSelectedBatch] = useState<PaymentBatch | null>(null);
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -39,25 +40,65 @@ export default function PaymentBatchManager() {
   const [processing, setProcessing] = useState(false);
 
   useEffect(() => {
-    loadBatches();
-  }, []);
-
-  const loadBatches = async () => {
-    try {
-      const response = await paymentBatchApi.getAll();
-      setBatches(response.data);
-    } catch (error) {
-      console.error('Failed to load payment batches:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    // Create mock payment batches from invoices
+    const mockBatches: PaymentBatch[] = [
+      {
+        id: 'batch-1',
+        batch_number: 'PB-2024-001',
+        total_amount: invoices.filter(i => i.status === 'PAYMENT_SCHEDULED').reduce((sum, i) => sum + i.total_amount, 0),
+        payment_count: invoices.filter(i => i.status === 'PAYMENT_SCHEDULED').length,
+        status: 'PENDING_CFO',
+        created_at: new Date().toISOString(),
+        payments: invoices.filter(i => i.status === 'PAYMENT_SCHEDULED').map(invoice => ({
+          id: invoice.id,
+          amount: invoice.total_amount,
+          scheduled_date: invoice.qb_posted_at || new Date().toISOString(),
+          status: invoice.status,
+          invoice: {
+            id: invoice.id,
+            invoice_number: invoice.invoice_number,
+            vendor: {
+              name: invoice.vendor_name
+            }
+          }
+        }))
+      },
+      {
+        id: 'batch-2',
+        batch_number: 'PB-2024-002',
+        total_amount: invoices.filter(i => i.status === 'PAID').reduce((sum, i) => sum + i.total_amount, 0),
+        payment_count: invoices.filter(i => i.status === 'PAID').length,
+        status: 'PROCESSED',
+        created_at: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+        processed_at: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
+        payments: invoices.filter(i => i.status === 'PAID').slice(0, 3).map(invoice => ({
+          id: invoice.id,
+          amount: invoice.total_amount,
+          scheduled_date: invoice.qb_posted_at || new Date().toISOString(),
+          status: invoice.status,
+          invoice: {
+            id: invoice.id,
+            invoice_number: invoice.invoice_number,
+            vendor: {
+              name: invoice.vendor_name
+            }
+          }
+        }))
+      }
+    ];
+    setBatches(mockBatches);
+    setLoading(false);
+  }, [invoices]);
 
   const handleProcessBatch = async (batchId: string) => {
     setProcessing(true);
     try {
-      await paymentBatchApi.process(batchId);
-      await loadBatches();
+      // Mock processing - update batch status to PROCESSED
+      setBatches(prev => prev.map(batch => 
+        batch.id === batchId 
+          ? { ...batch, status: 'PROCESSED' as const, processed_at: new Date().toISOString() }
+          : batch
+      ));
       setSelectedBatch(null);
     } catch (error) {
       console.error('Failed to process batch:', error);
@@ -70,8 +111,12 @@ export default function PaymentBatchManager() {
     if (!selectedBatch || !cancelReason) return;
     setProcessing(true);
     try {
-      await paymentBatchApi.cancel(selectedBatch.id, cancelReason);
-      await loadBatches();
+      // Mock cancellation - update batch status to CANCELLED
+      setBatches(prev => prev.map(batch => 
+        batch.id === selectedBatch.id 
+          ? { ...batch, status: 'CANCELLED' as const, cancelled_at: new Date().toISOString(), cancellation_reason: cancelReason }
+          : batch
+      ));
       setShowCancelModal(false);
       setCancelReason('');
       setSelectedBatch(null);

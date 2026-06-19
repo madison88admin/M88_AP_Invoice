@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { AppError } from './errorHandler';
 import { UserRole } from '@ap-invoice/shared';
-import { msalApp } from '../config/msal';
+import { getMsalApp } from '../config/msal';
 
 export interface AuthRequest extends Request {
   user?: {
@@ -51,6 +51,11 @@ export const authenticate = async (
 
     // MSAL authentication for production
     try {
+      const msalApp = getMsalApp();
+      if (!msalApp) {
+        throw new AppError('MSAL not configured — set AZURE_CLIENT_ID and AZURE_CLIENT_SECRET', 500);
+      }
+
       const oboRequest = {
         scopes: ['https://graph.microsoft.com/.default'],
         oboAssertion: token,

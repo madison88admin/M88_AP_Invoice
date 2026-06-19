@@ -1,4 +1,7 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { AuthProvider } from './contexts/AuthContext';
+import { MockDataProvider } from './contexts/MockDataContext';
+import Login from './components/Login';
 import Dashboard from './components/Dashboard';
 import InvoiceUpload from './components/InvoiceUpload';
 import ApprovalInbox from './components/ApprovalInbox';
@@ -7,21 +10,64 @@ import PaymentBatchManager from './components/PaymentBatchManager';
 import Reports from './components/Reports';
 import AccountingReview from './components/AccountingReview';
 import VendorManagement from './components/VendorManagement';
+import ProtectedRoute from './components/ProtectedRoute';
 
 function App() {
   return (
-    <Router>
-      <Routes>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/upload" element={<InvoiceUpload />} />
-        <Route path="/approvals" element={<ApprovalInbox />} />
-        <Route path="/exceptions" element={<ExceptionManager />} />
-        <Route path="/payment-batches" element={<PaymentBatchManager />} />
-        <Route path="/reports" element={<Reports />} />
-        <Route path="/accounting-review" element={<AccountingReview />} />
-        <Route path="/vendors" element={<VendorManagement />} />
-      </Routes>
-    </Router>
+    <AuthProvider>
+      <MockDataProvider>
+        <Router>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/" element={
+              <ProtectedRoute>
+                <Dashboard />
+              </ProtectedRoute>
+            } />
+            <Route path="/dashboard" element={
+              <ProtectedRoute>
+                <Dashboard />
+              </ProtectedRoute>
+            } />
+            <Route path="/upload" element={
+              <ProtectedRoute>
+                <InvoiceUpload />
+              </ProtectedRoute>
+            } />
+            <Route path="/approvals" element={
+              <ProtectedRoute>
+                <ApprovalInbox />
+              </ProtectedRoute>
+            } />
+            <Route path="/exceptions" element={
+              <ProtectedRoute>
+                <ExceptionManager />
+              </ProtectedRoute>
+            } />
+            <Route path="/payment-batches" element={
+              <ProtectedRoute>
+                <PaymentBatchManager />
+              </ProtectedRoute>
+            } />
+            <Route path="/reports" element={
+              <ProtectedRoute>
+                <Reports />
+              </ProtectedRoute>
+            } />
+            <Route path="/accounting-review" element={
+              <ProtectedRoute>
+                <AccountingReview />
+              </ProtectedRoute>
+            } />
+            <Route path="/vendors" element={
+              <ProtectedRoute>
+                <VendorManagement />
+              </ProtectedRoute>
+            } />
+          </Routes>
+        </Router>
+      </MockDataProvider>
+    </AuthProvider>
   );
 }
 

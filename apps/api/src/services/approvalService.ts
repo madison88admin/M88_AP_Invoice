@@ -15,6 +15,8 @@ import {
   determineApprovalTier,
   mapSignatoryRoleToPendingStatus,
 } from '@ap-invoice/shared';
+import { sendApprovalRequestNotification } from './notificationService';
+import { logger } from '../utils/logger';
 
 interface ApprovalRouteStep {
   role: SignatoryRole;
@@ -232,7 +234,10 @@ export async function approveInvoice(
 ) {
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
-    include: { signatures: true },
+    include: { 
+      signatures: true,
+      vendor: true,
+    },
   });
 
   if (!invoice) {
@@ -254,12 +259,14 @@ export async function approveInvoice(
     throw new AppError('No pending approval found for this role', 404);
   }
 
-  // Update the signature
+  // Update the signature with full attribution
   await prisma.signature.update({
     where: { id: pendingSignature.id },
     data: {
       signatory_name: signerName,
+      signatory_role: signatoryRole,
       signed_at: new Date(),
+      signature_type: 'DIGITAL',
     },
   });
 
@@ -306,6 +313,24 @@ export async function approveInvoice(
         sla_hours: getSLAForRole(nextRole) * 24,
       },
     });
+
+    // Auto-notify the next approver
+    try {
+      const approverEmail = getEmailForRole(nextRole);
+      if (approverEmail) {
+        await sendApprovalRequestNotification(
+          invoiceId,
+          invoice.invoice_number,
+          invoice.vendor?.name || 'Unknown',
+          Number(invoice.total_amount),
+          approverEmail
+        );
+        logger.info(`Auto-notified next approver (${nextRole}) for invoice ${invoice.invoice_number}`);
+      }
+    } catch (notificationError) {
+      logger.error(`Failed to notify next approver for invoice ${invoice.invoice_number}:`, notificationError);
+      // Don't block the approval flow if notification fails
+    }
   } else {
     // All approvals complete — update invoice status to APPROVED
     await prisma.invoice.update({
@@ -428,6 +453,21 @@ function getSLAForRole(signerRole: string): number {
     [SignatoryRole.ACCOUNTING_REVIEWER]: SLA_LIMITS.ACCOUNTING_DAYS,
   };
   return mapping[signerRole] || 7;
+}
+
+function getEmailForRole(signerRole: string): string | null {
+  // In production, this would query a user/role mapping table
+  // For now, return environment variables or default emails
+  const emailMapping: Record<string, string> = {
+    [SignatoryRole.COORDINATOR]: process.env.COORDINATOR_EMAIL || 'coordinator@madison88.com',
+    [SignatoryRole.PURCHASING_MANAGER]: process.env.PURCHASING_MANAGER_EMAIL || 'purchasing-manager@madison88.com',
+    [SignatoryRole.MLO_ACCOUNT_HOLDER]: process.env.MLO_ACCOUNT_HOLDER_EMAIL || 'mlo-account-holder@madison88.com',
+    [SignatoryRole.MLO_PLANNING_MANAGER]: process.env.MLO_PLANNING_MANAGER_EMAIL || 'mlo-planning-manager@madison88.com',
+    [SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION]: process.env.SR_MANAGER_EMAIL || 'sr-manager@madison88.com',
+    [SignatoryRole.MS_POLLY]: process.env.MS_POLLY_EMAIL || 'ms-polly@madison88.com',
+    [SignatoryRole.ACCOUNTING_REVIEWER]: process.env.ACCOUNTING_EMAIL || 'accounting@madison88.com',
+  };
+  return emailMapping[signerRole] || null;
 }
 
 /**

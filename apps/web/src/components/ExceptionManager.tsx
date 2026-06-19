@@ -1,58 +1,47 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { exceptionApi } from '../lib/api';
+import { useMockData } from '../contexts/MockDataContext';
+import { useAuth } from '../contexts/AuthContext';
 import { AlertTriangle, CheckCircle, XCircle, ArrowLeft } from 'lucide-react';
-
-interface Exception {
-  id: string;
-  reason: string;
-  description: string;
-  status: string;
-  resolution: string | null;
-  created_at: string;
-  resolved_at: string | null;
-  resolved_by: string | null;
-  invoice: {
-    id: string;
-    invoice_number: string;
-    total_amount: number;
-    currency: string;
-    vendor: {
-      name: string;
-    };
-  };
-}
+import { MockException } from '../lib/mockData';
 
 export default function ExceptionManager() {
-  const [exceptions, setExceptions] = useState<Exception[]>([]);
+  const { invoices } = useMockData();
+  const { user } = useAuth();
   const [loading, setLoading] = useState(true);
-  const [selectedException, setSelectedException] = useState<Exception | null>(null);
+  const [selectedException, setSelectedException] = useState<MockException | null>(null);
   const [showResolveModal, setShowResolveModal] = useState(false);
   const [showWaiveModal, setShowWaiveModal] = useState(false);
   const [resolution, setResolution] = useState('');
   const [waiverReason, setWaiverReason] = useState('');
 
-  const loadExceptions = async () => {
-    try {
-      const response = await exceptionApi.getPending();
-      setExceptions(response.data);
-    } catch (error) {
-      console.error('Failed to load exceptions:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadExceptions();
+  // Get exceptions from invoices
+  const exceptions = invoices.reduce((acc: MockException[], invoice) => {
+    return [...acc, ...invoice.exceptions];
   }, []);
 
+  useEffect(() => {
+    setLoading(false);
+  }, [invoices]);
+
   const handleResolve = async () => {
-    if (!selectedException || !resolution.trim()) return;
+    if (!selectedException || !resolution.trim() || !user) return;
 
     try {
-      await exceptionApi.resolve(selectedException.id, resolution);
-      await loadExceptions();
+      // Update exception status to RESOLVED
+      const invoice = invoices.find(inv => inv.id === selectedException.invoice_id);
+      if (invoice) {
+        const exceptionIndex = invoice.exceptions.findIndex(exc => exc.id === selectedException.id);
+        if (exceptionIndex !== -1) {
+          invoice.exceptions[exceptionIndex] = {
+            ...invoice.exceptions[exceptionIndex],
+            status: 'RESOLVED',
+            resolution_notes: resolution,
+            resolved_at: new Date().toISOString(),
+            resolved_by: user.name,
+          };
+        }
+      }
       setSelectedException(null);
       setShowResolveModal(false);
       setResolution('');
@@ -62,11 +51,23 @@ export default function ExceptionManager() {
   };
 
   const handleWaive = async () => {
-    if (!selectedException || !waiverReason.trim()) return;
+    if (!selectedException || !waiverReason.trim() || !user) return;
 
     try {
-      await exceptionApi.waive(selectedException.id, waiverReason);
-      await loadExceptions();
+      // Update exception status to WAIVED
+      const invoice = invoices.find(inv => inv.id === selectedException.invoice_id);
+      if (invoice) {
+        const exceptionIndex = invoice.exceptions.findIndex(exc => exc.id === selectedException.id);
+        if (exceptionIndex !== -1) {
+          invoice.exceptions[exceptionIndex] = {
+            ...invoice.exceptions[exceptionIndex],
+            status: 'WAIVED',
+            resolution_notes: waiverReason,
+            resolved_at: new Date().toISOString(),
+            resolved_by: user.name,
+          };
+        }
+      }
       setSelectedException(null);
       setShowWaiveModal(false);
       setWaiverReason('');
@@ -77,21 +78,32 @@ export default function ExceptionManager() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'PENDING':
-        return 'bg-yellow-100 text-yellow-800';
+      case 'OPEN':
+        return 'bg-amber-500/20 text-amber-300';
       case 'RESOLVED':
-        return 'bg-green-100 text-green-800';
+        return 'bg-green-500/20 text-green-300';
       case 'WAIVED':
-        return 'bg-blue-100 text-blue-800';
+        return 'bg-blue-500/20 text-blue-300';
       default:
-        return 'bg-gray-100 text-gray-800';
+        return 'bg-slate-500/20 text-slate-300';
     }
   };
+
+  // Get invoice for an exception
+  const getInvoiceForException = (exception: MockException) => {
+    return invoices.find(inv => inv.id === exception.invoice_id);
+  };
+
+  // Filter to show only OPEN exceptions
+  const openExceptions = exceptions.filter(exc => exc.status === 'OPEN');
+
+  // Get invoice for selected exception
+  const selectedInvoice = selectedException ? getInvoiceForException(selectedException) : null;
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen">
-        <div className="text-gray-600">Loading exceptions...</div>
+        <div className="text-slate-400">Loading exceptions...</div>
       </div>
     );
   }
@@ -171,27 +183,30 @@ export default function ExceptionManager() {
                   <h2 className="text-lg font-semibold text-white">Pending Exceptions</h2>
                 </div>
                 <div className="divide-y divide-white/5 max-h-[600px] overflow-y-auto">
-                  {exceptions.map((exception) => (
-                    <div
-                      key={exception.id}
-                      onClick={() => setSelectedException(exception)}
-                      className={`p-4 cursor-pointer transition-colors ${
-                        selectedException?.id === exception.id ? 'bg-white/5' : ''
-                      }`}
-                      style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', transition: 'background 150ms ease' }}
-                      onMouseEnter={(e) => {
-                        if (selectedException?.id !== exception.id) {
-                          e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (selectedException?.id !== exception.id) {
-                          e.currentTarget.style.background = 'transparent';
-                        }
-                      }}
-                    >
-                      <div className="flex items-start justify-between mb-2">
-                        <div className="flex items-center space-x-2">
+                  {openExceptions.map((exception) => {
+                    const invoice = getInvoiceForException(exception);
+                    if (!invoice) return null;
+                    return (
+                      <div
+                        key={exception.id}
+                        onClick={() => setSelectedException(exception)}
+                        className={`p-4 cursor-pointer transition-colors ${
+                          selectedException?.id === exception.id ? 'bg-white/5' : ''
+                        }`}
+                        style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', transition: 'background 150ms ease' }}
+                        onMouseEnter={(e) => {
+                          if (selectedException?.id !== exception.id) {
+                            e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (selectedException?.id !== exception.id) {
+                            e.currentTarget.style.background = 'transparent';
+                          }
+                        }}
+                      >
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="flex items-center space-x-2">
                           <AlertTriangle className="h-5 w-5 text-amber-400" />
                           <span className="font-medium text-white">{exception.reason}</span>
                         </div>
@@ -200,24 +215,25 @@ export default function ExceptionManager() {
                         </span>
                       </div>
                       <div className="text-sm text-slate-400 mb-2">
-                        Invoice: {exception.invoice.invoice_number}
+                        Invoice: {invoice.invoice_number}
                       </div>
                       <div className="text-sm text-slate-400 mb-2">
-                        Vendor: {exception.invoice.vendor.name}
+                        Vendor: {invoice.vendor_name}
                       </div>
                       <div className="text-sm text-slate-400">
-                        Amount: {exception.invoice.currency} {exception.invoice.total_amount.toFixed(2)}
+                        Amount: {invoice.currency} {invoice.total_amount.toFixed(2)}
                       </div>
                       <div className="text-xs text-slate-500 mt-2">
                         Created: {new Date(exception.created_at).toLocaleString()}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
 
               {/* Exception Detail */}
-              {selectedException && (
+              {selectedException && selectedInvoice && (
                 <div style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }}>
                   <div className="p-4" style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
                     <h2 className="text-lg font-semibold text-white">Exception Details</h2>
@@ -233,16 +249,16 @@ export default function ExceptionManager() {
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-slate-400 mb-1">Invoice</label>
-                      <div className="text-white">{selectedException.invoice.invoice_number}</div>
+                      <div className="text-white">{selectedInvoice.invoice_number}</div>
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-slate-400 mb-1">Vendor</label>
-                      <div className="text-white">{selectedException.invoice.vendor.name}</div>
+                      <div className="text-white">{selectedInvoice.vendor_name}</div>
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-slate-400 mb-1">Amount</label>
                       <div className="text-white">
-                        {selectedException.invoice.currency} {selectedException.invoice.total_amount.toFixed(2)}
+                        {selectedInvoice.currency} {selectedInvoice.total_amount.toFixed(2)}
                       </div>
                     </div>
                     <div>
@@ -251,10 +267,10 @@ export default function ExceptionManager() {
                         {new Date(selectedException.created_at).toLocaleString()}
                       </div>
                     </div>
-                    {selectedException.resolution && (
+                    {selectedException.resolution_notes && (
                       <div>
                         <label className="block text-sm font-medium text-slate-400 mb-1">Resolution</label>
-                        <div className="text-white">{selectedException.resolution}</div>
+                        <div className="text-white">{selectedException.resolution_notes}</div>
                       </div>
                     )}
                     {selectedException.resolved_at && (
@@ -265,8 +281,13 @@ export default function ExceptionManager() {
                         </div>
                       </div>
                     )}
-
-                    {selectedException.status === 'PENDING' && (
+                    {selectedException.resolved_by && (
+                      <div>
+                        <label className="block text-sm font-medium text-slate-400 mb-1">Resolved By</label>
+                        <div className="text-white">{selectedException.resolved_by}</div>
+                      </div>
+                    )}
+                    {selectedException.status === 'OPEN' && (
                       <div className="space-y-2 pt-4" style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}>
                         <button
                           onClick={() => setShowResolveModal(true)}

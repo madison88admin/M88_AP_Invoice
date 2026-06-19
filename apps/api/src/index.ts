@@ -1,7 +1,9 @@
+import dotenv from 'dotenv';
+dotenv.config(); // MUST be before all other imports
+
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import dotenv from 'dotenv';
 import rateLimit from 'express-rate-limit';
 import invoiceRoutes from './routes/invoices';
 import vendorRoutes from './routes/vendors';
@@ -11,11 +13,14 @@ import paymentRoutes from './routes/payments';
 import exceptionRoutes from './routes/exceptions';
 import paymentBatchRoutes from './routes/paymentBatches';
 import reportRoutes from './routes/reports';
+import dashboardRoutes from './routes/dashboard';
+import bankMatchingRoutes from './routes/bankMatching';
+import nextGenRoutes from './routes/nextGen';
+import piFollowUpRoutes from './routes/piFollowUp';
+import slaReminderRoutes from './routes/slaReminder';
 import { errorHandler } from './middleware/errorHandler';
 import { logger } from './utils/logger';
 import { connectDatabase, disconnectDatabase } from './config/database';
-
-dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -46,6 +51,11 @@ app.use('/api/payments', paymentRoutes);
 app.use('/api/exceptions', exceptionRoutes);
 app.use('/api/payment-batches', paymentBatchRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/bank-matching', bankMatchingRoutes);
+app.use('/api/nextgen', nextGenRoutes);
+app.use('/api/pi-follow-up', piFollowUpRoutes);
+app.use('/api/sla-reminder', slaReminderRoutes);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

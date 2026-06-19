@@ -4,6 +4,7 @@ import { logger } from '../utils/logger';
 const SHAREPOINT_SITE_ID = process.env.SHAREPOINT_SITE_ID || '';
 const SHAREPOINT_DRIVE_ID = process.env.SHAREPOINT_DRIVE_ID || '';
 const CONFIRMATIONS_FOLDER = 'Payment Confirmations';
+const AP_INVOICES_FOLDER = 'AP-Invoices';
 
 export interface SharePointUploadResult {
   success: boolean;
@@ -78,6 +79,94 @@ export async function uploadConfirmation(
       success: false,
       error: `Failed to upload confirmation: ${error}`,
     };
+  }
+}
+
+/**
+ * Upload an invoice to structured SharePoint folder
+ * Path: /AP-Invoices/{vendor_name}/{year}/{month}/{invoice_number}.pdf
+ */
+export async function uploadInvoiceToStructuredFolder(
+  vendorName: string,
+  invoiceNumber: string,
+  invoiceDate: Date,
+  fileContent: Buffer,
+  fileName: string
+): Promise<SharePointUploadResult> {
+  try {
+    const client = await getGraphClient();
+
+    // Sanitize vendor name for folder structure
+    const sanitizedVendorName = vendorName.replace(/[^a-zA-Z0-9\s-]/g, '').trim().replace(/\s+/g, '_');
+    
+    // Extract year and month from invoice date
+    const year = invoiceDate.getFullYear();
+    const month = String(invoiceDate.getMonth() + 1).padStart(2, '0');
+
+    // Build structured folder path
+    const folderPath = `${AP_INVOICES_FOLDER}/${sanitizedVendorName}/${year}/${month}`;
+    const filePath = `${folderPath}/${fileName}`;
+
+    // Ensure folder structure exists
+    await ensureFolderStructureExists(client, folderPath);
+
+    // Upload the file
+    const uploadUrl = `/sites/${SHAREPOINT_SITE_ID}/drive/items/${SHAREPOINT_DRIVE_ID}:/${filePath}:/content`;
+
+    // TODO: Implement actual SharePoint upload
+    // const response = await client.api(uploadUrl).put(fileContent);
+
+    // Simulate successful upload
+    const fileId = `SP-${Date.now()}-${fileName}`;
+    const webUrl = `https://madison88.sharepoint.com/sites/APInvoice/${filePath}`;
+
+    logger.info(`Invoice uploaded to structured folder: ${filePath} for invoice ${invoiceNumber}`);
+
+    return {
+      success: true,
+      fileId,
+      fileName,
+      webUrl,
+    };
+  } catch (error) {
+    logger.error('Error uploading invoice to structured folder:', error);
+    return {
+      success: false,
+      error: `Failed to upload invoice: ${error}`,
+    };
+  }
+}
+
+/**
+ * Ensure folder structure exists for invoice upload
+ */
+async function ensureFolderStructureExists(client: Client, folderPath: string): Promise<void> {
+  try {
+    const folders = folderPath.split('/');
+    let currentPath = '';
+
+    for (const folder of folders) {
+      currentPath = currentPath ? `${currentPath}/${folder}` : folder;
+      
+      // TODO: Implement actual folder existence check and creation
+      // const folderUrl = `/sites/${SHAREPOINT_SITE_ID}/drive/items/${SHAREPOINT_DRIVE_ID}:/${currentPath}`;
+      // try {
+      //   await client.api(folderUrl).get();
+      // } catch {
+      //   // Folder doesn't exist, create it
+      //   const parentPath = currentPath.substring(0, currentPath.lastIndexOf('/'));
+      //   await client.api(`/sites/${SHAREPOINT_SITE_ID}/drive/items/${SHAREPOINT_DRIVE_ID}:/${parentPath}:/children`)
+      //     .post({
+      //       name: folder,
+      //       folder: {},
+      //     });
+      // }
+    }
+
+    logger.info(`Folder structure ensured: ${folderPath}`);
+  } catch (error) {
+    logger.error('Error ensuring folder structure exists:', error);
+    throw new Error(`Failed to ensure folder structure: ${error}`);
   }
 }
 

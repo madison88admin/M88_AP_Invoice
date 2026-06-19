@@ -1,5 +1,6 @@
 import prisma from '../config/database';
-import { InvoiceStatus } from '@ap-invoice/shared';
+import { InvoiceStatus, InvoiceType } from '@ap-invoice/shared';
+import { logger } from '../utils/logger';
 
 export interface PIFollowUpItem {
   invoice_id: string;
@@ -13,6 +14,44 @@ export interface PIFollowUpItem {
   follow_up_count: number;
   last_follow_up_date?: Date;
   next_follow_up_date?: Date;
+}
+
+/**
+ * Get all Proforma Invoices that have been paid but are missing CI/SI
+ */
+export async function getPaidPIMissingCI(): Promise<PIFollowUpItem[]> {
+  const invoices = await prisma.invoice.findMany({
+    where: {
+      invoice_type: InvoiceType.PROFORMA,
+      status: InvoiceStatus.PAID,
+    },
+    include: {
+      vendor: true,
+      follow_up_tasks: {
+        where: {
+          task_type: 'REQUEST_CI',
+          status: 'PENDING',
+        },
+      },
+    },
+    orderBy: {
+      invoice_date: 'asc',
+    },
+  });
+
+  return invoices.map((invoice: any) => ({
+    invoice_id: invoice.id,
+    invoice_number: invoice.invoice_number,
+    vendor_id: invoice.vendor_id,
+    vendor_name: invoice.vendor?.name || 'Unknown',
+    amount: Number(invoice.total_amount),
+    currency: invoice.currency,
+    invoice_date: invoice.invoice_date || new Date(),
+    pi_status: 'PENDING_CI',
+    follow_up_count: invoice.follow_up_tasks?.[0]?.reminder_count || 0,
+    last_follow_up_date: invoice.follow_up_tasks?.[0]?.last_reminded_at,
+    next_follow_up_date: invoice.follow_up_tasks?.[0]?.due_date,
+  }));
 }
 
 /**
@@ -44,6 +83,68 @@ export async function getPIPendingInvoices(): Promise<PIFollowUpItem[]> {
     last_follow_up_date: undefined,
     next_follow_up_date: undefined,
   }));
+}
+
+/**
+ * Auto-create follow-up task when Proforma Invoice is paid
+ */
+export async function autoCreateCIFollowUpTask(invoiceId: string, paidAt: Date): Promise<void> {
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    include: {
+      vendor: true,
+    },
+  });
+
+  if (!invoice) {
+    throw new Error('Invoice not found');
+  }
+
+  if (invoice.invoice_type !== InvoiceType.PROFORMA) {
+    logger.info(`Invoice ${invoice.invoice_number} is not a Proforma Invoice, skipping CI follow-up task creation`);
+    return;
+  }
+
+  // Check if task already exists
+  const existingTask = await prisma.followUpTask.findFirst({
+    where: {
+      invoice_id: invoiceId,
+      task_type: 'REQUEST_CI',
+      status: 'PENDING',
+    },
+  });
+
+  if (existingTask) {
+    logger.info(`CI follow-up task already exists for invoice ${invoice.invoice_number}`);
+    return;
+  }
+
+  // Create follow-up task
+  const dueDate = new Date(paidAt.getTime() + 14 * 24 * 60 * 60 * 1000); // 14 days from payment
+
+  await prisma.followUpTask.create({
+    data: {
+      invoice_id: invoiceId,
+      task_type: 'REQUEST_CI',
+      assigned_to: process.env.COORDINATOR_EMAIL || 'coordinator@madison88.com',
+      due_date: dueDate,
+      status: 'PENDING',
+      reminder_count: 0,
+      notes: `Request Commercial/Sales Invoice from vendor ${invoice.vendor?.name} for PI ${invoice.invoice_number}, paid on ${paidAt.toISOString()}`,
+    },
+  });
+
+  // Create audit log entry
+  await prisma.auditLog.create({
+    data: {
+      invoice_id: invoiceId,
+      action: 'CI_FOLLOW_UP_TASK_CREATED',
+      performed_by: 'system',
+      note: `Auto-created CI follow-up task for PI ${invoice.invoice_number}, due ${dueDate.toISOString()}`,
+    },
+  });
+
+  logger.info(`Auto-created CI follow-up task for PI ${invoice.invoice_number}, due ${dueDate.toISOString()}`);
 }
 
 /**

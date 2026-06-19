@@ -1,42 +1,49 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Invoice } from '@ap-invoice/shared';
-import { approvalApi, invoiceApi } from '../lib/api';
+import { useMockData } from '../contexts/MockDataContext';
+import { useAuth } from '../contexts/AuthContext';
 import { CheckCircle, XCircle, Clock, ArrowLeft } from 'lucide-react';
+import { MockInvoice } from '../lib/mockData';
 
 export default function ApprovalInbox() {
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const { invoices, approveInvoice, rejectInvoice } = useMockData();
+  const { user } = useAuth();
   const [loading, setLoading] = useState(true);
-  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+  const [selectedInvoice, setSelectedInvoice] = useState<MockInvoice | null>(null);
   const [approving, setApproving] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [showRejectModal, setShowRejectModal] = useState(false);
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 5;
 
   useEffect(() => {
-    loadPendingApprovals();
-  }, []);
+    setLoading(false);
+  }, [invoices]);
 
-  const loadPendingApprovals = async () => {
-    try {
-      setLoading(true);
-      const response = await approvalApi.getPending();
-      setInvoices(response.data);
-    } catch (error) {
-      console.error('Failed to load pending approvals:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Filter invoices to show only pending approvals
+  const pendingApprovals = invoices.filter(invoice => {
+    if (!invoice.signatures || invoice.signatures.length === 0) return false;
+    const pending = invoice.signatures.find(s => !s.signed_at);
+    if (!pending) return false;
+    // Check if current user's role matches the pending signatory role
+    return pending.signatory_role === user?.role;
+  });
+
+  // Pagination logic
+  const totalPages = Math.ceil(pendingApprovals.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const displayedInvoices = pendingApprovals.slice(startIndex, endIndex);
 
   const handleApprove = async () => {
-    if (!selectedInvoice) return;
+    if (!selectedInvoice || !user) return;
 
     try {
       setApproving(true);
-      const signerName = 'Current User'; // In production, this would come from user context
-      await invoiceApi.approve(selectedInvoice.id, signerName);
-      await loadPendingApprovals();
+      await approveInvoice(selectedInvoice.id, user.name, user.role);
       setSelectedInvoice(null);
     } catch (error) {
       console.error('Failed to approve invoice:', error);
@@ -46,12 +53,11 @@ export default function ApprovalInbox() {
   };
 
   const handleReject = async () => {
-    if (!selectedInvoice || !rejectReason.trim()) return;
+    if (!selectedInvoice || !rejectReason.trim() || !user) return;
 
     try {
       setRejecting(true);
-      await invoiceApi.reject(selectedInvoice.id, rejectReason);
-      await loadPendingApprovals();
+      await rejectInvoice(selectedInvoice.id, rejectReason);
       setSelectedInvoice(null);
       setShowRejectModal(false);
       setRejectReason('');
@@ -62,7 +68,7 @@ export default function ApprovalInbox() {
     }
   };
 
-  const getApprovalStatus = (invoice: Invoice) => {
+  const getApprovalStatus = (invoice: MockInvoice) => {
     if (!invoice.signatures || invoice.signatures.length === 0) return 'No approvals';
     
     const approved = invoice.signatures.filter(s => s.signed_at !== null).length;
@@ -138,18 +144,19 @@ export default function ApprovalInbox() {
               <div style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }}>
                 <div className="px-6 py-4" style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
                   <h2 className="text-lg font-semibold text-white">
-                    Pending Approvals ({invoices.length})
+                    Pending Approvals ({pendingApprovals.length})
                   </h2>
                 </div>
                 {loading ? (
                   <div className="px-6 py-12 text-center text-slate-400">Loading...</div>
-                ) : invoices.length === 0 ? (
+                ) : pendingApprovals.length === 0 ? (
                   <div className="px-6 py-12 text-center text-slate-400">
                     No pending approvals
                   </div>
                 ) : (
-                  <div className="divide-y divide-white/5">
-                    {invoices.map((invoice) => (
+                  <>
+                    <div className="divide-y divide-white/5">
+                      {displayedInvoices.map((invoice) => (
                       <div
                         key={invoice.id}
                         onClick={() => setSelectedInvoice(invoice)}
@@ -178,7 +185,7 @@ export default function ApprovalInbox() {
                                 {invoice.invoice_number}
                               </p>
                               <p className="text-sm text-slate-400">
-                                {invoice.vendor?.name}
+                                {invoice.vendor_name}
                               </p>
                             </div>
                           </div>
@@ -194,6 +201,37 @@ export default function ApprovalInbox() {
                       </div>
                     ))}
                   </div>
+                  {/* Pagination Controls */}
+                  <div className="px-6 py-4 flex items-center justify-between" style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                    <button
+                      onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                      disabled={currentPage === 1}
+                      className="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      style={{ 
+                        background: currentPage === 1 ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.1)',
+                        color: 'var(--text-primary)',
+                        border: '1px solid var(--border-color)'
+                      }}
+                    >
+                      Previous
+                    </button>
+                    <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                      Page {currentPage} of {totalPages}
+                    </span>
+                    <button
+                      onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                      disabled={currentPage === totalPages}
+                      className="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      style={{ 
+                        background: currentPage === totalPages ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.1)',
+                        color: 'var(--text-primary)',
+                        border: '1px solid var(--border-color)'
+                      }}
+                    >
+                      Next
+                    </button>
+                  </div>
+                </>
                 )}
               </div>
             </div>
@@ -217,7 +255,7 @@ export default function ApprovalInbox() {
                     <div>
                       <p className="text-sm text-slate-400">Vendor</p>
                       <p className="text-sm font-medium text-white">
-                        {selectedInvoice.vendor?.name}
+                        {selectedInvoice.vendor_name}
                       </p>
                     </div>
                     <div>
@@ -227,10 +265,10 @@ export default function ApprovalInbox() {
                       </p>
                     </div>
                     <div>
-                      <p className="text-sm text-slate-400">Due Date</p>
+                      <p className="text-sm text-slate-400">Invoice Date</p>
                       <p className="text-sm font-medium text-white">
-                        {selectedInvoice.due_date
-                          ? new Date(selectedInvoice.due_date).toLocaleDateString()
+                        {selectedInvoice.invoice_date
+                          ? new Date(selectedInvoice.invoice_date).toLocaleDateString()
                           : 'N/A'}
                       </p>
                     </div>

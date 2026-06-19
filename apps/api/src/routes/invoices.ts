@@ -7,8 +7,65 @@ import * as approvalController from '../controllers/approval';
 import * as postingController from '../controllers/posting';
 import upload from '../middleware/upload';
 import { UserRole } from '@ap-invoice/shared';
+import { validateInvoiceWithData } from '../services/validationService';
 
 const router = Router() as Router;
+
+const devBypassAdmin = (req: any, res: any, next: any) => {
+  if (process.env.NODE_ENV === 'development') return next();
+  return authorize(UserRole.IT_ADMIN)(req, res, next);
+};
+
+/**
+ * POST /api/invoices/mock-validate
+ * Run all 17 validation rules on a posted invoice payload — no DB required.
+ * Accepts a full or partial invoice object in the request body.
+ * Uses a built-in realistic sample if body is empty.
+ */
+router.post('/mock-validate', devBypassAdmin, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const SAMPLE_INVOICE = {
+      id: 'mock-001',
+      invoice_number: 'INV-2026-001',
+      invoice_date: new Date('2026-06-01'),
+      due_date: new Date('2026-07-01'),
+      invoice_received_date: new Date('2026-06-03'),
+      total_amount: 23.75,
+      currency: 'USD',
+      payment_terms: 'NET30',
+      incoterm: 'FOB',
+      is_handwritten: false,
+      is_urgent: false,
+      priority_flag: false,
+      invoice_type: 'COMMERCIAL',
+      mpo_number: 'MPO015713',
+      vendor: {
+        id: 'vendor-001',
+        name: 'Combine Products International Limited',
+        swift_code: 'HSBCHKHHXXX',
+        account_number: '123456789',
+      },
+      signatures: [
+        { signatory_name: 'Computer-generated, no signature required', signatory_role: 'COORDINATOR', signed_at: new Date() },
+      ],
+      ocr_raw_data: {
+        bank_info: {
+          swift_code: 'HSBCHKHHXXX',
+          account_number: '123456789',
+        },
+      },
+    };
+
+    const invoiceData = Object.keys(req.body).length > 0
+      ? { ...SAMPLE_INVOICE, ...req.body }
+      : SAMPLE_INVOICE;
+
+    const result = await validateInvoiceWithData(invoiceData);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
 
 router.use(authenticate);
 

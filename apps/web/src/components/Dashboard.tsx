@@ -1,29 +1,32 @@
 import { useState, useEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
-import { Invoice, InvoiceStatus, InvoiceCategory, InvoiceType } from '@ap-invoice/shared';
+import { Link, useNavigate } from 'react-router-dom';
+import { InvoiceStatus, InvoiceCategory, InvoiceType } from '@ap-invoice/shared';
 import { invoiceApi } from '../lib/api';
 import InvoiceTable from './InvoiceTable';
 import UploadInvoiceModal from './UploadInvoiceModal';
-import { useDashboardStats } from '../hooks/useDashboardStats';
-import { useInvoices } from '../hooks/useInvoices';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { useQueryClient } from '@tanstack/react-query';
-import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, PenTool, TrendingUp, Search, Bell, Settings, User, LayoutDashboard, Building2, ChevronLeft } from 'lucide-react';
+import BottleneckView from './BottleneckView';
+import { ThemeToggle } from './ThemeToggle';
+import { useMockData } from '../contexts/MockDataContext';
+import { useAuth } from '../contexts/AuthContext';
+import { MockInvoice } from '../lib/mockData';
+import { hasPermission, filterInvoicesByRole } from '../lib/roleAccess';
+import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, PenTool, TrendingUp, Search, Bell, Settings, User, LayoutDashboard, Building2, ChevronLeft, LogOut } from 'lucide-react';
 
 // Custom hook for number count-up animation
 function useCountUp(end: number, duration: number = 1200, start: boolean = true) {
   const [count, setCount] = useState(0);
-  const [isAnimating, setIsAnimating] = useState(false);
   const startTimeRef = useRef<number>(0);
   const endRef = useRef(end);
   const animationFrameRef = useRef<number>();
+  const hasRunRef = useRef(false);
 
   useEffect(() => {
     endRef.current = end;
   }, [end]);
 
   useEffect(() => {
-    if (!start || !isAnimating) return;
+    if (!start || hasRunRef.current) return;
+    hasRunRef.current = true;
 
     const animate = (timestamp: number) => {
       if (!startTimeRef.current) startTimeRef.current = timestamp;
@@ -41,7 +44,6 @@ function useCountUp(end: number, duration: number = 1200, start: boolean = true)
       if (progress < 1) {
         animationFrameRef.current = requestAnimationFrame(animate);
       } else {
-        setIsAnimating(false);
         setCount(endRef.current);
       }
     };
@@ -53,20 +55,44 @@ function useCountUp(end: number, duration: number = 1200, start: boolean = true)
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [isAnimating, duration, start]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [start, duration]);
 
   const startAnimation = () => {
     setCount(0);
-    setIsAnimating(true);
+    hasRunRef.current = false;
     startTimeRef.current = 0;
+    // Trigger re-animation by temporarily setting start to false
+    setTimeout(() => {
+      hasRunRef.current = false;
+      setCount(0);
+      startTimeRef.current = 0;
+      animationFrameRef.current = requestAnimationFrame((timestamp) => {
+        startTimeRef.current = timestamp;
+        const animate = (ts: number) => {
+          const elapsed = ts - startTimeRef.current;
+          const progress = Math.min(elapsed / duration, 1);
+          const easeOutExpo = (t: number) => t === 1 ? 1 : 1 - Math.pow(2, -10 * t);
+          setCount(Math.floor(easeOutExpo(progress) * endRef.current));
+          if (progress < 1) {
+            animationFrameRef.current = requestAnimationFrame(animate);
+          } else {
+            setCount(endRef.current);
+          }
+        };
+        animate(timestamp);
+      });
+    }, 0);
   };
 
   return { count, startAnimation };
 }
 
 export default function Dashboard() {
-  const queryClient = useQueryClient();
-  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+  const navigate = useNavigate();
+  const { user, logout } = useAuth();
+  const { invoices } = useMockData();
+  const [selectedInvoice, setSelectedInvoice] = useState<MockInvoice | null>(null);
   const [validating, setValidating] = useState(false);
   const [validationResult, setValidationResult] = useState<any>(null);
   const [showRejectModal, setShowRejectModal] = useState(false);
@@ -85,75 +111,72 @@ export default function Dashboard() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [progressAnimated, setProgressAnimated] = useState(false);
   const [toasts, setToasts] = useState<{ id: string; message: string; type: 'success' | 'error' | 'warning' | 'info' }[]>([]);
-  const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(true);
-  const sentinelRef = useRef<HTMLDivElement>(null);
   const [countUpStarted, setCountUpStarted] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  // Fetch dashboard stats from Supabase
-  const { data: dashboardStats, isLoading: statsLoading } = useDashboardStats();
+  // Use mock data
+  const mockInvoices = invoices;
 
-  // Fetch invoices from Supabase
-  const { data: invoicesData, isLoading: invoicesLoading, refetch: refetchInvoices } = useInvoices(filters, page);
+  // Filter invoices based on user role
+  const roleFilteredInvoices = user ? filterInvoicesByRole(mockInvoices, user.role) : mockInvoices;
 
-  // Convert Supabase data to Invoice format
-  const invoices = invoicesData?.data || [];
+  // Filter invoices based on filters
+  const filteredInvoices = roleFilteredInvoices.filter(inv => {
+    if (filters.status && inv.status !== filters.status) return false;
+    if (filters.category && inv.category !== filters.category) return false;
+    if (filters.type && inv.invoice_type !== filters.type) return false;
+    if (filters.brand && inv.brand !== filters.brand) return false;
+    return true;
+  });
+
+  // Sort invoices by invoice date (newest first) to show those approaching due dates first
+  const sortedInvoices = [...filteredInvoices].sort((a, b) => {
+    const dateA = new Date(a.invoice_date);
+    const dateB = new Date(b.invoice_date);
+    return dateA.getTime() - dateB.getTime(); // Ascending order (oldest first = closer to due)
+  });
+
+  // Pagination: show 4 invoices per page
+  const [currentPage, setCurrentPage] = useState(1);
+  const invoicesPerPage = 4;
+  const totalPages = Math.ceil(sortedInvoices.length / invoicesPerPage);
+  const startIndex = (currentPage - 1) * invoicesPerPage;
+  const endIndex = startIndex + invoicesPerPage;
+  const displayedInvoices = sortedInvoices.slice(startIndex, endIndex);
 
   // Update loading state
   useEffect(() => {
-    setLoading(invoicesLoading);
-  }, [invoicesLoading]);
+    setLoading(false);
+    // Start count-up animations after loading is complete
+    setTimeout(() => setCountUpStarted(true), 100);
+  }, []);
 
-  // Update hasMore based on total count
-  useEffect(() => {
-    setHasMore(invoicesData ? invoicesData.total > page * 20 : true);
-  }, [invoicesData, page]);
-
-  // Real-time updates with Supabase subscription
-  useEffect(() => {
-    if (!isSupabaseConfigured || !supabase) return;
-
-    const channel = supabase
-      .channel('invoices-channel')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'invoices',
-        },
-        () => {
-          // Invalidate queries when invoices change
-          queryClient.invalidateQueries({ queryKey: ['invoices'] });
-          queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
-        }
-      )
-      .subscribe();
-
-    return () => {
-      if (supabase) {
-        supabase.removeChannel(channel);
-      }
-    };
-  }, [queryClient]);
-
-  // Count-up animations for each KPI - use Supabase data if available, otherwise fallback to local data
-  const pendingValidationCount = useCountUp(dashboardStats?.pendingValidation || 0, 1200, countUpStarted && !statsLoading);
-  const awaitingApprovalCount = useCountUp(dashboardStats?.awaitingApproval || 0, 1200, countUpStarted && !statsLoading);
-  const urgentPaymentsCount = useCountUp(dashboardStats?.urgentPayments || 0, 1200, countUpStarted && !statsLoading);
-  const handwrittenDocsCount = useCountUp(dashboardStats?.handwrittenDocs || 0, 1200, countUpStarted && !statsLoading);
-  const slaAtRiskCount = useCountUp(dashboardStats?.slaAtRisk || 0, 1200, countUpStarted && !statsLoading);
-  const paidThisWeekCount = useCountUp(dashboardStats?.paidThisWeek || 0, 1200, countUpStarted && !statsLoading);
-  const totalAmountCount = useCountUp(Math.floor(dashboardStats?.totalAmount || 0), 1200, countUpStarted && !statsLoading);
-  const exceptionsCount = useCountUp(dashboardStats?.exceptions || 0, 1200, countUpStarted && !statsLoading);
-
-  // Format trend percentage
-  const formatTrend = (trend: number) => {
-    const sign = trend >= 0 ? '+' : '';
-    return `${sign}${trend.toFixed(1)}%`;
-  };
+  // Count-up animations for each KPI - calculate from mock data
+  const pendingValidationCount = useCountUp(mockInvoices.filter(i => i.status === InvoiceStatus.VALIDATION_PENDING).length, 1200, countUpStarted);
+  const awaitingApprovalCount = useCountUp(mockInvoices.filter(i => i.status === InvoiceStatus.PENDING_MANAGER || i.status === InvoiceStatus.PENDING_MLO_PLANNING_MANAGER || i.status === InvoiceStatus.PENDING_SR_MANAGER || i.status === InvoiceStatus.PENDING_POLLY).length, 1200, countUpStarted);
+  const urgentPaymentsCount = useCountUp(mockInvoices.filter(i => {
+    const currentStage = i.stage_timestamps.find(st => !st.exited_at);
+    if (!currentStage) return false;
+    const enteredAt = new Date(currentStage.entered_at);
+    const now = new Date();
+    const elapsedHours = (now.getTime() - enteredAt.getTime()) / (1000 * 60 * 60);
+    const remainingHours = currentStage.sla_hours - elapsedHours;
+    return remainingHours <= 24 && remainingHours > 0;
+  }).length, 1200, countUpStarted);
+  const handwrittenDocsCount = useCountUp(mockInvoices.filter(i => i.invoice_type === 'PROFORMA').length, 1200, countUpStarted);
+  const slaAtRiskCount = useCountUp(mockInvoices.filter(i => {
+    const currentStage = i.stage_timestamps.find(st => !st.exited_at);
+    if (!currentStage) return false;
+    const enteredAt = new Date(currentStage.entered_at);
+    const now = new Date();
+    const elapsedHours = (now.getTime() - enteredAt.getTime()) / (1000 * 60 * 60);
+    const remainingHours = currentStage.sla_hours - elapsedHours;
+    return remainingHours <= 48 && remainingHours > 0;
+  }).length, 1200, countUpStarted);
+  const paidThisWeekCount = useCountUp(mockInvoices.filter(i => i.status === InvoiceStatus.PAID).length, 1200, countUpStarted);
+  const totalAmountCount = useCountUp(Math.floor(mockInvoices.reduce((sum, i) => sum + i.total_amount, 0)), 1200, countUpStarted);
+  const exceptionsCount = useCountUp(mockInvoices.filter(i => i.exceptions.length > 0).length, 1200, countUpStarted);
 
   const showToast = (message: string, type: 'success' | 'error' | 'warning' | 'info' = 'info') => {
     const id = Date.now().toString();
@@ -171,28 +194,6 @@ export default function Dashboard() {
     setTimeout(() => setCountUpStarted(true), 200);
   }, []);
 
-  // Intersection Observer for infinite scroll
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting && hasMore && !invoicesLoading) {
-          setPage(prev => prev + 1);
-        }
-      },
-      { threshold: 0.1 }
-    );
-
-    if (sentinelRef.current) {
-      observer.observe(sentinelRef.current);
-    }
-
-    return () => {
-      if (sentinelRef.current) {
-        observer.unobserve(sentinelRef.current);
-      }
-    };
-  }, [hasMore, invoicesLoading]);
-
   const getGreeting = () => {
     const hour = new Date().getHours();
     if (hour < 12) return 'Good morning ☀️';
@@ -207,8 +208,6 @@ export default function Dashboard() {
       setValidating(true);
       const response = await invoiceApi.validate(selectedInvoice.id);
       setValidationResult(response.data);
-      // Reload invoices to get updated status and exceptions
-      await refetchInvoices();
       // Reload selected invoice with updated data
       const updatedInvoice = await invoiceApi.getById(selectedInvoice.id);
       setSelectedInvoice(updatedInvoice.data);
@@ -221,10 +220,15 @@ export default function Dashboard() {
 
   const handleApprove = async (invoiceId: string) => {
     try {
-      const signerName = 'Current User'; // In production, this would come from user context
-      await invoiceApi.approve(invoiceId, signerName);
+      if (!user) {
+        showToast('You must be logged in to approve invoices', 'error');
+        return;
+      }
+      
+      // Signature attribution: pass user's name as signer
+      // Backend will record full signature details (signer_name, signer_role, signed_at, is_digital)
+      await invoiceApi.approve(invoiceId, user.name);
       showToast('Invoice approved successfully', 'success');
-      await refetchInvoices();
       setSelectedInvoice(null);
     } catch (error) {
       console.error('Failed to approve invoice:', error);
@@ -238,7 +242,6 @@ export default function Dashboard() {
     try {
       await invoiceApi.reject(selectedInvoice.id, rejectReason);
       showToast('Invoice rejected successfully', 'success');
-      await refetchInvoices();
       setSelectedInvoice(null);
       setShowRejectModal(false);
       setRejectReason('');
@@ -255,7 +258,6 @@ export default function Dashboard() {
       setPosting(true);
       await invoiceApi.post(selectedInvoice.id);
       showToast('Invoice posted to accounting successfully', 'success');
-      await refetchInvoices();
       setSelectedInvoice(null);
     } catch (error) {
       console.error('Failed to post invoice:', error);
@@ -271,7 +273,6 @@ export default function Dashboard() {
     try {
       await invoiceApi.schedulePayment(selectedInvoice.id, paymentDate);
       showToast('Payment scheduled successfully', 'success');
-      await refetchInvoices();
       setSelectedInvoice(null);
       setShowSchedulePaymentModal(false);
       setPaymentDate('');
@@ -287,32 +288,32 @@ export default function Dashboard() {
       value: pendingValidationCount.count,
       icon: FileText,
       color: '#2563EB',
-      trend: dashboardStats ? formatTrend(dashboardStats.pendingValidationTrend) : '+12%',
-      trendUp: dashboardStats ? dashboardStats.pendingValidationTrend >= 0 : true,
+      trend: '+12%',
+      trendUp: true,
     },
     {
       label: 'Awaiting Approval',
       value: awaitingApprovalCount.count,
       icon: Clock,
       color: '#7C3AED',
-      trend: dashboardStats ? formatTrend(dashboardStats.awaitingApprovalTrend) : '+5%',
-      trendUp: dashboardStats ? dashboardStats.awaitingApprovalTrend >= 0 : true,
+      trend: '+5%',
+      trendUp: true,
     },
     {
       label: 'Urgent Payments',
       value: urgentPaymentsCount.count,
       icon: AlertTriangle,
       color: '#DC2626',
-      trend: dashboardStats ? formatTrend(dashboardStats.urgentPaymentsTrend) : '-3%',
-      trendUp: dashboardStats ? dashboardStats.urgentPaymentsTrend >= 0 : false,
+      trend: '-3%',
+      trendUp: false,
     },
     {
       label: 'Handwritten Docs',
       value: handwrittenDocsCount.count,
       icon: PenTool,
       color: '#F59E0B',
-      trend: dashboardStats ? formatTrend(dashboardStats.handwrittenDocsTrend) : '+8%',
-      trendUp: dashboardStats ? dashboardStats.handwrittenDocsTrend >= 0 : true,
+      trend: '+8%',
+      trendUp: true,
       subtitle: 'Awaiting manual review',
     },
     {
@@ -320,8 +321,8 @@ export default function Dashboard() {
       value: slaAtRiskCount.count,
       icon: AlertCircle,
       color: '#DC2626',
-      trend: dashboardStats ? formatTrend(dashboardStats.slaAtRiskTrend) : '+5%',
-      trendUp: dashboardStats ? dashboardStats.slaAtRiskTrend >= 0 : false,
+      trend: '+5%',
+      trendUp: false,
       subtitle: 'invoices need immediate action',
     },
     {
@@ -329,29 +330,29 @@ export default function Dashboard() {
       value: paidThisWeekCount.count,
       icon: CheckCircle,
       color: '#059669',
-      trend: dashboardStats ? formatTrend(dashboardStats.paidThisWeekTrend) : '+22%',
-      trendUp: dashboardStats ? dashboardStats.paidThisWeekTrend >= 0 : true,
+      trend: '+22%',
+      trendUp: true,
     },
     {
       label: 'Total Amount',
       value: `$${totalAmountCount.count.toLocaleString()}`,
       icon: TrendingUp,
       color: '#4F46E5',
-      trend: dashboardStats ? formatTrend(dashboardStats.totalAmountTrend) : '+18%',
-      trendUp: dashboardStats ? dashboardStats.totalAmountTrend >= 0 : true,
+      trend: '+18%',
+      trendUp: true,
     },
     {
       label: 'Exceptions',
       value: exceptionsCount.count,
       icon: AlertCircle,
       color: '#DB2777',
-      trend: dashboardStats ? formatTrend(dashboardStats.exceptionsTrend) : '-7%',
-      trendUp: dashboardStats ? dashboardStats.exceptionsTrend >= 0 : false,
+      trend: '-7%',
+      trendUp: false,
     },
   ];
 
   return (
-    <div className="flex h-screen relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%)' }}>
+    <div className="flex h-screen relative" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%)' }}>
       {/* Layered Background Atmosphere */}
       <div style={{ position: 'fixed', inset: 0, zIndex: 0, overflow: 'hidden', pointerEvents: 'none' }}>
         {/* Purple orb top-right */}
@@ -428,6 +429,12 @@ export default function Dashboard() {
           </Link>
           <Link
             to="/approvals"
+            onClick={(e) => {
+              if (!user) {
+                e.preventDefault();
+                navigate('/login');
+              }
+            }}
             className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white"
             style={{ 
               borderLeft: '2px solid transparent', 
@@ -446,9 +453,9 @@ export default function Dashboard() {
             {!sidebarCollapsed && (
               <div className="flex items-center justify-between flex-1">
                 <span className="font-medium">Approvals</span>
-                {(dashboardStats?.awaitingApproval ?? 0) > 0 && (
+                {awaitingApprovalCount.count > 0 && (
                   <span className="bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
-                    {dashboardStats?.awaitingApproval ?? 0}
+                    {awaitingApprovalCount.count}
                   </span>
                 )}
               </div>
@@ -456,6 +463,12 @@ export default function Dashboard() {
           </Link>
           <Link
             to="/exceptions"
+            onClick={(e) => {
+              if (!user) {
+                e.preventDefault();
+                navigate('/login');
+              }
+            }}
             className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white"
             style={{ 
               borderLeft: '2px solid transparent', 
@@ -474,9 +487,9 @@ export default function Dashboard() {
             {!sidebarCollapsed && (
               <div className="flex items-center justify-between flex-1">
                 <span className="font-medium">Exceptions</span>
-                {(dashboardStats?.exceptions ?? 0) > 0 && (
+                {exceptionsCount.count > 0 && (
                   <span className="bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
-                    {dashboardStats?.exceptions ?? 0}
+                    {exceptionsCount.count}
                   </span>
                 )}
               </div>
@@ -484,6 +497,12 @@ export default function Dashboard() {
           </Link>
           <Link
             to="/vendors"
+            onClick={(e) => {
+              if (!user) {
+                e.preventDefault();
+                navigate('/login');
+              }
+            }}
             className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white"
             style={{ 
               borderLeft: '2px solid transparent', 
@@ -503,6 +522,12 @@ export default function Dashboard() {
           </Link>
           <Link
             to="/payment-batches"
+            onClick={(e) => {
+              if (!user) {
+                e.preventDefault();
+                navigate('/login');
+              }
+            }}
             className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white"
             style={{ 
               borderLeft: '2px solid transparent', 
@@ -522,6 +547,12 @@ export default function Dashboard() {
           </Link>
           <Link
             to="/reports"
+            onClick={(e) => {
+              if (!user) {
+                e.preventDefault();
+                navigate('/login');
+              }
+            }}
             className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white"
             style={{ 
               borderLeft: '2px solid transparent', 
@@ -541,6 +572,12 @@ export default function Dashboard() {
           </Link>
           <Link
             to="/accounting-review"
+            onClick={(e) => {
+              if (!user) {
+                e.preventDefault();
+                navigate('/login');
+              }
+            }}
             className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white"
             style={{ 
               borderLeft: '2px solid transparent', 
@@ -596,102 +633,34 @@ export default function Dashboard() {
               <p className="text-sm text-slate-300">{getGreeting()}</p>
             </div>
             <div className="flex items-center gap-4">
-              <button
-                onClick={() => setShowUploadModal(true)}
-                className="px-4 py-2 text-white rounded-lg font-medium transition-all duration-200"
-                style={{ 
-                  background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-                  boxShadow: '0 0 20px rgba(99,102,241,0.45), 0 4px 15px rgba(0,0,0,0.3)'
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.boxShadow = '0 0 35px rgba(99,102,241,0.65), 0 4px 20px rgba(0,0,0,0.4)';
-                  e.currentTarget.style.transform = 'translateY(-1px)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.boxShadow = '0 0 20px rgba(99,102,241,0.45), 0 4px 15px rgba(0,0,0,0.3)';
-                  e.currentTarget.style.transform = 'translateY(0)';
-                }}
-              >
-                Upload Invoice
-              </button>
-              <div className="relative">
-                <button
-                  onClick={() => setShowNotifications(!showNotifications)}
-                  className="relative p-2 text-slate-300 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
-                >
-                  <Bell className="h-5 w-5" />
-                  <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" />
-                </button>
-                {showNotifications && (
-                  <div 
-                    className="absolute right-0 z-50"
-                    style={{ 
-                      top: 'calc(100% + 8px)',
-                      width: '320px',
-                      background: 'rgba(15, 23, 42, 0.85)',
-                      backdropFilter: 'blur(24px)',
-                      WebkitBackdropFilter: 'blur(24px)',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      borderRadius: '16px',
-                      boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
-                      transform: 'scale(0.95) translateY(-8px)',
-                      opacity: 0,
-                      animation: 'notificationOpen 200ms ease-out forwards',
-                      transformOrigin: 'top right'
-                    }}
-                  >
-                    <style>{`
-                      @keyframes notificationOpen {
-                        to {
-                          transform: scale(1) translateY(0);
-                          opacity: 1;
-                        }
-                      }
-                    `}</style>
-                    <div className="p-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                      <div className="flex items-center justify-between">
-                        <h3 className="text-sm font-semibold text-white">Notifications</h3>
-                        <button className="text-xs text-[#6366f1] hover:text-[#818cf8]">Mark all read</button>
-                      </div>
+              {/* Theme Toggle */}
+              <ThemeToggle />
+              {/* User Info */}
+              {user && (
+                <div className="flex items-center gap-3 px-4 py-2 bg-white/5 border border-white/10 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center">
+                      <span className="text-white text-sm font-medium">
+                        {user.name.split(' ').map(n => n[0]).join('')}
+                      </span>
                     </div>
-                    <div className="p-2">
-                      <div className="p-3 hover:bg-white/10 rounded-lg cursor-pointer transition-colors" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                        <div className="flex items-start gap-3">
-                          <div className="w-2 h-2 rounded-full mt-2 flex-shrink-0" style={{ background: '#22c55e' }} />
-                          <div className="flex-1">
-                            <p className="text-sm text-white">Invoice #1041 approved</p>
-                            <p className="text-xs text-slate-400 mt-1">Approved by John Doe</p>
-                          </div>
-                          <span className="text-xs text-slate-500">15m</span>
-                        </div>
-                      </div>
-                      <div className="p-3 hover:bg-white/10 rounded-lg cursor-pointer transition-colors" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                        <div className="flex items-start gap-3">
-                          <div className="w-2 h-2 rounded-full mt-2 flex-shrink-0" style={{ background: '#ef4444' }} />
-                          <div className="flex-1">
-                            <p className="text-sm text-white">Invoice #1042 flagged as exception</p>
-                            <p className="text-xs text-slate-400 mt-1">Missing vendor information</p>
-                          </div>
-                          <span className="text-xs text-slate-500">2m</span>
-                        </div>
-                      </div>
-                      <div className="p-3 hover:bg-white/10 rounded-lg cursor-pointer transition-colors">
-                        <div className="flex items-start gap-3">
-                          <div className="w-2 h-2 rounded-full mt-2 flex-shrink-0" style={{ background: '#f59e0b' }} />
-                          <div className="flex-1">
-                            <p className="text-sm text-white">Invoice #1043 pending approval</p>
-                            <p className="text-xs text-slate-400 mt-1">Awaiting manager review</p>
-                          </div>
-                          <span className="text-xs text-slate-500">1h</span>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="p-3 text-center" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                      <button className="text-sm text-[#6366f1] hover:text-[#818cf8]">View all notifications →</button>
+                    <div className="text-left">
+                      <p className="text-sm font-medium text-white">{user.name}</p>
+                      <p className="text-xs text-slate-400">{user.role.replace(/_/g, ' ')}</p>
                     </div>
                   </div>
-                )}
-              </div>
+                  <button
+                    onClick={() => {
+                      logout();
+                      navigate('/login');
+                    }}
+                    className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+                    title="Logout"
+                  >
+                    <LogOut className="h-4 w-4" />
+                  </button>
+                </div>
+              )}
               <button className="p-2 text-slate-300 hover:text-white hover:bg-white/10 rounded-lg transition-colors">
                 <Settings className="h-5 w-5" />
               </button>
@@ -799,6 +768,125 @@ export default function Dashboard() {
             </div>
           )}
 
+          {/* Bottleneck View */}
+          <BottleneckView />
+
+          {/* Action Buttons - Glassmorphism */}
+          <div className="flex items-center gap-4 mb-6">
+            {user && (
+              <button
+                onClick={() => {
+                  console.log('Upload button clicked, showUploadModal:', showUploadModal);
+                  setShowUploadModal(true);
+                }}
+                className="px-4 py-2 text-white rounded-lg font-medium transition-all duration-200"
+                style={{
+                  background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                  boxShadow: '0 0 20px rgba(99,102,241,0.45), 0 4px 15px rgba(0,0,0,0.3)'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.boxShadow = '0 0 35px rgba(99,102,241,0.65), 0 4px 20px rgba(0,0,0,0.4)';
+                  e.currentTarget.style.transform = 'translateY(-1px)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.boxShadow = '0 0 20px rgba(99,102,241,0.45), 0 4px 15px rgba(0,0,0,0.3)';
+                  e.currentTarget.style.transform = 'translateY(0)';
+                }}
+              >
+                Upload Invoice
+              </button>
+            )}
+          </div>
+
+          {/* Notifications */}
+          <div className="relative">
+            <button
+                onClick={() => {
+                  if (!user) {
+                    navigate('/login');
+                  } else {
+                    setShowNotifications(!showNotifications);
+                  }
+                }}
+                className="relative px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  <Bell className="h-5 w-5" />
+                  <span>Notifications</span>
+                  <span className="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full" />
+                </div>
+              </button>
+              {showNotifications && (
+                <div 
+                  className="absolute right-0 z-50"
+                  style={{ 
+                    top: 'calc(100% + 8px)',
+                    width: '320px',
+                    background: 'rgba(15, 23, 42, 0.85)',
+                    backdropFilter: 'blur(24px)',
+                    WebkitBackdropFilter: 'blur(24px)',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    borderRadius: '16px',
+                    boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+                    transform: 'scale(0.95) translateY(-8px)',
+                    opacity: 0,
+                    animation: 'notificationOpen 200ms ease-out forwards',
+                    transformOrigin: 'top right'
+                  }}
+                >
+                  <style>{`
+                    @keyframes notificationOpen {
+                      to {
+                        transform: scale(1) translateY(0);
+                        opacity: 1;
+                      }
+                    }
+                  `}</style>
+                  <div className="p-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-semibold text-white">Notifications</h3>
+                      <button className="text-xs text-[#6366f1] hover:text-[#818cf8]">Mark all read</button>
+                    </div>
+                  </div>
+                  <div className="p-2">
+                    <div className="p-3 hover:bg-white/10 rounded-lg cursor-pointer transition-colors" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                      <div className="flex items-start gap-3">
+                        <div className="w-2 h-2 rounded-full mt-2 flex-shrink-0" style={{ background: '#22c55e' }} />
+                        <div className="flex-1">
+                          <p className="text-sm text-white">Invoice #1041 approved</p>
+                          <p className="text-xs text-slate-400 mt-1">Approved by John Doe</p>
+                        </div>
+                        <span className="text-xs text-slate-500">15m</span>
+                      </div>
+                    </div>
+                    <div className="p-3 hover:bg-white/10 rounded-lg cursor-pointer transition-colors" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                      <div className="flex items-start gap-3">
+                        <div className="w-2 h-2 rounded-full mt-2 flex-shrink-0" style={{ background: '#ef4444' }} />
+                        <div className="flex-1">
+                          <p className="text-sm text-white">Invoice #1042 flagged as exception</p>
+                          <p className="text-xs text-slate-400 mt-1">Missing vendor information</p>
+                        </div>
+                        <span className="text-xs text-slate-500">2m</span>
+                      </div>
+                    </div>
+                    <div className="p-3 hover:bg-white/10 rounded-lg cursor-pointer transition-colors">
+                      <div className="flex items-start gap-3">
+                        <div className="w-2 h-2 rounded-full mt-2 flex-shrink-0" style={{ background: '#f59e0b' }} />
+                        <div className="flex-1">
+                          <p className="text-sm text-white">Invoice #1043 pending approval</p>
+                          <p className="text-xs text-slate-400 mt-1">Awaiting manager review</p>
+                        </div>
+                        <span className="text-xs text-slate-500">1h</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="p-3 text-center" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                    <button className="text-sm text-[#6366f1] hover:text-[#818cf8]">View all notifications →</button>
+                  </div>
+                </div>
+              )}
+            </div>
+
           {/* Filters - Glassmorphism */}
           <div className="p-4 mb-6" style={{ background: 'rgba(255, 255, 255, 0.04)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', border: '1px solid rgba(255, 255, 255, 0.07)', borderRadius: '16px' }}>
             <div className="flex flex-col md:flex-row items-start md:items-center gap-4">
@@ -894,24 +982,35 @@ export default function Dashboard() {
             <div className="px-6 py-4 border-b border-white/10">
               <h2 className="text-lg font-semibold text-white">Invoices</h2>
             </div>
-            <InvoiceTable invoices={invoices} onInvoiceClick={setSelectedInvoice} loading={loading} />
+            <InvoiceTable invoices={displayedInvoices} onInvoiceClick={setSelectedInvoice} loading={loading} />
             
-            {/* Loading more spinner */}
-            {invoicesLoading && page > 1 && (
-              <div className="flex items-center justify-center py-4">
-                <div className="w-6 h-6 border-2 border-[#6366f1] border-t-transparent rounded-full animate-spin" />
+            {/* Pagination */}
+            {sortedInvoices.length > 0 && (
+              <div className="flex items-center justify-between py-4 px-6">
+                <div className="text-sm text-slate-400">
+                  Showing {startIndex + 1}-{Math.min(endIndex, sortedInvoices.length)} of {sortedInvoices.length} invoices
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                    disabled={currentPage === 1}
+                    className="px-4 py-2 bg-white/5 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors text-sm font-medium border border-white/10"
+                  >
+                    Previous
+                  </button>
+                  <span className="text-sm text-slate-400">
+                    Page {currentPage} of {totalPages}
+                  </span>
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                    disabled={currentPage === totalPages}
+                    className="px-4 py-2 bg-white/5 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors text-sm font-medium border border-white/10"
+                  >
+                    Next
+                  </button>
+                </div>
               </div>
             )}
-            
-            {/* End of list message */}
-            {!hasMore && invoices.length > 0 && (
-              <div className="text-center py-4 text-slate-400 text-sm">
-                You've reached the end · {invoices.length} invoices total
-              </div>
-            )}
-            
-            {/* Sentinel for infinite scroll */}
-            <div ref={sentinelRef} className="h-1" />
           </div>
 
           {/* Supplier Balance Analysis */}
@@ -1160,27 +1259,31 @@ export default function Dashboard() {
               )}
 
               {/* Approval Actions */}
-              {selectedInvoice.status === (InvoiceStatus.PENDING_COORDINATOR as any) && (
+              {selectedInvoice.status === (InvoiceStatus.PENDING_COORDINATOR as any) && user && (
                 <div className="space-y-2">
-                  <button
-                    onClick={() => handleApprove(selectedInvoice.id)}
-                    className="w-full flex items-center justify-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-                  >
-                    <CheckCircle className="h-4 w-4 mr-2" />
-                    Approve
-                  </button>
-                  <button
-                    onClick={() => setShowRejectModal(true)}
-                    className="w-full flex items-center justify-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-                  >
-                    <XCircle className="h-4 w-4 mr-2" />
-                    Reject
-                  </button>
+                  {hasPermission(user.role, 'canApprove') && (
+                    <button
+                      onClick={() => handleApprove(selectedInvoice.id)}
+                      className="w-full flex items-center justify-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                    >
+                      <CheckCircle className="h-4 w-4 mr-2" />
+                      Approve
+                    </button>
+                  )}
+                  {hasPermission(user.role, 'canReject') && (
+                    <button
+                      onClick={() => setShowRejectModal(true)}
+                      className="w-full flex items-center justify-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                    >
+                      <XCircle className="h-4 w-4 mr-2" />
+                      Reject
+                    </button>
+                  )}
                 </div>
               )}
 
               {/* Posting Actions */}
-              {selectedInvoice.status === InvoiceStatus.APPROVED && (
+              {selectedInvoice.status === InvoiceStatus.APPROVED && user && hasPermission(user.role, 'canPost') && (
                 <button
                   onClick={handlePost}
                   disabled={posting}
@@ -1193,7 +1296,7 @@ export default function Dashboard() {
               )}
 
               {/* Payment Scheduling */}
-              {selectedInvoice.status === (InvoiceStatus.POSTED_TO_QB as any) && (
+              {selectedInvoice.status === (InvoiceStatus.POSTED_TO_QB as any) && user && hasPermission(user.role, 'canSchedulePayment') && (
                 <button
                   onClick={() => setShowSchedulePaymentModal(true)}
                   className="w-full flex items-center justify-center px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
@@ -1203,23 +1306,102 @@ export default function Dashboard() {
                 </button>
               )}
 
-              {/* Validation Results */}
+              {/* Validation Results - Detailed 17-Rule Display */}
               {validationResult && (
                 <div className={`mt-4 p-4 rounded-lg ${validationResult.passed ? 'bg-green-500/10' : 'bg-red-500/10'} border ${validationResult.passed ? 'border-green-500/20' : 'border-red-500/20'}`}>
-                  <p className={`text-sm font-semibold mb-2 ${validationResult.passed ? 'text-green-400' : 'text-red-400'}`}>
-                    {validationResult.passed ? 'Validation Passed' : 'Validation Failed'}
-                  </p>
-                  <div className="space-y-1">
-                    {validationResult.results.map((result: any, idx: number) => (
-                      <div key={idx} className="flex items-start text-xs">
-                        <span className={`mr-2 ${result.passed ? 'text-green-400' : 'text-red-400'}`}>
-                          {result.passed ? '✓' : '✗'}
-                        </span>
-                        <span className={result.passed ? 'text-green-300' : 'text-red-300'}>
-                          {result.message}
-                        </span>
+                  <div className="flex items-center justify-between mb-3">
+                    <p className={`text-sm font-semibold ${validationResult.passed ? 'text-green-400' : 'text-red-400'}`}>
+                      {validationResult.passed ? '✓ Validation Passed' : '✗ Validation Failed'}
+                    </p>
+                    <span className="text-xs text-slate-400">
+                      {validationResult.results.filter((r: any) => r.passed).length}/{validationResult.results.length} rules passed
+                    </span>
+                  </div>
+
+                  {/* Rule Categories */}
+                  <div className="space-y-3">
+                    {/* Vendor Rules */}
+                    <div>
+                      <p className="text-xs font-medium text-slate-400 mb-1">Vendor</p>
+                      <div className="space-y-1">
+                        {validationResult.results.slice(0, 1).map((result: any, idx: number) => (
+                          <div key={idx} className="flex items-start text-xs">
+                            <span className={`mr-2 ${result.passed ? 'text-green-400' : 'text-red-400'}`}>{result.passed ? '✓' : '✗'}</span>
+                            <span className={result.passed ? 'text-green-300' : 'text-red-300'}>{result.message}</span>
+                          </div>
+                        ))}
                       </div>
-                    ))}
+                    </div>
+
+                    {/* Invoice Data Rules */}
+                    <div>
+                      <p className="text-xs font-medium text-slate-400 mb-1">Invoice Data</p>
+                      <div className="space-y-1">
+                        {validationResult.results.slice(1, 8).map((result: any, idx: number) => (
+                          <div key={idx} className="flex items-start text-xs">
+                            <span className={`mr-2 ${result.passed ? 'text-green-400' : 'text-red-400'}`}>{result.passed ? '✓' : '✗'}</span>
+                            <span className={result.passed ? 'text-green-300' : 'text-red-300'}>{result.message}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Bank Details */}
+                    <div>
+                      <p className="text-xs font-medium text-slate-400 mb-1">Bank Details</p>
+                      <div className="space-y-1">
+                        {validationResult.results.slice(8, 9).map((result: any, idx: number) => (
+                          <div key={idx} className="flex items-start text-xs">
+                            <span className={`mr-2 ${result.passed ? 'text-green-400' : 'text-red-400'}`}>{result.passed ? '✓' : '✗'}</span>
+                            <span className={result.passed ? 'text-green-300' : 'text-red-300'}>{result.message}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Signatures */}
+                    <div>
+                      <p className="text-xs font-medium text-slate-400 mb-1">Signatures</p>
+                      <div className="space-y-1">
+                        {validationResult.results.slice(9, 10).map((result: any, idx: number) => (
+                          <div key={idx} className="flex items-start text-xs">
+                            <span className={`mr-2 ${result.passed ? 'text-green-400' : 'text-red-400'}`}>{result.passed ? '✓' : '✗'}</span>
+                            <span className={result.passed ? 'text-green-300' : 'text-red-300'}>{result.message}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* NextGen PO Cross-Check - Highlighted */}
+                    <div className={`p-2 rounded ${validationResult.results[16]?.passed ? 'bg-green-500/10' : 'bg-red-500/10'} border ${validationResult.results[16]?.passed ? 'border-green-500/20' : 'border-red-500/20'}`}>
+                      <p className="text-xs font-medium text-slate-400 mb-1 flex items-center">
+                        <span className="mr-1">🔗</span> NextGen PO Cross-Check
+                      </p>
+                      <div className="space-y-1">
+                        {validationResult.results.slice(16, 17).map((result: any, idx: number) => (
+                          <div key={idx} className="flex items-start text-xs">
+                            <span className={`mr-2 ${result.passed ? 'text-green-400' : 'text-red-400'}`}>{result.passed ? '✓' : '✗'}</span>
+                            <span className={result.passed ? 'text-green-300' : 'text-red-300'}>{result.message}</span>
+                          </div>
+                        ))}
+                        {validationResult.results[16]?.detail && (
+                          <p className="text-xs text-slate-400 mt-1 pl-4">{validationResult.results[16].detail}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Compliance Rules */}
+                    <div>
+                      <p className="text-xs font-medium text-slate-400 mb-1">Compliance</p>
+                      <div className="space-y-1">
+                        {validationResult.results.slice(10, 16).map((result: any, idx: number) => (
+                          <div key={idx} className="flex items-start text-xs">
+                            <span className={`mr-2 ${result.passed ? 'text-green-400' : 'text-red-400'}`}>{result.passed ? '✓' : '✗'}</span>
+                            <span className={result.passed ? 'text-green-300' : 'text-red-300'}>{result.message}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}

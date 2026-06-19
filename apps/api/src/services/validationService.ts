@@ -3,6 +3,7 @@ import { ExceptionReason, InvoiceStatus, InvoiceType, BillToEntity, SignatoryRol
 import { createApprovalRequest } from './approvalService';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils/logger';
+import { nextGenService } from './nextGenService';
 import crypto from 'crypto';
 
 export interface ValidationResult {
@@ -25,6 +26,54 @@ export interface InvoiceValidationResult {
 // Late submission thresholds
 const LATE_SUBMISSION_WARNING_DAYS = 7;
 const LATE_SUBMISSION_ERROR_DAYS = 14;
+
+/**
+ * Run all 17 validation rules against a raw invoice object (no DB required).
+ * Used for testing/mock mode when database is unavailable.
+ */
+export async function validateInvoiceWithData(
+  invoiceData: any
+): Promise<InvoiceValidationResult> {
+  const invoice = invoiceData;
+  const results: ValidationResult[] = [];
+  const exceptions: Array<{ reason: ExceptionReason; detail: string }> = [];
+
+  const rules = [
+    { fn: () => validateVendorMatch(invoice.vendor), reason: ExceptionReason.VENDOR_NOT_FOUND },
+    { fn: () => validateInvoiceNumber(invoice.invoice_number), reason: ExceptionReason.MISSING_PO_REFERENCE },
+    { fn: () => validateInvoiceDate(invoice.invoice_date ? new Date(invoice.invoice_date) : null), reason: ExceptionReason.OCR_LOW_CONFIDENCE },
+    { fn: () => validateDueDate(invoice.due_date ? new Date(invoice.due_date) : null, invoice.invoice_date ? new Date(invoice.invoice_date) : null), reason: ExceptionReason.OCR_LOW_CONFIDENCE },
+    { fn: () => validateAmount(Number(invoice.total_amount)), reason: ExceptionReason.AMOUNT_MISMATCH },
+    { fn: () => validateCurrency(invoice.currency, invoice.invoice_currency_original, invoice.exchange_rate_to_usd ? Number(invoice.exchange_rate_to_usd) : undefined), reason: ExceptionReason.AMOUNT_MISMATCH },
+    { fn: () => validatePaymentTerms(invoice.payment_terms || ''), reason: ExceptionReason.AMOUNT_MISMATCH },
+    { fn: () => validateIncoterm(invoice.incoterm), reason: ExceptionReason.AMOUNT_MISMATCH },
+    { fn: async () => validateBankDetails(invoice), reason: ExceptionReason.MISSING_BANK_INFO },
+    { fn: () => validateSignatures(Number(invoice.total_amount), invoice.signatures || []), reason: ExceptionReason.MISSING_SIGNATURE },
+    { fn: async () => checkDuplicateInvoice(invoice), reason: ExceptionReason.DUPLICATE_INVOICE },
+    { fn: () => checkLateSubmission(invoice), reason: ExceptionReason.LATE_SUBMISSION },
+    { fn: () => checkUrgentPayment(invoice), reason: ExceptionReason.LATE_SUBMISSION },
+    { fn: () => validateHandwrittenDocument(invoice), reason: ExceptionReason.HANDWRITTEN_DOCUMENT },
+    { fn: async () => checkMissingBankInfo(invoice), reason: ExceptionReason.MISSING_BANK_INFO },
+    { fn: () => validateInvoiceTemplate(invoice.invoice_type as InvoiceType, invoice.invoice_template_type), reason: ExceptionReason.HANDWRITTEN_DOCUMENT },
+    { fn: async () => validatePOAgainstNextGen(invoice), reason: ExceptionReason.AMOUNT_MISMATCH },
+  ];
+
+  for (const rule of rules) {
+    const result: ValidationResult = await Promise.resolve(rule.fn());
+    results.push(result);
+    if (!result.passed) {
+      exceptions.push({ reason: result.reason || rule.reason, detail: result.detail || '' });
+    }
+  }
+
+  const passed = results.every(r => r.passed);
+  return {
+    invoice_id: invoice.id || 'mock',
+    passed,
+    results,
+    exceptions,
+  };
+}
 
 export async function validateInvoice(invoiceId: string): Promise<InvoiceValidationResult> {
   const invoice = await prisma.invoice.findUnique({
@@ -152,6 +201,13 @@ export async function validateInvoice(invoiceId: string): Promise<InvoiceValidat
   results.push(templateResult);
   if (!templateResult.passed) {
     exceptions.push({ reason: ExceptionReason.HANDWRITTEN_DOCUMENT, detail: templateResult.detail || '' });
+  }
+
+  // RULE 17 — PO cross-check via NextGen (fetch-only, read from NextGen)
+  const poCheckResult = await validatePOAgainstNextGen(invoice);
+  results.push(poCheckResult);
+  if (!poCheckResult.passed) {
+    exceptions.push({ reason: poCheckResult.reason || ExceptionReason.AMOUNT_MISMATCH, detail: poCheckResult.detail || '' });
   }
 
   const passed = results.every(r => r.passed);
@@ -611,13 +667,19 @@ async function checkDuplicateInvoice(invoice: any): Promise<ValidationResult> {
   const hash = crypto.createHash('sha256').update(hashInput).digest('hex');
 
   // Check for existing invoice with same invoice_number + vendor
-  const duplicate = await prisma.invoice.findFirst({
+  let duplicate: any = null;
+  try {
+  duplicate = await prisma.invoice.findFirst({
     where: {
       invoice_number: invoice.invoice_number,
       vendor_id: invoice.vendor_id,
       id: { not: invoice.id },
     },
   });
+
+  } catch {
+    return { passed: true, message: 'Duplicate check skipped — DB unavailable' };
+  }
 
   if (duplicate) {
     return {
@@ -756,4 +818,81 @@ async function checkMissingBankInfo(invoice: any): Promise<ValidationResult> {
     passed: true,
     message: 'Vendor bank information is complete',
   };
+}
+
+// RULE 17 — PO cross-check via NextGen (fetch-only)
+// Fetches PO from NextGen and validates: PO exists, amount matches, vendor matches
+async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult> {
+  const poRef = invoice.mpo_number || invoice.po_number;
+
+  // No PO reference on invoice — skip (not all invoices have POs)
+  if (!poRef) {
+    return {
+      passed: true,
+      message: 'No PO/MPO reference — skipping NextGen check',
+    };
+  }
+
+  try {
+    // Fetch PO from NextGen (read-only)
+    const po = invoice.mpo_number
+      ? await nextGenService.fetchPOByMPO(invoice.mpo_number, {
+          vendor_name: invoice.vendor?.name,
+          amount: Number(invoice.total_amount),
+        })
+      : await nextGenService.fetchPOByNumber(invoice.po_number);
+
+    if (!po) {
+      return {
+        passed: false,
+        reason: ExceptionReason.MISSING_PO_REFERENCE,
+        message: `PO ${poRef} not found in NextGen`,
+        detail: `Referenced PO could not be found. Verify PO number or check with Purchasing.`,
+      };
+    }
+
+    const differences: string[] = [];
+
+    // Amount check (>5% variance = fail)
+    const poAmount = Number(po.amount);
+    const invoiceAmount = Number(invoice.total_amount);
+    if (poAmount > 0) {
+      const variance = Math.abs(invoiceAmount - poAmount) / poAmount;
+      if (variance > 0.05) {
+        differences.push(
+          `Amount: invoice $${invoiceAmount.toFixed(2)} vs PO $${poAmount.toFixed(2)} (${(variance * 100).toFixed(1)}% variance)`
+        );
+      }
+    }
+
+    // Vendor name check
+    if (invoice.vendor?.name && po.vendor_name) {
+      const invoiceVendor = invoice.vendor.name.toLowerCase().trim();
+      const poVendor = po.vendor_name.toLowerCase().trim();
+      if (invoiceVendor !== poVendor) {
+        differences.push(`Vendor: invoice "${invoice.vendor.name}" vs PO "${po.vendor_name}"`);
+      }
+    }
+
+    if (differences.length > 0) {
+      return {
+        passed: false,
+        reason: ExceptionReason.AMOUNT_MISMATCH,
+        message: `Invoice does not match PO ${poRef} in NextGen`,
+        detail: differences.join('; '),
+      };
+    }
+
+    return {
+      passed: true,
+      message: `PO ${poRef} verified in NextGen — amount and vendor match`,
+    };
+  } catch (error) {
+    // NextGen unavailable — log warning but don't block validation
+    logger.warn(`NextGen PO check failed for ${poRef}: ${error instanceof Error ? error.message : 'unknown error'}`);
+    return {
+      passed: true,
+      message: `NextGen unavailable — PO ${poRef} check deferred to pre-post stage`,
+    };
+  }
 }

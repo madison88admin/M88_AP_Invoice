@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { Upload, FileText, X, Sparkles, CheckCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
@@ -10,6 +11,7 @@ interface UploadInvoiceModalProps {
 }
 
 export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceModalProps) {
+  console.log('UploadInvoiceModal render, isOpen:', isOpen);
   const queryClient = useQueryClient();
   const [file, setFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -153,7 +155,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
 
   return (
     <AnimatePresence>
-      {isOpen && (
+      {isOpen && createPortal(
         <>
           {/* Backdrop */}
           <motion.div
@@ -164,9 +166,9 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
             style={{
               position: 'fixed',
               inset: 0,
-              background: 'rgba(0, 0, 0, 0.6)',
+              background: 'rgba(0, 0, 0, 0.7)',
               backdropFilter: 'blur(8px)',
-              zIndex: 30,
+              zIndex: 1000,
             }}
             onClick={handleClose}
           />
@@ -185,14 +187,14 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
               width: '600px',
               maxHeight: '90vh',
               overflowY: 'auto',
-              background: 'rgba(15, 23, 42, 0.85)',
+              background: 'rgba(15, 23, 42, 0.98)',
               backdropFilter: 'blur(24px)',
               WebkitBackdropFilter: 'blur(24px)',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
+              border: '1px solid rgba(255, 255, 255, 0.2)',
               borderRadius: '24px',
               boxShadow: '0 24px 80px rgba(0, 0, 0, 0.6)',
               padding: '32px',
-              zIndex: 31,
+              zIndex: 1001,
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -783,7 +785,8 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
               )}
             </div>
           </motion.div>
-        </>
+        </>,
+        document.body
       )}
     </AnimatePresence>
   );

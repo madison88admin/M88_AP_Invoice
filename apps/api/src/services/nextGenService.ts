@@ -633,9 +633,9 @@ export class NextGenService {
 
     logger.info(`MPO pagination: total=${total}, totalPages=${totalPages}, mpoNum=${mpoNum}, startPage=${startPage}, firstItem=${firstItems[0]?.Name}`);
 
-    // Fetch 4 pages around estimated position for safety
+    // Fetch more pages around estimated position for safety (expand to 10 pages)
     const pages = new Set<number>();
-    for (let p = Math.max(1, startPage - 1); p <= Math.min(totalPages, startPage + 2); p++) pages.add(p);
+    for (let p = Math.max(1, startPage - 3); p <= Math.min(totalPages, startPage + 6); p++) pages.add(p);
 
     const results: any[] = [];
     for (const p of pages) {
@@ -646,13 +646,41 @@ export class NextGenService {
       const r = await this.post<any>('/MaterialPurchaseOrder/MPOGridRead', {
         page: p,
         pageSize: PAGE_SIZE,
-        sort: [{ field: 'Name', dir: 'asc' }],
-        filter: null,
       });
-      const items: any[] = r?.Data || r?.data || [];
-      results.push(...items);
-      logger.info(`MPO page ${p}: first=${items[0]?.Name}, last=${items[items.length - 1]?.Name}`);
+      results.push(...(r?.Data || r?.data || []));
     }
+
+    // If target not found in targeted pages, search all pages
+    // Use flexible matching formats
+    const normalizedMPO = mpoNumber.replace(/^MPO/i, '').replace(/^0+/, '');
+    const mpoWithPrefix = `MPO${normalizedMPO.padStart(6, '0')}`; // 6-digit padding
+    const mpoWithPrefixShort = `MPO${normalizedMPO}`;
+
+    const found = results.find((i: any) =>
+      i.Name === mpoNumber ||
+      i.Name === mpoWithPrefix ||
+      i.Name === mpoWithPrefixShort ||
+      i.Name === normalizedMPO ||
+      i.Name?.includes(mpoNumber)
+    );
+
+    if (mpoNumber && !found) {
+      logger.warn(`MPO ${mpoNumber} not found in targeted pages, searching all pages`);
+      const allResults = [...firstItems];
+      let page = 2;
+      while (allResults.length < total) {
+        const r = await this.post<any>('/MaterialPurchaseOrder/MPOGridRead', {
+          page,
+          pageSize: PAGE_SIZE,
+        });
+        const pageData = r?.Data || r?.data || [];
+        allResults.push(...pageData);
+        if (pageData.length === 0) break;
+        page++;
+      }
+      return allResults;
+    }
+
     return results;
   }
 
@@ -696,17 +724,31 @@ export class NextGenService {
       const allHeaders = await this.fetchAllMPOHeaders(mpoNumber);
       if (allHeaders.length === 0) return null;
 
-      // ── Tier 1: Exact Name match ──────────────────────────────────────────
-      const exactMatch = allHeaders.find((i: any) => i.Name === mpoNumber);
+      // Normalize MPO number for flexible matching
+      // Remove "MPO" prefix and leading zeros for comparison
+      const normalizedMPO = mpoNumber.replace(/^MPO/i, '').replace(/^0+/, '');
+      const mpoWithPrefix = `MPO${normalizedMPO.padStart(6, '0')}`; // 6-digit padding based on sample MPO013402
+      const mpoWithPrefixShort = `MPO${normalizedMPO}`;
+
+      logger.info(`MPO ${mpoNumber}: Searching with formats: ${mpoNumber}, ${mpoWithPrefix}, ${mpoWithPrefixShort}, ${normalizedMPO}`);
+      logger.info(`MPO ${mpoNumber}: Sample results from search: ${allHeaders.slice(0, 5).map((h: any) => h.Name).join(', ')}`);
+
+      // ── Tier 1: Exact Name match (try multiple formats) ─────────────────────
+      const exactMatch = allHeaders.find((i: any) =>
+        i.Name === mpoNumber ||
+        i.Name === mpoWithPrefix ||
+        i.Name === mpoWithPrefixShort ||
+        i.Name === normalizedMPO
+      );
       if (exactMatch) {
-        logger.info(`MPO ${mpoNumber}: Tier-1 exact name match`);
+        logger.info(`MPO ${mpoNumber}: Tier-1 exact name match (found as ${exactMatch.Name})`);
         return this.buildMPOData(exactMatch, mpoNumber);
       }
 
       // ── Tier 2: Reference field match (Comments / Description / SupplierDescription) ──
       const refMatch = allHeaders.find((i: any) => {
         const refs = [i.Comments, i.Description, i.SupplierDescription].filter(Boolean).join(' ');
-        return refs.includes(mpoNumber);
+        return refs.includes(mpoNumber) || refs.includes(normalizedMPO) || refs.includes(mpoWithPrefix);
       });
       if (refMatch) {
         logger.info(`MPO ${mpoNumber}: Tier-2 reference field match (OrderId ${refMatch.Id})`);
@@ -894,8 +936,23 @@ export class NextGenService {
       differences.push(`Amount variance warning: Invoice $${invoiceData.amount.toFixed(2)} vs PO $${nextgenData.amount.toFixed(2)} (${(amountDiff * 100).toFixed(1)}% variance)`);
     }
 
-    // Vendor comparison (case-insensitive)
-    vendorMatch = invoiceData.vendor_name.toLowerCase() === nextgenData.vendor_name.toLowerCase();
+    // Vendor comparison (fuzzy matching for full company names)
+    const normalizeVendorName = (name: string): string => {
+      return name
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .replace(/\b(b\.v\.|ltd|limited|inc|corp|corporation|llc|co|company|h\.k\.|pte)\.?/gi, '')
+        .trim();
+    };
+
+    const invVendorNorm = normalizeVendorName(invoiceData.vendor_name);
+    const poVendorNorm = normalizeVendorName(nextgenData.vendor_name);
+
+    // Check if one contains the other (for full vs short names)
+    vendorMatch = invVendorNorm === poVendorNorm ||
+                  invVendorNorm.includes(poVendorNorm) ||
+                  poVendorNorm.includes(invVendorNorm);
+
     if (!vendorMatch) {
       differences.push(`Vendor mismatch: Invoice "${invoiceData.vendor_name}" vs PO "${nextgenData.vendor_name}"`);
     }

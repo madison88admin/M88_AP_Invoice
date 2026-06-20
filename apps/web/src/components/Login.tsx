@@ -188,7 +188,7 @@ export default function Login() {
             <button
               type="button"
               onClick={() => {
-                setEmail('glecie.yumena@madison88.com');
+                setEmail('maricon.alvarez@madison88.com');
                 setPassword('madison88');
               }}
               className="text-xs px-3 py-1 rounded-lg transition-all"
@@ -206,7 +206,76 @@ export default function Login() {
                 e.currentTarget.style.color = 'var(--text-muted)';
               }}
             >
-              Glecie (Planning)
+              Maricon (Coordinator)
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEmail('maricar.tanaleon@madison88.com');
+                setPassword('madison88');
+              }}
+              className="text-xs px-3 py-1 rounded-lg transition-all"
+              style={{ 
+                background: 'var(--bg-card)', 
+                border: '1px solid var(--border-color)',
+                color: 'var(--text-muted)'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'var(--bg-card-hover)';
+                e.currentTarget.style.color = 'var(--text-primary)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'var(--bg-card)';
+                e.currentTarget.style.color = 'var(--text-muted)';
+              }}
+            >
+              Maricar (Manager)
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEmail('maryann.delmonte@madison88.com');
+                setPassword('madison88');
+              }}
+              className="text-xs px-3 py-1 rounded-lg transition-all"
+              style={{ 
+                background: 'var(--bg-card)', 
+                border: '1px solid var(--border-color)',
+                color: 'var(--text-muted)'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'var(--bg-card-hover)';
+                e.currentTarget.style.color = 'var(--text-primary)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'var(--bg-card)';
+                e.currentTarget.style.color = 'var(--text-muted)';
+              }}
+            >
+              Mary Ann (Manager)
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEmail('mary.delmonte@madison88.com');
+                setPassword('madison88');
+              }}
+              className="text-xs px-3 py-1 rounded-lg transition-all"
+              style={{ 
+                background: 'var(--bg-card)', 
+                border: '1px solid var(--border-color)',
+                color: 'var(--text-muted)'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'var(--bg-card-hover)';
+                e.currentTarget.style.color = 'var(--text-primary)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'var(--bg-card)';
+                e.currentTarget.style.color = 'var(--text-muted)';
+              }}
+            >
+              Mary (Supervisor)
             </button>
             <button
               type="button"
@@ -229,7 +298,30 @@ export default function Login() {
                 e.currentTarget.style.color = 'var(--text-muted)';
               }}
             >
-              Edwin (Planning)
+              Edwin (Planning TOP_10)
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEmail('glecie.yumena@madison88.com');
+                setPassword('madison88');
+              }}
+              className="text-xs px-3 py-1 rounded-lg transition-all"
+              style={{ 
+                background: 'var(--bg-card)', 
+                border: '1px solid var(--border-color)',
+                color: 'var(--text-muted)'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'var(--bg-card-hover)';
+                e.currentTarget.style.color = 'var(--text-primary)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'var(--bg-card)';
+                e.currentTarget.style.color = 'var(--text-muted)';
+              }}
+            >
+              Glecie (Planning OTHER)
             </button>
             <button
               type="button"
@@ -257,7 +349,7 @@ export default function Login() {
             <button
               type="button"
               onClick={() => {
-                setEmail('maricon.alvarez@madison88.com');
+                setEmail('cc@madison88.com');
                 setPassword('madison88');
               }}
               className="text-xs px-3 py-1 rounded-lg transition-all"
@@ -275,12 +367,12 @@ export default function Login() {
                 e.currentTarget.style.color = 'var(--text-muted)';
               }}
             >
-              Maricon (Coordinator)
+              CC (CFO)
             </button>
             <button
               type="button"
               onClick={() => {
-                setEmail('edwin.garcia@madison88.com');
+                setEmail('polly@madison88.com');
                 setPassword('madison88');
               }}
               className="text-xs px-3 py-1 rounded-lg transition-all"
@@ -298,7 +390,76 @@ export default function Login() {
                 e.currentTarget.style.color = 'var(--text-muted)';
               }}
             >
-              Edwin (Admin)
+              Polly (President)
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEmail('paul.avendano@madison88.com');
+                setPassword('madison88');
+              }}
+              className="text-xs px-3 py-1 rounded-lg transition-all"
+              style={{ 
+                background: 'var(--bg-card)', 
+                border: '1px solid var(--border-color)',
+                color: 'var(--text-muted)'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'var(--bg-card-hover)';
+                e.currentTarget.style.color = 'var(--text-primary)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'var(--bg-card)';
+                e.currentTarget.style.color = 'var(--text-muted)';
+              }}
+            >
+              Paul (IT Admin)
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEmail('jc@madison88.com');
+                setPassword('madison88');
+              }}
+              className="text-xs px-3 py-1 rounded-lg transition-all"
+              style={{ 
+                background: 'var(--bg-card)', 
+                border: '1px solid var(--border-color)',
+                color: 'var(--text-muted)'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'var(--bg-card-hover)';
+                e.currentTarget.style.color = 'var(--text-primary)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'var(--bg-card)';
+                e.currentTarget.style.color = 'var(--text-muted)';
+              }}
+            >
+              JC (IT Admin)
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEmail('superadmin@madison88.com');
+                setPassword('madison88');
+              }}
+              className="text-xs px-3 py-1 rounded-lg transition-all"
+              style={{ 
+                background: 'var(--bg-card)', 
+                border: '1px solid var(--border-color)',
+                color: 'var(--text-muted)'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'var(--bg-card-hover)';
+                e.currentTarget.style.color = 'var(--text-primary)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'var(--bg-card)';
+                e.currentTarget.style.color = 'var(--text-muted)';
+              }}
+            >
+              Superadmin
             </button>
           </div>
         </div>

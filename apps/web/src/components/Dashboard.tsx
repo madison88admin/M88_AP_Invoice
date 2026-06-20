@@ -10,7 +10,7 @@ import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { MockInvoice } from '../lib/mockData';
 import { hasPermission, filterInvoicesByRole } from '../lib/roleAccess';
-import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, PenTool, TrendingUp, Search, Bell, Settings, User, LayoutDashboard, Building2, ChevronLeft, LogOut } from 'lucide-react';
+import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, User, LayoutDashboard, Building2, ChevronLeft, LogOut } from 'lucide-react';
 
 // Custom hook for number count-up animation
 function useCountUp(end: number, duration: number = 1200, start: boolean = true) {
@@ -118,8 +118,72 @@ export default function Dashboard() {
   // Use mock data
   const mockInvoices = invoices;
 
-  // Filter invoices based on user role
-  const roleFilteredInvoices = user ? filterInvoicesByRole(mockInvoices, user.role) : mockInvoices;
+  // Filter invoices based on user role and permissions
+  const getRoleFilteredInvoices = () => {
+    if (!user) return mockInvoices;
+
+    const role = user.role;
+
+    // Planning Manager brand scope filter
+    if (role === 'PLANNING_MANAGER' && user.brand_scope) {
+      const top10Brands = ['TNF', 'UA', 'VNS', 'ARC', 'CSC', 'HH', 'BUR', 'TM', 'FR', 'ON'];
+      if (user.brand_scope === 'TOP_10') {
+        return mockInvoices.filter(i => top10Brands.includes(i.brand_code || ''));
+      } else {
+        return mockInvoices.filter(i => !top10Brands.includes(i.brand_code || ''));
+      }
+    }
+
+    // ACCOUNTING_ASSOCIATE - only their uploaded invoices
+    if (role === 'ACCOUNTING_ASSOCIATE') {
+      return mockInvoices.filter(i => i.uploaded_by === user.email);
+    }
+
+    // SR_MANAGER_GLOBAL_PRODUCTION - only production invoices $5K+
+    if (role === 'SR_MANAGER_GLOBAL_PRODUCTION') {
+      return mockInvoices.filter(i => i.total_amount >= 5000);
+    }
+
+    // MS_POLLY - only high-value invoices (>$100K)
+    if (role === 'MS_POLLY') {
+      return mockInvoices.filter(i => i.total_amount >= 100000);
+    }
+
+    // CFO - all invoices (financial overview)
+    if (role === 'CFO') {
+      return mockInvoices;
+    }
+
+    // IT_ADMIN - all invoices (read-only for debugging)
+    if (role === 'IT_ADMIN') {
+      return mockInvoices;
+    }
+
+    // SUPERADMIN - all invoices
+    if (role === 'SUPERADMIN') {
+      return mockInvoices;
+    }
+
+    // PURCHASING_COORDINATOR - pending their approval
+    if (role === 'PURCHASING_COORDINATOR') {
+      return mockInvoices.filter(i => i.status === 'PENDING_COORDINATOR');
+    }
+
+    // PURCHASING_MANAGER - pending their approval
+    if (role === 'PURCHASING_MANAGER') {
+      return mockInvoices.filter(i => i.status === 'PENDING_MANAGER');
+    }
+
+    // ACCOUNTING_SUPERVISOR - all invoices
+    if (role === 'ACCOUNTING_SUPERVISOR') {
+      return mockInvoices;
+    }
+
+    // Default: use existing role-based filter
+    return filterInvoicesByRole(mockInvoices, role);
+  };
+
+  const roleFilteredInvoices = getRoleFilteredInvoices();
 
   // Filter invoices based on filters
   const filteredInvoices = roleFilteredInvoices.filter(inv => {
@@ -164,17 +228,6 @@ export default function Dashboard() {
     const remainingHours = currentStage.sla_hours - elapsedHours;
     return remainingHours <= 24 && remainingHours > 0;
   }).length, 1200, countUpStarted);
-  const handwrittenDocsCount = useCountUp(mockInvoices.filter(i => i.invoice_type === 'PROFORMA').length, 1200, countUpStarted);
-  const slaAtRiskCount = useCountUp(mockInvoices.filter(i => {
-    const currentStage = i.stage_timestamps.find(st => !st.exited_at);
-    if (!currentStage) return false;
-    const enteredAt = new Date(currentStage.entered_at);
-    const now = new Date();
-    const elapsedHours = (now.getTime() - enteredAt.getTime()) / (1000 * 60 * 60);
-    const remainingHours = currentStage.sla_hours - elapsedHours;
-    return remainingHours <= 48 && remainingHours > 0;
-  }).length, 1200, countUpStarted);
-  const paidThisWeekCount = useCountUp(mockInvoices.filter(i => i.status === InvoiceStatus.PAID).length, 1200, countUpStarted);
   const totalAmountCount = useCountUp(Math.floor(mockInvoices.reduce((sum, i) => sum + i.total_amount, 0)), 1200, countUpStarted);
   const exceptionsCount = useCountUp(mockInvoices.filter(i => i.exceptions.length > 0).length, 1200, countUpStarted);
 
@@ -194,12 +247,6 @@ export default function Dashboard() {
     setTimeout(() => setCountUpStarted(true), 200);
   }, []);
 
-  const getGreeting = () => {
-    const hour = new Date().getHours();
-    if (hour < 12) return 'Good morning ☀️';
-    if (hour < 18) return 'Good afternoon 🌤';
-    return 'Good evening 🌙';
-  };
 
   const handleValidate = async () => {
     if (!selectedInvoice) return;
@@ -282,74 +329,418 @@ export default function Dashboard() {
     }
   };
 
-  const kpis = [
-    {
-      label: 'Pending Validation',
-      value: pendingValidationCount.count,
-      icon: FileText,
-      color: '#2563EB',
-      trend: '+12%',
-      trendUp: true,
-    },
-    {
-      label: 'Awaiting Approval',
-      value: awaitingApprovalCount.count,
-      icon: Clock,
-      color: '#7C3AED',
-      trend: '+5%',
-      trendUp: true,
-    },
-    {
-      label: 'Urgent Payments',
-      value: urgentPaymentsCount.count,
-      icon: AlertTriangle,
-      color: '#DC2626',
-      trend: '-3%',
-      trendUp: false,
-    },
-    {
-      label: 'Handwritten Docs',
-      value: handwrittenDocsCount.count,
-      icon: PenTool,
-      color: '#F59E0B',
-      trend: '+8%',
-      trendUp: true,
-      subtitle: 'Awaiting manual review',
-    },
-    {
-      label: 'SLA at Risk',
-      value: slaAtRiskCount.count,
-      icon: AlertCircle,
-      color: '#DC2626',
-      trend: '+5%',
-      trendUp: false,
-      subtitle: 'invoices need immediate action',
-    },
-    {
-      label: 'Paid This Week',
-      value: paidThisWeekCount.count,
-      icon: CheckCircle,
-      color: '#059669',
-      trend: '+22%',
-      trendUp: true,
-    },
-    {
-      label: 'Total Amount',
-      value: `$${totalAmountCount.count.toLocaleString()}`,
-      icon: TrendingUp,
-      color: '#4F46E5',
-      trend: '+18%',
-      trendUp: true,
-    },
-    {
-      label: 'Exceptions',
-      value: exceptionsCount.count,
-      icon: AlertCircle,
-      color: '#DB2777',
-      trend: '-7%',
-      trendUp: false,
-    },
-  ];
+  // Role-specific KPI cards
+  const getRoleSpecificKPIs = () => {
+    if (!user) return [];
+
+    const role = user.role;
+
+    switch (role) {
+      case 'ACCOUNTING_ASSOCIATE':
+        return [
+          {
+            label: 'My Invoices',
+            value: mockInvoices.filter(i => i.uploaded_by === user.email).length,
+            icon: FileText,
+            color: '#2563EB',
+            trend: '+12%',
+            trendUp: true,
+          },
+          {
+            label: 'Pending Validation',
+            value: pendingValidationCount.count,
+            icon: Clock,
+            color: '#7C3AED',
+            trend: '+5%',
+            trendUp: true,
+          },
+          {
+            label: 'Validated Today',
+            value: mockInvoices.filter(i => i.status === InvoiceStatus.APPROVED).length,
+            icon: CheckCircle,
+            color: '#059669',
+            trend: '+22%',
+            trendUp: true,
+          },
+          {
+            label: 'Exceptions',
+            value: exceptionsCount.count,
+            icon: AlertCircle,
+            color: '#DB2777',
+            trend: '-7%',
+            trendUp: false,
+          },
+        ];
+
+      case 'PURCHASING_COORDINATOR':
+        return [
+          {
+            label: 'Pending My Approval',
+            value: mockInvoices.filter(i => i.status === 'PENDING_COORDINATOR').length,
+            icon: Clock,
+            color: '#7C3AED',
+            trend: '+5%',
+            trendUp: true,
+          },
+          {
+            label: 'PO Validation Results',
+            value: mockInvoices.filter(i => i.po_validation?.po_found).length,
+            icon: CheckCircle,
+            color: '#059669',
+            trend: '+18%',
+            trendUp: true,
+          },
+          {
+            label: 'Vendor Mismatches',
+            value: mockInvoices.filter(i => i.po_validation?.comparison?.vendor_match === false).length,
+            icon: AlertTriangle,
+            color: '#DC2626',
+            trend: '-3%',
+            trendUp: false,
+          },
+          {
+            label: 'Approved This Week',
+            value: mockInvoices.filter(i => i.status === 'APPROVED').length,
+            icon: CheckSquare,
+            color: '#059669',
+            trend: '+22%',
+            trendUp: true,
+          },
+        ];
+
+      case 'PURCHASING_MANAGER':
+        return [
+          {
+            label: 'Pending My Approval',
+            value: mockInvoices.filter(i => i.status === 'PENDING_MANAGER').length,
+            icon: Clock,
+            color: '#7C3AED',
+            trend: '+5%',
+            trendUp: true,
+          },
+          {
+            label: 'Team Performance',
+            value: '92%',
+            icon: TrendingUp,
+            color: '#4F46E5',
+            trend: '+8%',
+            trendUp: true,
+            subtitle: 'Coordinator approval rate',
+          },
+          {
+            label: 'PO Validation Summary',
+            value: mockInvoices.filter(i => i.po_validation?.po_found).length,
+            icon: CheckCircle,
+            color: '#059669',
+            trend: '+18%',
+            trendUp: true,
+          },
+          {
+            label: 'Escalated Items',
+            value: mockInvoices.filter(i => i.status === InvoiceStatus.ON_HOLD).length,
+            icon: AlertTriangle,
+            color: '#F59E0B',
+            trend: '+2%',
+            trendUp: true,
+          },
+        ];
+
+      case 'ACCOUNTING_SUPERVISOR':
+        return [
+          {
+            label: 'All Invoices Overview',
+            value: mockInvoices.length,
+            icon: FileText,
+            color: '#2563EB',
+            trend: '+12%',
+            trendUp: true,
+          },
+          {
+            label: 'Pending from Associates',
+            value: mockInvoices.filter(i => i.status === 'VALIDATION_PENDING').length,
+            icon: Clock,
+            color: '#7C3AED',
+            trend: '+5%',
+            trendUp: true,
+          },
+          {
+            label: 'Exception Flags',
+            value: exceptionsCount.count,
+            icon: AlertCircle,
+            color: '#DB2777',
+            trend: '-7%',
+            trendUp: false,
+          },
+          {
+            label: 'Ready for Posting',
+            value: mockInvoices.filter(i => i.status === 'APPROVED').length,
+            icon: CheckCircle,
+            color: '#059669',
+            trend: '+22%',
+            trendUp: true,
+          },
+        ];
+
+      case 'PLANNING_MANAGER':
+        const brandScope = user.brand_scope;
+        const filteredByBrand = brandScope === 'TOP_10'
+          ? mockInvoices.filter(i => ['TNF', 'UA', 'VNS', 'ARC', 'CSC', 'HH', 'BUR', 'TM', 'FR', 'ON'].includes(i.brand_code || ''))
+          : mockInvoices.filter(i => !['TNF', 'UA', 'VNS', 'ARC', 'CSC', 'HH', 'BUR', 'TM', 'FR', 'ON'].includes(i.brand_code || ''));
+
+        return [
+          {
+            label: `${brandScope} Brand Invoices`,
+            value: filteredByBrand.length,
+            icon: Building2,
+            color: '#2563EB',
+            trend: '+12%',
+            trendUp: true,
+          },
+          {
+            label: 'Pending My Approval',
+            value: filteredByBrand.filter(i => i.status === 'PENDING_MLO_PLANNING_MANAGER').length,
+            icon: Clock,
+            color: '#7C3AED',
+            trend: '+5%',
+            trendUp: true,
+          },
+          {
+            label: 'Brand-Filtered List',
+            value: filteredByBrand.filter(i => i.status !== 'PAID').length,
+            icon: FileSearch,
+            color: '#4F46E5',
+            trend: '+8%',
+            trendUp: true,
+          },
+          {
+            label: 'Approved This Month',
+            value: filteredByBrand.filter(i => i.status === 'APPROVED').length,
+            icon: CheckCircle,
+            color: '#059669',
+            trend: '+22%',
+            trendUp: true,
+          },
+        ];
+
+      case 'SR_MANAGER_GLOBAL_PRODUCTION':
+        return [
+          {
+            label: 'Production Invoices $5K+',
+            value: mockInvoices.filter(i => i.total_amount >= 5000).length,
+            icon: Package,
+            color: '#2563EB',
+            trend: '+12%',
+            trendUp: true,
+          },
+          {
+            label: 'Pending My Approval',
+            value: mockInvoices.filter(i => i.status === 'PENDING_SR_MANAGER').length,
+            icon: Clock,
+            color: '#7C3AED',
+            trend: '+5%',
+            trendUp: true,
+          },
+          {
+            label: 'Global Production Costs',
+            value: `$${mockInvoices.filter(i => i.total_amount >= 5000).reduce((sum, i) => sum + i.total_amount, 0).toLocaleString()}`,
+            icon: TrendingUp,
+            color: '#4F46E5',
+            trend: '+18%',
+            trendUp: true,
+          },
+          {
+            label: 'Tier 3+ Approvals',
+            value: mockInvoices.filter(i => (i.approval_tier || 0) >= 3).length,
+            icon: Shield,
+            color: '#059669',
+            trend: '+22%',
+            trendUp: true,
+          },
+        ];
+
+      case 'CFO':
+        return [
+          {
+            label: 'Total AP Amount',
+            value: `$${totalAmountCount.count.toLocaleString()}`,
+            icon: TrendingUp,
+            color: '#4F46E5',
+            trend: '+18%',
+            trendUp: true,
+          },
+          {
+            label: 'Cash Flow',
+            value: '$2.4M',
+            icon: BarChart3,
+            color: '#059669',
+            trend: '+15%',
+            trendUp: true,
+          },
+          {
+            label: 'High-Value Alerts',
+            value: mockInvoices.filter(i => i.total_amount >= 50000).length,
+            icon: AlertTriangle,
+            color: '#DC2626',
+            trend: '+2%',
+            trendUp: true,
+          },
+          {
+            label: 'Payment Batches',
+            value: mockInvoices.filter(i => i.status === 'PAYMENT_SCHEDULED').length,
+            icon: Package,
+            color: '#7C3AED',
+            trend: '+8%',
+            trendUp: true,
+          },
+        ];
+
+      case 'MS_POLLY':
+        return [
+          {
+            label: 'Total Invoices This Month',
+            value: mockInvoices.length,
+            icon: FileText,
+            color: '#2563EB',
+            trend: '+12%',
+            trendUp: true,
+          },
+          {
+            label: 'Total AP Amount',
+            value: `$${totalAmountCount.count.toLocaleString()}`,
+            icon: TrendingUp,
+            color: '#4F46E5',
+            trend: '+18%',
+            trendUp: true,
+          },
+          {
+            label: 'Pending My Approval',
+            value: mockInvoices.filter(i => i.status === 'PENDING_POLLY').length,
+            icon: Clock,
+            color: '#7C3AED',
+            trend: '+5%',
+            trendUp: true,
+          },
+          {
+            label: 'Critical Exceptions',
+            value: exceptionsCount.count,
+            icon: AlertCircle,
+            color: '#DC2626',
+            trend: '-7%',
+            trendUp: false,
+          },
+        ];
+
+      case 'IT_ADMIN':
+        return [
+          {
+            label: 'System Health',
+            value: '98.5%',
+            icon: CheckCircle,
+            color: '#059669',
+            trend: '+2%',
+            trendUp: true,
+          },
+          {
+            label: 'NextGen Integration',
+            value: 'Active',
+            icon: Shield,
+            color: '#2563EB',
+            trend: 'Stable',
+            trendUp: true,
+          },
+          {
+            label: 'Total Users',
+            value: 14,
+            icon: User,
+            color: '#7C3AED',
+            trend: '+2',
+            trendUp: true,
+          },
+          {
+            label: 'Error Logs',
+            value: 3,
+            icon: AlertCircle,
+            color: '#DC2626',
+            trend: '-5',
+            trendUp: false,
+          },
+        ];
+
+      case 'SUPERADMIN':
+        return [
+          {
+            label: 'System Health',
+            value: '98.5%',
+            icon: CheckCircle,
+            color: '#059669',
+            trend: '+2%',
+            trendUp: true,
+          },
+          {
+            label: 'Total Users',
+            value: 14,
+            icon: User,
+            color: '#7C3AED',
+            trend: '+2',
+            trendUp: true,
+          },
+          {
+            label: 'All Invoices',
+            value: mockInvoices.length,
+            icon: FileText,
+            color: '#2563EB',
+            trend: '+12%',
+            trendUp: true,
+          },
+          {
+            label: 'System Configuration',
+            value: 'Active',
+            icon: Settings,
+            color: '#4F46E5',
+            trend: 'Stable',
+            trendUp: true,
+          },
+        ];
+
+      default:
+        return [
+          {
+            label: 'Pending Validation',
+            value: pendingValidationCount.count,
+            icon: FileText,
+            color: '#2563EB',
+            trend: '+12%',
+            trendUp: true,
+          },
+          {
+            label: 'Awaiting Approval',
+            value: awaitingApprovalCount.count,
+            icon: Clock,
+            color: '#7C3AED',
+            trend: '+5%',
+            trendUp: true,
+          },
+          {
+            label: 'Urgent Payments',
+            value: urgentPaymentsCount.count,
+            icon: AlertTriangle,
+            color: '#DC2626',
+            trend: '-3%',
+            trendUp: false,
+          },
+          {
+            label: 'Exceptions',
+            value: exceptionsCount.count,
+            icon: AlertCircle,
+            color: '#DB2777',
+            trend: '-7%',
+            trendUp: false,
+          },
+        ];
+    }
+  };
+
+  const kpis = getRoleSpecificKPIs();
 
   return (
     <div className="flex h-screen relative" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%)' }}>
@@ -427,174 +818,228 @@ export default function Dashboard() {
             <LayoutDashboard className="h-5 w-5 flex-shrink-0" />
             {!sidebarCollapsed && <span className="font-medium">Dashboard</span>}
           </Link>
-          <Link
-            to="/approvals"
-            onClick={(e) => {
-              if (!user) {
-                e.preventDefault();
-                navigate('/login');
-              }
-            }}
-            className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white"
-            style={{ 
-              borderLeft: '2px solid transparent', 
-              transition: 'all 150ms ease'
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
-              e.currentTarget.style.borderLeft = '2px solid rgba(99,102,241,0.6)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'transparent';
-              e.currentTarget.style.borderLeft = '2px solid transparent';
-            }}
-          >
-            <CheckSquare className="h-5 w-5 flex-shrink-0" />
-            {!sidebarCollapsed && (
-              <div className="flex items-center justify-between flex-1">
-                <span className="font-medium">Approvals</span>
-                {awaitingApprovalCount.count > 0 && (
-                  <span className="bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
-                    {awaitingApprovalCount.count}
-                  </span>
-                )}
-              </div>
-            )}
-          </Link>
-          <Link
-            to="/exceptions"
-            onClick={(e) => {
-              if (!user) {
-                e.preventDefault();
-                navigate('/login');
-              }
-            }}
-            className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white"
-            style={{ 
-              borderLeft: '2px solid transparent', 
-              transition: 'all 150ms ease'
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
-              e.currentTarget.style.borderLeft = '2px solid rgba(99,102,241,0.6)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'transparent';
-              e.currentTarget.style.borderLeft = '2px solid transparent';
-            }}
-          >
-            <AlertTriangle className="h-5 w-5 flex-shrink-0" />
-            {!sidebarCollapsed && (
-              <div className="flex items-center justify-between flex-1">
-                <span className="font-medium">Exceptions</span>
-                {exceptionsCount.count > 0 && (
-                  <span className="bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
-                    {exceptionsCount.count}
-                  </span>
-                )}
-              </div>
-            )}
-          </Link>
-          <Link
-            to="/vendors"
-            onClick={(e) => {
-              if (!user) {
-                e.preventDefault();
-                navigate('/login');
-              }
-            }}
-            className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white"
-            style={{ 
-              borderLeft: '2px solid transparent', 
-              transition: 'all 150ms ease'
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
-              e.currentTarget.style.borderLeft = '2px solid rgba(99,102,241,0.6)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'transparent';
-              e.currentTarget.style.borderLeft = '2px solid transparent';
-            }}
-          >
-            <Building2 className="h-5 w-5 flex-shrink-0" />
-            {!sidebarCollapsed && <span className="font-medium">Vendors</span>}
-          </Link>
-          <Link
-            to="/payment-batches"
-            onClick={(e) => {
-              if (!user) {
-                e.preventDefault();
-                navigate('/login');
-              }
-            }}
-            className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white"
-            style={{ 
-              borderLeft: '2px solid transparent', 
-              transition: 'all 150ms ease'
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
-              e.currentTarget.style.borderLeft = '2px solid rgba(99,102,241,0.6)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'transparent';
-              e.currentTarget.style.borderLeft = '2px solid transparent';
-            }}
-          >
-            <Package className="h-5 w-5 flex-shrink-0" />
-            {!sidebarCollapsed && <span className="font-medium">Batches</span>}
-          </Link>
-          <Link
-            to="/reports"
-            onClick={(e) => {
-              if (!user) {
-                e.preventDefault();
-                navigate('/login');
-              }
-            }}
-            className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white"
-            style={{ 
-              borderLeft: '2px solid transparent', 
-              transition: 'all 150ms ease'
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
-              e.currentTarget.style.borderLeft = '2px solid rgba(99,102,241,0.6)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'transparent';
-              e.currentTarget.style.borderLeft = '2px solid transparent';
-            }}
-          >
-            <BarChart3 className="h-5 w-5 flex-shrink-0" />
-            {!sidebarCollapsed && <span className="font-medium">Reports</span>}
-          </Link>
-          <Link
-            to="/accounting-review"
-            onClick={(e) => {
-              if (!user) {
-                e.preventDefault();
-                navigate('/login');
-              }
-            }}
-            className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white"
-            style={{ 
-              borderLeft: '2px solid transparent', 
-              transition: 'all 150ms ease'
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
-              e.currentTarget.style.borderLeft = '2px solid rgba(99,102,241,0.6)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'transparent';
-              e.currentTarget.style.borderLeft = '2px solid transparent';
-            }}
-          >
-            <FileSearch className="h-5 w-5 flex-shrink-0" />
-            {!sidebarCollapsed && <span className="font-medium">Review</span>}
-          </Link>
+          
+          {/* Approvals - For approvers only (PURCHASING_COORDINATOR, PURCHASING_MANAGER, PLANNING_MANAGER, SR_MANAGER_GLOBAL_PRODUCTION, MS_POLLY, ACCOUNTING_SUPERVISOR) */}
+          {user && [
+            'PURCHASING_COORDINATOR', 
+            'PURCHASING_MANAGER', 
+            'PLANNING_MANAGER', 
+            'SR_MANAGER_GLOBAL_PRODUCTION', 
+            'MS_POLLY',
+            'ACCOUNTING_SUPERVISOR'
+          ].includes(user.role) && (
+            <Link
+              to="/approvals"
+              onClick={(e) => {
+                if (!user) {
+                  e.preventDefault();
+                  navigate('/login');
+                }
+              }}
+              className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white"
+              style={{ 
+                borderLeft: '2px solid transparent', 
+                transition: 'all 150ms ease'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
+                e.currentTarget.style.borderLeft = '2px solid rgba(99,102,241,0.6)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'transparent';
+                e.currentTarget.style.borderLeft = '2px solid transparent';
+              }}
+            >
+              <CheckSquare className="h-5 w-5 flex-shrink-0" />
+              {!sidebarCollapsed && (
+                <div className="flex items-center justify-between flex-1">
+                  <span className="font-medium">Approvals</span>
+                  {awaitingApprovalCount.count > 0 && (
+                    <span className="bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
+                      {awaitingApprovalCount.count}
+                    </span>
+                  )}
+                </div>
+              )}
+            </Link>
+          )}
+          
+          {/* Exceptions - For operational roles only (ACCOUNTING_ASSOCIATE, ACCOUNTING_SUPERVISOR, CFO) */}
+          {user && ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'CFO'].includes(user.role) && (
+            <Link
+              to="/exceptions"
+              onClick={(e) => {
+                if (!user) {
+                  e.preventDefault();
+                  navigate('/login');
+                }
+              }}
+              className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white"
+              style={{ 
+                borderLeft: '2px solid transparent', 
+                transition: 'all 150ms ease'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
+                e.currentTarget.style.borderLeft = '2px solid rgba(99,102,241,0.6)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'transparent';
+                e.currentTarget.style.borderLeft = '2px solid transparent';
+              }}
+            >
+              <AlertTriangle className="h-5 w-5 flex-shrink-0" />
+              {!sidebarCollapsed && (
+                <div className="flex items-center justify-between flex-1">
+                  <span className="font-medium">Exceptions</span>
+                  {exceptionsCount.count > 0 && (
+                    <span className="bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
+                      {exceptionsCount.count}
+                    </span>
+                  )}
+                </div>
+              )}
+            </Link>
+          )}
+          
+          {/* Vendors - For roles that need vendor info (PURCHASING_COORDINATOR, PURCHASING_MANAGER, ACCOUNTING_SUPERVISOR, CFO) */}
+          {user && ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'CFO'].includes(user.role) && (
+            <Link
+              to="/vendors"
+              onClick={(e) => {
+                if (!user) {
+                  e.preventDefault();
+                  navigate('/login');
+                }
+              }}
+              className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white"
+              style={{ 
+                borderLeft: '2px solid transparent', 
+                transition: 'all 150ms ease'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
+                e.currentTarget.style.borderLeft = '2px solid rgba(99,102,241,0.6)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'transparent';
+                e.currentTarget.style.borderLeft = '2px solid transparent';
+              }}
+            >
+              <Building2 className="h-5 w-5 flex-shrink-0" />
+              {!sidebarCollapsed && <span className="font-medium">Vendors</span>}
+            </Link>
+          )}
+          
+          {/* Batches - For financial roles only (CFO, ACCOUNTING_SUPERVISOR) */}
+          {user && ['CFO', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
+            <Link
+              to="/payment-batches"
+              onClick={(e) => {
+                if (!user) {
+                  e.preventDefault();
+                  navigate('/login');
+                }
+              }}
+              className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white"
+              style={{ 
+                borderLeft: '2px solid transparent', 
+                transition: 'all 150ms ease'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
+                e.currentTarget.style.borderLeft = '2px solid rgba(99,102,241,0.6)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'transparent';
+                e.currentTarget.style.borderLeft = '2px solid transparent';
+              }}
+            >
+              <Package className="h-5 w-5 flex-shrink-0" />
+              {!sidebarCollapsed && <span className="font-medium">Batches</span>}
+            </Link>
+          )}
+          
+          {/* Reports - For financial and management roles (CFO, PURCHASING_MANAGER, ACCOUNTING_SUPERVISOR) */}
+          {user && ['CFO', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
+            <Link
+              to="/reports"
+              onClick={(e) => {
+                if (!user) {
+                  e.preventDefault();
+                  navigate('/login');
+                }
+              }}
+              className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white"
+              style={{ 
+                borderLeft: '2px solid transparent', 
+                transition: 'all 150ms ease'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
+                e.currentTarget.style.borderLeft = '2px solid rgba(99,102,241,0.6)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'transparent';
+                e.currentTarget.style.borderLeft = '2px solid transparent';
+              }}
+            >
+              <BarChart3 className="h-5 w-5 flex-shrink-0" />
+              {!sidebarCollapsed && <span className="font-medium">Reports</span>}
+            </Link>
+          )}
+          
+          {/* Review - For accounting roles only (ACCOUNTING_ASSOCIATE, ACCOUNTING_SUPERVISOR) */}
+          {user && ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
+            <Link
+              to="/accounting-review"
+              onClick={(e) => {
+                if (!user) {
+                  e.preventDefault();
+                  navigate('/login');
+                }
+              }}
+              className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white"
+              style={{ 
+                borderLeft: '2px solid transparent', 
+                transition: 'all 150ms ease'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
+                e.currentTarget.style.borderLeft = '2px solid rgba(99,102,241,0.6)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'transparent';
+                e.currentTarget.style.borderLeft = '2px solid transparent';
+              }}
+            >
+              <FileSearch className="h-5 w-5 flex-shrink-0" />
+              {!sidebarCollapsed && <span className="font-medium">Review</span>}
+            </Link>
+          )}
+          
+          {/* System Configuration - Only for IT_ADMIN and SUPERADMIN */}
+          {user && (user.role === 'IT_ADMIN' || user.role === 'SUPERADMIN') && (
+            <Link
+              to="/settings"
+              className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white"
+              style={{ 
+                borderLeft: '2px solid transparent', 
+                transition: 'all 150ms ease'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
+                e.currentTarget.style.borderLeft = '2px solid rgba(99,102,241,0.6)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'transparent';
+                e.currentTarget.style.borderLeft = '2px solid transparent';
+              }}
+            >
+              <Settings className="h-5 w-5 flex-shrink-0" />
+              {!sidebarCollapsed && <span className="font-medium">System Configuration</span>}
+            </Link>
+          )}
         </nav>
 
         {/* Collapse Toggle */}
@@ -629,8 +1074,14 @@ export default function Dashboard() {
         <header style={{ background: 'rgba(10, 14, 30, 0.6)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }} className="px-6 py-4">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-2xl font-bold text-white">Dashboard</h1>
-              <p className="text-sm text-slate-300">{getGreeting()}</p>
+              <h1 className="text-2xl font-bold text-white">
+                {user ? `Welcome, ${user.name.split(' ')[0]}` : 'Dashboard'}
+              </h1>
+              {user && (
+                <span className="inline-block mt-1 px-3 py-1 text-xs font-medium rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                  {user.role.replace(/_/g, ' ')}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-4">
               {/* Theme Toggle */}
@@ -646,7 +1097,7 @@ export default function Dashboard() {
                     </div>
                     <div className="text-left">
                       <p className="text-sm font-medium text-white">{user.name}</p>
-                      <p className="text-xs text-slate-400">{user.role.replace(/_/g, ' ')}</p>
+                      <p className="text-xs text-slate-400">{user.title || user.role.replace(/_/g, ' ')}</p>
                     </div>
                   </div>
                   <button
@@ -717,7 +1168,7 @@ export default function Dashboard() {
                       <div className="flex-1">
                         <p className="text-sm font-medium text-slate-300 mb-1">{kpi.label}</p>
                         <p className="text-2xl font-bold text-white">{kpi.value}</p>
-                        {kpi.subtitle && (
+                        {'subtitle' in kpi && kpi.subtitle && (
                           <p className="text-xs text-slate-400 mt-1">{kpi.subtitle}</p>
                         )}
                         <div className="flex items-center gap-1 mt-2">
@@ -768,33 +1219,136 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Bottleneck View */}
-          <BottleneckView />
+          {/* Bottleneck View - Hide for IT_ADMIN and SUPERADMIN */}
+          {user && user.role !== 'IT_ADMIN' && user.role !== 'SUPERADMIN' && (
+            <BottleneckView />
+          )}
 
-          {/* Action Buttons - Glassmorphism */}
+          {/* Action Buttons - Glassmorphism - Role-specific */}
           <div className="flex items-center gap-4 mb-6">
             {user && (
-              <button
-                onClick={() => {
-                  console.log('Upload button clicked, showUploadModal:', showUploadModal);
-                  setShowUploadModal(true);
-                }}
-                className="px-4 py-2 text-white rounded-lg font-medium transition-all duration-200"
-                style={{
-                  background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-                  boxShadow: '0 0 20px rgba(99,102,241,0.45), 0 4px 15px rgba(0,0,0,0.3)'
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.boxShadow = '0 0 35px rgba(99,102,241,0.65), 0 4px 20px rgba(0,0,0,0.4)';
-                  e.currentTarget.style.transform = 'translateY(-1px)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.boxShadow = '0 0 20px rgba(99,102,241,0.45), 0 4px 15px rgba(0,0,0,0.3)';
-                  e.currentTarget.style.transform = 'translateY(0)';
-                }}
-              >
-                Upload Invoice
-              </button>
+              <>
+                {/* Upload Invoice - Only for ACCOUNTING_ASSOCIATE */}
+                {user.role === 'ACCOUNTING_ASSOCIATE' && (
+                  <button
+                    onClick={() => {
+                      console.log('Upload button clicked, showUploadModal:', showUploadModal);
+                      setShowUploadModal(true);
+                    }}
+                    className="px-4 py-2 text-white rounded-lg font-medium transition-all duration-200"
+                    style={{
+                      background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                      boxShadow: '0 0 20px rgba(99,102,241,0.45), 0 4px 15px rgba(0,0,0,0.3)'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.boxShadow = '0 0 35px rgba(99,102,241,0.65), 0 4px 20px rgba(0,0,0,0.4)';
+                      e.currentTarget.style.transform = 'translateY(-1px)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.boxShadow = '0 0 20px rgba(99,102,241,0.45), 0 4px 15px rgba(0,0,0,0.3)';
+                      e.currentTarget.style.transform = 'translateY(0)';
+                    }}
+                  >
+                    Upload Invoice
+                  </button>
+                )}
+
+                {/* Approve/Reject - For approvers */}
+                {(user.role === 'PURCHASING_COORDINATOR' ||
+                  user.role === 'PURCHASING_MANAGER' ||
+                  user.role === 'PLANNING_MANAGER' ||
+                  user.role === 'SR_MANAGER_GLOBAL_PRODUCTION' ||
+                  user.role === 'MS_POLLY' ||
+                  user.role === 'ACCOUNTING_SUPERVISOR' ||
+                  user.role === 'CFO') && (
+                  <>
+                    <button
+                      onClick={() => navigate('/approvals')}
+                      className="px-4 py-2 text-white rounded-lg font-medium transition-all duration-200"
+                      style={{
+                        background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
+                        boxShadow: '0 0 20px rgba(5,150,105,0.45), 0 4px 15px rgba(0,0,0,0.3)'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.boxShadow = '0 0 35px rgba(5,150,105,0.65), 0 4px 20px rgba(0,0,0,0.4)';
+                        e.currentTarget.style.transform = 'translateY(-1px)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.boxShadow = '0 0 20px rgba(5,150,105,0.45), 0 4px 15px rgba(0,0,0,0.3)';
+                        e.currentTarget.style.transform = 'translateY(0)';
+                      }}
+                    >
+                      Review Approvals
+                    </button>
+                  </>
+                )}
+
+                {/* Route to CFO - Only for ACCOUNTING_SUPERVISOR */}
+                {user.role === 'ACCOUNTING_SUPERVISOR' && (
+                  <button
+                    onClick={() => navigate('/approvals')}
+                    className="px-4 py-2 text-white rounded-lg font-medium transition-all duration-200"
+                    style={{
+                      background: 'linear-gradient(135deg, #f59e0b 0%, #fbbf24 100%)',
+                      boxShadow: '0 0 20px rgba(245,158,11,0.45), 0 4px 15px rgba(0,0,0,0.3)'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.boxShadow = '0 0 35px rgba(245,158,11,0.65), 0 4px 20px rgba(0,0,0,0.4)';
+                      e.currentTarget.style.transform = 'translateY(-1px)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.boxShadow = '0 0 20px rgba(245,158,11,0.45), 0 4px 15px rgba(0,0,0,0.3)';
+                      e.currentTarget.style.transform = 'translateY(0)';
+                    }}
+                  >
+                    Route to CFO
+                  </button>
+                )}
+
+                {/* Payment Batch Approval - Only for CFO */}
+                {user.role === 'CFO' && (
+                  <button
+                    onClick={() => navigate('/payment-batches')}
+                    className="px-4 py-2 text-white rounded-lg font-medium transition-all duration-200"
+                    style={{
+                      background: 'linear-gradient(135deg, #7c3aed 0%, #8b5cf6 100%)',
+                      boxShadow: '0 0 20px rgba(124,58,237,0.45), 0 4px 15px rgba(0,0,0,0.3)'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.boxShadow = '0 0 35px rgba(124,58,237,0.65), 0 4px 20px rgba(0,0,0,0.4)';
+                      e.currentTarget.style.transform = 'translateY(-1px)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.boxShadow = '0 0 20px rgba(124,58,237,0.45), 0 4px 15px rgba(0,0,0,0.3)';
+                      e.currentTarget.style.transform = 'translateY(0)';
+                    }}
+                  >
+                    Batch Approve Payments
+                  </button>
+                )}
+
+                {/* System Configuration - Only for IT_ADMIN and SUPERADMIN */}
+                {(user.role === 'IT_ADMIN' || user.role === 'SUPERADMIN') && (
+                  <button
+                    onClick={() => navigate('/settings')}
+                    className="px-4 py-2 text-white rounded-lg font-medium transition-all duration-200"
+                    style={{
+                      background: 'linear-gradient(135deg, #4f46e5 0%, #6366f1 100%)',
+                      boxShadow: '0 0 20px rgba(79,70,229,0.45), 0 4px 15px rgba(0,0,0,0.3)'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.boxShadow = '0 0 35px rgba(79,70,229,0.65), 0 4px 20px rgba(0,0,0,0.4)';
+                      e.currentTarget.style.transform = 'translateY(-1px)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.boxShadow = '0 0 20px rgba(79,70,229,0.45), 0 4px 15px rgba(0,0,0,0.3)';
+                      e.currentTarget.style.transform = 'translateY(0)';
+                    }}
+                  >
+                    System Configuration
+                  </button>
+                )}
+              </>
             )}
           </div>
 
@@ -887,95 +1441,97 @@ export default function Dashboard() {
               )}
             </div>
 
-          {/* Filters - Glassmorphism */}
-          <div className="p-4 mb-6" style={{ background: 'rgba(255, 255, 255, 0.04)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', border: '1px solid rgba(255, 255, 255, 0.07)', borderRadius: '16px' }}>
-            <div className="flex flex-col md:flex-row items-start md:items-center gap-4">
-              <div className="relative w-full md:flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Search invoices..."
-                  className="w-full pl-10 pr-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent text-white placeholder-slate-400"
-                />
+          {/* Filters - Glassmorphism - Role-specific visibility */}
+          {user && user.role !== 'MS_POLLY' && user.role !== 'IT_ADMIN' && user.role !== 'SUPERADMIN' && (
+            <div className="p-4 mb-6" style={{ background: 'rgba(255, 255, 255, 0.04)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', border: '1px solid rgba(255, 255, 255, 0.07)', borderRadius: '16px' }}>
+              <div className="flex flex-col md:flex-row items-start md:items-center gap-4">
+                <div className="relative w-full md:flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Search invoices..."
+                    className="w-full pl-10 pr-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent text-white placeholder-slate-400"
+                  />
+                </div>
+                <select
+                  value={filters.status || ''}
+                  onChange={(e) => setFilters({ ...filters, status: e.target.value as InvoiceStatus | undefined })}
+                  className="w-full md:w-auto px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent text-white"
+                >
+                  <option value="" className="bg-[#0f172a]">All Statuses</option>
+                  {Object.values(InvoiceStatus).map((status) => (
+                    <option key={status} value={status} className="bg-[#0f172a]">
+                      {status.replace(/_/g, ' ')}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={filters.category || ''}
+                  onChange={(e) => setFilters({ ...filters, category: e.target.value as InvoiceCategory | undefined })}
+                  className="w-full md:w-auto px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent text-white"
+                >
+                  <option value="" className="bg-[#0f172a]">All Categories</option>
+                  {Object.values(InvoiceCategory).map((category) => (
+                    <option key={category} value={category} className="bg-[#0f172a]">
+                      {category.replace(/_/g, ' ')}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={filters.type || ''}
+                  onChange={(e) => setFilters({ ...filters, type: e.target.value as InvoiceType | undefined })}
+                  className="w-full md:w-auto px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent text-white"
+                >
+                  <option value="" className="bg-[#0f172a]">All Types</option>
+                  {Object.values(InvoiceType).map((type) => (
+                    <option key={type} value={type} className="bg-[#0f172a]">{type}</option>
+                  ))}
+                </select>
+                <select
+                  value={filters.brand || ''}
+                  onChange={(e) => setFilters({ ...filters, brand: e.target.value || undefined })}
+                  className="w-full md:w-auto px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent text-white"
+                >
+                  <option value="" className="bg-[#0f172a]">All Brands</option>
+                  <option value="Columbia Sportswear" className="bg-[#0f172a]">Columbia Sportswear</option>
+                  <option value="The North Face" className="bg-[#0f172a]">The North Face</option>
+                  <option value="Vans" className="bg-[#0f172a]">Vans</option>
+                  <option value="Arc'teryx" className="bg-[#0f172a]">Arc'teryx</option>
+                  <option value="Under Armour" className="bg-[#0f172a]">Under Armour</option>
+                  <option value="Helly Hansen" className="bg-[#0f172a]">Helly Hansen</option>
+                  <option value="Burton" className="bg-[#0f172a]">Burton</option>
+                  <option value="Travis Mathew" className="bg-[#0f172a]">Travis Mathew</option>
+                  <option value="Fjallraven" className="bg-[#0f172a]">Fjallraven</option>
+                  <option value="On Running" className="bg-[#0f172a]">On Running</option>
+                  <option value="Prana" className="bg-[#0f172a]">Prana</option>
+                  <option value="Other" className="bg-[#0f172a]">Other brands</option>
+                </select>
+                <select
+                  value={filters.brand_code || ''}
+                  onChange={(e) => setFilters({ ...filters, brand_code: e.target.value as string | undefined })}
+                  className="w-full md:w-auto px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent text-white"
+                >
+                  <option value="" className="bg-[#0f172a]">All Brand Codes</option>
+                  <option value="CSC" className="bg-[#0f172a]">CSC</option>
+                  <option value="TNF" className="bg-[#0f172a]">TNF</option>
+                  <option value="VNS" className="bg-[#0f172a]">VNS</option>
+                  <option value="ARC" className="bg-[#0f172a]">ARC</option>
+                  <option value="UA" className="bg-[#0f172a]">UA</option>
+                  <option value="HH" className="bg-[#0f172a]">HH</option>
+                  <option value="BUR" className="bg-[#0f172a]">BUR</option>
+                  <option value="TM" className="bg-[#0f172a]">TM</option>
+                  <option value="FR" className="bg-[#0f172a]">FR</option>
+                  <option value="ON" className="bg-[#0f172a]">ON</option>
+                </select>
+                <button
+                  onClick={() => setFilters({ status: undefined, category: undefined, type: undefined, brand: undefined, brand_code: undefined })}
+                  className="w-full md:w-auto px-4 py-2 border border-white/10 text-slate-300 rounded-lg hover:bg-white/10 transition-colors font-medium"
+                >
+                  Clear
+                </button>
               </div>
-              <select
-                value={filters.status || ''}
-                onChange={(e) => setFilters({ ...filters, status: e.target.value as InvoiceStatus | undefined })}
-                className="w-full md:w-auto px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent text-white"
-              >
-                <option value="" className="bg-[#0f172a]">All Statuses</option>
-                {Object.values(InvoiceStatus).map((status) => (
-                  <option key={status} value={status} className="bg-[#0f172a]">
-                    {status.replace(/_/g, ' ')}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={filters.category || ''}
-                onChange={(e) => setFilters({ ...filters, category: e.target.value as InvoiceCategory | undefined })}
-                className="w-full md:w-auto px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent text-white"
-              >
-                <option value="" className="bg-[#0f172a]">All Categories</option>
-                {Object.values(InvoiceCategory).map((category) => (
-                  <option key={category} value={category} className="bg-[#0f172a]">
-                    {category.replace(/_/g, ' ')}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={filters.type || ''}
-                onChange={(e) => setFilters({ ...filters, type: e.target.value as InvoiceType | undefined })}
-                className="w-full md:w-auto px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent text-white"
-              >
-                <option value="" className="bg-[#0f172a]">All Types</option>
-                {Object.values(InvoiceType).map((type) => (
-                  <option key={type} value={type} className="bg-[#0f172a]">{type}</option>
-                ))}
-              </select>
-              <select
-                value={filters.brand || ''}
-                onChange={(e) => setFilters({ ...filters, brand: e.target.value || undefined })}
-                className="w-full md:w-auto px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent text-white"
-              >
-                <option value="" className="bg-[#0f172a]">All Brands</option>
-                <option value="Columbia Sportswear" className="bg-[#0f172a]">Columbia Sportswear</option>
-                <option value="The North Face" className="bg-[#0f172a]">The North Face</option>
-                <option value="Vans" className="bg-[#0f172a]">Vans</option>
-                <option value="Arc'teryx" className="bg-[#0f172a]">Arc'teryx</option>
-                <option value="Under Armour" className="bg-[#0f172a]">Under Armour</option>
-                <option value="Helly Hansen" className="bg-[#0f172a]">Helly Hansen</option>
-                <option value="Burton" className="bg-[#0f172a]">Burton</option>
-                <option value="Travis Mathew" className="bg-[#0f172a]">Travis Mathew</option>
-                <option value="Fjallraven" className="bg-[#0f172a]">Fjallraven</option>
-                <option value="On Running" className="bg-[#0f172a]">On Running</option>
-                <option value="Prana" className="bg-[#0f172a]">Prana</option>
-                <option value="Other" className="bg-[#0f172a]">Other brands</option>
-              </select>
-              <select
-                value={filters.brand_code || ''}
-                onChange={(e) => setFilters({ ...filters, brand_code: e.target.value as string | undefined })}
-                className="w-full md:w-auto px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent text-white"
-              >
-                <option value="" className="bg-[#0f172a]">All Brand Codes</option>
-                <option value="CSC" className="bg-[#0f172a]">CSC</option>
-                <option value="TNF" className="bg-[#0f172a]">TNF</option>
-                <option value="VNS" className="bg-[#0f172a]">VNS</option>
-                <option value="ARC" className="bg-[#0f172a]">ARC</option>
-                <option value="UA" className="bg-[#0f172a]">UA</option>
-                <option value="HH" className="bg-[#0f172a]">HH</option>
-                <option value="BUR" className="bg-[#0f172a]">BUR</option>
-                <option value="TM" className="bg-[#0f172a]">TM</option>
-                <option value="FR" className="bg-[#0f172a]">FR</option>
-                <option value="ON" className="bg-[#0f172a]">ON</option>
-              </select>
-              <button
-                onClick={() => setFilters({ status: undefined, category: undefined, type: undefined, brand: undefined, brand_code: undefined })}
-                className="w-full md:w-auto px-4 py-2 border border-white/10 text-slate-300 rounded-lg hover:bg-white/10 transition-colors font-medium"
-              >
-                Clear
-              </button>
             </div>
-          </div>
+          )}
 
           {/* Invoice Table - Glassmorphism */}
           <div style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }}>
@@ -1013,114 +1569,119 @@ export default function Dashboard() {
             )}
           </div>
 
-          {/* Supplier Balance Analysis */}
-          <div className="mt-6" style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }}>
-            <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold text-white">Supplier balance</h2>
-                <p className="text-sm text-slate-400">Received vs recorded — real-time gap analysis</p>
+          {/* Supplier Balance Analysis - Only for CFO and ACCOUNTING_SUPERVISOR */}
+          {user && (user.role === 'CFO' || user.role === 'ACCOUNTING_SUPERVISOR') && (
+            <div className="mt-6" style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }}>
+              <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-white">Supplier balance</h2>
+                  <p className="text-sm text-slate-400">Received vs recorded — real-time gap analysis</p>
+                </div>
+                <Link to="/vendors" className="text-sm text-[#6366f1] hover:text-[#818cf8]">View all vendors →</Link>
               </div>
-              <Link to="/vendors" className="text-sm text-[#6366f1] hover:text-[#818cf8]">View all vendors →</Link>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-white/5">
+                  <thead style={{ background: 'rgba(255,255,255,0.05)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
+                        Vendor Name
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
+                        Invoices Received
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
+                        Invoices Recorded
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
+                        Gap
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
+                        Total Outstanding (USD)
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {[
+                      { name: 'Avery Dennison Paxar (China) Ltd', received: 12, recorded: 12, outstanding: 1956.17 },
+                      { name: 'UPW Limited', received: 8, recorded: 7, outstanding: 174.87 },
+                      { name: 'Avery Dennison Hong Kong B.V.', received: 15, recorded: 15, outstanding: 37.94 },
+                      { name: 'Amass International Limited', received: 5, recorded: 5, outstanding: 422.25 },
+                    ].map((vendor, i) => {
+                      const gap = vendor.received - vendor.recorded;
+                      return (
+                        <tr key={i} className="hover:bg-white/5 transition-colors">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-200">{vendor.name}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-white">{vendor.received}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-white">{vendor.recorded}</td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            {gap > 0 ? (
+                              <div className="flex items-center gap-2">
+                                <AlertCircle className="h-4 w-4 text-red-500" />
+                                <span className="text-sm font-semibold text-red-400">{gap}</span>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                <CheckCircle className="h-4 w-4 text-green-500" />
+                                <span className="text-sm text-green-400">0</span>
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-white font-medium">${vendor.outstanding.toLocaleString()}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-white/5">
-                <thead style={{ background: 'rgba(255,255,255,0.05)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
-                      Vendor Name
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
-                      Invoices Received
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
-                      Invoices Recorded
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
-                      Gap
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
-                      Total Outstanding (USD)
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
+          )}
+
+          {/* Payables Aging - Only for CFO and ACCOUNTING_SUPERVISOR */}
+          {user && (user.role === 'CFO' || user.role === 'ACCOUNTING_SUPERVISOR') && (
+            <div className="mt-6" style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }}>
+              <div className="px-6 py-4 border-b border-white/10">
+                <h2 className="text-lg font-semibold text-white">Payables aging</h2>
+                <p className="text-sm text-slate-400">Outstanding invoices by age bucket</p>
+              </div>
+              <div className="p-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   {[
-                    { name: 'Avery Dennison Paxar (China) Ltd', received: 12, recorded: 12, outstanding: 1956.17 },
-                    { name: 'UPW Limited', received: 8, recorded: 7, outstanding: 174.87 },
-                    { name: 'Avery Dennison Hong Kong B.V.', received: 15, recorded: 15, outstanding: 37.94 },
-                    { name: 'Amass International Limited', received: 5, recorded: 5, outstanding: 422.25 },
-                  ].map((vendor, i) => {
-                    const gap = vendor.received - vendor.recorded;
-                    return (
-                      <tr key={i} className="hover:bg-white/5 transition-colors">
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-200">{vendor.name}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-white">{vendor.received}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-white">{vendor.recorded}</td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          {gap > 0 ? (
-                            <div className="flex items-center gap-2">
-                              <AlertCircle className="h-4 w-4 text-red-500" />
-                              <span className="text-sm font-semibold text-red-400">{gap}</span>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-2">
-                              <CheckCircle className="h-4 w-4 text-green-500" />
-                              <span className="text-sm text-green-400">0</span>
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-white font-medium">${vendor.outstanding.toLocaleString()}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Payables Aging */}
-          <div className="mt-6" style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }}>
-            <div className="px-6 py-4 border-b border-white/10">
-              <h2 className="text-lg font-semibold text-white">Payables aging</h2>
-              <p className="text-sm text-slate-400">Outstanding invoices by age bucket</p>
-            </div>
-            <div className="p-6">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {[
-                  { label: 'Current (not yet due)', count: 5, amount: 3190.29, color: '#059669' },
-                  { label: '1–30 days overdue', count: 2, amount: 752.07, color: '#F59E0B' },
-                  { label: '31–60 days overdue', count: 0, amount: 0, color: '#F97316' },
-                  { label: '60+ days overdue', count: 0, amount: 0, color: '#DC2626' },
-                ].map((bucket, i) => (
-                  <div
-                    key={i}
-                    className="p-4 rounded-lg"
-                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
-                  >
-                    <p className="text-xs font-medium text-slate-400 mb-2">{bucket.label}</p>
-                    <p className="text-2xl font-bold text-white mb-1">{bucket.count}</p>
-                    <p className="text-sm text-slate-300">${bucket.amount.toLocaleString()}</p>
-                    <button
-                      className="mt-3 text-xs text-[#6366f1] hover:text-[#818cf8]"
-                      onClick={() => setFilters({ ...filters, status: undefined })}
+                    { label: 'Current (not yet due)', count: 5, amount: 3190.29, color: '#059669' },
+                    { label: '1–30 days overdue', count: 2, amount: 752.07, color: '#F59E0B' },
+                    { label: '31–60 days overdue', count: 0, amount: 0, color: '#F97316' },
+                    { label: '60+ days overdue', count: 0, amount: 0, color: '#DC2626' },
+                  ].map((bucket, i) => (
+                    <div
+                      key={i}
+                      className="p-4 rounded-lg"
+                      style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
                     >
-                      View →
-                    </button>
-                  </div>
-                ))}
+                      <p className="text-xs font-medium text-slate-400 mb-2">{bucket.label}</p>
+                      <p className="text-2xl font-bold text-white mb-1">{bucket.count}</p>
+                      <p className="text-sm text-slate-300">${bucket.amount.toLocaleString()}</p>
+                      <button
+                        className="mt-3 text-xs text-[#6366f1] hover:text-[#818cf8]"
+                        onClick={() => setFilters({ ...filters, status: undefined })}
+                      >
+                        View →
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
-          {/* Processing Time per Stage */}
-          <div className="mt-6" style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }}>
-            <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold text-white">Processing time per stage</h2>
-                <p className="text-sm text-slate-400">Average hours at each approval stage vs SLA target</p>
-              </div>
-              <div className="text-right">
-                <p className="text-sm text-slate-400">SLA compliance</p>
+          {/* Processing Time per Stage - Only for ACCOUNTING_SUPERVISOR and PURCHASING_MANAGER */}
+          {user && (user.role === 'ACCOUNTING_SUPERVISOR' || user.role === 'PURCHASING_MANAGER') && (
+            <div className="mt-6" style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }}>
+              <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-white">Processing time per stage</h2>
+                  <p className="text-sm text-slate-400">Average hours at each approval stage vs SLA target</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm text-slate-400">SLA compliance</p>
                 <p className="text-lg font-bold text-green-400">87%</p>
               </div>
             </div>
@@ -1157,6 +1718,7 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
+          )}
         </main>
       </div>
 

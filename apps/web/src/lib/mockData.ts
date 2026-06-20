@@ -18,6 +18,7 @@ export interface MockInvoice {
   invoice_type: InvoiceType;
   category: InvoiceCategory;
   brand?: string;
+  brand_code?: string;
   brand_tier?: BrandTier;
   season?: string;
   order_type?: string;
@@ -40,6 +41,7 @@ export interface MockInvoice {
   due_date?: string;
   updated_at?: string;
   created_at?: string;
+  uploaded_by?: string;
   vendor?: { name: string };
   incoterm?: string;
   bill_to_entity?: string;
@@ -47,6 +49,13 @@ export interface MockInvoice {
   is_urgent?: boolean;
   ocr_confidence_score?: number;
   approval_tier?: number;
+  po_validation?: {
+    po_found: boolean;
+    comparison?: {
+      vendor_match: boolean;
+      amount_match: boolean;
+    };
+  };
 }
 
 export interface MockSignature {

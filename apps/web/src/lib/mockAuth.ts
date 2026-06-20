@@ -32,15 +32,35 @@ export const MOCK_USERS: MockUser[] = [
     password: "madison88",
     name: "Joy Yco",
     role: "PURCHASING_COORDINATOR",
-    title: "Purchasing Assistant"
+    title: "Purchasing Coordinator"
   },
   {
-    email: "glecie.yumena@madison88.com",
+    email: "maricon.alvarez@madison88.com",
     password: "madison88",
-    name: "Glecie Yumena",
-    role: "PLANNING_MANAGER",
-    brand_scope: "OTHER",
-    title: "Planning Manager"
+    name: "Maricon Alvarez",
+    role: "PURCHASING_COORDINATOR",
+    title: "Purchasing Coordinator"
+  },
+  {
+    email: "maricar.tanaleon@madison88.com",
+    password: "madison88",
+    name: "Maricar Tanaleon",
+    role: "PURCHASING_MANAGER",
+    title: "Purchasing Manager"
+  },
+  {
+    email: "maryann.delmonte@madison88.com",
+    password: "madison88",
+    name: "Mary Ann Del Monte",
+    role: "PURCHASING_MANAGER",
+    title: "Purchasing Manager"
+  },
+  {
+    email: "mary.delmonte@madison88.com",
+    password: "madison88",
+    name: "Mary Del Monte",
+    role: "ACCOUNTING_SUPERVISOR",
+    title: "Accounting Supervisor"
   },
   {
     email: "edwin.garcia@madison88.com",
@@ -51,6 +71,14 @@ export const MOCK_USERS: MockUser[] = [
     title: "Associate Operations Manager & Lead Process Improvement Analyst"
   },
   {
+    email: "glecie.yumena@madison88.com",
+    password: "madison88",
+    name: "Glecie Yumena",
+    role: "PLANNING_MANAGER",
+    brand_scope: "OTHER",
+    title: "Planning Manager"
+  },
+  {
     email: "lindsey.schindler@madison88.com",
     password: "madison88",
     name: "Lindsey Schindler",
@@ -58,56 +86,21 @@ export const MOCK_USERS: MockUser[] = [
     title: "Senior Manager, Global Production Operations"
   },
   {
-    email: "maricon.alvarez@madison88.com",
-    password: "madison88",
-    name: "Maricon Alvarez",
-    role: "PURCHASING_COORDINATOR",
-    title: "Purchasing Coordinator"
-  },
-  {
-    email: "manager@madison88.com",
-    password: "madison88",
-    name: "Maricar Tanaleon",
-    role: "PURCHASING_MANAGER",
-    title: "Purchasing Manager"
-  },
-  {
-    email: "manager2@madison88.com",
-    password: "madison88",
-    name: "Mary Ann Del Monte",
-    role: "PURCHASING_MANAGER",
-    title: "Purchasing Manager"
-  },
-  {
-    email: "polly@madison88.com",
-    password: "madison88",
-    name: "Polly",
-    role: "MS_POLLY",
-    title: "MS Polly"
-  },
-  {
-    email: "accounting.supervisor@madison88.com",
-    password: "madison88",
-    name: "Mary Del Monte",
-    role: "ACCOUNTING_SUPERVISOR",
-    title: "Accounting Supervisor"
-  },
-  {
-    email: "cfo@madison88.com",
+    email: "cc@madison88.com",
     password: "madison88",
     name: "Chris Cantasano",
     role: "CFO",
     title: "CFO"
   },
   {
-    email: "president@madison88.com",
+    email: "polly@madison88.com",
     password: "madison88",
-    name: "Chris Ascaño",
-    role: "PRESIDENT",
+    name: "Polly",
+    role: "MS_POLLY",
     title: "President"
   },
   {
-    email: "it.admin@madison88.com",
+    email: "paul.avendano@madison88.com",
     password: "madison88",
     name: "Paul Avendaño",
     role: "IT_ADMIN",
@@ -123,6 +116,18 @@ export const MOCK_USERS: MockUser[] = [
 ];
 
 const SESSION_KEY = 'mock_session';
+const TOKEN_KEY = 'auth_token';
+
+// Simple JWT-like token generation for mock auth
+const generateMockToken = (user: MockUser): string => {
+  const payload = {
+    id: user.email,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+  };
+  return btoa(JSON.stringify(payload)); // Base64 encode as simple token
+};
 
 export const mockAuth = {
   login: (email: string, password: string): MockUser | null => {
@@ -131,6 +136,9 @@ export const mockAuth = {
     );
     if (user) {
       localStorage.setItem(SESSION_KEY, JSON.stringify(user));
+      // Also store as auth_token for API compatibility
+      const token = generateMockToken(user);
+      localStorage.setItem(TOKEN_KEY, token);
       return user;
     }
     return null;
@@ -138,6 +146,7 @@ export const mockAuth = {
 
   logout: () => {
     localStorage.removeItem(SESSION_KEY);
+    localStorage.removeItem(TOKEN_KEY);
   },
 
   getCurrentUser: (): MockUser | null => {

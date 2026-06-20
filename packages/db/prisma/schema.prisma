@@ -71,6 +71,7 @@ model Invoice {
   mpo_number            String?
   brand_code            String?
   brand                 String?
+  brand_tier            BrandTier?
   season                String?
   order_type            OrderType?
   incoterm              String?
@@ -320,6 +321,7 @@ enum ExceptionReason {
   HANDWRITTEN_DOCUMENT
   MISSING_PO_REFERENCE
   MULTI_PO_CONSOLIDATED
+  MISSING_BRAND_TIER
 }
 
 enum BillToEntity {
@@ -374,4 +376,9 @@ enum PaymentBatchStatus {
   APPROVED
   PROCESSED
   CANCELLED
+}
+
+enum BrandTier {
+  TOP_10
+  OTHER
 }

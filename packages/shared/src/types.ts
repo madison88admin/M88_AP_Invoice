@@ -87,6 +87,7 @@ export enum ExceptionReason {
   HANDWRITTEN_DOCUMENT = 'HANDWRITTEN_DOCUMENT',
   MISSING_PO_REFERENCE = 'MISSING_PO_REFERENCE',
   MULTI_PO_CONSOLIDATED = 'MULTI_PO_CONSOLIDATED',
+  MISSING_BRAND_TIER = 'MISSING_BRAND_TIER',
 }
 
 export enum ExceptionStatus {
@@ -129,6 +130,11 @@ export enum PaymentTerms {
   SPLIT_50_50 = 'SPLIT_50_50',
   PREPAID = 'PREPAID',
   COD = 'COD',
+  OTHER = 'OTHER',
+}
+
+export enum BrandTier {
+  TOP_10 = 'TOP_10',
   OTHER = 'OTHER',
 }
 

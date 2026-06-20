@@ -1,23 +1,48 @@
-import { InvoiceType, InvoiceCategory, SignatoryRole, UserRole, BillToEntity, OrderType } from './types';
+import { InvoiceType, InvoiceCategory, SignatoryRole, UserRole, BillToEntity, OrderType, BrandTier } from './types';
 
-// ─── TOP 10 BRANDS (seed — confirm full list with Purchasing) ───
-export const TOP_10_BRANDS: Record<string, string> = {
-  CSC: 'Columbia Sportswear',
-  TNF: 'The North Face',
-  VNS: 'Vans',
-  ARC: "Arc'teryx",
-  UA: 'Under Armour',
-  HH: 'Helly Hansen',
-  BUR: 'Burton',
-  TM: 'Travis Mathew',
-  FR: 'Fjallraven',
-  ON: 'On Running',
+// ─── KNOWN BRANDS (single source of truth for brand codes and tiers) ───
+export interface KnownBrand {
+  name: string;
+  tier: BrandTier;
+}
+
+export const KNOWN_BRANDS: Record<string, KnownBrand> = {
+  // TOP_10 — confirmed by Purchasing as the Top 10 brand list
+  CSC: { name: 'Columbia Sportswear', tier: BrandTier.TOP_10 },
+  TNF: { name: 'The North Face', tier: BrandTier.TOP_10 },
+  VNS: { name: 'Vans', tier: BrandTier.TOP_10 },
+  ARC: { name: "Arc'teryx", tier: BrandTier.TOP_10 },
+  UA:  { name: 'Under Armour', tier: BrandTier.TOP_10 },
+  HH:  { name: 'Helly Hansen', tier: BrandTier.TOP_10 },
+  BUR: { name: 'Burton', tier: BrandTier.TOP_10 },
+  TM:  { name: 'Travis Mathew', tier: BrandTier.TOP_10 },
+  FR:  { name: 'Fjallraven', tier: BrandTier.TOP_10 },
+  FRJ: { name: 'Fjallraven', tier: BrandTier.TOP_10 },
+  ON:  { name: 'On Running', tier: BrandTier.TOP_10 },
+
+  // OTHER — seeded from brand codes seen across the 42 sample invoices analyzed
+  // This list is intentionally incomplete — grows as new OTHER-tier brands appear via real invoices
+  PRA: { name: 'Prana', tier: BrandTier.OTHER },
+  PRN: { name: 'Prana', tier: BrandTier.OTHER },
+  DYN: { name: 'Dynafit', tier: BrandTier.OTHER },
+  MUS: { name: 'Mustang', tier: BrandTier.OTHER },
+  SKI: { name: 'Ski brand', tier: BrandTier.OTHER },
+  SMW: { name: 'SMW', tier: BrandTier.OTHER },
+  VUO: { name: 'Vuori', tier: BrandTier.OTHER },
 };
+
+// ─── LEGACY: TOP_10_BRANDS (kept for backward compatibility, will be deprecated) ───
+export const TOP_10_BRANDS: Record<string, string> = {};
+for (const [code, brand] of Object.entries(KNOWN_BRANDS)) {
+  if (brand.tier === BrandTier.TOP_10) {
+    TOP_10_BRANDS[code] = brand.name;
+  }
+}
 
 // Reverse map: brand name (lowercase) → code
 export const BRAND_NAME_TO_CODE: Record<string, string> = {};
-for (const [code, name] of Object.entries(TOP_10_BRANDS)) {
-  BRAND_NAME_TO_CODE[name.toLowerCase()] = code;
+for (const [code, brand] of Object.entries(KNOWN_BRANDS)) {
+  BRAND_NAME_TO_CODE[brand.name.toLowerCase()] = code;
 }
 
 // ─── SIGNER NAME LISTS (configurable, IT-controlled) ───
@@ -184,7 +209,9 @@ export function parsePOReference(poRef: string): {
 } {
   if (!poRef) return {};
 
-  const tokens = poRef.split('_').filter(t => t.length > 0);
+  // Normalize spaces to underscores for consistent parsing
+  const normalizedRef = poRef.replace(/\s+/g, '_');
+  const tokens = normalizedRef.split('_').filter(t => t.length > 0);
   const result: {
     brand_code?: string;
     season?: string;
@@ -194,17 +221,44 @@ export function parsePOReference(poRef: string): {
     factory_location?: string;
   } = {};
 
-  // Token[0] → brand code (e.g., CSC, TNF, VNS)
+  // Brand name to code mapping
+  const brandNameToCode: { [key: string]: string } = {
+    'PRANA': 'PRA',
+    'THE NORTH FACE': 'TNF',
+    'COLUMBIA': 'CSC',
+    'VANS': 'VNS',
+    'ARC': 'ARC',
+    'UNDER ARMOUR': 'UA',
+    'HURLEY': 'HH',
+    'BURTON': 'BUR',
+    'TOMMY': 'TM',
+    'FRYE': 'FRJ',
+    'ONEONE': 'ON',
+    'NEW BALANCE': 'NB',
+    'CALVIN KLEIN': 'CK',
+    'RALPH LAUREN': 'RL',
+  };
+
+  // Token[0] → brand code (e.g., CSC, TNF, VNS) or full brand name
+  // Only extract if it's a valid brand code (2-4 letters, not a number)
   if (tokens.length > 0) {
-    result.brand_code = tokens[0].toUpperCase();
+    const firstToken = tokens[0].toUpperCase();
+    // Validate it's a brand code (2-4 letters) not a PO number
+    if (/^[A-Z]{2,4}$/.test(firstToken)) {
+      result.brand_code = brandNameToCode[firstToken] || firstToken;
+    }
   }
 
   // Token[1] → season (e.g., F26, FH26, F26_JAN)
+  // Accept both single-letter (F26) and two-letter (FH26) season codes
   if (tokens.length > 1) {
-    result.season = tokens[1];
-    // Handle season + sub-season (e.g., F26_JAN)
-    if (tokens.length > 2 && /^[A-Z]{3}$/i.test(tokens[2])) {
-      result.season = `${tokens[1]}_${tokens[2]}`;
+    const seasonPattern = /^[A-Z]{1,2}\d{2}$/i;
+    if (seasonPattern.test(tokens[1])) {
+      result.season = tokens[1];
+      // Handle season + sub-season (e.g., F26_JAN, FH26_JAN)
+      if (tokens.length > 2 && /^[A-Z]{3}$/i.test(tokens[2])) {
+        result.season = `${tokens[1]}_${tokens[2]}`;
+      }
     }
   }
 
@@ -220,23 +274,34 @@ export function parsePOReference(poRef: string): {
     result.po_number = tokens[poIdx];
   }
 
-  // Detect order type
+  // Detect order type - comprehensive mapping
   const upperTokens = tokens.map(t => t.toUpperCase());
-  if (upperTokens.includes('BULK')) {
-    result.order_type = 'BULK';
-  } else if (upperTokens.includes('SMS') || upperTokens.includes('STOCK MAKE SPECIAL')) {
-    result.order_type = 'SMS';
-  } else if (upperTokens.includes('SAMPLE')) {
-    result.order_type = 'SAMPLE';
-  } else if (upperTokens.includes('JAN') || upperTokens.includes('BUY')) {
-    result.order_type = 'BULK';
+  const orderTypeMapping: { [key: string]: string } = {
+    'BULK': 'BULK',
+    'SMS': 'SMS',
+    'STOCK MAKE SPECIAL': 'SMS',
+    'SAMPLE': 'SAMPLE',
+    'JAN': 'BULK', // January production treated as bulk
+    'BUY': 'BULK', // Buy order treated as bulk
+    'NOV BUY': 'BULK', // November buy order (with space)
+    'PROD': 'BULK', // Production
+    'STOCK': 'SMS', // Stock
+    'R&D': 'SAMPLE', // Research & Development
+    'PDS': 'SAMPLE', // Pre-Development Sample
+  };
+
+  for (const token of upperTokens) {
+    if (orderTypeMapping[token]) {
+      result.order_type = orderTypeMapping[token];
+      break;
+    }
   }
 
   // Factory / Location — typically the last token(s) after MPO
   if (mpoIdx >= 0 && mpoIdx + 1 < tokens.length) {
     const remaining = tokens.slice(mpoIdx + 1);
     const factoryTokens = remaining.filter(
-      t => !['BULK', 'SMS', 'SAMPLE', 'JAN', 'BUY'].includes(t.toUpperCase())
+      t => !['BULK', 'SMS', 'SAMPLE', 'JAN', 'BUY', 'NOV BUY', 'PROD', 'STOCK', 'R&D', 'PDS'].includes(t.toUpperCase())
     );
     if (factoryTokens.length > 0) {
       result.factory_location = factoryTokens.join('_');

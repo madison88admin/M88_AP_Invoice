@@ -1694,8 +1694,10 @@ function extractUsingGenericLayer(text: string): {
   }
 
   // Extract invoice date using aliases
+  // Restrict capture to actual date strings (slash or DD MMM YYYY) to avoid trailing text like "Bill To ..."
+  const dateCapturePattern = `(?:\\d{1,2}[\\/\\-.]\\s*\\d{1,2}[\\/\\-.]\\s*\\d{2,4}|\\d{1,2}\\s+[A-Za-z]{3}\\s*,?\\s*\\d{4})`;
   for (const alias of FIELD_ALIASES.invoice_date) {
-    const regex = new RegExp(`${alias.replace(/\s+/g, '\\s+')}[:\\s]*([\\d\\w\\-\\/.\\s]+)`, 'i');
+    const regex = new RegExp(`${alias.replace(/\s+/g, '\\s+')}[:\\s]*(${dateCapturePattern})`, 'i');
     const match = normalized.match(regex);
     if (match) {
       const parsed = parseDate(match[1].trim());
@@ -1710,7 +1712,7 @@ function extractUsingGenericLayer(text: string): {
 
   // Extract due date using aliases
   for (const alias of FIELD_ALIASES.due_date) {
-    const regex = new RegExp(`${alias.replace(/\s+/g, '\\s+')}[:\\s]*([\\d\\w\\-\\/.\\s]+)`, 'i');
+    const regex = new RegExp(`${alias.replace(/\s+/g, '\\s+')}[:\\s]*(${dateCapturePattern})`, 'i');
     const match = normalized.match(regex);
     if (match) {
       const parsed = parseDate(match[1].trim());
@@ -2059,8 +2061,14 @@ function extractLineItems(text: string): Array<{ quantity: number; unitPrice: nu
   
   // STEP 4: Fallback - try to find line items without SKU anchors
   // Look for patterns like: "6390 USD 0.051 325.89" or "120 Each 0.06656 7.99"
+  // Also detect Nilorn-style: "10000 T0003725 JWS 0.02730 11,200 305.76" (unitPrice qty amount)
   if (lineItems.length === 0) {
     console.log('[extractLineItems] No items found via SKU method, trying fallback pattern');
+    
+    const hasNilornFormat = /Shipped\s+Qty|Nilorn|Item\s+Description/i.test(normalized);
+    if (hasNilornFormat) {
+      console.log('[extractLineItems] Detected Nilorn-style shipped-qty table');
+    }
     
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
@@ -2100,6 +2108,26 @@ function extractLineItems(text: string): Array<{ quantity: number; unitPrice: nu
           if (variance < 0.20) {  // 20% tolerance for fallback
             console.log('[extractLineItems] Found line item via fallback pattern 2:', { quantity, unitPrice, extendedPrice, variance });
             lineItems.push({ quantity, unitPrice, extendedPrice, rawLine: line });
+          }
+        }
+      }
+      
+      // Nilorn-style: unitPrice + qty + line_total (e.g., "0.02730 11,200 305.76")
+      if (hasNilornFormat) {
+        const nilornPattern = /(?:^|\s)([\d.]+)\s+([\d,]+)\s+([\d.]+)(?=\s|$)/g;
+        while ((fallbackMatch = nilornPattern.exec(line)) !== null) {
+          const unitPrice = parseFloat(fallbackMatch[1]);
+          const quantity = parseInt(fallbackMatch[2].replace(/,/g, ''), 10);
+          const extendedPrice = parseFloat(fallbackMatch[3]);
+          
+          if (quantity > 0 && quantity < 100000 && unitPrice > 0 && extendedPrice > 0) {
+            const calculated = quantity * unitPrice;
+            const variance = Math.abs(calculated - extendedPrice) / extendedPrice;
+            
+            if (variance < 0.20) {  // 20% tolerance for fallback
+              console.log('[extractLineItems] Found line item via Nilorn pattern:', { quantity, unitPrice, extendedPrice, variance });
+              lineItems.push({ quantity, unitPrice, extendedPrice, rawLine: line });
+            }
           }
         }
       }

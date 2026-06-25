@@ -8,9 +8,9 @@ const SLA_THRESHOLDS: Partial<Record<InvoiceStatus, number>> = {
   [InvoiceStatus.PENDING_COORDINATOR]: 168, // 7 days
   [InvoiceStatus.PENDING_MANAGER]: 168, // 7 days
   [InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER]: 168, // 7 days
-  [InvoiceStatus.PENDING_MLO_PLANNING_MANAGER]: 96, // 4 days
-  [InvoiceStatus.PENDING_SR_MANAGER]: 72, // 3 days (Lindsey)
-  [InvoiceStatus.PENDING_POLLY]: 72, // 3 days
+  [InvoiceStatus.PENDING_MLO_PLANNING_MANAGER]: 168, // 7 days
+  [InvoiceStatus.PENDING_SR_MANAGER]: 168, // 7 days
+  [InvoiceStatus.PENDING_POLLY]: 168, // 7 days
   [InvoiceStatus.PENDING_ACCOUNTING]: 168, // 7 days
 };
 
@@ -244,7 +244,7 @@ function getApproverEmail(stage: InvoiceStatus): string {
     [InvoiceStatus.PENDING_COORDINATOR]: process.env.COORDINATOR_EMAIL || 'coordinator@madison88.com',
     [InvoiceStatus.PENDING_MANAGER]: process.env.PURCHASING_MANAGER_EMAIL || 'purchasing-manager@madison88.com',
     [InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER]: process.env.MLO_ACCOUNT_HOLDER_EMAIL || 'mlo-account-holder@madison88.com',
-    [InvoiceStatus.PENDING_MLO_PLANNING_MANAGER]: process.env.MLO_PLANNING_MANAGER_EMAIL || 'mlo-planning-manager@madison88.com',
+    [InvoiceStatus.PENDING_MLO_PLANNING_MANAGER]: process.env.MLO_PLANNING_MANAGER_EMAIL || 'planning-manager@madison88.com',
     [InvoiceStatus.PENDING_SR_MANAGER]: process.env.SR_MANAGER_EMAIL || 'sr-manager@madison88.com',
     [InvoiceStatus.PENDING_POLLY]: process.env.MS_POLLY_EMAIL || 'ms-polly@madison88.com',
     [InvoiceStatus.PENDING_ACCOUNTING]: process.env.ACCOUNTING_EMAIL || 'accounting@madison88.com',

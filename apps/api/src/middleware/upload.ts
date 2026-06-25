@@ -6,9 +6,8 @@ const storage = multer.memoryStorage();
 const fileFilter = (req: any, file: any, cb: any) => {
   const allowedTypes = /jpeg|jpg|png|pdf/;
   const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-  const mimetype = allowedTypes.test(file.mimetype);
-
-  if (extname && mimetype) {
+  // Only check extension for now, mimetype can be unreliable
+  if (extname) {
     return cb(null, true);
   } else {
     cb(new Error('Only images and PDF files are allowed'));

@@ -5,6 +5,7 @@ import {
   getPaymentBatches,
   getPaymentBatchById,
   processPaymentBatch,
+  approvePaymentBatchByCFO,
   cancelPaymentBatch,
 } from '../services/paymentBatchService';
 
@@ -57,6 +58,20 @@ export const processPaymentBatchController = async (
   try {
     const { batchId } = req.params;
     const result = await processPaymentBatch(batchId, req.user!.id);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const approvePaymentBatchByCFOController = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { batchId } = req.params;
+    const result = await approvePaymentBatchByCFO(batchId, req.user!.id);
     res.json(result);
   } catch (error) {
     next(error);

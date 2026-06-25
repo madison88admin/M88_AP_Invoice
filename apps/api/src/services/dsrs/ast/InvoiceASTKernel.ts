@@ -382,7 +382,7 @@ export function buildInvoiceAST(
 
   // Add GRAND TOTAL nodes from TOTAL lines, with multi-page awareness.
   // If page boundaries are available, prefer the LAST page's total match (real fix for G&F Trading).
-  const totalKeywords = ['total', 'say total', 'grand total', 'total amount', 'amount due', 'balance due', 'net total', 'net amount'];
+  const totalKeywords = ['total', 'say total', 'grand total', 'total amount', 'amount due', 'balance due', 'net total', 'net amount', 'sub total', 'subtotal'];
 
   // Collect all candidate total lines with their page index.
   // For each total line, prefer numbers with currency context (USD, $, HKD, etc.) over bare numbers.

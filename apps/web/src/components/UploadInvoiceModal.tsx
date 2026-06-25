@@ -1,9 +1,7 @@
 import { useState, useCallback } from 'react';
-import { createPortal } from 'react-dom';
-import { Upload, FileText, X, Sparkles, CheckCircle } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { Upload, FileText, X, Sparkles, CheckCircle, AlertTriangle } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
+import { invoiceApi } from '../lib/api';
 
 interface UploadInvoiceModalProps {
   isOpen: boolean;
@@ -15,11 +13,13 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
   const queryClient = useQueryClient();
   const [file, setFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [aiExtractionEnabled, setAiExtractionEnabled] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadComplete, setUploadComplete] = useState(false);
+  const [poValidation, setPoValidation] = useState<any>(null);
+  const [consensus, setConsensus] = useState<any>(null);
+  const [requiresManualVendorAssignment, setRequiresManualVendorAssignment] = useState(false);
   const [formData, setFormData] = useState({
     vendorName: '',
     invoiceNumber: '',
@@ -28,31 +28,114 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
     amount: '',
     currency: 'USD',
     category: '',
+    brand: '',
+    brandTier: '' as '' | 'TOP_10' | 'OTHER',
+    season: '',
+    orderType: '' as '' | 'BULK' | 'SMS' | 'SAMPLE',
+    poNumber: '',
+    mpoNumber: '',
+    qtyShipped: '',
+    paymentTerms: '',
+    bankName: '',
+    swiftCode: '',
+    accountNumber: '',
     notes: '',
     priority: 'medium' as 'low' | 'medium' | 'high',
   });
 
-  const handleFileSelect = useCallback((selectedFile: File) => {
+  const handleFileSelect = useCallback(async (selectedFile: File) => {
+    console.log('[DEBUG] File selected:', selectedFile.name, selectedFile.size);
     setFile(selectedFile);
-    if (aiExtractionEnabled) {
-      setIsExtracting(true);
-      setTimeout(() => {
-        setIsExtracting(false);
-        // Simulate AI extraction
+    console.log('[DEBUG] AI extraction enabled, starting...');
+    setIsExtracting(true);
+    try {
+      console.log('[DEBUG] Calling invoiceApi.upload...');
+      const response = await invoiceApi.upload(selectedFile);
+      console.log('[DEBUG] Frontend OCR response:', response.data);
+      console.log('[DEBUG] Response structure:', JSON.stringify(response.data, null, 2));
+
+      if (response.data.success && response.data.extraction) {
+        const extraction = response.data.extraction;
+        console.log('[DEBUG] Mapping Madison extraction to form:', extraction);
+        console.log('[DEBUG] vendor_name:', extraction.vendor_name);
+        console.log('[DEBUG] invoice_number:', extraction.invoice_number);
+        console.log('[DEBUG] invoice_date:', extraction.invoice_date);
+        console.log('[DEBUG] amount:', extraction.amount);
+        console.log('[DEBUG] currency:', extraction.currency);
+        console.log('[DEBUG] PO validation:', response.data.po_validation);
+        
+        // Set PO validation and consensus results (display-only in AST mode)
+        setPoValidation(response.data.po_validation);
+        setConsensus(response.data.consensus);
+        setRequiresManualVendorAssignment(response.data.requires_manual_vendor_assignment || false);
+
+        // DSRS v7.3: Frontend treats extraction as SINGLE CANONICAL PAYLOAD.
+        // PO validation is display-only; it NEVER drives form values, brand, amount, or qty.
+        const brandToUse = extraction.brand || '';
+        if (response.data.po_validation?.mode === 'AST_ISOLATED') {
+          console.log('[DEBUG] AST mode: PO validation isolated, using extraction brand only');
+        }
+
+        // Format date (already in YYYY-MM-DD format from Madison extractor)
+        const formattedDate = extraction.invoice_date || '';
+        const formattedDueDate = extraction.due_date || '';
+
         setFormData({
-          vendorName: 'Acme Corporation',
-          invoiceNumber: 'INV-2024-001',
-          invoiceDate: new Date().toISOString().split('T')[0],
-          dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-          amount: '5000.00',
-          currency: 'USD',
-          category: 'Services',
+          vendorName: extraction.vendor_name || '',
+          invoiceNumber: extraction.invoice_number || '',
+          invoiceDate: formattedDate,
+          dueDate: formattedDueDate,
+          amount: extraction.amount?.toString() || '',
+          currency: extraction.currency || 'USD',
+          category: extraction.category || '',
+          brand: brandToUse,
+          brandTier: extraction.brand_tier || '',
+          season: extraction.season || '',
+          orderType: extraction.order_type || '',
+          poNumber: extraction.po_number || '',
+          mpoNumber: extraction.mpo_number || '',
+          qtyShipped: extraction.qty_shipped?.toString() || '',
+          paymentTerms: extraction.payment_terms || '',
+          bankName: extraction.bank_details?.bank_name || '',
+          swiftCode: extraction.bank_details?.swift_code || '',
+          accountNumber: extraction.bank_details?.account_number || '',
           notes: '',
-          priority: 'medium',
+          priority: extraction.is_urgent ? 'high' : 'medium',
         });
-      }, 1500);
+      } else {
+        console.log('[DEBUG] Madison extraction response missing success or extraction');
+        console.log('[DEBUG] success:', response.data.success);
+        console.log('[DEBUG] extraction:', response.data.extraction);
+      }
+    } catch (error) {
+      console.error('[DEBUG] OCR extraction failed:', error);
+      // Fall back to empty form on error
+      setFormData({
+        vendorName: '',
+        invoiceNumber: '',
+        invoiceDate: '',
+        dueDate: '',
+        amount: '',
+        currency: 'USD',
+        category: '',
+        brand: '',
+        brandTier: '',
+        season: '',
+        orderType: '',
+        poNumber: '',
+        mpoNumber: '',
+        qtyShipped: '',
+        paymentTerms: '',
+        bankName: '',
+        swiftCode: '',
+        accountNumber: '',
+        notes: '',
+        priority: 'medium',
+      });
+    } finally {
+      setIsExtracting(false);
     }
-  }, [aiExtractionEnabled]);
+  }, []);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -79,40 +162,39 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
     setUploadProgress(0);
 
     try {
-      // Return early if Supabase is not configured
-      if (!isSupabaseConfigured || !supabase) {
-        throw new Error('Supabase is not configured. Please set up environment variables.');
-      }
+      // Store invoice in-memory (bypass Supabase for now)
+      const invoice = {
+        id: crypto.randomUUID(),
+        invoice_number: formData.invoiceNumber,
+        vendor_name: formData.vendorName,
+        amount: parseFloat(formData.amount),
+        currency: formData.currency,
+        category: formData.category,
+        brand: formData.brand,
+        brand_tier: formData.brandTier,
+        season: formData.season,
+        order_type: formData.orderType,
+        po_number: formData.poNumber,
+        mpo_number: formData.mpoNumber,
+        qty_shipped: formData.qtyShipped ? parseFloat(formData.qtyShipped) : null,
+        payment_terms: formData.paymentTerms,
+        bank_name: formData.bankName,
+        swift_code: formData.swiftCode,
+        account_number: formData.accountNumber,
+        status: 'pending_validation',
+        priority: formData.priority,
+        date_issued: formData.invoiceDate,
+        date_due: formData.dueDate,
+        notes: formData.notes,
+        file_name: file.name,
+        file_size: file.size,
+        created_at: new Date().toISOString(),
+      };
 
-      // Upload file to Supabase Storage
-      const fileName = `${Date.now()}_${file.name}`;
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('invoices')
-        .upload(fileName, file);
-
-      if (uploadError) throw uploadError;
-
-      setUploadProgress(50);
-
-      // Insert invoice record into database
-      const { error: insertError } = await supabase
-        .from('invoices')
-        .insert({
-          invoice_number: formData.invoiceNumber,
-          vendor_name: formData.vendorName,
-          amount: parseFloat(formData.amount),
-          currency: formData.currency,
-          category: formData.category,
-          status: 'pending_validation',
-          priority: formData.priority,
-          date_issued: formData.invoiceDate,
-          date_due: formData.dueDate,
-          notes: formData.notes,
-          file_url: uploadData.path,
-          is_non_usd: formData.currency !== 'USD',
-        });
-
-      if (insertError) throw insertError;
+      // Store in localStorage for persistence across page reloads
+      const existingInvoices = JSON.parse(localStorage.getItem('invoices') || '[]');
+      existingInvoices.push(invoice);
+      localStorage.setItem('invoices', JSON.stringify(existingInvoices));
 
       setUploadProgress(100);
 
@@ -141,11 +223,23 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
       amount: '',
       currency: 'USD',
       category: '',
+      brand: '',
+      brandTier: '',
+      season: '',
+      orderType: '',
+      poNumber: '',
+      mpoNumber: '',
+      qtyShipped: '',
+      paymentTerms: '',
+      bankName: '',
+      swiftCode: '',
+      accountNumber: '',
       notes: '',
       priority: 'medium',
     });
     setUploadProgress(0);
     setUploadComplete(false);
+    setConsensus(null);
   };
 
   const handleClose = () => {
@@ -154,31 +248,22 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
   };
 
   return (
-    <AnimatePresence>
-      {isOpen && createPortal(
+    <>
+      {isOpen && (
         <>
           {/* Backdrop */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 250 }}
+          <div
             style={{
               position: 'fixed',
               inset: 0,
-              background: 'rgba(0, 0, 0, 0.7)',
-              backdropFilter: 'blur(8px)',
+              background: '#000000',
               zIndex: 1000,
             }}
             onClick={handleClose}
           />
 
           {/* Modal */}
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            transition={{ duration: 250, ease: 'easeOut' }}
+          <div
             style={{
               position: 'fixed',
               top: '50%',
@@ -187,12 +272,10 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
               width: '600px',
               maxHeight: '90vh',
               overflowY: 'auto',
-              background: 'rgba(15, 23, 42, 0.98)',
-              backdropFilter: 'blur(24px)',
-              WebkitBackdropFilter: 'blur(24px)',
-              border: '1px solid rgba(255, 255, 255, 0.2)',
+              background: '#1e1b4b',
+              border: '2px solid #ffffff',
               borderRadius: '24px',
-              boxShadow: '0 24px 80px rgba(0, 0, 0, 0.6)',
+              boxShadow: '0 24px 80px #000000',
               padding: '32px',
               zIndex: 1001,
             }}
@@ -226,52 +309,6 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
             <div className="mb-6">
               <h2 className="text-2xl font-bold text-white mb-2">Upload Invoice</h2>
               <p className="text-sm text-slate-400">Supported formats: PDF, PNG, JPG, XLSX</p>
-            </div>
-
-            {/* AI Extraction Toggle */}
-            <div
-              style={{
-                background: 'rgba(99, 102, 241, 0.08)',
-                border: '1px solid rgba(99, 102, 241, 0.2)',
-                borderRadius: '12px',
-                padding: '12px 16px',
-                marginBottom: '24px',
-              }}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <Sparkles className="h-5 w-5 text-indigo-400" />
-                  <div>
-                    <p className="text-sm font-medium text-white">Auto-extract with AI</p>
-                    <p className="text-xs text-slate-400">Automatically fill fields from your document</p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setAiExtractionEnabled(!aiExtractionEnabled)}
-                  style={{
-                    width: '44px',
-                    height: '24px',
-                    background: aiExtractionEnabled ? 'linear-gradient(135deg, #6366f1, #8b5cf6)' : 'rgba(255, 255, 255, 0.1)',
-                    borderRadius: '12px',
-                    position: 'relative',
-                    cursor: 'pointer',
-                    transition: 'all 150ms ease',
-                  }}
-                >
-                  <div
-                    style={{
-                      position: 'absolute',
-                      top: '2px',
-                      left: aiExtractionEnabled ? '22px' : '2px',
-                      width: '20px',
-                      height: '20px',
-                      background: 'white',
-                      borderRadius: '50%',
-                      transition: 'all 150ms ease',
-                    }}
-                  />
-                </button>
-              </div>
             </div>
 
             {/* Drag & Drop Zone */}
@@ -396,6 +433,173 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
             {/* Form Fields */}
             {file && !isExtracting && (
               <div className="space-y-4" style={{ marginBottom: '24px' }}>
+                {/* Consensus Extraction Confidence — DISPLAY ONLY */}
+                {consensus && (
+                  <div
+                    style={{
+                      background:
+                        consensus.overall_status === 'APPROVED'
+                          ? 'rgba(34, 197, 94, 0.1)'
+                          : consensus.overall_status === 'REVIEW_REQUIRED'
+                            ? 'rgba(234, 179, 8, 0.1)'
+                            : 'rgba(239, 68, 68, 0.1)',
+                      border:
+                        consensus.overall_status === 'APPROVED'
+                          ? '1px solid rgba(34, 197, 94, 0.3)'
+                          : consensus.overall_status === 'REVIEW_REQUIRED'
+                            ? '1px solid rgba(234, 179, 8, 0.3)'
+                            : '1px solid rgba(239, 68, 68, 0.3)',
+                      borderRadius: '10px',
+                      padding: '12px 16px',
+                      marginBottom: '16px',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                      <span style={{ fontSize: '16px' }}>
+                        {consensus.overall_status === 'APPROVED'
+                          ? '✅'
+                          : consensus.overall_status === 'REVIEW_REQUIRED'
+                            ? '⚠️'
+                            : '🔴'}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: '13px',
+                          color:
+                            consensus.overall_status === 'APPROVED'
+                              ? '#22c55e'
+                              : consensus.overall_status === 'REVIEW_REQUIRED'
+                                ? '#eab308'
+                                : '#ef4444',
+                        }}
+                      >
+                        Extraction Confidence: {consensus.overall_confidence}% — {consensus.overall_status.replace(/_/g, ' ')}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '8px' }}>
+                      Engines: {consensus.engines_used?.join(' + ') || 'pdf2json+madison'}
+                      {consensus.extraction_time_ms ? ` · ${consensus.extraction_time_ms}ms` : ''}
+                    </div>
+                    {consensus.engine_notes && (
+                      <div style={{ fontSize: '11px', color: '#fbbf24', marginBottom: '8px', fontStyle: 'italic' }}>
+                        {consensus.engine_notes}
+                      </div>
+                    )}
+                    {consensus.conflicts && consensus.conflicts.length > 0 && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '8px' }}>
+                        {consensus.conflicts.map((conflict: any, i: number) => (
+                          <div key={i} style={{ fontSize: '11px', color: '#f87171' }}>
+                            {conflict.severity === 'CRITICAL' ? '🔴' : '⚠️'} {conflict.reason}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* PO Validation Status — DISPLAY ONLY, never drives form values */}
+                {poValidation && (
+                  <div
+                    style={{
+                      background: poValidation.mode === 'AST_ISOLATED'
+                        ? 'rgba(59, 130, 246, 0.1)'
+                        : poValidation.validation_result?.status === 'AUTO_APPROVED'
+                          ? 'rgba(34, 197, 94, 0.1)'
+                          : 'rgba(239, 68, 68, 0.1)',
+                      border: poValidation.mode === 'AST_ISOLATED'
+                        ? '1px solid rgba(59, 130, 246, 0.3)'
+                        : poValidation.validation_result?.status === 'AUTO_APPROVED'
+                          ? '1px solid rgba(34, 197, 94, 0.3)'
+                          : '1px solid rgba(239, 68, 68, 0.3)',
+                      borderRadius: '10px',
+                      padding: '12px 16px',
+                      marginBottom: '16px',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                      <span style={{ fontSize: '16px' }}>
+                        {poValidation.mode === 'AST_ISOLATED'
+                          ? '🔒'
+                          : poValidation.validation_result?.status === 'AUTO_APPROVED'
+                            ? '✅'
+                            : '⚠️'}
+                      </span>
+                      <span style={{ fontSize: '13px', color: poValidation.mode === 'AST_ISOLATED' ? '#3b82f6' : poValidation.validation_result?.status === 'AUTO_APPROVED' ? '#22c55e' : '#ef4444' }}>
+                        {poValidation.mode === 'AST_ISOLATED'
+                          ? 'PO Validation Disabled (AST Mode)'
+                          : poValidation.validation_result?.status === 'AUTO_APPROVED'
+                            ? 'Auto-Approved'
+                            : poValidation.validation_result?.status === 'REVIEW_REQUIRED'
+                              ? 'Review Required'
+                              : poValidation.validation_result?.status === 'REJECTED'
+                                ? 'Rejected'
+                                : poValidation.po_found
+                                  ? 'PO Found'
+                                  : 'PO Not Found in NextGen'}
+                      </span>
+                    </div>
+                    {poValidation.mode === 'AST_ISOLATED' && (
+                      <div style={{ fontSize: '12px', color: '#94a3b8' }}>
+                        {poValidation.message}
+                      </div>
+                    )}
+                    {poValidation.mode !== 'AST_ISOLATED' && poValidation.po_found && poValidation.validation_result?.checks && (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px' }}>
+                        {poValidation.validation_result.checks.currency_match !== undefined && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#94a3b8' }}>
+                            {poValidation.validation_result.checks.currency_match ? (
+                              <CheckCircle className="h-3 w-3 text-green-500" />
+                            ) : (
+                              <AlertTriangle className="h-3 w-3 text-amber-500" />
+                            )}
+                            <span>Currency</span>
+                          </div>
+                        )}
+                        {poValidation.validation_result.checks.vendor_match !== undefined && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#94a3b8' }}>
+                            {poValidation.validation_result.checks.vendor_match ? (
+                              <CheckCircle className="h-3 w-3 text-green-500" />
+                            ) : (
+                              <AlertTriangle className="h-3 w-3 text-amber-500" />
+                            )}
+                            <span>Vendor</span>
+                          </div>
+                        )}
+                        {poValidation.validation_result.checks.brand_match !== undefined && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#94a3b8' }}>
+                            {poValidation.validation_result.checks.brand_match ? (
+                              <CheckCircle className="h-3 w-3 text-green-500" />
+                            ) : (
+                              <AlertTriangle className="h-3 w-3 text-amber-500" />
+                            )}
+                            <span>Brand</span>
+                          </div>
+                        )}
+                        {poValidation.validation_result.checks.season_match !== undefined && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#94a3b8' }}>
+                            {poValidation.validation_result.checks.season_match ? (
+                              <CheckCircle className="h-3 w-3 text-green-500" />
+                            ) : (
+                              <AlertTriangle className="h-3 w-3 text-amber-500" />
+                            )}
+                            <span>Season</span>
+                          </div>
+                        )}
+                        {poValidation.validation_result.checks.order_type_match !== undefined && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#94a3b8' }}>
+                            {poValidation.validation_result.checks.order_type_match ? (
+                              <CheckCircle className="h-3 w-3 text-green-500" />
+                            ) : (
+                              <AlertTriangle className="h-3 w-3 text-amber-500" />
+                            )}
+                            <span>Order Type</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Row 1: Vendor Name | Invoice Number */}
                 <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -424,6 +628,11 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                         e.currentTarget.style.boxShadow = 'none';
                       }}
                     />
+                    {requiresManualVendorAssignment && (
+                      <div style={{ fontSize: '12px', color: '#f59e0b', marginTop: '4px' }}>
+                        Vendor not recognized — please confirm or correct the vendor name above.
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-400 mb-2">Invoice Number *</label>
@@ -557,6 +766,8 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                       }}
                     >
                       <option value="USD" style={{ background: '#0f172a' }}>USD</option>
+                      <option value="HKD" style={{ background: '#0f172a' }}>HKD</option>
+                      <option value="IDR" style={{ background: '#0f172a' }}>IDR</option>
                       <option value="PHP" style={{ background: '#0f172a' }}>PHP</option>
                       <option value="EUR" style={{ background: '#0f172a' }}>EUR</option>
                       <option value="GBP" style={{ background: '#0f172a' }}>GBP</option>
@@ -583,15 +794,323 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                     }}
                   >
                     <option value="" style={{ background: '#0f172a' }}>Select category</option>
-                    <option value="Utilities" style={{ background: '#0f172a' }}>Utilities</option>
-                    <option value="Supplies" style={{ background: '#0f172a' }}>Supplies</option>
-                    <option value="Services" style={{ background: '#0f172a' }}>Services</option>
-                    <option value="Equipment" style={{ background: '#0f172a' }}>Equipment</option>
-                    <option value="Other" style={{ background: '#0f172a' }}>Other</option>
+                    <option value="Trims" style={{ background: '#0f172a' }}>Trims</option>
+                    <option value="Yarn" style={{ background: '#0f172a' }}>Yarn</option>
+                    <option value="Sample" style={{ background: '#0f172a' }}>Sample</option>
+                    <option value="Shipping" style={{ background: '#0f172a' }}>Shipping</option>
+                    <option value="Lab" style={{ background: '#0f172a' }}>Lab</option>
                   </select>
                 </div>
 
-                {/* Row 5: Notes */}
+                {/* Row 5: Brand | Brand Tier */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">Brand</label>
+                    <input
+                      type="text"
+                      value={formData.brand}
+                      onChange={(e) => setFormData({ ...formData, brand: e.target.value })}
+                      placeholder="e.g. Columbia Sportswear"
+                      style={{
+                        width: '100%',
+                        padding: '10px 14px',
+                        background: 'rgba(255, 255, 255, 0.05)',
+                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        borderRadius: '10px',
+                        color: 'white',
+                        outline: 'none',
+                        transition: 'all 150ms ease',
+                      }}
+                      onFocus={(e) => {
+                        e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.6)';
+                        e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+                      }}
+                      onBlur={(e) => {
+                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                        e.currentTarget.style.boxShadow = 'none';
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">Brand Tier</label>
+                    <select
+                      value={formData.brandTier}
+                      onChange={(e) => setFormData({ ...formData, brandTier: e.target.value as '' | 'TOP_10' | 'OTHER' })}
+                      style={{
+                        width: '100%',
+                        padding: '10px 14px',
+                        background: 'rgba(255, 255, 255, 0.05)',
+                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        borderRadius: '10px',
+                        color: 'white',
+                        outline: 'none',
+                        transition: 'all 150ms ease',
+                      }}
+                    >
+                      <option value="" style={{ background: '#0f172a' }}>Select tier</option>
+                      <option value="TOP_10" style={{ background: '#0f172a' }}>Top 10</option>
+                      <option value="OTHER" style={{ background: '#0f172a' }}>Other</option>
+                    </select>
+                  </div>
+                </div>
+                {formData.brand && !formData.brandTier && (
+                  <div style={{ fontSize: '12px', color: '#f59e0b', marginTop: '4px' }}>
+                    Brand tier could not be determined automatically — please confirm before submitting.
+                  </div>
+                )}
+
+                {/* Row 6: Season | Order Type */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">Season</label>
+                    <input
+                      type="text"
+                      value={formData.season}
+                      onChange={(e) => setFormData({ ...formData, season: e.target.value })}
+                      placeholder="e.g. F26, FW26"
+                      style={{
+                        width: '100%',
+                        padding: '10px 14px',
+                        background: 'rgba(255, 255, 255, 0.05)',
+                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        borderRadius: '10px',
+                        color: 'white',
+                        outline: 'none',
+                        transition: 'all 150ms ease',
+                      }}
+                      onFocus={(e) => {
+                        e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.6)';
+                        e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+                      }}
+                      onBlur={(e) => {
+                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                        e.currentTarget.style.boxShadow = 'none';
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">Order Type</label>
+                    <select
+                      value={formData.orderType}
+                      onChange={(e) => setFormData({ ...formData, orderType: e.target.value as '' | 'BULK' | 'SMS' | 'SAMPLE' })}
+                      style={{
+                        width: '100%',
+                        padding: '10px 14px',
+                        background: 'rgba(255, 255, 255, 0.05)',
+                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        borderRadius: '10px',
+                        color: 'white',
+                        outline: 'none',
+                        transition: 'all 150ms ease',
+                      }}
+                    >
+                      <option value="" style={{ background: '#0f172a' }}>Select type</option>
+                      <option value="BULK" style={{ background: '#0f172a' }}>Bulk</option>
+                      <option value="SMS" style={{ background: '#0f172a' }}>SMS</option>
+                      <option value="SAMPLE" style={{ background: '#0f172a' }}>Sample</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Row 7: PO Number | MPO Number */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">PO Number</label>
+                    <input
+                      type="text"
+                      value={formData.poNumber}
+                      onChange={(e) => setFormData({ ...formData, poNumber: e.target.value })}
+                      placeholder="Optional"
+                      style={{
+                        width: '100%',
+                        padding: '10px 14px',
+                        background: 'rgba(255, 255, 255, 0.05)',
+                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        borderRadius: '10px',
+                        color: 'white',
+                        outline: 'none',
+                        transition: 'all 150ms ease',
+                      }}
+                      onFocus={(e) => {
+                        e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.6)';
+                        e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+                      }}
+                      onBlur={(e) => {
+                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                        e.currentTarget.style.boxShadow = 'none';
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">MPO Number *</label>
+                    <input
+                      type="text"
+                      value={formData.mpoNumber}
+                      onChange={(e) => setFormData({ ...formData, mpoNumber: e.target.value })}
+                      placeholder="e.g. MPO15371"
+                      style={{
+                        width: '100%',
+                        padding: '10px 14px',
+                        background: 'rgba(255, 255, 255, 0.05)',
+                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        borderRadius: '10px',
+                        color: 'white',
+                        outline: 'none',
+                        transition: 'all 150ms ease',
+                      }}
+                      onFocus={(e) => {
+                        e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.6)';
+                        e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+                      }}
+                      onBlur={(e) => {
+                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                        e.currentTarget.style.boxShadow = 'none';
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {/* Row 8: QTY SHIPPED (full width) */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-400 mb-2">QTY SHIPPED</label>
+                  <input
+                    type="number"
+                    value={formData.qtyShipped}
+                    onChange={(e) => setFormData({ ...formData, qtyShipped: e.target.value })}
+                    placeholder="Auto-extracted from line items"
+                    style={{
+                      width: '100%',
+                      padding: '10px 14px',
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                      borderRadius: '10px',
+                      color: 'white',
+                      outline: 'none',
+                      transition: 'all 150ms ease',
+                    }}
+                    onFocus={(e) => {
+                      e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.6)';
+                      e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+                    }}
+                    onBlur={(e) => {
+                      e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                      e.currentTarget.style.boxShadow = 'none';
+                    }}
+                  />
+                </div>
+
+                {/* Row 9: Payment Terms (full width) */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-400 mb-2">Payment Terms</label>
+                  <input
+                    type="text"
+                    value={formData.paymentTerms}
+                    onChange={(e) => setFormData({ ...formData, paymentTerms: e.target.value })}
+                    placeholder="e.g. Net 30, T/T 100% before shipment"
+                    style={{
+                      width: '100%',
+                      padding: '10px 14px',
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                      borderRadius: '10px',
+                      color: 'white',
+                      outline: 'none',
+                      transition: 'all 150ms ease',
+                    }}
+                    onFocus={(e) => {
+                      e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.6)';
+                      e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+                    }}
+                    onBlur={(e) => {
+                      e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                      e.currentTarget.style.boxShadow = 'none';
+                    }}
+                  />
+                </div>
+
+                {/* Row 9: Bank Name | SWIFT Code | Account Number (3 columns) */}
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">Bank Name</label>
+                    <input
+                      type="text"
+                      value={formData.bankName}
+                      onChange={(e) => setFormData({ ...formData, bankName: e.target.value })}
+                      style={{
+                        width: '100%',
+                        padding: '10px 14px',
+                        background: 'rgba(255, 255, 255, 0.05)',
+                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        borderRadius: '10px',
+                        color: 'white',
+                        outline: 'none',
+                        transition: 'all 150ms ease',
+                      }}
+                      onFocus={(e) => {
+                        e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.6)';
+                        e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+                      }}
+                      onBlur={(e) => {
+                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                        e.currentTarget.style.boxShadow = 'none';
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">SWIFT Code</label>
+                    <input
+                      type="text"
+                      value={formData.swiftCode}
+                      onChange={(e) => setFormData({ ...formData, swiftCode: e.target.value })}
+                      style={{
+                        width: '100%',
+                        padding: '10px 14px',
+                        background: 'rgba(255, 255, 255, 0.05)',
+                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        borderRadius: '10px',
+                        color: 'white',
+                        outline: 'none',
+                        transition: 'all 150ms ease',
+                      }}
+                      onFocus={(e) => {
+                        e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.6)';
+                        e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+                      }}
+                      onBlur={(e) => {
+                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                        e.currentTarget.style.boxShadow = 'none';
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">Account Number</label>
+                    <input
+                      type="text"
+                      value={formData.accountNumber}
+                      onChange={(e) => setFormData({ ...formData, accountNumber: e.target.value })}
+                      style={{
+                        width: '100%',
+                        padding: '10px 14px',
+                        background: 'rgba(255, 255, 255, 0.05)',
+                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        borderRadius: '10px',
+                        color: 'white',
+                        outline: 'none',
+                        transition: 'all 150ms ease',
+                      }}
+                      onFocus={(e) => {
+                        e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.6)';
+                        e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+                      }}
+                      onBlur={(e) => {
+                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                        e.currentTarget.style.boxShadow = 'none';
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {/* Row 10: Notes */}
                 <div>
                   <label className="block text-sm font-medium text-slate-400 mb-2">Notes / Description</label>
                   <textarea
@@ -688,16 +1207,16 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                   {!isUploading ? (
                     <button
                       onClick={handleUpload}
-                      disabled={!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount}
+                      disabled={!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount || !formData.mpoNumber}
                       style={{
                         padding: '10px 24px',
                         background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
                         border: 'none',
                         borderRadius: '10px',
                         color: 'white',
-                        cursor: (!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount) ? 'not-allowed' : 'pointer',
-                        opacity: (!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount) ? 0.4 : 1,
-                        boxShadow: (!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount) ? 'none' : '0 0 20px rgba(99, 102, 241, 0.45)',
+                        cursor: (!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount || !formData.mpoNumber) ? 'not-allowed' : 'pointer',
+                        opacity: (!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount || !formData.mpoNumber) ? 0.4 : 1,
+                        boxShadow: (!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount || !formData.mpoNumber) ? 'none' : '0 0 20px rgba(99, 102, 241, 0.45)',
                         transition: 'all 150ms ease',
                       }}
                     >
@@ -731,10 +1250,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
               ) : (
                 /* Success State */
                 <div className="flex items-center gap-4">
-                  <motion.div
-                    initial={{ scale: 0 }}
-                    animate={{ scale: 1 }}
-                    transition={{ type: 'spring', stiffness: 200, damping: 15 }}
+                  <div
                     style={{
                       width: '48px',
                       height: '48px',
@@ -746,7 +1262,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                     }}
                   >
                     <CheckCircle className="h-6 w-6 text-green-400" />
-                  </motion.div>
+                  </div>
                   <div>
                     <p className="text-white font-medium">Invoice uploaded successfully!</p>
                     <p className="text-sm text-slate-400">It will appear in your dashboard shortly.</p>
@@ -784,10 +1300,9 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                 </div>
               )}
             </div>
-          </motion.div>
-        </>,
-        document.body
+          </div>
+        </>
       )}
-    </AnimatePresence>
+    </>
   );
 }

@@ -1,6 +1,7 @@
 import prisma from '../config/database';
-import { InvoiceStatus, InvoiceType, InvoiceCategory } from '@ap-invoice/shared';
+import { InvoiceStatus, InvoiceType, InvoiceCategory, BrandTier } from '@ap-invoice/shared';
 import { AppError } from '../middleware/errorHandler';
+import { isTop10Brand, TOP_10_BRANDS } from '@ap-invoice/shared';
 import crypto from 'crypto';
 
 export const createInvoice = async (invoiceData: any, userId: string) => {
@@ -40,6 +41,16 @@ export const createInvoice = async (invoiceData: any, userId: string) => {
     source,
   } = invoiceData;
 
+  // Determine brand_tier from brand or brand_code
+  let brand_tier: BrandTier | undefined;
+  if (brand_code && TOP_10_BRANDS[brand_code]) {
+    brand_tier = BrandTier.TOP_10;
+  } else if (brand && isTop10Brand(brand)) {
+    brand_tier = BrandTier.TOP_10;
+  } else {
+    brand_tier = BrandTier.OTHER;
+  }
+
   const invoice = await prisma.invoice.create({
     data: {
       invoice_number,
@@ -63,6 +74,7 @@ export const createInvoice = async (invoiceData: any, userId: string) => {
       order_type,
       brand,
       brand_code,
+      brand_tier,
       season,
       mpo_number,
       customer_po_number,
@@ -169,7 +181,7 @@ export const getInvoiceById = async (id: string) => {
 export const updateInvoiceStatus = async (id: string, status: InvoiceStatus, userId: string) => {
   const invoice = await prisma.invoice.update({
     where: { id },
-    data: { status },
+    data: { status: status as any },
     include: {
       vendor: true,
       signatures: true,

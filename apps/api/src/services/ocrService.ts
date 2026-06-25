@@ -467,7 +467,12 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
     invoice_received_date: new Date(),
     vendor_name: extracted.vendor_name || '',
     total_amount: extracted.amount || 0,
+    subtotal: undefined,
     currency: extracted.currency || 'USD',
+    invoice_currency_original: extracted.currency || 'USD',
+    exchange_rate_to_usd: undefined,
+    date_range_start: undefined,
+    date_range_end: undefined,
     payment_terms: extracted.payment_terms || PaymentTerms.NET_30,
     incoterm: undefined,
     bank_charges: 0,
@@ -492,7 +497,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
       swift_code: extracted.bank_swift,
       account_usd: extracted.bank_account,
     },
-    signatures: [],
+    signatures: [] as SignatureInfo[],
     raw_data: extracted,
   };
 }

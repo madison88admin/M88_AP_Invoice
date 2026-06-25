@@ -270,12 +270,48 @@ export async function processPaymentBatch(
     throw new AppError('Batch is not in DRAFT status', 400);
   }
 
-  // Simulate batch processing (in real scenario, this would integrate with banking system)
-  // Update batch status to PENDING_CFO
-  await prisma.paymentBatch.update({
+  // Move batch to CFO approval queue
+  const updatedBatch = await prisma.paymentBatch.update({
     where: { id: batchId },
-    data: { status: PaymentBatchStatus.PENDING_CFO as any },
+    data: {
+      status: PaymentBatchStatus.PENDING_CFO as any,
+      processed_by: userId,
+      processed_at: new Date(),
+    },
   });
+
+  await prisma.auditLog.create({
+    data: {
+      action: 'PAYMENT_BATCH_PENDING_CFO',
+      performed_by: userId,
+      note: `Payment batch ${batch.batch_number} submitted for CFO approval. ${batch.payments.length} payments totaling ${batch.total_amount}`,
+    },
+  });
+
+  return updatedBatch;
+}
+
+/**
+ * CFO approves a payment batch and executes payment
+ */
+export async function approvePaymentBatchByCFO(
+  batchId: string,
+  userId: string
+) {
+  const batch = await prisma.paymentBatch.findUnique({
+    where: { id: batchId },
+    include: {
+      payments: true,
+    },
+  });
+
+  if (!batch) {
+    throw new AppError('Payment batch not found', 404);
+  }
+
+  if (batch.status !== PaymentBatchStatus.PENDING_CFO) {
+    throw new AppError('Batch is not pending CFO approval', 400);
+  }
 
   // Process each payment in the batch
   for (const payment of batch.payments) {
@@ -293,7 +329,6 @@ export async function processPaymentBatch(
       data: { status: InvoiceStatus.PAID },
     });
 
-    // Create audit log entry for each payment
     await prisma.auditLog.create({
       data: {
         invoice_id: payment.invoice_id,
@@ -304,7 +339,6 @@ export async function processPaymentBatch(
     });
   }
 
-  // Update batch status to PROCESSED
   const updatedBatch = await prisma.paymentBatch.update({
     where: { id: batchId },
     data: {
@@ -314,12 +348,11 @@ export async function processPaymentBatch(
     },
   });
 
-  // Create audit log entry for batch completion
   await prisma.auditLog.create({
     data: {
       action: 'PAYMENT_BATCH_PROCESSED',
       performed_by: userId,
-      note: `Payment batch ${batch.batch_number} processed successfully with ${batch.payments.length} payments`,
+      note: `Payment batch ${batch.batch_number} approved by CFO and processed with ${batch.payments.length} payments`,
     },
   });
 

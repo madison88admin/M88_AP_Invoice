@@ -1,12 +1,40 @@
 import { PrismaClient } from '@prisma/client';
 
-const prisma = new PrismaClient({
-  log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+const DB_ENABLED = process.env.DATABASE_URL && process.env.DATABASE_URL.length > 0;
+
+let realPrisma: PrismaClient | null = null;
+
+if (DB_ENABLED) {
+  realPrisma = new PrismaClient({
+    log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+  });
+  console.log('[Database] DB_ENABLED mode - Prisma initialized');
+} else {
+  console.log('[Database] DB_DISABLED mode - Prisma not initialized (vendor system offline)');
+}
+
+// Proxy that exposes a non-null PrismaClient type but throws if DB is disabled
+const prisma = new Proxy({} as PrismaClient, {
+  get(_target, prop) {
+    if (!realPrisma) {
+      throw new Error('Database not available');
+    }
+    return (realPrisma as any)[prop];
+  },
 });
 
 export default prisma;
 
+export const getPrisma = () => realPrisma;
+
+export const isDbEnabled = () => DB_ENABLED;
+
 export const connectDatabase = async () => {
+  if (!DB_ENABLED || !realPrisma) {
+    console.log('[Database] DB disabled - skipping connection');
+    return;
+  }
+
   try {
     await prisma.$connect();
     console.log('Database connected successfully');
@@ -21,5 +49,7 @@ export const connectDatabase = async () => {
 };
 
 export const disconnectDatabase = async () => {
-  await prisma.$disconnect();
+  if (realPrisma) {
+    await realPrisma.$disconnect();
+  }
 };

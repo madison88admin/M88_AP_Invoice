@@ -1,4 +1,4 @@
-import prisma from '../config/database';
+import prisma, { isDbEnabled } from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 
 export interface VendorMatchResult {
@@ -8,82 +8,110 @@ export interface VendorMatchResult {
   confidence: number;
 }
 
-export async function matchVendor(vendorName: string): Promise<VendorMatchResult> {
-  const normalizedInput = vendorName.toUpperCase().trim();
+/**
+ * Normalize vendor name for better matching
+ * Removes company suffixes, normalizes spacing, handles common variations
+ */
+function normalizeVendorName(name: string): string {
+  return name
+    .toUpperCase()
+    .replace(/CO\.?,?\s*LTD\.?/gi, '')
+    .replace(/LIMITED/gi, '')
+    .replace(/CORPORATION/gi, '')
+    .replace(/INC\.?/gi, '')
+    .replace(/LLC/gi, '')
+    .replace(/PTE\.?/gi, '')
+    .replace(/SDN\.?/gi, '')
+    .replace(/BHD\.?/gi, '')
+    .replace(/-/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
-  // Step 1: Exact match on Vendor.name
-  const exactMatch = await prisma.vendor.findFirst({
-    where: {
-      name: {
-        equals: vendorName,
-        mode: 'insensitive',
-      },
-    },
-  });
-
-  if (exactMatch) {
-    return {
-      vendor_id: exactMatch.id,
-      vendor_name: exactMatch.name,
-      match_type: 'exact',
-      confidence: 1.0,
-    };
+export async function matchVendor(vendorName: string): Promise<VendorMatchResult | null> {
+  // Early return if DB is disabled
+  if (!isDbEnabled()) {
+    console.log('[VendorMatch] DB disabled, skipping vendor lookup');
+    return null;
   }
 
-  // Step 2: Exact match on Vendor.name_aliases array
-  const allVendors = await prisma.vendor.findMany();
-  for (const vendor of allVendors) {
-    if (vendor.name_aliases.some(alias => 
-      alias.toUpperCase() === normalizedInput
-    )) {
-      return {
-        vendor_id: vendor.id,
-        vendor_name: vendor.name,
-        match_type: 'alias',
-        confidence: 0.95,
-      };
-    }
-  }
+  const normalizedInput = normalizeVendorName(vendorName);
 
-  // Step 3: Fuzzy match (Levenshtein distance ≤ 3, case-insensitive)
-  for (const vendor of allVendors) {
-    const distance = levenshteinDistance(normalizedInput, vendor.name.toUpperCase());
-    if (distance <= 3) {
-      const confidence = 1 - (distance / Math.max(normalizedInput.length, vendor.name.length));
-      return {
-        vendor_id: vendor.id,
-        vendor_name: vendor.name,
-        match_type: 'fuzzy',
-        confidence,
-      };
-    }
-  }
-
-  // Step 4: Partial match on key tokens
-  const inputTokens = normalizedInput.split(/\s+/).filter(t => t.length > 2);
-  for (const vendor of allVendors) {
-    const vendorTokens = vendor.name.toUpperCase().split(/\s+/).filter(t => t.length > 2);
+  try {
+    // Step 1: Exact match on Vendor.name (with normalization)
+    const allVendors = await prisma.vendor.findMany();
     
-    const commonTokens = inputTokens.filter(token => 
-      vendorTokens.some(vToken => vToken.includes(token) || token.includes(vToken))
-    );
-
-    if (commonTokens.length >= 2) {
-      const confidence = commonTokens.length / Math.max(inputTokens.length, vendorTokens.length);
-      return {
-        vendor_id: vendor.id,
-        vendor_name: vendor.name,
-        match_type: 'partial',
-        confidence,
-      };
+    for (const vendor of allVendors) {
+      const normalizedVendorName = normalizeVendorName(vendor.name);
+      if (normalizedVendorName === normalizedInput) {
+        return {
+          vendor_id: vendor.id,
+          vendor_name: vendor.name,
+          match_type: 'exact',
+          confidence: 1.0,
+        };
+      }
     }
-  }
 
-  // Step 5: No match found
-  throw new AppError(
-    `No matching vendor found for "${vendorName}". Please assign vendor manually.`,
-    404
-  );
+    // Step 2: Exact match on Vendor.name_aliases array
+    for (const vendor of allVendors) {
+      for (const alias of vendor.name_aliases) {
+        const normalizedAlias = normalizeVendorName(alias);
+        if (normalizedAlias === normalizedInput) {
+          return {
+            vendor_id: vendor.id,
+            vendor_name: vendor.name,
+            match_type: 'alias',
+            confidence: 0.95,
+          };
+        }
+      }
+    }
+
+    // Step 3: Fuzzy match (Levenshtein distance ≤ 3, case-insensitive)
+    for (const vendor of allVendors) {
+      const normalizedVendorName = normalizeVendorName(vendor.name);
+      const distance = levenshteinDistance(normalizedInput, normalizedVendorName);
+      if (distance <= 3) {
+        const confidence = 1 - (distance / Math.max(normalizedInput.length, normalizedVendorName.length));
+        return {
+          vendor_id: vendor.id,
+          vendor_name: vendor.name,
+          match_type: 'fuzzy',
+          confidence,
+        };
+      }
+    }
+
+    // Step 4: Partial match on key tokens
+    const inputTokens = normalizedInput.split(/\s+/).filter(t => t.length > 2);
+    for (const vendor of allVendors) {
+      const normalizedVendorName = normalizeVendorName(vendor.name);
+      const vendorTokens = normalizedVendorName.split(/\s+/).filter(t => t.length > 2);
+      
+      const commonTokens = inputTokens.filter(token => 
+        vendorTokens.some(vToken => vToken.includes(token) || token.includes(vToken))
+      );
+
+      if (commonTokens.length >= 2) {
+        const confidence = commonTokens.length / Math.max(inputTokens.length, vendorTokens.length);
+        return {
+          vendor_id: vendor.id,
+          vendor_name: vendor.name,
+          match_type: 'partial',
+          confidence,
+        };
+      }
+    }
+
+    // Step 5: No match found - return null instead of throwing error
+    console.warn(`[VendorMatch] No matching vendor found for "${vendorName}"`);
+    return null;
+  } catch (err) {
+    console.warn('[VendorMatch] DB not available, skipping vendor lookup:', err);
+    // Return null instead of throwing error - vendor matching is optional
+    return null;
+  }
 }
 
 function levenshteinDistance(str1: string, str2: string): number {
@@ -115,6 +143,12 @@ function levenshteinDistance(str1: string, str2: string): number {
 }
 
 export async function getVendorSuggestions(searchTerm: string, limit: number = 5) {
+  // Early return if DB is disabled
+  if (!isDbEnabled()) {
+    console.log('[VendorMatch] DB disabled, skipping vendor suggestions');
+    return [];
+  }
+
   const normalizedSearch = searchTerm.toUpperCase().trim();
   
   const vendors = await prisma.vendor.findMany({

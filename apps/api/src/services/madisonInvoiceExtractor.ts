@@ -16,6 +16,9 @@ export const AST_SINGLE_SOURCE_MODE = true;
 // ============================================================================
 // FIELD ALIAS DICTIONARY SYSTEM
 // ============================================================================
+// Shared date capture regex: matches DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY, DD-MMM-YYYY, DD-MMM-YY, DD MMM YYYY, DD MMM YY, YYYY-MM-DD, YYYY/MM/DD
+const DATE_CAPTURE_PATTERN = `(?:\\d{1,2}[\\/\\-.]\\s*\\d{1,2}[\\/\\-.]\\s*\\d{2,4}|\\d{1,2}[\\/\\-.]\\s*[A-Za-z]{3}\\s*[\\/\\-.]\\s*\\d{2,4}|\\d{1,2}\\s+[A-Za-z]{3}\\s*,?\\s*\\d{2,4}|\\d{4}[\\/\\-.]\\d{1,2}[\\/\\-.]\\d{1,2})`;
+
 const FIELD_ALIASES = {
   invoice_number: [
     'invoice no',
@@ -101,6 +104,9 @@ function normalizeInvoiceText(text: string): string {
   // Remove duplicate spaces (within lines)
   normalized = normalized.replace(/ {2,}/g, ' ');
 
+  // Normalize full-width colons (e.g., Chinese/Japanese ：) to half-width colons
+  normalized = normalized.replace(/：/g, ':');
+
   // Fix OCR fragmentation around colons
   normalized = normalized.replace(/: +/g, ': ');
 
@@ -129,9 +135,27 @@ function detectVendor(text: string): VendorDetection {
     { vendor: 'MAS', patterns: [/MAS\s*HOLDINGS/i, /MAS\s*BRANDS/i], confidence: 0.95 },
   ];
   
+  // Identify the buyer section (BILL TO / SHIP TO) so we don't match the buyer as the vendor.
+  const billToIndex = upperText.indexOf('BILL TO');
+  const shipToIndex = upperText.indexOf('SHIP TO');
+  const buyerSectionStart = Math.min(
+    billToIndex !== -1 ? billToIndex : Infinity,
+    shipToIndex !== -1 ? shipToIndex : Infinity
+  );
+  
   for (const { vendor, patterns, confidence } of vendorPatterns) {
     for (const pattern of patterns) {
-      if (pattern.test(text)) {
+      const match = text.match(pattern);
+      if (match) {
+        const matchIndex = match.index || 0;
+        
+        // Madison88 usually appears as the buyer (BILL TO / SHIP TO), not the supplier.
+        // Skip MADISON detection if it matches inside the buyer section.
+        if (vendor === 'MADISON' && buyerSectionStart !== Infinity && matchIndex > buyerSectionStart) {
+          console.log('[detectVendor] Skipping MADISON match in buyer section:', match[0]);
+          continue;
+        }
+        
         console.log('[detectVendor] Found vendor:', vendor, 'with confidence:', confidence);
         return { vendor, confidence };
       }
@@ -525,13 +549,28 @@ function parseDate(dateStr: string, preferUS: boolean = false): string | null {
               year = parseInt(groups[2]);
             }
           }
+
+          // For ambiguous MM/DD vs DD/MM dates (not YYYY-first), if the month is invalid, try the other interpretation.
+          if (groups[0].length !== 4 && !isNaN(parseInt(groups[1])) && (month < 1 || month > 12 || day < 1 || day > 31)) {
+            console.log('[parseDate] Ambiguous date', match[0], ': month/day out of range, trying alternate format');
+            if (pattern.preferUS) {
+              // Try DD/MM/YYYY
+              month = parseInt(groups[1]);
+              day = parseInt(groups[0]);
+            } else {
+              // Try MM/DD/YYYY
+              month = parseInt(groups[0]);
+              day = parseInt(groups[1]);
+            }
+          }
         } else {
           // Not enough groups, skip this pattern
           continue;
         }
       }
 
-      const date = new Date(year, month - 1, day);
+      // Use UTC to avoid timezone off-by-one-day issues (e.g., local UTC+8 shifts the date back)
+      const date = new Date(Date.UTC(year, month - 1, day));
       // FIX 101: Validate year is reasonable (between 2000 and 2100)
       if (!isNaN(date.getTime()) && year >= 2000 && year <= 2100) {
         return date.toISOString().split('T')[0];
@@ -540,6 +579,24 @@ function parseDate(dateStr: string, preferUS: boolean = false): string | null {
   }
 
   return null;
+}
+
+/**
+ * Compute due date from invoice date and payment terms
+ * Parses terms like "30 Days", "NET 30", "NET DUE IN 30 DAYS"
+ */
+function computeDueDateFromTerms(invoiceDate: string, paymentTerms: string): string | null {
+  const daysMatch = paymentTerms.match(/(\d+)\s*(?:DAYS?|D)/i);
+  if (!daysMatch) return null;
+
+  const days = parseInt(daysMatch[1], 10);
+  if (isNaN(days) || days <= 0) return null;
+
+  const date = new Date(invoiceDate + 'T00:00:00Z');
+  if (isNaN(date.getTime())) return null;
+
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().split('T')[0];
 }
 
 /**
@@ -608,10 +665,12 @@ function extractVendorName(text: string): string | null {
   const searchArea = text.substring(0, Math.min(3000, text.length));
 
   // Prefix-style companies (e.g., Indonesian "PT. PAXAR INDONESIA")
+  // Address indicators that signal the company name has ended and the address begins
+  const addressIndicators = ['JL', 'JALAN', 'STREET', 'ST', 'ROAD', 'RD', 'AVENUE', 'AVE', 'BLVD', 'BOULEVARD', 'NO', 'NUMBER', 'SUITE', 'ROOM', 'FLOOR', 'BUILDING', 'TOWER', 'DISTRICT', 'CITY', 'PROVINCE', 'COUNTRY', 'TEL', 'FAX', 'PHONE', 'EMAIL', 'WEBSITE', 'BANK', 'SWIFT', 'ACCOUNT', 'A/C'];
   const prefixPattern = /\b(PT\.?\s+[A-Z][A-Za-z\s&]+)\b/gi;
   let prefixMatch;
   while ((prefixMatch = prefixPattern.exec(searchArea)) !== null) {
-    const candidate = prefixMatch[1].trim();
+    let candidate = prefixMatch[1].trim();
     const upperCandidate = candidate.toUpperCase();
     if (nonVendorCompanies.has(upperCandidate) || upperCandidate.includes('MADISON') || upperCandidate.includes('BILL TO')) {
       continue;
@@ -620,6 +679,21 @@ function extractVendorName(text: string): string | null {
       console.log('[extractVendorName] Rejecting noisy prefix candidate:', candidate);
       continue;
     }
+    // Truncate at address indicators so we don't include "Jl. Gatot Subroto..." as part of the name
+    for (const indicator of addressIndicators) {
+      const idx = upperCandidate.indexOf(` ${indicator} `);
+      if (idx !== -1) {
+        candidate = candidate.substring(0, idx).trim();
+        break;
+      }
+      // Also handle indicator followed by period (e.g., "Jl.")
+      const idxDot = upperCandidate.indexOf(` ${indicator}.`);
+      if (idxDot !== -1) {
+        candidate = candidate.substring(0, idxDot).trim();
+        break;
+      }
+    }
+    if (!candidate) continue;
     console.log('[extractVendorName] Found vendor (supplier) prefix candidate:', candidate);
     candidates.push({ name: candidate, position: prefixMatch.index });
   }
@@ -680,13 +754,28 @@ function extractVendorName(text: string): string | null {
   const fallbackPrefixPattern = /\b(PT\.?\s+[A-Z][A-Za-z\s&]+)\b/gi;
   let fallbackPrefixMatch;
   while ((fallbackPrefixMatch = fallbackPrefixPattern.exec(fallbackSearchArea)) !== null) {
-    const candidate = fallbackPrefixMatch[1].trim();
+    let candidate = fallbackPrefixMatch[1].trim();
     if (candidate.toUpperCase().includes('MADISON') || candidate.toUpperCase().includes('BILL TO')) {
       continue;
     }
     if (genericVendorNoise.some(noise => candidate.toUpperCase().includes(noise))) {
       continue;
     }
+    // Truncate at address indicators so we don't include "Jl. Gatot Subroto..." as part of the name
+    const upperCandidate = candidate.toUpperCase();
+    for (const indicator of addressIndicators) {
+      const idx = upperCandidate.indexOf(` ${indicator} `);
+      if (idx !== -1) {
+        candidate = candidate.substring(0, idx).trim();
+        break;
+      }
+      const idxDot = upperCandidate.indexOf(` ${indicator}.`);
+      if (idxDot !== -1) {
+        candidate = candidate.substring(0, idxDot).trim();
+        break;
+      }
+    }
+    if (!candidate) continue;
     console.log('[extractVendorName] Fallback prefix candidate:', candidate);
     fallbackCandidates.push({ name: candidate, position: fallbackPrefixMatch.index });
   }
@@ -775,7 +864,8 @@ function extractInvoiceDate(text: string, preferUS: boolean = false): string | n
   const labels = ['Invoice Date', 'INVOICE DATE:', 'Date:', 'Date', 'Issued Date', 'Billing Date'];
   
   for (const label of labels) {
-    const regex = new RegExp(`${label.replace('.', '\\.')}[:\\s]*([\\d\\w\\-\\/,.]+)`, 'i');
+    // Restrict capture to actual date strings to avoid trailing text like "INVOICE NO: ..."
+    const regex = new RegExp(`${label.replace('.', '\\.')}[:\\s]*(${DATE_CAPTURE_PATTERN})`, 'i');
     const match = text.match(regex);
     if (match) {
       console.log('[extractInvoiceDate] Found label', label, 'with value:', match[1]);
@@ -825,8 +915,8 @@ function extractDueDate(text: string, preferUS: boolean = false): string | null 
   const labels = ['Due Date', 'INVOICE DUE', 'Invoice due date', 'Payment Due Date', 'Due by', 'Payment Due'];
 
   for (const label of labels) {
-    // Updated regex to capture full date including spaces (e.g., "06 Jun 2026")
-    const regex = new RegExp(`${label.replace('.', '\\.')}[:\\s]*([\\d\\w\\-\\/.\\s]+)`, 'i');
+    // Restrict capture to actual date strings to avoid trailing text like "CREDIT TERM 30 Days"
+    const regex = new RegExp(`${label.replace('.', '\\.')}[:\\s]*(${DATE_CAPTURE_PATTERN})`, 'i');
     const match = text.match(regex);
     if (match) {
       const dateValue = match[1].trim();
@@ -834,6 +924,24 @@ function extractDueDate(text: string, preferUS: boolean = false): string | null 
       const parsed = parseDate(dateValue, preferUS);
       if (parsed) {
         console.log('[extractDueDate] Parsed date:', parsed);
+        return parsed;
+      }
+    }
+  }
+
+  // Fallback: settlement deadline patterns (e.g., "SETTLE ... ON/ BEFORE 01/19/2026")
+  const settlementPatterns = [
+    new RegExp(`(?:SETTLE|PAYMENT|DUE).{0,30}(?:BEFORE|ON\\s*/\\s*BEFORE)[\\s:]*(${DATE_CAPTURE_PATTERN})`, 'i'),
+    new RegExp(`(?:PAYABLE|DUE)\\s*(?:BY|ON\\s*/\\s*BEFORE)[\\s:]*(${DATE_CAPTURE_PATTERN})`, 'i')
+  ];
+  for (const pattern of settlementPatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      const dateValue = match[1].trim();
+      console.log('[extractDueDate] Found settlement deadline:', dateValue);
+      const parsed = parseDate(dateValue, preferUS);
+      if (parsed) {
+        console.log('[extractDueDate] Parsed settlement date:', parsed);
         return parsed;
       }
     }
@@ -1398,6 +1506,24 @@ function extractAmount(text: string): {
  * Uses heuristics since OCR confidence scores are not available from pdf-parse/pdf2json
  */
 function detectHandwritten(text: string): boolean {
+  // Fast path: if document contains standard printed invoice markers, it is not handwritten.
+  const printedInvoiceMarkers = [
+    /INVOICE\s*(NO|NUMBER|DATE|#)/i,
+    /BILL\s*TO/i,
+    /SHIP\s*TO/i,
+    /PAGE\s*:/i,
+    /TEL\s*:/i,
+    /FAX\s*:/i,
+    /SWIFT\s*(CODE|#)/i,
+    /A\/C\s*#/i,
+    /BANK\s*(CODE|ACCOUNT)/i,
+  ];
+  const printedMarkerCount = printedInvoiceMarkers.reduce((count, pattern) => count + (pattern.test(text) ? 1 : 0), 0);
+  if (printedMarkerCount >= 3) {
+    console.log('[detectHandwritten] Document contains printed invoice markers, not handwritten:', printedMarkerCount);
+    return false;
+  }
+
   // Heuristic 1: Check for inconsistent character spacing patterns
   // Handwritten text often has irregular spacing
   const spacingVariance = text.split('\n').reduce((acc, line) => {
@@ -1472,7 +1598,7 @@ function extractBankCharge(text: string): number | null {
  * Extract and normalize payment terms
  */
 function extractPaymentTerms(text: string): string | null {
-  const labels = ['Payment Terms', 'TERMS:', 'Terms of payment', 'Credit Term', 'CREDIT TERM'];
+  const labels = ['Payment Terms', 'NET TERMS', 'TERMS:', 'Terms of payment', 'Credit Term', 'CREDIT TERM'];
   
   for (const label of labels) {
     // Updated regex to stop at newline or after reasonable length
@@ -1540,13 +1666,25 @@ function extractPaymentTerms(text: string): string | null {
 /**
  * Extract bank details with confidence scoring
  */
-function extractBankDetails(text: string): { bank_name: string | null; swift_code: string | null; account_number: string | null; confidence: number } {
+function extractBankDetails(text: string): { bank_name: string | null; swift_code: string | null; account_number: string | null; account_usd: string | null; account_hkd: string | null; account_eur: string | null; account_vnd: string | null; account_idr: string | null; account_php: string | null; account_jpy: string | null; account_gbp: string | null; account_cny: string | null; account_aud: string | null; account_cad: string | null; account_sgd: string | null; confidence: number } {
   console.log('[extractBankDetails] Starting bank details extraction');
   
   const normalized = normalizeInvoiceText(text);
   let bank_name: string | null = null;
   let swift_code: string | null = null;
   let account_number: string | null = null;
+  let account_usd: string | null = null;
+  let account_hkd: string | null = null;
+  let account_eur: string | null = null;
+  let account_vnd: string | null = null;
+  let account_idr: string | null = null;
+  let account_php: string | null = null;
+  let account_jpy: string | null = null;
+  let account_gbp: string | null = null;
+  let account_cny: string | null = null;
+  let account_aud: string | null = null;
+  let account_cad: string | null = null;
+  let account_sgd: string | null = null;
   let confidence = 0.0;
 
   // Detect bank name
@@ -1616,47 +1754,135 @@ function extractBankDetails(text: string): { bank_name: string | null; swift_cod
   }
   
   // Extract account number with more flexible patterns
-  const accountMatch = normalized.match(/A\/C\s*(?:NO|NUMBER)?[:\s：]*([\d\s\-]+)/i) ||
-                       normalized.match(/Account\s*#[:\s：]*([\d\s\-]+)/i) ||
-                       normalized.match(/A\/C#\s*([\d\s\-]+)/i) ||
-                       normalized.match(/A\/C\s*NO\.?\s*[:\s：]*([\d\s\(\)]+)/i) ||
-                       normalized.match(/A\/C\s*[:\s：]*([\d\s\(\)USD]+)/i) ||
-                       normalized.match(/A\/C\s*NUMBER\s*[:\s：]*([\d\s\-]+)/i);
+  const accountPatterns = [
+    /A\/C\s*(?:NO|NUMBER)?[:\s：]*([\d\s\-]+)/i,
+    /Account\s*#[:\s：]*([\d\s\-]+)/i,
+    /A\/C#\s*([\d\s\-]+)/i,
+    /A\/C\s*NO\.?\s*[:\s：]*([\d\s\(\)]+)/i,
+    /A\/C\s*[:\s：]*([\d\s\(\)USD]+)/i,
+    /A\/C\s*NUMBER\s*[:\s：]*([\d\s\-]+)/i,
+    /Account\s*No\.?\s*[:\s：]*([\d\s\-]+)/i,
+    /Account\s*Number\s*[:\s：]*([\d\s\-]+)/i,
+    /Bank\s*Account\s*(?:No|Number)?\.?\s*[:\s：]*([\d\s\-]+)/i,
+    /Bank\s*A\/C\s*(?:No|Number)?\.?\s*[:\s：]*([\d\s\-]+)/i,
+    /Acct\.?\s*(?:No|Number)?\.?\s*[:\s：]*([\d\s\-]+)/i,
+    /A\/C\s*No\.?\s*[:\s：]*([\d\s\-]+)/i,
+    /A\/C\s*No\s*[:\s：]*([\d\s\-]+)/i,
+    /Account\s*No\s*[:\s：]*([\d\s\-]+)/i,
+    /Account\s*Number\.?\s*[:\s：]*([\d\s\-]+)/i,
+    /Bank\s*Acct\.?\s*(?:No|Number)?\.?\s*[:\s：]*([\d\s\-]+)/i,
+  ];
 
-  console.log('[extractBankDetails] Account number patterns tested');
-  console.log('[extractBankDetails] Pattern 1 (A/C NO):', /A\/C\s*(?:NO|NUMBER)?[:\s]*([\d\s\-]+)/i.test(normalized));
-  console.log('[extractBankDetails] Pattern 2 (Account #):', /Account\s*#[:\s]*([\d\s\-]+)/i.test(normalized));
-  console.log('[extractBankDetails] Pattern 3 (A/C#):', /A\/C#\s*([\d\s\-]+)/i.test(normalized));
-  console.log('[extractBankDetails] Pattern 4 (A/C NO.):', /A\/C\s*NO\.?\s*([\d\s\(\)]+)/i.test(normalized));
-  console.log('[extractBankDetails] Pattern 5 (A/C: with USD):', /A\/C\s*:\s*([\d\s\(\)USD]+)/i.test(normalized));
-  
-  // Debug: Show all lines containing "A/C" or "Account"
-  const linesWithAC = normalized.split('\n').filter(line => 
-    line.includes('A/C') || line.includes('Account') || line.includes('ACCOUNT')
-  );
-  console.log('[extractBankDetails] Lines with A/C or Account:', linesWithAC);
+  let accountMatch: RegExpMatchArray | null = null;
+  for (let i = 0; i < accountPatterns.length; i++) {
+    accountMatch = normalized.match(accountPatterns[i]);
+    if (accountMatch) {
+      console.log(`[extractBankDetails] Pattern ${i + 1} matched:`, accountMatch[0]);
+      break;
+    }
+  }
 
   if (accountMatch) {
-    // Remove spaces, parentheses, and USD suffix
+    // Remove spaces, parentheses, and currency suffix
     account_number = accountMatch[1]
       .replace(/\s+/g, '') // Remove spaces
       .replace(/[\(\)]/g, '') // Remove parentheses
-      .replace(/USD/gi, ''); // Remove USD suffix
+      .replace(/USD|HKD|EUR|VND|IDR|PHP|JPY|GBP|CNY|AUD|CAD|SGD/gi, ''); // Remove currency suffixes
     confidence = Math.max(confidence, 0.85);
     console.log('[extractBankDetails] Found account number:', account_number);
   } else {
     console.log('[extractBankDetails] No account number match found');
   }
 
-  console.log('[extractBankDetails] Final result:', { bank_name, swift_code, account_number, confidence });
-  return { bank_name, swift_code, account_number, confidence };
+  // Multi-currency account extraction
+  // Find the bank account section first, then extract all number (currency) pairs within it
+  const bankAccountSectionRegex = /(?:A\/C|Account|Acct|Bank\s*Account|Bank\s*A\/C)\s*(?:No|No\.|#|Number)?\s*[:\s：]*([\s\S]{0,300})/i;
+  const sectionMatch = normalized.match(bankAccountSectionRegex);
+  const currencies = ['USD', 'HKD', 'EUR', 'VND', 'IDR', 'PHP', 'JPY', 'GBP', 'CNY', 'AUD', 'CAD', 'SGD'];
+  const currencyMap: Record<string, keyof typeof accountLookup> = {
+    'USD': 'account_usd', 'HKD': 'account_hkd', 'EUR': 'account_eur', 'VND': 'account_vnd',
+    'IDR': 'account_idr', 'PHP': 'account_php', 'JPY': 'account_jpy', 'GBP': 'account_gbp',
+    'CNY': 'account_cny', 'AUD': 'account_aud', 'CAD': 'account_cad', 'SGD': 'account_sgd',
+  };
+  const accountLookup: Record<string, string | null> = {
+    account_usd, account_hkd, account_eur, account_vnd, account_idr, account_php,
+    account_jpy, account_gbp, account_cny, account_aud, account_cad, account_sgd,
+  };
+
+  if (sectionMatch) {
+    const section = sectionMatch[1];
+    // Extract all number (currency) pairs like: 741-291777-201 (USD), 741-291777-001 (HKD)
+    const currencyAlternation = currencies.join('|');
+    const pairPattern = new RegExp(`([\\d\\-]{5,30})\\s*\\((\\b(?:${currencyAlternation})\\b)\\)`, 'gi');
+    let pairMatch;
+    while ((pairMatch = pairPattern.exec(section)) !== null) {
+      const rawAccount = pairMatch[1].replace(/\s+/g, '');
+      const currency = pairMatch[2].toUpperCase();
+      const key = currencyMap[currency];
+      if (key) {
+        accountLookup[key] = rawAccount;
+      }
+      if (currency === 'USD') {
+        account_number = rawAccount;
+        account_usd = rawAccount;
+      }
+    }
+
+    // Fallback: currency before number, e.g., USD: 741-291777-201
+    if (!account_usd) {
+      const fallbackPattern = new RegExp(`\\b(${currencyAlternation})\\b\\s*[:\s]\\s*([\\d\\-]{5,30})`, 'gi');
+      let fbMatch;
+      while ((fbMatch = fallbackPattern.exec(section)) !== null) {
+        const currency = fbMatch[1].toUpperCase();
+        const rawAccount = fbMatch[2].replace(/\s+/g, '');
+        const key = currencyMap[currency];
+        if (key) {
+          accountLookup[key] = rawAccount;
+        }
+        if (currency === 'USD') {
+          account_number = rawAccount;
+          account_usd = rawAccount;
+        }
+      }
+    }
+  }
+
+  // If USD was found, always use it as primary account_number
+  if (accountLookup.account_usd) {
+    account_number = accountLookup.account_usd;
+    account_usd = accountLookup.account_usd;
+  }
+
+  // Debug: Show all lines containing "A/C" or "Account"
+  const linesWithAC = normalized.split('\n').filter(line => 
+    line.includes('A/C') || line.includes('Account') || line.includes('ACCOUNT') || line.includes('Acct')
+  );
+  console.log('[extractBankDetails] Lines with A/C/Account:', linesWithAC);
+
+  console.log('[extractBankDetails] Final result:', { bank_name, swift_code, account_number, account_usd, account_hkd, account_eur, confidence });
+  return {
+    bank_name, swift_code, account_number,
+    account_usd: accountLookup.account_usd,
+    account_hkd: accountLookup.account_hkd,
+    account_eur: accountLookup.account_eur,
+    account_vnd: accountLookup.account_vnd,
+    account_idr: accountLookup.account_idr,
+    account_php: accountLookup.account_php,
+    account_jpy: accountLookup.account_jpy,
+    account_gbp: accountLookup.account_gbp,
+    account_cny: accountLookup.account_cny,
+    account_aud: accountLookup.account_aud,
+    account_cad: accountLookup.account_cad,
+    account_sgd: accountLookup.account_sgd,
+    confidence,
+  };
 }
 
 /**
  * Generic extraction layer for unknown vendors
  * Uses alias dictionary and fallback patterns when vendor-specific rules fail
  */
-function extractUsingGenericLayer(text: string): {
+function extractUsingGenericLayer(text: string, preferUS: boolean = false): {
   invoice_number: { value: string | null; confidence: number };
   invoice_date: { value: string | null; confidence: number };
   due_date: { value: string | null; confidence: number };
@@ -1694,13 +1920,12 @@ function extractUsingGenericLayer(text: string): {
   }
 
   // Extract invoice date using aliases
-  // Restrict capture to actual date strings (slash or DD MMM YYYY) to avoid trailing text like "Bill To ..."
-  const dateCapturePattern = `(?:\\d{1,2}[\\/\\-.]\\s*\\d{1,2}[\\/\\-.]\\s*\\d{2,4}|\\d{1,2}\\s+[A-Za-z]{3}\\s*,?\\s*\\d{4})`;
+  // Restrict capture to actual date strings to avoid trailing text like "Bill To ..."
   for (const alias of FIELD_ALIASES.invoice_date) {
-    const regex = new RegExp(`${alias.replace(/\s+/g, '\\s+')}[:\\s]*(${dateCapturePattern})`, 'i');
+    const regex = new RegExp(`${alias.replace(/\s+/g, '\\s+')}[:\\s]*(${DATE_CAPTURE_PATTERN})`, 'i');
     const match = normalized.match(regex);
     if (match) {
-      const parsed = parseDate(match[1].trim());
+      const parsed = parseDate(match[1].trim(), preferUS);
       if (parsed) {
         result.invoice_date.value = parsed;
         result.invoice_date.confidence = 0.70;
@@ -1712,15 +1937,37 @@ function extractUsingGenericLayer(text: string): {
 
   // Extract due date using aliases
   for (const alias of FIELD_ALIASES.due_date) {
-    const regex = new RegExp(`${alias.replace(/\s+/g, '\\s+')}[:\\s]*(${dateCapturePattern})`, 'i');
+    const regex = new RegExp(`${alias.replace(/\s+/g, '\\s+')}[:\\s]*(${DATE_CAPTURE_PATTERN})`, 'i');
     const match = normalized.match(regex);
     if (match) {
-      const parsed = parseDate(match[1].trim());
+      const parsed = parseDate(match[1].trim(), preferUS);
       if (parsed) {
         result.due_date.value = parsed;
         result.due_date.confidence = 0.70;
         console.log('[GenericLayer] Found due date:', parsed);
         break;
+      }
+    }
+  }
+
+  // Fallback: settlement deadline patterns (e.g., "SETTLE ... ON/ BEFORE 01/19/2026")
+  if (!result.due_date.value) {
+    const settlementPatterns = [
+      new RegExp(`(?:SETTLE|PAYMENT|DUE).{0,30}(?:BEFORE|ON\\s*/\\s*BEFORE)[\\s:]*(${DATE_CAPTURE_PATTERN})`, 'i'),
+      new RegExp(`(?:PAYABLE|DUE)\\s*(?:BY|ON\\s*/\\s*BEFORE)[\\s:]*(${DATE_CAPTURE_PATTERN})`, 'i')
+    ];
+    for (const pattern of settlementPatterns) {
+      const match = normalized.match(pattern);
+      if (match) {
+        const dateValue = match[1].trim();
+        console.log('[GenericLayer] Found settlement deadline:', dateValue);
+        const parsed = parseDate(dateValue, preferUS);
+        if (parsed) {
+          result.due_date.value = parsed;
+          result.due_date.confidence = 0.65;
+          console.log('[GenericLayer] Parsed settlement date:', parsed);
+          break;
+        }
       }
     }
   }
@@ -1767,7 +2014,24 @@ function extractUsingGenericLayer(text: string): {
     const regex = new RegExp(`${alias.replace(/\s+/g, '\\s+')}[:\\s]*([A-Za-z0-9\\s]{0,50})`, 'i');
     const match = normalized.match(regex);
     if (match) {
-      const value = match[1].trim().toUpperCase();
+      let value = match[1].trim().toUpperCase();
+
+      // Stop after number + day(s) token (e.g., "30 DAYS NET DUE DATE 16" -> "30 DAYS")
+      const dayMatch = value.match(/(\d+\s*DAYS?)/i);
+      if (dayMatch && dayMatch.index !== undefined) {
+        const dayIndex = dayMatch.index + dayMatch[0].length;
+        value = value.substring(0, dayIndex).trim();
+      }
+
+      // Stop at common following labels to avoid capturing "Due Date", "Invoice Date", etc.
+      const stopLabels = ['DUE DATE', 'INVOICE DATE', 'EFFECTIVE DATE', 'STATEMENT DATE'];
+      for (const stopLabel of stopLabels) {
+        const stopIndex = value.indexOf(stopLabel);
+        if (stopIndex !== -1) {
+          value = value.substring(0, stopIndex).trim();
+        }
+      }
+
       if (/\d/.test(value) || /NET|TT|PAYMENT|CREDIT|DAYS/i.test(value)) {
         result.payment_terms.value = value;
         result.payment_terms.confidence = 0.70;
@@ -2065,9 +2329,15 @@ function extractLineItems(text: string): Array<{ quantity: number; unitPrice: nu
   if (lineItems.length === 0) {
     console.log('[extractLineItems] No items found via SKU method, trying fallback pattern');
     
-    const hasNilornFormat = /Shipped\s+Qty|Nilorn|Item\s+Description/i.test(normalized);
+    const hasNilornFormat = /Shipped\s+Qty|Nilorn/i.test(normalized);
     if (hasNilornFormat) {
       console.log('[extractLineItems] Detected Nilorn-style shipped-qty table');
+    }
+    
+    // Avery-style: table has both QTY ORDERED and QTY SHIPPED columns (e.g., "750 750 0.00848")
+    const hasAveryOrderedShippedTable = /QTY\s+ORDERED.*QTY\s+SHIPPED/i.test(normalized);
+    if (hasAveryOrderedShippedTable) {
+      console.log('[extractLineItems] Detected Avery-style ordered/shipped table');
     }
     
     for (let i = 0; i < lines.length; i++) {
@@ -2128,6 +2398,43 @@ function extractLineItems(text: string): Array<{ quantity: number; unitPrice: nu
               console.log('[extractLineItems] Found line item via Nilorn pattern:', { quantity, unitPrice, extendedPrice, variance });
               lineItems.push({ quantity, unitPrice, extendedPrice, rawLine: line });
             }
+          }
+        }
+      }
+      
+      // Avery-style ordered/shipped: qty_ordered + qty_shipped + unit_price (e.g., "750 750 0.00848")
+      if (hasAveryOrderedShippedTable) {
+        const orderedShippedPattern = /(?:^|\s)(\d{2,6})\s+(\d{2,6})\s+([\d.]+)(?=\s|$)/g;
+        while ((fallbackMatch = orderedShippedPattern.exec(line)) !== null) {
+          const qtyOrdered = parseInt(fallbackMatch[1]);
+          const quantity = parseInt(fallbackMatch[2]);
+          const unitPrice = parseFloat(fallbackMatch[3]);
+          
+          // Only accept if ordered and shipped are equal or shipped <= ordered (avoid false totals)
+          if (quantity > 0 && quantity < 100000 && qtyOrdered > 0 && unitPrice > 0 && unitPrice < 10) {
+            const extendedPrice = quantity * unitPrice;
+            console.log('[extractLineItems] Found line item via ordered/shipped pattern:', { quantity, qtyOrdered, unitPrice, extendedPrice });
+            lineItems.push({ quantity, unitPrice, extendedPrice, rawLine: line });
+          }
+        }
+      }
+      
+      // Checkpoint-style: amount after UoM + qty + line_number + weight (e.g., "Pcs 1,493.82 ... 12900 1 6.210")
+      // Detect by line containing item context markers (Pcs, SO, VendorNo)
+      const hasCheckpointContext = /Pcs|SO\d|VendorNo|Item\s*Description|Grounded|TNF/i.test(line);
+      if (hasCheckpointContext) {
+        const checkpointPattern = /Pcs\s+([\d,]+\.\d{2})\s+.*?(\d{2,6})\s+(\d{1,2})\s+([\d,]+\.\d{2,3})/g;
+        while ((fallbackMatch = checkpointPattern.exec(line)) !== null) {
+          const extendedPrice = parseFloat(fallbackMatch[1].replace(/,/g, ''));
+          const quantity = parseInt(fallbackMatch[2]);
+          const lineIndex = parseInt(fallbackMatch[3]);
+          const weight = parseFloat(fallbackMatch[4].replace(/,/g, ''));
+
+          // Validate: quantity reasonable, line index small (1-20), extendedPrice small (< 100000)
+          if (quantity > 0 && quantity < 100000 && lineIndex >= 1 && lineIndex <= 20 && extendedPrice > 0 && extendedPrice < 100000) {
+            const unitPrice = quantity > 0 ? extendedPrice / quantity : 0;
+            console.log('[extractLineItems] Found line item via Checkpoint pattern:', { quantity, lineIndex, extendedPrice, unitPrice, weight });
+            lineItems.push({ quantity, unitPrice, extendedPrice, rawLine: line });
           }
         }
       }
@@ -2521,6 +2828,41 @@ function parsePOReference(text: string): {
   po_number: string | null;
   mpo_number: string | null;
 } {
+  // Pattern 0: Full PO reference with brand, season, description and MPO
+  // e.g., "PO#TNF F26 ADVANCE ORDER_MPO14751_DEC+JAN+FEB BUY_INDONESIA" or "TNF F26 JAN BUY_MPO15371_MDDC_A7WJO_INDONESIA"
+  const fullPoRefPattern = /(?:PO#?\s*)?([A-Z]{2,4})\s+(F\d{2}|S\d{2}|FW\d{2}|FH\d{2}|SS\d{2})\s+(.+?)[\s_]*MPO(\d+(?:\s+\d+)*)/i;
+  const fullPoRefMatch = text.match(fullPoRefPattern);
+
+  if (fullPoRefMatch) {
+    const brand_code = fullPoRefMatch[1].toUpperCase();
+    const brand = BRAND_CODE_MAP[brand_code] || brand_code;
+    const season = fullPoRefMatch[2].toUpperCase();
+    const description = fullPoRefMatch[3].trim().replace(/\s+/g, ' ');
+    const mpoDigits = fullPoRefMatch[4].replace(/\s+/g, '');
+    const mpo_number = mpoDigits ? 'MPO' + mpoDigits.padStart(6, '0') : null;
+    const po_number = description + (mpoDigits ? ` MPO${mpoDigits.padStart(6, '0')}` : '');
+
+    let order_type: 'BULK' | 'SMS' | 'SAMPLE' | null = null;
+    const upperDesc = description.toUpperCase();
+    if (upperDesc.includes('BUY') || upperDesc.includes('ADVANCE ORDER') || upperDesc.includes('RBUY')) {
+      order_type = 'BULK';
+    } else if (upperDesc.includes('SAMPLE')) {
+      order_type = 'SAMPLE';
+    } else if (upperDesc.includes('SMS')) {
+      order_type = 'SMS';
+    }
+
+    return {
+      raw: fullPoRefMatch[0],
+      brand,
+      brand_code,
+      season,
+      order_type,
+      po_number,
+      mpo_number,
+    };
+  }
+
   // Pattern 1: Full pattern with brand - BRAND_SEASON_ORDERTYPE_PO#_MPO#_FACTORY
   const fullPattern = /[A-Z]{2,4}[_\-][A-Za-z0-9_\-]*MPO\d+/;
   // Pattern 2: Simplified pattern - just MPO with optional prefix (e.g., RBUY_MPO15439, MPO15439)
@@ -2631,6 +2973,14 @@ function parsePOReference(text: string): {
     }
   }
 
+  // Fallback: extract season from anywhere in the text if not found in reference
+  if (!season) {
+    const seasonMatch = text.match(/\b(F\d{2}|S\d{2}|FW\d{2}|FH\d{2}|SS\d{2})\b/i);
+    if (seasonMatch) {
+      season = seasonMatch[1].toUpperCase();
+    }
+  }
+
   return {
     raw,
     brand,
@@ -2648,20 +2998,21 @@ function parsePOReference(text: string): {
 function deriveCategory(text: string): 'TRIMS' | 'YARN' | 'SAMPLE' | 'SHIPPING' | 'LAB' | null {
   const lowerText = text.toLowerCase();
   
-  const trimsKeywords = ['label', 'tag', 'patch', 'sticker', 'badge', 'zipper', 'button', 'snap', 'buckle', 'hook', 'velcro', 'ribbon', 'elastic', 'trim', 'accessory'];
+  const trimsKeywords = ['label', 'tag', 'patch', 'sticker', 'badge', 'zipper', 'button', 'snap', 'buckle', 'hook', 'velcro', 'ribbon', 'elastic', 'trim', 'accessory', 'heat transfer', 'transfer', 'ht label', 'cold cut', 'cut single', 'woven', 'printed', 'satin', 'damask', 'taffeta', 'care label', 'size label'];
   const yarnKeywords = ['yarn', 'wool', 'fabric', 'textile', 'thread', 'cotton', 'polyester', 'nylon', 'spandex'];
-  const shippingKeywords = ['freight', 'courier', 'shipping', 'awb', 'delivery', 'transport', 'logistics'];
+  const shippingKeywords = ['freight charge', 'shipping charge', 'delivery charge', 'courier fee', 'awb', 'transport', 'logistics'];
   const labKeywords = ['lab', 'testing', 'certification', 'test', 'analysis', 'quality', 'inspection'];
 
   const hasTrims = trimsKeywords.some(k => lowerText.includes(k));
   const hasYarn = yarnKeywords.some(k => lowerText.includes(k));
   const hasShipping = shippingKeywords.some(k => lowerText.includes(k));
-  const hasLab = labKeywords.some(k => lowerText.includes(k));
+  // Use word boundaries for short lab keywords to avoid matching substrings like 'available' or 'label'
+  const hasLab = labKeywords.some(k => new RegExp(`\\b${k}\\b`, 'i').test(lowerText));
 
+  if (hasTrims) return 'TRIMS';
   if (hasLab) return 'LAB';
   if (hasShipping) return 'SHIPPING';
   if (hasYarn) return 'YARN';
-  if (hasTrims) return 'TRIMS';
 
   // Default to TRIMS if it looks like a physical product
   if (lowerText.includes('item') || lowerText.includes('product') || lowerText.includes('material')) {
@@ -2705,6 +3056,18 @@ export async function extractMadisonInvoiceFields(fileBuffer: Buffer): Promise<M
   let bank_name: string | null;
   let swift_code: string | null;
   let account_number: string | null;
+  let account_usd: string | null = null;
+  let account_hkd: string | null = null;
+  let account_eur: string | null = null;
+  let account_vnd: string | null = null;
+  let account_idr: string | null = null;
+  let account_php: string | null = null;
+  let account_jpy: string | null = null;
+  let account_gbp: string | null = null;
+  let account_cny: string | null = null;
+  let account_aud: string | null = null;
+  let account_cad: string | null = null;
+  let account_sgd: string | null = null;
   let needs_currency_confirmation = false;
   let legacyAmountResult: { amount: number | null; currency: any; confidence: number; amount_candidates: number[]; amount_candidates_trace: Array<{ value: any; score: number; reason: string }> } = {
     amount: null,
@@ -2746,13 +3109,25 @@ export async function extractMadisonInvoiceFields(fileBuffer: Buffer): Promise<M
     bank_name = bankResult.bank_name;
     swift_code = bankResult.swift_code;
     account_number = bankResult.account_number;
+    account_usd = bankResult.account_usd;
+    account_hkd = bankResult.account_hkd;
+    account_eur = bankResult.account_eur;
+    account_vnd = bankResult.account_vnd;
+    account_idr = bankResult.account_idr;
+    account_php = bankResult.account_php;
+    account_jpy = bankResult.account_jpy;
+    account_gbp = bankResult.account_gbp;
+    account_cny = bankResult.account_cny;
+    account_aud = bankResult.account_aud;
+    account_cad = bankResult.account_cad;
+    account_sgd = bankResult.account_sgd;
     
     due_date = extractDueDate(normalizedText, preferUS);
   } else {
     console.log('[MadisonExtractor] Using generic extraction layer');
     
     // Use generic extraction layer
-    const genericResult = extractUsingGenericLayer(normalizedText);
+    const genericResult = extractUsingGenericLayer(normalizedText, preferUS);
     
     vendor_name = extractVendorName(normalizedText);
     invoice_number = genericResult.invoice_number.value;
@@ -2781,6 +3156,24 @@ export async function extractMadisonInvoiceFields(fileBuffer: Buffer): Promise<M
     bank_name = bankResult.bank_name;
     swift_code = bankResult.swift_code;
     account_number = bankResult.account_number;
+    account_usd = bankResult.account_usd;
+    account_hkd = bankResult.account_hkd;
+    account_eur = bankResult.account_eur;
+    account_vnd = bankResult.account_vnd;
+    account_idr = bankResult.account_idr;
+    account_php = bankResult.account_php;
+    account_jpy = bankResult.account_jpy;
+    account_gbp = bankResult.account_gbp;
+    account_cny = bankResult.account_cny;
+    account_aud = bankResult.account_aud;
+    account_cad = bankResult.account_cad;
+    account_sgd = bankResult.account_sgd;
+  }
+
+  // Fallback: default payment terms to 30 Days if not found (most common)
+  if (!payment_terms) {
+    payment_terms = '30 Days';
+    console.log('[MadisonExtractor] Payment terms not found, defaulting to 30 Days');
   }
 
   // Step 5: Extract additional fields (common to all vendors)
@@ -2834,6 +3227,15 @@ export async function extractMadisonInvoiceFields(fileBuffer: Buffer): Promise<M
     qty_shipped = astOutput.qty_shipped;
     status = astOutput.status;
     status_reason = astOutput.status_reason;
+
+    // Fallback: if AST did not produce qty_shipped, compute it from extracted line items
+    if (!qty_shipped && lineItems.length > 0) {
+      const computedQty = lineItems.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+      if (computedQty > 0) {
+        qty_shipped = computedQty;
+        console.log('[MadisonExtractor] Computed qty_shipped from line items:', computedQty);
+      }
+    }
 
     console.log('[MadisonExtractor] AST kernel output:', astOutput);
   } else {
@@ -2893,6 +3295,15 @@ export async function extractMadisonInvoiceFields(fileBuffer: Buffer): Promise<M
   // Step 6: Calculate due date from payment terms if not found
   // FIX: NEVER compute due_date from relative terms (NET 30) unless explicitly given full date
   // If only "NET 30" or similar, leave due_date null
+  // Fallback: compute due_date from invoice_date + payment_terms if no explicit due date found
+  if (!due_date && invoice_date && payment_terms) {
+    const computedDueDate = computeDueDateFromTerms(invoice_date, payment_terms);
+    if (computedDueDate) {
+      due_date = computedDueDate;
+      console.log('[MadisonExtractor] Computed due_date from terms:', computedDueDate);
+    }
+  }
+
   console.log('[MadisonExtractor] due_date:', due_date);
 
   // Step 7: AI fallback if confidence is too low (placeholder for future implementation)
@@ -2919,6 +3330,18 @@ export async function extractMadisonInvoiceFields(fileBuffer: Buffer): Promise<M
       bank_name,
       swift_code,
       account_number,
+      account_usd,
+      account_hkd,
+      account_eur,
+      account_vnd,
+      account_idr,
+      account_php,
+      account_jpy,
+      account_gbp,
+      account_cny,
+      account_aud,
+      account_cad,
+      account_sgd,
     },
     bill_to_text,
     bill_to_confirmed_madison88,

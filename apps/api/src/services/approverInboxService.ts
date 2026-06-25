@@ -176,13 +176,14 @@ export async function getAllPendingApprovals() {
 
 /**
  * Map user role to signatory roles
- * MLO_ACCOUNT_HOLDER is a single role (brand-dependent routing handled at approval time)
+ * PLANNING_MANAGER is a single role (brand-dependent routing handled at approval time)
  */
 function mapUserRoleToSignatoryRoles(userRole: UserRole): SignatoryRole[] {
   const mapping: Record<UserRole, SignatoryRole[]> = {
     [UserRole.PURCHASING_COORDINATOR]: [SignatoryRole.COORDINATOR],
     [UserRole.PURCHASING_MANAGER]: [SignatoryRole.PURCHASING_MANAGER],
-    [UserRole.PLANNING_MANAGER]: [SignatoryRole.MLO_ACCOUNT_HOLDER, SignatoryRole.MLO_PLANNING_MANAGER],
+    [UserRole.MLO_ACCOUNT_HOLDER]: [SignatoryRole.MLO_ACCOUNT_HOLDER],
+    [UserRole.PLANNING_MANAGER]: [SignatoryRole.MLO_PLANNING_MANAGER],
     [UserRole.SR_MANAGER_GLOBAL_PRODUCTION]: [SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION],
     [UserRole.MS_POLLY]: [SignatoryRole.MS_POLLY],
     [UserRole.ACCOUNTING_ASSOCIATE]: [SignatoryRole.ACCOUNTING_REVIEWER],

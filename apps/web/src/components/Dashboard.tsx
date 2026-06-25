@@ -114,6 +114,17 @@ export default function Dashboard() {
   const [countUpStarted, setCountUpStarted] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [poAuditSummary, setPoAuditSummary] = useState({
+    matched: 0,
+    warnings: 0,
+    mismatches: 0,
+    pending: 0,
+    not_found: 0,
+    skipped: 0,
+    error: 0,
+    total: 0,
+  });
+  const [poAuditLoading, setPoAuditLoading] = useState(false);
 
   // Use mock data
   const mockInvoices = invoices;
@@ -214,6 +225,48 @@ export default function Dashboard() {
     setLoading(false);
     // Start count-up animations after loading is complete
     setTimeout(() => setCountUpStarted(true), 100);
+  }, []);
+
+  // Fetch DSRS v7.3 async PO audit summary
+  useEffect(() => {
+    let mounted = true;
+
+    const fetchPoAuditSummary = async () => {
+      setPoAuditLoading(true);
+      try {
+        const res = await fetch('/api/invoices/po-audit/all');
+        if (!res.ok) {
+          if (mounted) setPoAuditLoading(false);
+          return;
+        }
+        const results: Array<{ status: string }> = await res.json();
+        if (!mounted) return;
+
+        setPoAuditSummary({
+          matched: results.filter(r => r.status === 'MATCHED').length,
+          warnings: results.filter(r => r.status === 'WARNING').length,
+          mismatches: results.filter(r => r.status === 'MISMATCH').length,
+          pending: results.filter(r => r.status === 'PENDING' || r.status === 'RUNNING').length,
+          not_found: results.filter(r => r.status === 'NOT_FOUND').length,
+          skipped: results.filter(r => r.status === 'SKIPPED').length,
+          error: results.filter(r => r.status === 'ERROR').length,
+          total: results.length,
+        });
+      } catch (err) {
+        console.error('Failed to fetch PO audit summary:', err);
+      } finally {
+        if (mounted) setPoAuditLoading(false);
+      }
+    };
+
+    fetchPoAuditSummary();
+    // Refresh every 30 seconds
+    const interval = setInterval(fetchPoAuditSummary, 30000);
+
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
   }, []);
 
   // Count-up animations for each KPI - calculate from mock data
@@ -1218,6 +1271,52 @@ export default function Dashboard() {
               ))}
             </div>
           )}
+
+          {/* DSRS v7.3 PO Audit Summary */}
+          <div
+            className="mb-6 p-5 rounded-2xl"
+            style={{
+              background: 'rgba(255, 255, 255, 0.05)',
+              backdropFilter: 'blur(20px) saturate(180%)',
+              WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+              border: '1px solid rgba(255, 255, 255, 0.08)',
+              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.1)',
+            }}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Search className="h-4 w-4 text-slate-400" />
+                <h3 className="text-sm font-semibold text-slate-200">PO Validation Audit</h3>
+              </div>
+              {poAuditLoading && (
+                <span className="text-xs text-slate-500">Loading...</span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+              {[
+                { label: 'Matched', value: poAuditSummary.matched, color: 'text-emerald-400', bg: 'bg-emerald-500/20' },
+                { label: 'Warnings', value: poAuditSummary.warnings, color: 'text-amber-400', bg: 'bg-amber-500/20' },
+                { label: 'Mismatches', value: poAuditSummary.mismatches, color: 'text-red-400', bg: 'bg-red-500/20' },
+                { label: 'Pending', value: poAuditSummary.pending, color: 'text-blue-400', bg: 'bg-blue-500/20' },
+                { label: 'Not Found', value: poAuditSummary.not_found, color: 'text-orange-400', bg: 'bg-orange-500/20' },
+                { label: 'Skipped', value: poAuditSummary.skipped, color: 'text-slate-400', bg: 'bg-slate-500/20' },
+                { label: 'Error', value: poAuditSummary.error, color: 'text-red-400', bg: 'bg-red-500/20' },
+              ].map((item) => (
+                <div
+                  key={item.label}
+                  className="flex flex-col items-center justify-center p-3 rounded-xl"
+                  style={{ background: 'rgba(255, 255, 255, 0.03)' }}
+                >
+                  <span className={`text-lg font-bold ${item.color}`}>{item.value}</span>
+                  <span className="text-xs text-slate-400 mt-1">{item.label}</span>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-slate-500 mt-3">
+              {poAuditSummary.total} invoice(s) audited against NextGen PO data. Audit is async and informational only.
+            </p>
+          </div>
 
           {/* Bottleneck View - Hide for IT_ADMIN and SUPERADMIN */}
           {user && user.role !== 'IT_ADMIN' && user.role !== 'SUPERADMIN' && (

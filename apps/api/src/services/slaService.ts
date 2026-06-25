@@ -3,12 +3,13 @@ import { InvoiceStatus } from '@ap-invoice/shared';
 
 // SLA thresholds in hours for each stage
 const SLA_THRESHOLDS: Partial<Record<InvoiceStatus, number>> = {
-  [InvoiceStatus.PENDING_COORDINATOR]: 24,
-  [InvoiceStatus.PENDING_MANAGER]: 48,
-  [InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER]: 72,
-  [InvoiceStatus.PENDING_SR_MANAGER]: 96,
-  [InvoiceStatus.PENDING_POLLY]: 24,
-  [InvoiceStatus.PENDING_ACCOUNTING]: 48,
+  [InvoiceStatus.PENDING_COORDINATOR]: 168,
+  [InvoiceStatus.PENDING_MANAGER]: 168,
+  [InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER]: 168,
+  [InvoiceStatus.PENDING_MLO_PLANNING_MANAGER]: 168,
+  [InvoiceStatus.PENDING_SR_MANAGER]: 168,
+  [InvoiceStatus.PENDING_POLLY]: 168,
+  [InvoiceStatus.PENDING_ACCOUNTING]: 168,
 };
 
 /**

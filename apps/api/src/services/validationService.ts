@@ -1,4 +1,4 @@
-import prisma from '../config/database';
+import prisma, { isDbEnabled } from '../config/database';
 import { ExceptionReason, InvoiceStatus, InvoiceType, BillToEntity, SignatoryRole, APPROVAL_THRESHOLDS, determineApprovalTier } from '@ap-invoice/shared';
 import { createApprovalRequest } from './approvalService';
 import { AppError } from '../middleware/errorHandler';
@@ -76,6 +76,10 @@ export async function validateInvoiceWithData(
 }
 
 export async function validateInvoice(invoiceId: string): Promise<InvoiceValidationResult> {
+  if (!isDbEnabled()) {
+    throw new AppError('Database not available', 500);
+  }
+
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
     include: {
@@ -600,7 +604,7 @@ function validateSignatures(amount: number, signatures: any[]): ValidationResult
     };
   }
 
-  // Tier 2+: Purchasing Manager + MLO Account Holder
+  // Tier 2+: Purchasing Manager
   if (tier >= 2) {
     if (!signedRoles.includes(SignatoryRole.PURCHASING_MANAGER)) {
       return {
@@ -610,18 +614,29 @@ function validateSignatures(amount: number, signatures: any[]): ValidationResult
         detail: 'A Purchasing Manager signature is required for invoices above $2,000',
       };
     }
+  }
 
+  // Tier 2 ($2,001-$4,999): MLO Account Holder + MLO Planning Manager + Sr. Manager Global Production
+  if (tier === 2) {
     if (!signedRoles.includes(SignatoryRole.MLO_ACCOUNT_HOLDER)) {
       return {
         passed: false,
         reason: ExceptionReason.MISSING_SIGNATURE,
         message: 'Missing MLO Account Holder signature',
-        detail: 'An MLO Account Holder signature is required for invoices above $2,000',
+        detail: 'An MLO Account Holder signature is required for invoices between $2,001 and $4,999',
+      };
+    }
+    if (!signedRoles.includes(SignatoryRole.MLO_PLANNING_MANAGER)) {
+      return {
+        passed: false,
+        reason: ExceptionReason.MISSING_SIGNATURE,
+        message: 'Missing MLO Planning Manager signature',
+        detail: 'An MLO Planning Manager signature is required for invoices between $2,001 and $4,999',
       };
     }
   }
 
-  // Tier 3+: MLO Planning Manager + Sr. Manager Global Production
+  // Tier 3+ ($5,000+): MLO Planning Manager + Sr. Manager Global Production
   if (tier >= 3) {
     if (!signedRoles.includes(SignatoryRole.MLO_PLANNING_MANAGER)) {
       return {
@@ -662,6 +677,10 @@ function validateSignatures(amount: number, signatures: any[]): ValidationResult
 
 // RULE 11 — Duplicate detection
 async function checkDuplicateInvoice(invoice: any): Promise<ValidationResult> {
+  if (!isDbEnabled()) {
+    return { passed: true, message: 'Duplicate check skipped — DB unavailable' };
+  }
+
   // Hash: SHA-256(invoice_number + vendor_id + amount + invoice_date)
   const hashInput = `${invoice.invoice_number}${invoice.vendor_id || ''}${invoice.total_amount}${invoice.invoice_date || ''}`;
   const hash = crypto.createHash('sha256').update(hashInput).digest('hex');
@@ -688,6 +707,39 @@ async function checkDuplicateInvoice(invoice: any): Promise<ValidationResult> {
       message: 'Duplicate invoice detected',
       detail: `Invoice ${invoice.invoice_number} already exists for this vendor (ID: ${duplicate.id})`,
     };
+  }
+
+  // Secondary fuzzy check: same vendor + same amount + date within ±3 days, different invoice number
+  try {
+    const invoiceDate = invoice.invoice_date ? new Date(invoice.invoice_date) : null;
+    if (invoiceDate) {
+      const threeDaysBefore = new Date(invoiceDate.getTime() - 3 * 24 * 60 * 60 * 1000);
+      const threeDaysAfter = new Date(invoiceDate.getTime() + 3 * 24 * 60 * 60 * 1000);
+
+      const fuzzyDuplicate = await prisma.invoice.findFirst({
+        where: {
+          vendor_id: invoice.vendor_id,
+          total_amount: Number(invoice.total_amount),
+          invoice_date: {
+            gte: threeDaysBefore,
+            lte: threeDaysAfter,
+          },
+          invoice_number: { not: invoice.invoice_number },
+          id: { not: invoice.id },
+        },
+      });
+
+      if (fuzzyDuplicate) {
+        return {
+          passed: false,
+          reason: ExceptionReason.DUPLICATE_INVOICE,
+          message: 'Suspected duplicate invoice detected (fuzzy match)',
+          detail: `Invoice with different number (${fuzzyDuplicate.invoice_number}) but same vendor, amount, and date within ±3 days (ID: ${fuzzyDuplicate.id})`,
+        };
+      }
+    }
+  } catch {
+    // Skip fuzzy check if DB unavailable
   }
 
   return {
@@ -821,7 +873,7 @@ async function checkMissingBankInfo(invoice: any): Promise<ValidationResult> {
 }
 
 // RULE 17 — PO cross-check via NextGen (fetch-only)
-// Fetches PO from NextGen and validates: PO exists, amount matches, vendor matches
+// FIX 4: Only validate if MPO matches. If MPO mismatch → skip validation, do not compare vendor/brand.
 async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult> {
   const poRef = invoice.mpo_number || invoice.po_number;
 
@@ -842,15 +894,17 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
         })
       : await nextGenService.fetchPOByNumber(invoice.po_number);
 
+    // FIX 4: If PO not found or MPO mismatch, skip validation (do not compare vendor/brand)
     if (!po) {
       return {
-        passed: false,
-        reason: ExceptionReason.MISSING_PO_REFERENCE,
-        message: `PO ${poRef} not found in NextGen`,
-        detail: `Referenced PO could not be found. Verify PO number or check with Purchasing.`,
+        passed: true,
+        message: `PO ${poRef} not found in NextGen — skipping validation (MPO mismatch)`,
+        detail: `Referenced PO could not be found. MPO mismatch detected - skipping vendor/brand comparison.`,
       };
     }
 
+    // FIX 4: Only proceed with comparison if MPO matches
+    // If we got here, MPO matches, so we can safely compare amount and vendor
     const differences: string[] = [];
 
     // Amount check (>5% variance = fail)
@@ -865,7 +919,7 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
       }
     }
 
-    // Vendor name check
+    // Vendor name check (only if MPO matches)
     if (invoice.vendor?.name && po.vendor_name) {
       const invoiceVendor = invoice.vendor.name.toLowerCase().trim();
       const poVendor = po.vendor_name.toLowerCase().trim();

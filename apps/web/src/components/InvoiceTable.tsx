@@ -2,6 +2,7 @@ import { InvoiceStatus, OrderType } from '@ap-invoice/shared';
 import { formatCurrency, formatDate, cn } from '../lib/utils';
 import { FileText, Calendar, DollarSign, Eye, Check, Flag } from 'lucide-react';
 import { MockInvoice } from '../lib/mockData';
+import { POValidationBadge } from './POValidationBadge';
 
 interface InvoiceTableProps {
   invoices: MockInvoice[];
@@ -16,7 +17,6 @@ const statusColors: Partial<Record<InvoiceStatus, { bg: string; text: string }>>
   [InvoiceStatus.EXCEPTION_FLAGGED]: { bg: 'bg-red-500/20', text: 'text-red-400' },
   [InvoiceStatus.PENDING_COORDINATOR]: { bg: 'bg-amber-500/20', text: 'text-amber-400' },
   [InvoiceStatus.PENDING_MANAGER]: { bg: 'bg-amber-500/20', text: 'text-amber-400' },
-  [InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER]: { bg: 'bg-amber-500/20', text: 'text-amber-400' },
   [InvoiceStatus.PENDING_MLO_PLANNING_MANAGER]: { bg: 'bg-amber-500/20', text: 'text-amber-400' },
   [InvoiceStatus.PENDING_SR_MANAGER]: { bg: 'bg-amber-500/20', text: 'text-amber-400' },
   [InvoiceStatus.PENDING_POLLY]: { bg: 'bg-amber-500/20', text: 'text-amber-400' },
@@ -97,6 +97,9 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
             </th>
             <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
               Status
+            </th>
+            <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px', width: '160px' }}>
+              PO Validation
             </th>
             <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px', width: '60px' }}>
               Signatures
@@ -198,6 +201,12 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
                   {invoice.status.replace(/_/g, ' ')}
                 </span>
               </td>
+              <td className="px-6 py-4 whitespace-nowrap" style={{ width: '160px' }} onClick={(e) => e.stopPropagation()}>
+                <POValidationBadge
+                  invoiceId={invoice.id}
+                  initialStatus={(invoice as any).po_validation_status || 'PENDING'}
+                />
+              </td>
               <td className="px-4 py-4 whitespace-nowrap text-sm text-slate-200" style={{ width: '60px' }}>
                 {invoice.signatures && invoice.signatures.length > 0 ? (
                   <span className={cn(
@@ -245,7 +254,7 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
           ))}
           {sortedInvoices.length === 0 && (
             <tr>
-              <td colSpan={15} className="px-6 py-12 text-center">
+              <td colSpan={16} className="px-6 py-12 text-center">
                 <div className="flex flex-col items-center justify-center">
                   <FileText className="h-12 w-12 text-slate-600 mb-4" style={{ animation: 'pulse-soft 2.5s ease-in-out infinite' }} />
                   <p className="text-sm text-slate-400">No invoices found</p>

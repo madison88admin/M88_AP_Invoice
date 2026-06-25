@@ -1,17 +1,16 @@
 import prisma from '../config/database';
-import { InvoiceStatus, SignatoryRole, SignatureType } from '@ap-invoice/shared';
+import { InvoiceStatus, SignatoryRole, SignatureType, ExceptionReason, BrandTier } from '@ap-invoice/shared';
 import { AppError } from '../middleware/errorHandler';
 import {
   APPROVAL_THRESHOLDS,
   SLA_LIMITS,
-  TOP_10_BRANDS,
+  KNOWN_BRANDS,
   COORDINATOR_NAMES,
   PURCHASING_MANAGER_NAMES,
   MLO_ACCOUNT_HOLDER_EDWIN,
   MLO_ACCOUNT_HOLDER_GLECIE,
   SR_MANAGER_NAME,
   MS_POLLY_NAME,
-  isTop10Brand,
   determineApprovalTier,
   mapSignatoryRoleToPendingStatus,
 } from '@ap-invoice/shared';
@@ -24,33 +23,86 @@ interface ApprovalRouteStep {
   sla_days: number;
 }
 
+interface BrandValidationResult {
+  tier: BrandTier;
+  brandName: string | null;
+  needsException: boolean;
+  exceptionDetail?: string;
+}
+
+/**
+ * Validate brand information for Tier 2+ invoices using KNOWN_BRANDS table
+ */
+function validateBrandForApproval(brandCode: string | null | undefined): BrandValidationResult {
+  if (!brandCode) {
+    return {
+      tier: BrandTier.OTHER, // placeholder, won't be used if needsException
+      brandName: null,
+      needsException: true,
+      exceptionDetail: "No brand could be extracted from this invoice's PO reference. Please confirm brand and tier manually."
+    };
+  }
+
+  const known = KNOWN_BRANDS[brandCode.toUpperCase()];
+
+  if (!known) {
+    return {
+      tier: BrandTier.OTHER, // placeholder, won't be used if needsException
+      brandName: null,
+      needsException: true,
+      exceptionDetail: `Unrecognized brand code '${brandCode}' — please confirm brand and tier manually, or add ${brandCode} to the brand code table if this is a new brand.`
+    };
+  }
+
+  return {
+    tier: known.tier,
+    brandName: known.name,
+    needsException: false
+  };
+}
+
 /**
  * Determine the approval route based on invoice amount and brand
- * 4-tier system per BRD v5.0:
- * - Tier 1 (<=2000): Coordinator only
- * - Tier 2 (2001-5000): Coordinator + Purchasing Manager + MLO Account Holder
- * - Tier 3 (5000-100000): + MLO Planning Manager + Sr. Manager Global Production
- * - Tier 4 (>100000): + Ms. Polly
+ * 4-tier system per described accounting/purchasing flow:
+ * - Tier 1 (<=2000): Coordinator + Purchasing Manager
+ * - Tier 2 (2001-5000): Coordinator + Purchasing Manager + MLO Account Holder + MLO Planning Manager + Sr. Manager GPO
+ * - Tier 3 (5001-100000): Coordinator + Purchasing Manager + MLO Planning Manager + Sr. Manager GPO
+ * - Above 100000: Coordinator + Purchasing Manager + MLO Planning Manager + Sr. Manager GPO + Ms. Polly
  */
-export function determineApprovalRoute(amount: number, brandName?: string): ApprovalRouteStep[] {
+export function determineApprovalRoute(
+  amount: number,
+  brandName?: string,
+  brandCode?: string
+): ApprovalRouteStep[] {
   const tier = determineApprovalTier(amount);
   const route: ApprovalRouteStep[] = [];
 
-  // Tier 1: amount <= $2,000 → Coordinator only
+  // Tier 1: amount <= $2,000 → Coordinator + Purchasing Manager
   route.push({ role: SignatoryRole.COORDINATOR, assignee_name: 'Any Coordinator', sla_days: SLA_LIMITS.COORDINATOR_DAYS });
+  route.push({ role: SignatoryRole.PURCHASING_MANAGER, assignee_name: 'Any Purchasing Manager', sla_days: SLA_LIMITS.PURCHASING_MANAGER_DAYS });
 
   if (tier >= 2) {
-    route.push({ role: SignatoryRole.PURCHASING_MANAGER, assignee_name: 'Any Purchasing Manager', sla_days: SLA_LIMITS.PURCHASING_MANAGER_DAYS });
+    const brandValidation = validateBrandForApproval(brandCode);
+    if (brandValidation.needsException) {
+      throw new AppError(brandValidation.exceptionDetail!, 400);
+    }
 
     // MLO Account Holder — brand-dependent: Edwin for TOP_10, Glecie for OTHER
-    const mloAccountHolder = (brandName && isTop10Brand(brandName))
+    const mloAccountHolder = brandValidation.tier === BrandTier.TOP_10
       ? MLO_ACCOUNT_HOLDER_EDWIN
       : MLO_ACCOUNT_HOLDER_GLECIE;
-    route.push({ role: SignatoryRole.MLO_ACCOUNT_HOLDER, assignee_name: mloAccountHolder, sla_days: SLA_LIMITS.MLO_ACCOUNT_HOLDER_DAYS });
-  }
 
-  if (tier >= 3) {
-    route.push({ role: SignatoryRole.MLO_PLANNING_MANAGER, assignee_name: 'MLO Planning Manager', sla_days: SLA_LIMITS.MLO_PLANNING_MANAGER_DAYS });
+    // Tier 2: add MLO Account Holder and MLO Planning Manager
+    if (tier === 2) {
+      route.push({ role: SignatoryRole.MLO_ACCOUNT_HOLDER, assignee_name: mloAccountHolder, sla_days: SLA_LIMITS.MLO_ACCOUNT_HOLDER_DAYS });
+      route.push({ role: SignatoryRole.MLO_PLANNING_MANAGER, assignee_name: mloAccountHolder, sla_days: SLA_LIMITS.MLO_PLANNING_MANAGER_DAYS });
+    }
+
+    // Tier 3+: add MLO Planning Manager
+    if (tier >= 3) {
+      route.push({ role: SignatoryRole.MLO_PLANNING_MANAGER, assignee_name: mloAccountHolder, sla_days: SLA_LIMITS.MLO_PLANNING_MANAGER_DAYS });
+    }
+
     route.push({ role: SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION, assignee_name: SR_MANAGER_NAME, sla_days: SLA_LIMITS.SR_MANAGER_DAYS });
   }
 
@@ -123,7 +175,8 @@ export async function createApprovalRequest(invoiceId: string, userId: string) {
   // Determine approval route based on amount and brand
   const amount = Number(invoice.total_amount);
   const brandName = invoice.brand || undefined;
-  const approvalRoute = determineApprovalRoute(amount, brandName);
+  const brandCode = invoice.brand_code || undefined;
+  const approvalRoute = determineApprovalRoute(amount, brandName, brandCode);
   const tier = determineApprovalTier(amount);
 
   // Check auto-approval eligibility for low-risk Tier 1 invoices
@@ -264,7 +317,7 @@ export async function approveInvoice(
     where: { id: pendingSignature.id },
     data: {
       signatory_name: signerName,
-      signatory_role: signatoryRole,
+      signatory_role: signatoryRole as any,
       signed_at: new Date(),
       signature_type: 'DIGITAL',
     },
@@ -429,7 +482,8 @@ function mapUserRoleToSignatoryRole(userRole: string): SignatoryRole | null {
   const mapping: Record<string, SignatoryRole> = {
     'PURCHASING_COORDINATOR': SignatoryRole.COORDINATOR,
     'PURCHASING_MANAGER': SignatoryRole.PURCHASING_MANAGER,
-    'PLANNING_MANAGER': SignatoryRole.MLO_ACCOUNT_HOLDER,
+    'MLO_ACCOUNT_HOLDER': SignatoryRole.MLO_ACCOUNT_HOLDER,
+    'MLO_PLANNING_MANAGER': SignatoryRole.MLO_PLANNING_MANAGER,
     'SR_MANAGER_GLOBAL_PRODUCTION': SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION,
     'MS_POLLY': SignatoryRole.MS_POLLY,
     'ACCOUNTING_ASSOCIATE': SignatoryRole.ACCOUNTING_REVIEWER,
@@ -462,7 +516,7 @@ function getEmailForRole(signerRole: string): string | null {
     [SignatoryRole.COORDINATOR]: process.env.COORDINATOR_EMAIL || 'coordinator@madison88.com',
     [SignatoryRole.PURCHASING_MANAGER]: process.env.PURCHASING_MANAGER_EMAIL || 'purchasing-manager@madison88.com',
     [SignatoryRole.MLO_ACCOUNT_HOLDER]: process.env.MLO_ACCOUNT_HOLDER_EMAIL || 'mlo-account-holder@madison88.com',
-    [SignatoryRole.MLO_PLANNING_MANAGER]: process.env.MLO_PLANNING_MANAGER_EMAIL || 'mlo-planning-manager@madison88.com',
+    [SignatoryRole.MLO_PLANNING_MANAGER]: process.env.MLO_PLANNING_MANAGER_EMAIL || 'planning-manager@madison88.com',
     [SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION]: process.env.SR_MANAGER_EMAIL || 'sr-manager@madison88.com',
     [SignatoryRole.MS_POLLY]: process.env.MS_POLLY_EMAIL || 'ms-polly@madison88.com',
     [SignatoryRole.ACCOUNTING_REVIEWER]: process.env.ACCOUNTING_EMAIL || 'accounting@madison88.com',

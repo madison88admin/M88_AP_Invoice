@@ -2191,11 +2191,11 @@ function extractBankDetails(text: string): { bank_name: string | null; swift_cod
   // Stop labels expanded to avoid capturing invoice metadata (incoterm, payment terms, A/C, etc.).
   const bankNameStopLabels = '(?:\\d|Swift|SWIFT|SWIFT\s*BIC|A\/C|Account|Beneficiary|Address|ADD|Tel|Fax|INCOTERM|Payment\s*Terms|BANK\s*ADD|BANK\s*ADDRESS|HS\s*CODE|C\/NO|A\/C\s*NAME|A\/C\s*NUMBER|A\/C\s*NO|SWIFT\s*CODE|Intermediary|Intermediary\s*Bank|$)';
   const genericBankNamePatterns = [
-    new RegExp(`Bank\\s*Name\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,]+?)(?=\\s*${bankNameStopLabels})`, 'i'),
-    new RegExp(`Beneficiary(?:['']s)?\\s*(?:Bank)?\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,]+?)(?=\\s*${bankNameStopLabels})`, 'i'),
-    new RegExp(`Our\\s*Bank\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,]+?)(?=\\s*${bankNameStopLabels})`, 'i'),
-    new RegExp(`Bank\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,]+?)(?=\\s*${bankNameStopLabels})`, 'i'),
-    new RegExp(`Banker\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,]+?)(?=\\s*${bankNameStopLabels})`, 'i'),
+    new RegExp(`Bank\\s*Name\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,()]+?)(?=\\s*${bankNameStopLabels})`, 'i'),
+    new RegExp(`Beneficiary(?:['']s)?\\s*(?:Bank)?\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,()]+?)(?=\\s*${bankNameStopLabels})`, 'i'),
+    new RegExp(`Our\\s*Bank\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,()]+?)(?=\\s*${bankNameStopLabels})`, 'i'),
+    new RegExp(`Bank\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,()]+?)(?=\\s*${bankNameStopLabels})`, 'i'),
+    new RegExp(`Banker\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,()]+?)(?=\\s*${bankNameStopLabels})`, 'i'),
   ];
 
   for (const pattern of genericBankNamePatterns) {
@@ -2287,7 +2287,7 @@ function extractBankDetails(text: string): { bank_name: string | null; swift_cod
 
   // Extract account number with more flexible patterns
   const accountPatterns = [
-    /A\/C\s*NO\.?\s*[:\s]*([_\d\s\-]+(?:\s*\(USD\)|\s*\(HKD\)|\s*\(EUR\)|\s*\(CNY\))?)/i,
+    /A\/C\s*NO\.?\s*[:\s]*([_\d][_\d\s\-]*(?:\s*\(USD\)|\s*\(HKD\)|\s*\(EUR\)|\s*\(CNY\))?)/i,
     /A\/C\s*NUMBER\s*[:\s]*([_\d\-]{5,30})/i,
     /A\/C\s*NO\.?\s*[:\s]*([_\d\-]{5,30})/i,
     /A\/C\s*(?:NO|NUMBER)?[:\s：]*([_\d\s\-]+)/i,

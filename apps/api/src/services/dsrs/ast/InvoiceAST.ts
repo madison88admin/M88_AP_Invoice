@@ -552,6 +552,11 @@ export class InvoiceASTResolver {
         }, 0);
 
         if (validLineItems.length > 0 && lineItemSum > 0 && grandTotalValue > 0) {
+          const grandTotalScore = bestGrandTotal.metadata?.score ?? 0;
+          // High-score grand totals (e.g. explicit TOTALUSD on last page) are trusted even when
+          // the detected line item sum is incomplete, as happens with fragmented OCR.
+          const isHighConfidenceGrandTotal = grandTotalScore >= 150;
+
           if (grandTotalValue < lineItemSum * 0.2) {
             console.log('[InvoiceASTResolver] GRAND_TOTAL suspiciously small:', grandTotalValue, '< 20% of line item sum:', lineItemSum, 'using LINE_ITEM_SUM');
             return {
@@ -562,7 +567,7 @@ export class InvoiceASTResolver {
               explanation: `Grand total ${grandTotalValue} < 20% of line item sum ${lineItemSum}; used line item sum instead`
             };
           }
-          if (grandTotalValue > lineItemSum * 5) {
+          if (!isHighConfidenceGrandTotal && grandTotalValue > lineItemSum * 5) {
             console.log('[InvoiceASTResolver] GRAND_TOTAL suspiciously large:', grandTotalValue, '> 5x line item sum:', lineItemSum, 'using LINE_ITEM_SUM');
             return {
               value: Math.round(lineItemSum * 100) / 100,

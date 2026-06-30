@@ -4,7 +4,7 @@
  * PO validation runs after upload completes — never blocks upload flow
  */
 
-import { NextGenService } from './nextGenService';
+import { NextGenService, NextGenPOData } from './nextGenService';
 
 export type POValidationStatus =
   | 'PENDING'      // audit not started yet
@@ -15,6 +15,13 @@ export type POValidationStatus =
   | 'NOT_FOUND'    // PO/MPO not found in NextGen
   | 'SKIPPED'      // no PO/MPO number in invoice
   | 'ERROR';       // NextGen unreachable
+
+export interface POChangeRecord {
+  changed_at: Date;
+  field: string;
+  previous_value: string;
+  current_value: string;
+}
 
 export interface POAuditResult {
   invoice_id: string;
@@ -37,6 +44,7 @@ export interface POAuditResult {
     variance_pct?: number;
     differences: string[];
   };
+  po_changes?: POChangeRecord[];
   error?: string;
 }
 
@@ -52,6 +60,7 @@ export interface POAuditInput {
 
 // In-memory store (replace with DB later)
 const auditStore = new Map<string, POAuditResult>();
+const poSnapshotStore = new Map<string, NextGenPOData>();
 
 export class POAuditService {
   private static instance: POAuditService;
@@ -130,6 +139,34 @@ export class POAuditService {
       // If NextGen says no match but variance is within threshold, still warn
       if (!result.is_match && status === 'MATCHED') status = 'WARNING';
 
+      // Detect PO changes by comparing with previous snapshot
+      const poKey = invoiceData.mpo_number || invoiceData.po_number || auditId;
+      const previousSnapshot = poSnapshotStore.get(poKey);
+      const poChanges: POChangeRecord[] = [];
+      if (previousSnapshot && result.nextgen_data) {
+        const previousQty = previousSnapshot.line_items?.reduce((sum, li) => sum + (li.quantity || 0), 0) ?? 0;
+        const currentQty = result.nextgen_data.line_items?.reduce((sum, li) => sum + (li.quantity || 0), 0) ?? 0;
+
+        if (previousSnapshot.amount !== result.nextgen_data.amount) {
+          poChanges.push({ changed_at: new Date(), field: 'amount', previous_value: String(previousSnapshot.amount), current_value: String(result.nextgen_data.amount) });
+        }
+        if (previousSnapshot.currency !== result.nextgen_data.currency) {
+          poChanges.push({ changed_at: new Date(), field: 'currency', previous_value: previousSnapshot.currency || '', current_value: result.nextgen_data.currency || '' });
+        }
+        if (previousSnapshot.vendor_name !== result.nextgen_data.vendor_name) {
+          poChanges.push({ changed_at: new Date(), field: 'vendor_name', previous_value: previousSnapshot.vendor_name || '', current_value: result.nextgen_data.vendor_name || '' });
+        }
+        if (previousQty !== currentQty) {
+          poChanges.push({ changed_at: new Date(), field: 'total_quantity', previous_value: String(previousQty), current_value: String(currentQty) });
+        }
+        if ((previousSnapshot.line_items?.length || 0) !== (result.nextgen_data.line_items?.length || 0)) {
+          poChanges.push({ changed_at: new Date(), field: 'line_item_count', previous_value: String(previousSnapshot.line_items?.length || 0), current_value: String(result.nextgen_data.line_items?.length || 0) });
+        }
+      }
+      if (result.nextgen_data) {
+        poSnapshotStore.set(poKey, result.nextgen_data);
+      }
+
       auditStore.set(auditId, {
         invoice_id: auditId,
         status,
@@ -148,6 +185,7 @@ export class POAuditService {
           ...result.comparison,
           variance_pct: variance !== null ? Math.round(variance * 1000) / 10 : 0,
         },
+        po_changes: poChanges.length > 0 ? poChanges : undefined,
       });
     } catch (error) {
       // NextGen unreachable — non-blocking, just log

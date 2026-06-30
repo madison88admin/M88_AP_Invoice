@@ -42,6 +42,7 @@ model Vendor {
   
   @@index([name])
   @@index([is_active])
+  @@map("APInvoice_Vendor")
 }
 
 model Invoice {
@@ -53,6 +54,8 @@ model Invoice {
   
   // Amounts
   subtotal              Decimal?
+  tax_amount            Decimal?
+  discount_amount       Decimal?
   bank_charges          Decimal?
   freight_charges       Decimal?
   additional_charges    Decimal?
@@ -65,7 +68,11 @@ model Invoice {
   vendor_id             String
   vendor                Vendor        @relation(fields: [vendor_id], references: [id])
   vendor_name_raw       String
-  
+
+  // Address / entity fields extracted from invoice
+  ship_to               String?
+  sold_to               String?
+
   // PO & order details
   customer_po_number    String?
   mpo_number            String?
@@ -144,6 +151,7 @@ model Invoice {
   @@index([bill_to_entity])
   @@index([approval_tier])
   @@index([invoice_hash])
+  @@map("APInvoice_Invoice")
 }
 
 model Signature {
@@ -158,6 +166,7 @@ model Signature {
   
   @@index([invoice_id])
   @@index([signatory_role])
+  @@map("APInvoice_Signature")
 }
 
 model StageTimestamp {
@@ -172,6 +181,7 @@ model StageTimestamp {
   
   @@index([invoice_id])
   @@index([stage])
+  @@map("APInvoice_StageTimestamp")
 }
 
 model AuditLog {
@@ -185,6 +195,7 @@ model AuditLog {
   
   @@index([invoice_id])
   @@index([created_at])
+  @@map("APInvoice_AuditLog")
 }
 
 model Payment {
@@ -200,11 +211,16 @@ model Payment {
   batch         PaymentBatch? @relation(fields: [batch_id], references: [id])
   paid_at       DateTime?
   reference     String?
+  selected_for_batch Boolean  @default(false)
+  selected_by   String?
+  selected_at   DateTime?
   created_at    DateTime      @default(now())
   updated_at    DateTime      @updatedAt
   
   @@index([invoice_id])
   @@index([status])
+  @@index([selected_for_batch])
+  @@map("APInvoice_Payment")
 }
 
 model PaymentBatch {
@@ -222,6 +238,7 @@ model PaymentBatch {
   cancellation_reason  String?
   payments             Payment[]
   created_at           DateTime           @default(now())
+  @@map("APInvoice_PaymentBatch")
 }
 
 model FollowUpTask {
@@ -243,6 +260,7 @@ model FollowUpTask {
   @@index([assigned_to])
   @@index([status])
   @@index([due_date])
+  @@map("APInvoice_FollowUpTask")
 }
 
 // --- ENUMS ---
@@ -362,6 +380,7 @@ model Exception {
   
   @@index([invoice_id])
   @@index([status])
+  @@map("APInvoice_Exception")
 }
 
 enum ExceptionStatus {

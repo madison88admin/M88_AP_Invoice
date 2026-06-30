@@ -63,11 +63,10 @@ function validateBrandForApproval(brandCode: string | null | undefined): BrandVa
 
 /**
  * Determine the approval route based on invoice amount and brand
- * 4-tier system per described accounting/purchasing flow:
- * - Tier 1 (<=2000): Coordinator + Purchasing Manager
- * - Tier 2 (2001-5000): Coordinator + Purchasing Manager + MLO Account Holder + MLO Planning Manager + Sr. Manager GPO
- * - Tier 3 (5001-100000): Coordinator + Purchasing Manager + MLO Planning Manager + Sr. Manager GPO
- * - Above 100000: Coordinator + Purchasing Manager + MLO Planning Manager + Sr. Manager GPO + Ms. Polly
+ * 3-tier system per new flow:
+ * - Tier 1 (<=4999): Coordinator + Purchasing Manager
+ * - Tier 2 (5000-99999): Coordinator + Purchasing Manager + MLO Account Holder + MLO Planning Manager + Sr. Manager GPO
+ * - Tier 3 (>=100000): Coordinator + Purchasing Manager + MLO Account Holder + MLO Planning Manager + Sr. Manager GPO + Ms. Polly
  */
 export function determineApprovalRoute(
   amount: number,
@@ -77,7 +76,7 @@ export function determineApprovalRoute(
   const tier = determineApprovalTier(amount);
   const route: ApprovalRouteStep[] = [];
 
-  // Tier 1: amount <= $2,000 → Coordinator + Purchasing Manager
+  // Tier 1: amount <= $4,999 → Coordinator + Purchasing Manager
   route.push({ role: SignatoryRole.COORDINATOR, assignee_name: 'Any Coordinator', sla_days: SLA_LIMITS.COORDINATOR_DAYS });
   route.push({ role: SignatoryRole.PURCHASING_MANAGER, assignee_name: 'Any Purchasing Manager', sla_days: SLA_LIMITS.PURCHASING_MANAGER_DAYS });
 
@@ -92,21 +91,14 @@ export function determineApprovalRoute(
       ? MLO_ACCOUNT_HOLDER_EDWIN
       : MLO_ACCOUNT_HOLDER_GLECIE;
 
-    // Tier 2: add MLO Account Holder and MLO Planning Manager
-    if (tier === 2) {
-      route.push({ role: SignatoryRole.MLO_ACCOUNT_HOLDER, assignee_name: mloAccountHolder, sla_days: SLA_LIMITS.MLO_ACCOUNT_HOLDER_DAYS });
-      route.push({ role: SignatoryRole.MLO_PLANNING_MANAGER, assignee_name: mloAccountHolder, sla_days: SLA_LIMITS.MLO_PLANNING_MANAGER_DAYS });
-    }
-
-    // Tier 3+: add MLO Planning Manager
-    if (tier >= 3) {
-      route.push({ role: SignatoryRole.MLO_PLANNING_MANAGER, assignee_name: mloAccountHolder, sla_days: SLA_LIMITS.MLO_PLANNING_MANAGER_DAYS });
-    }
+    // Tier 2+: add MLO Account Holder and MLO Planning Manager
+    route.push({ role: SignatoryRole.MLO_ACCOUNT_HOLDER, assignee_name: mloAccountHolder, sla_days: SLA_LIMITS.MLO_ACCOUNT_HOLDER_DAYS });
+    route.push({ role: SignatoryRole.MLO_PLANNING_MANAGER, assignee_name: mloAccountHolder, sla_days: SLA_LIMITS.MLO_PLANNING_MANAGER_DAYS });
 
     route.push({ role: SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION, assignee_name: SR_MANAGER_NAME, sla_days: SLA_LIMITS.SR_MANAGER_DAYS });
   }
 
-  if (tier >= 4) {
+  if (tier >= 3) {
     route.push({ role: SignatoryRole.MS_POLLY, assignee_name: MS_POLLY_NAME, sla_days: SLA_LIMITS.MS_POLLY_DAYS });
   }
 
@@ -115,7 +107,7 @@ export function determineApprovalRoute(
 
 /**
  * Check if an invoice qualifies for auto-approval (low-risk Tier 1)
- * Criteria: Tier 1 (≤$2K) + vendor bank verified + OCR confidence ≥90% + no exceptions + not duplicate
+ * Criteria: Tier 1 (≤$4,999) + vendor bank verified + OCR confidence ≥90% + no exceptions + not duplicate + vendor cumulative < $100
  */
 async function isAutoApprovalEligible(invoice: any): Promise<{ eligible: boolean; reason?: string }> {
   const amount = Number(invoice.total_amount);
@@ -148,6 +140,23 @@ async function isAutoApprovalEligible(invoice: any): Promise<{ eligible: boolean
   });
   if (exceptions.length > 0) {
     return { eligible: false, reason: `${exceptions.length} unresolved exception(s)` };
+  }
+
+  // Vendor cumulative amount this month must be less than $100
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const vendorCumulative = await prisma.invoice.aggregate({
+    _sum: { total_amount: true },
+    where: {
+      vendor_id: invoice.vendor_id,
+      status: { not: 'REJECTED' as any },
+      created_at: { gte: startOfMonth },
+      id: { not: invoice.id },
+    },
+  });
+  const cumulativeAmount = Number(vendorCumulative._sum.total_amount || 0);
+  if (cumulativeAmount >= 100) {
+    return { eligible: false, reason: `Vendor cumulative amount $${cumulativeAmount.toFixed(2)} this month exceeds $100 threshold` };
   }
 
   return { eligible: true };

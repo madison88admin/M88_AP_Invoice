@@ -84,10 +84,9 @@ NEXTGEN_API_KEY=your_api_key
 **Implementation:**
 - Enhanced `approvalService.ts` with auto-notify next approver
 - Auto-determines approval tier based on amount:
-  - ≤ $2,000: Tier 1
-  - $2,001-$5,000: Tier 2
-  - $5,001-$100,000: Tier 3
-  - > $100,000: Tier 4
+  - $0.1-$4,999: Tier 1
+  - $5,000-$99,999: Tier 2
+  - ≥ $100,000: Tier 3
 - Auto-creates approval chain as sequential tasks
 - Auto-notifies next approver via email using `notificationService.ts`
 - Approvers see one-click Approve/Reject in approval inbox

@@ -528,68 +528,72 @@ export class InvoiceASTResolver {
       };
     }
 
-    // PRIORITY 1: GRAND_TOTAL node (ONLY if structurally valid).
-    // Multi-page awareness is built in the builder: if multiple pages had total matches, the node
-    // came from the LAST page (fixes G&F Trading where total is only on page 2).
-    const validGrandTotals = nodes.grandTotals.filter(n => n.confidence >= 0.7);
-    if (validGrandTotals.length > 0) {
-      const bestGrandTotal = validGrandTotals.reduce((best, current) =>
-        current.confidence > best.confidence ? current : best
-      );
+    // PRIORITY 1: GRAND_TOTAL node — now score-ranked, not just confidence-filtered.
+    // The builder attaches a score to each candidate based on label strength, currency,
+    // page position, and line-item-sum cross-check.
+    const grandTotalNodes = nodes.grandTotals
+      .filter(n => (n.confidence ?? 0) >= 0.3)
+      .sort((a, b) => (b.metadata?.score ?? 0) - (a.metadata?.score ?? 0));
 
-      const grandTotalValue = typeof bestGrandTotal.value === 'number' ? bestGrandTotal.value : 0;
+    if (grandTotalNodes.length > 0) {
+      const bestGrandTotal = grandTotalNodes[0];
 
-      // Sanity check: if line items sum to a much larger plausible total, the GRAND_TOTAL
-      // may have picked a unit price due to layout interleaving. Prefer line item sum.
-      const validLineItems = nodes.lineItems.filter(n => n.confidence >= 0.7);
-      const lineItemSum = validLineItems.reduce((total, item) => {
-        const extNode = this.findChildByType(item, 'EXTENDED_PRICE');
-        return total + (typeof extNode?.value === 'number' ? extNode.value : 0);
-      }, 0);
+      // If scoring threshold was not met, the builder stores a null-value node.
+      // Fall through to line-item sum instead of trusting low-confidence candidates.
+      if (bestGrandTotal.value !== null && typeof bestGrandTotal.value === 'number') {
+        const grandTotalValue = bestGrandTotal.value;
 
-      if (validLineItems.length > 0 && lineItemSum > 0 && grandTotalValue > 0) {
-        if (grandTotalValue < lineItemSum * 0.2) {
-          console.log('[InvoiceASTResolver] GRAND_TOTAL suspiciously small:', grandTotalValue, '< 20% of line item sum:', lineItemSum, 'using LINE_ITEM_SUM');
-          return {
-            value: Math.round(lineItemSum * 100) / 100,
-            currency: detectedCurrency as any,
-            confidence: 0.85,
-            source: 'LINE_ITEM_SUM',
-            explanation: 'Grand total suspiciously small versus line item sum; used line item sum instead'
-          };
+        // Sanity check: if line items sum to a much larger plausible total, the GRAND_TOTAL
+        // may have picked a unit price due to layout interleaving. Prefer line item sum.
+        const validLineItems = nodes.lineItems.filter(n => n.confidence >= 0.7);
+        const lineItemSum = validLineItems.reduce((total, item) => {
+          const extNode = this.findChildByType(item, 'EXTENDED_PRICE');
+          return total + (typeof extNode?.value === 'number' ? extNode.value : 0);
+        }, 0);
+
+        if (validLineItems.length > 0 && lineItemSum > 0 && grandTotalValue > 0) {
+          if (grandTotalValue < lineItemSum * 0.2) {
+            console.log('[InvoiceASTResolver] GRAND_TOTAL suspiciously small:', grandTotalValue, '< 20% of line item sum:', lineItemSum, 'using LINE_ITEM_SUM');
+            return {
+              value: Math.round(lineItemSum * 100) / 100,
+              currency: detectedCurrency as any,
+              confidence: 0.75,
+              source: 'LINE_ITEM_SUM',
+              explanation: `Grand total ${grandTotalValue} < 20% of line item sum ${lineItemSum}; used line item sum instead`
+            };
+          }
+          if (grandTotalValue > lineItemSum * 5) {
+            console.log('[InvoiceASTResolver] GRAND_TOTAL suspiciously large:', grandTotalValue, '> 5x line item sum:', lineItemSum, 'using LINE_ITEM_SUM');
+            return {
+              value: Math.round(lineItemSum * 100) / 100,
+              currency: detectedCurrency as any,
+              confidence: 0.75,
+              source: 'LINE_ITEM_SUM',
+              explanation: `Grand total ${grandTotalValue} > 5x line item sum ${lineItemSum}; used line item sum instead`
+            };
+          }
+          // Per-1000-PCS invoices (e.g., Paxar) often have a unit price that looks like a total.
+          if (ast.metadata?.hasPer1000Pcs && grandTotalValue > lineItemSum * 1.5) {
+            console.log('[InvoiceASTResolver] GRAND_TOTAL suspiciously large for per-1000-PCS invoice:', grandTotalValue, '> 1.5x line item sum:', lineItemSum, 'using LINE_ITEM_SUM');
+            return {
+              value: Math.round(lineItemSum * 100) / 100,
+              currency: detectedCurrency as any,
+              confidence: 0.75,
+              source: 'LINE_ITEM_SUM',
+              explanation: `Per-1000-PCS invoice: grand total ${grandTotalValue} > 1.5x line item sum ${lineItemSum}; used line item sum instead`
+            };
+          }
         }
-        if (grandTotalValue > lineItemSum * 5) {
-          console.log('[InvoiceASTResolver] GRAND_TOTAL suspiciously large:', grandTotalValue, '> 5x line item sum:', lineItemSum, 'using LINE_ITEM_SUM');
-          return {
-            value: Math.round(lineItemSum * 100) / 100,
-            currency: detectedCurrency as any,
-            confidence: 0.85,
-            source: 'LINE_ITEM_SUM',
-            explanation: 'Grand total suspiciously large versus line item sum; used line item sum instead'
-          };
-        }
-        // Per-1000-PCS invoices (e.g., Paxar) often have a unit price that looks like a total.
-        // If the grand total is more than 1.5x the line item sum, prefer the line item sum.
-        if (ast.metadata?.hasPer1000Pcs && grandTotalValue > lineItemSum * 1.5) {
-          console.log('[InvoiceASTResolver] GRAND_TOTAL suspiciously large for per-1000-PCS invoice:', grandTotalValue, '> 1.5x line item sum:', lineItemSum, 'using LINE_ITEM_SUM');
-          return {
-            value: Math.round(lineItemSum * 100) / 100,
-            currency: detectedCurrency as any,
-            confidence: 0.85,
-            source: 'LINE_ITEM_SUM',
-            explanation: 'Per-1000-PCS invoice: grand total likely a unit price; used line item sum instead'
-          };
-        }
+
+        console.log('[InvoiceASTResolver] Selected GRAND_TOTAL:', bestGrandTotal.value, 'score:', bestGrandTotal.metadata?.score);
+        return {
+          value: Math.round(grandTotalValue * 100) / 100,
+          currency: detectedCurrency as any,
+          confidence: bestGrandTotal.confidence,
+          source: 'GRAND_TOTAL',
+          explanation: `Score ${bestGrandTotal.metadata?.score ?? 'N/A'} | label: ${bestGrandTotal.metadata?.label || 'TOTAL'} | page ${bestGrandTotal.metadata?.pageIndex ?? 'unknown'}`
+        };
       }
-
-      console.log('[InvoiceASTResolver] Selected GRAND_TOTAL:', bestGrandTotal.value);
-      return {
-        value: Math.round(grandTotalValue * 100) / 100,
-        currency: detectedCurrency as any,
-        confidence: bestGrandTotal.confidence,
-        source: 'GRAND_TOTAL',
-        explanation: `GRAND_TOTAL node from structured invoice AST (label: ${bestGrandTotal.metadata?.label || 'TOTAL'}, page: ${bestGrandTotal.metadata?.pageIndex ?? 'unknown'})`
-      };
     }
 
     // PRIORITY 2: SUM(all LINE_ITEM.extended_price)

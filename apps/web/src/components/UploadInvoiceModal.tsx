@@ -501,12 +501,12 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                 {poValidation && (
                   <div
                     style={{
-                      background: poValidation.mode === 'AST_ISOLATED'
+                      background: (poValidation.mode === 'AST_ISOLATED' && poValidation.skipped)
                         ? 'rgba(59, 130, 246, 0.1)'
                         : poValidation.validation_result?.status === 'AUTO_APPROVED'
                           ? 'rgba(34, 197, 94, 0.1)'
                           : 'rgba(239, 68, 68, 0.1)',
-                      border: poValidation.mode === 'AST_ISOLATED'
+                      border: (poValidation.mode === 'AST_ISOLATED' && poValidation.skipped)
                         ? '1px solid rgba(59, 130, 246, 0.3)'
                         : poValidation.validation_result?.status === 'AUTO_APPROVED'
                           ? '1px solid rgba(34, 197, 94, 0.3)'
@@ -518,15 +518,15 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
                       <span style={{ fontSize: '16px' }}>
-                        {poValidation.mode === 'AST_ISOLATED'
+                        {(poValidation.mode === 'AST_ISOLATED' && poValidation.skipped)
                           ? '🔒'
                           : poValidation.validation_result?.status === 'AUTO_APPROVED'
                             ? '✅'
                             : '⚠️'}
                       </span>
-                      <span style={{ fontSize: '13px', color: poValidation.mode === 'AST_ISOLATED' ? '#3b82f6' : poValidation.validation_result?.status === 'AUTO_APPROVED' ? '#22c55e' : '#ef4444' }}>
-                        {poValidation.mode === 'AST_ISOLATED'
-                          ? 'PO Validation Disabled (AST Mode)'
+                      <span style={{ fontSize: '13px', color: (poValidation.mode === 'AST_ISOLATED' && poValidation.skipped) ? '#3b82f6' : poValidation.validation_result?.status === 'AUTO_APPROVED' ? '#22c55e' : '#ef4444' }}>
+                        {(poValidation.mode === 'AST_ISOLATED' && poValidation.skipped)
+                          ? 'PO Validation Skipped'
                           : poValidation.validation_result?.status === 'AUTO_APPROVED'
                             ? 'Auto-Approved'
                             : poValidation.validation_result?.status === 'REVIEW_REQUIRED'
@@ -538,12 +538,12 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                                   : 'PO Not Found in NextGen'}
                       </span>
                     </div>
-                    {poValidation.mode === 'AST_ISOLATED' && (
+                    {(poValidation.mode === 'AST_ISOLATED' && poValidation.skipped) && (
                       <div style={{ fontSize: '12px', color: '#94a3b8' }}>
                         {poValidation.message}
                       </div>
                     )}
-                    {poValidation.mode !== 'AST_ISOLATED' && poValidation.po_found && poValidation.validation_result?.checks && (
+                    {(!poValidation.skipped || poValidation.mode !== 'AST_ISOLATED') && poValidation.po_found && poValidation.validation_result?.checks && (
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px' }}>
                         {poValidation.validation_result.checks.currency_match !== undefined && (
                           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#94a3b8' }}>

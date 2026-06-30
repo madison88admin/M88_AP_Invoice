@@ -72,7 +72,7 @@ export const MockDataProvider = ({ children }: MockDataProviderProps) => {
         newStage = 'PURCHASING_MANAGER';
       } else if (currentStage === 'PURCHASING_MANAGER') {
         // Check amount for tier routing
-        if (inv.total_amount <= 2000) {
+        if (inv.total_amount <= 4999) {
           newStatus = InvoiceStatus.APPROVED; // Tier 1 - final approval
           newStage = undefined;
         } else {

@@ -132,12 +132,11 @@ export const INVOICE_TYPE_KEYWORDS: Record<string, InvoiceType> = {
   'STATEMENT': InvoiceType.STATEMENT,
 };
 
-// ─── APPROVAL ROUTING (4 tiers per BRD v5.0) ───
+// ─── APPROVAL ROUTING (3 tiers per new flow) ───
 export const APPROVAL_THRESHOLDS = {
-  TIER_1: 2000,      // USD 2,000 and below
-  TIER_2: 5000,      // USD 2,001 to $4,999
-  TIER_3: 100000,    // USD 5,000 to $99,999
-  // Above TIER_3 = Tier 4 ($100,000+)
+  TIER_1: 4999.99,   // USD 0.1 to $4,999
+  TIER_2: 99999.99,  // USD $5,000 to $99,999
+  // Above TIER_2 = Tier 3 ($100,000+)
 };
 
 export const SIGNATURE_REQUIREMENTS = {
@@ -152,12 +151,7 @@ export const SIGNATURE_REQUIREMENTS = {
   TIER_3: [
     SignatoryRole.COORDINATOR,
     SignatoryRole.PURCHASING_MANAGER,
-    SignatoryRole.MLO_PLANNING_MANAGER,
-    SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION,
-  ],
-  TIER_4: [
-    SignatoryRole.COORDINATOR,
-    SignatoryRole.PURCHASING_MANAGER,
+    SignatoryRole.MLO_ACCOUNT_HOLDER,
     SignatoryRole.MLO_PLANNING_MANAGER,
     SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION,
     SignatoryRole.MS_POLLY,
@@ -167,8 +161,8 @@ export const SIGNATURE_REQUIREMENTS = {
 export const SLA_LIMITS = {
   COORDINATOR_DAYS: 7,
   PURCHASING_MANAGER_DAYS: 7,
-  MLO_ACCOUNT_HOLDER_DAYS: 7,
-  MLO_PLANNING_MANAGER_DAYS: 7,
+  MLO_ACCOUNT_HOLDER_DAYS: 3,
+  MLO_PLANNING_MANAGER_DAYS: 4,
   SR_MANAGER_DAYS: 7,
   MS_POLLY_DAYS: 7,
   ACCOUNTING_DAYS: 7,
@@ -428,8 +422,7 @@ export function matchSignerToRole(signerName: string): SignatoryRole | null {
 export function determineApprovalTier(amount: number): number {
   if (amount <= APPROVAL_THRESHOLDS.TIER_1) return 1;
   if (amount <= APPROVAL_THRESHOLDS.TIER_2) return 2;
-  if (amount <= APPROVAL_THRESHOLDS.TIER_3) return 3;
-  return 4;
+  return 3;
 }
 
 /**

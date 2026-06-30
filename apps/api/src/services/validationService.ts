@@ -611,19 +611,19 @@ function validateSignatures(amount: number, signatures: any[]): ValidationResult
         passed: false,
         reason: ExceptionReason.MISSING_SIGNATURE,
         message: 'Missing Purchasing Manager signature',
-        detail: 'A Purchasing Manager signature is required for invoices above $2,000',
+        detail: 'A Purchasing Manager signature is required for invoices above $4,999',
       };
     }
   }
 
-  // Tier 2 ($2,001-$4,999): MLO Account Holder + MLO Planning Manager + Sr. Manager Global Production
-  if (tier === 2) {
+  // Tier 2+ ($5,000+): MLO Account Holder + MLO Planning Manager + Sr. Manager Global Production
+  if (tier >= 2) {
     if (!signedRoles.includes(SignatoryRole.MLO_ACCOUNT_HOLDER)) {
       return {
         passed: false,
         reason: ExceptionReason.MISSING_SIGNATURE,
         message: 'Missing MLO Account Holder signature',
-        detail: 'An MLO Account Holder signature is required for invoices between $2,001 and $4,999',
+        detail: 'An MLO Account Holder signature is required for invoices above $4,999',
       };
     }
     if (!signedRoles.includes(SignatoryRole.MLO_PLANNING_MANAGER)) {
@@ -631,34 +631,21 @@ function validateSignatures(amount: number, signatures: any[]): ValidationResult
         passed: false,
         reason: ExceptionReason.MISSING_SIGNATURE,
         message: 'Missing MLO Planning Manager signature',
-        detail: 'An MLO Planning Manager signature is required for invoices between $2,001 and $4,999',
+        detail: 'An MLO Planning Manager signature is required for invoices above $4,999',
       };
     }
-  }
-
-  // Tier 3+ ($5,000+): MLO Planning Manager + Sr. Manager Global Production
-  if (tier >= 3) {
-    if (!signedRoles.includes(SignatoryRole.MLO_PLANNING_MANAGER)) {
-      return {
-        passed: false,
-        reason: ExceptionReason.MISSING_SIGNATURE,
-        message: 'Missing MLO Planning Manager signature',
-        detail: 'An MLO Planning Manager signature is required for invoices above $5,000',
-      };
-    }
-
     if (!signedRoles.includes(SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION)) {
       return {
         passed: false,
         reason: ExceptionReason.MISSING_SIGNATURE,
         message: 'Missing Sr. Manager Global Production signature',
-        detail: 'Sr. Manager of Global Production Operations signature required for invoices above $5,000',
+        detail: 'Sr. Manager of Global Production Operations signature required for invoices above $4,999',
       };
     }
   }
 
-  // Tier 4: Ms. Polly
-  if (tier >= 4) {
+  // Tier 3: Ms. Polly
+  if (tier >= 3) {
     if (!signedRoles.includes(SignatoryRole.MS_POLLY)) {
       return {
         passed: false,

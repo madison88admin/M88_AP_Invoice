@@ -21,7 +21,7 @@ function isWednesday(date: Date = new Date()): boolean {
 }
 
 /**
- * Get payments scheduled for the next Wednesday
+ * Get payments scheduled for the next Wednesday that have been selected by Accounting Associate
  */
 export async function getPaymentsForNextWednesday() {
   const nextWednesday = getNextWednesday();
@@ -38,6 +38,7 @@ export async function getPaymentsForNextWednesday() {
         lte: endOfDay,
       },
       batch_id: null, // Not already in a batch
+      selected_for_batch: true,
     },
     include: {
       invoice: {
@@ -52,6 +53,81 @@ export async function getPaymentsForNextWednesday() {
   });
 
   return payments;
+}
+
+/**
+ * Get scheduled payments available for batch selection
+ */
+export async function getScheduledPaymentsForBatch() {
+  const payments = await prisma.payment.findMany({
+    where: {
+      status: 'SCHEDULED',
+      batch_id: null,
+      payment_date: {
+        gte: new Date(),
+      },
+    },
+    include: {
+      invoice: {
+        include: {
+          vendor: true,
+        },
+      },
+    },
+    orderBy: {
+      payment_date: 'asc',
+    },
+  });
+
+  return payments;
+}
+
+/**
+ * Select payments for batch creation by Accounting Associate
+ */
+export async function selectPaymentsForBatch(paymentIds: string[], userId: string) {
+  const payments = await prisma.payment.findMany({
+    where: {
+      id: { in: paymentIds },
+      status: 'SCHEDULED',
+      batch_id: null,
+    },
+  });
+
+  if (payments.length !== paymentIds.length) {
+    throw new AppError('Some payments are not found, already in a batch, or not in SCHEDULED status', 400);
+  }
+
+  await prisma.payment.updateMany({
+    where: { id: { in: paymentIds } },
+    data: {
+      selected_for_batch: true,
+      selected_by: userId,
+      selected_at: new Date(),
+    },
+  });
+
+  return { selected: paymentIds.length };
+}
+
+/**
+ * Deselect payments for batch creation
+ */
+export async function deselectPaymentsForBatch(paymentIds: string[], userId: string) {
+  await prisma.payment.updateMany({
+    where: {
+      id: { in: paymentIds },
+      selected_for_batch: true,
+      batch_id: null,
+    },
+    data: {
+      selected_for_batch: false,
+      selected_by: null,
+      selected_at: null,
+    },
+  });
+
+  return { deselected: paymentIds.length };
 }
 
 /**
@@ -149,11 +225,12 @@ export async function createPaymentBatch(
   paymentIds: string[],
   userId: string
 ) {
-  // Validate that all payments exist and are in SCHEDULED status
+  // Validate that all payments exist, are in SCHEDULED status, and selected by Accounting Associate
   const payments = await prisma.payment.findMany({
     where: {
       id: { in: paymentIds },
       status: 'SCHEDULED',
+      selected_for_batch: true,
     },
     include: {
       invoice: {
@@ -165,7 +242,7 @@ export async function createPaymentBatch(
   });
 
   if (payments.length !== paymentIds.length) {
-    throw new AppError('Some payments are not found or not in SCHEDULED status', 400);
+    throw new AppError('Some payments are not found, not selected for batch, or not in SCHEDULED status', 400);
   }
 
   // Calculate total batch amount
@@ -185,13 +262,16 @@ export async function createPaymentBatch(
     },
   });
 
-  // Update payments to link to batch
+  // Update payments to link to batch and clear selection
   await prisma.payment.updateMany({
     where: {
       id: { in: paymentIds },
     },
     data: {
       batch_id: batch.id,
+      selected_for_batch: false,
+      selected_by: null,
+      selected_at: null,
     },
   });
 

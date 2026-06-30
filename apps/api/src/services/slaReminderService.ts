@@ -191,7 +191,9 @@ async function sendSLAReminder(
 }
 
 /**
- * Send SLA breach escalation email to Accounting Supervisor
+ * Send SLA breach escalation email
+ * Purchasing Manager and Sr. Manager Global Production breaches escalate to VP of Operations (Chris A).
+ * All other stages escalate to Accounting Supervisor.
  */
 async function sendSLAEscalation(
   invoiceId: string,
@@ -206,7 +208,7 @@ async function sendSLAEscalation(
 
     if (!invoice) return false;
 
-    const accountingSupervisorEmail = getAccountingSupervisorEmail();
+    const escalationEmail = getEscalationEmail(stage);
     const hoursOver = Math.floor(elapsedHours - (SLA_THRESHOLDS[stage] || 168));
 
     const subject = `ESCALATION: SLA Breached - Invoice ${invoice.invoice_number} - ${hoursOver} hours overdue`;
@@ -227,8 +229,8 @@ async function sendSLAEscalation(
       <p><a href="${process.env.APP_URL || 'http://localhost:5173'}/approvals">View in Approval Inbox</a></p>
     `;
 
-    await sendEmail({ to: [accountingSupervisorEmail], subject, body });
-    logger.info(`SLA breach escalation sent for invoice ${invoice.invoice_number} at stage ${stage}`);
+    await sendEmail({ to: [escalationEmail], subject, body });
+    logger.info(`SLA breach escalation sent for invoice ${invoice.invoice_number} at stage ${stage} to ${escalationEmail}`);
     return true;
   } catch (error) {
     logger.error(`Error sending SLA escalation for invoice ${invoiceId}:`, error);
@@ -265,6 +267,25 @@ function getManagerEmail(stage: InvoiceStatus): string {
  */
 function getAccountingSupervisorEmail(): string {
   return process.env.ACCOUNTING_SUPERVISOR_EMAIL || 'accounting-supervisor@madison88.com';
+}
+
+/**
+ * Get VP of Operations email (Chris A) for escalations
+ */
+function getVPOfOperationsEmail(): string {
+  return process.env.VP_OPERATIONS_EMAIL || 'chris.a@madison88.com';
+}
+
+/**
+ * Determine escalation recipient based on stage.
+ * Purchasing Manager and Sr. Manager Global Production breaches escalate to VP of Operations.
+ * All other stages escalate to Accounting Supervisor.
+ */
+function getEscalationEmail(stage: InvoiceStatus): string {
+  if (stage === InvoiceStatus.PENDING_MANAGER || stage === InvoiceStatus.PENDING_SR_MANAGER) {
+    return getVPOfOperationsEmail();
+  }
+  return getAccountingSupervisorEmail();
 }
 
 /**

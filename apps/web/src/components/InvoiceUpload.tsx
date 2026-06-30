@@ -14,16 +14,23 @@ interface OCRResult {
   vendor_name: string;
   total_amount: number;
   currency: string;
+  settlement_currency?: string;
   invoice_currency_original?: string;
+  needs_currency_confirmation?: boolean;
   exchange_rate_to_usd?: number;
   payment_terms: PaymentTerms;
   incoterm?: string;
+  subtotal?: number;
+  tax_amount?: number;
+  discount_amount?: number;
   bank_charges: number;
   freight_charges: number;
   additional_charges: number;
   invoice_type: InvoiceType;
   category: InvoiceCategory;
   bill_to_entity?: BillToEntity;
+  ship_to?: string;
+  sold_to?: string;
   is_handwritten: boolean;
   is_urgent: boolean;
   priority_pay_date?: string;
@@ -52,6 +59,14 @@ interface OCRResult {
     signatory_role: string;
     signature_type: string;
   }>;
+  amount_resolution_debug?: {
+    method: string;
+    confidence: number;
+    score: number | null;
+    topCandidates: Array<{ amount: number; label: string; score: number; page: number }>;
+    internalLineItems?: Array<{ quantity: number; unitPrice: number; extendedPrice: number; rawLine: string }>;
+    internalLineItemSum?: number;
+  };
 }
 
 export default function InvoiceUpload() {
@@ -94,12 +109,13 @@ export default function InvoiceUpload() {
 
     try {
       const response = await invoiceApi.upload(file);
-      setOcrResult(response.data.ocr_result);
+      setOcrResult(response.data.extraction || response.data.ocr_result);
       setVendorMatch(response.data.vendor_match);
       setRequiresManualVendor(response.data.requires_manual_vendor_assignment);
 
       if (response.data.requires_manual_vendor_assignment) {
-        const suggestions = await vendorApi.getSuggestions(response.data.ocr_result.vendor_name);
+        const extraction = response.data.extraction || response.data.ocr_result;
+        const suggestions = await vendorApi.getSuggestions(extraction?.vendor_name);
         setVendorSuggestions(suggestions.data);
       }
     } catch (err: any) {
@@ -137,9 +153,14 @@ export default function InvoiceUpload() {
         currency: ocrResult.currency,
         payment_terms: String(ocrResult.payment_terms) as PaymentTerms,
         incoterm: ocrResult.incoterm,
+        subtotal: ocrResult.subtotal,
+        tax_amount: ocrResult.tax_amount,
+        discount_amount: ocrResult.discount_amount,
         bank_charges: ocrResult.bank_charges,
         freight_charges: ocrResult.freight_charges,
         additional_charges: ocrResult.additional_charges,
+        ship_to: ocrResult.ship_to,
+        sold_to: ocrResult.sold_to,
         invoice_type: ocrResult.invoice_type,
         category: ocrResult.category,
         bill_to_entity: ocrResult.bill_to_entity,

@@ -9,6 +9,7 @@ import { NextGenService } from '../services/nextGenService';
 import { validateInvoiceAgainstPO } from '../services/invoiceValidationAgent';
 import { poAuditService } from '../services/poAuditService';
 import { geminiOCRService } from '../services/geminiOCRService';
+import { groqOCRService } from '../services/groqOCRService';
 import { consensusExtractor, RawExtractionResult } from '../services/consensusExtractor';
 import crypto from 'crypto';
 
@@ -218,17 +219,70 @@ export const uploadMadisonInvoice = async (
 
     console.log('[DEBUG] pdf2jsonRaw mapped for consensus:', JSON.stringify(pdf2jsonRaw, null, 2));
 
+    let groqResult: any = null;
     const consensus = await consensusExtractor.extract(
       madisonRawResult.raw_text || '',
       fileBuffer,
       async () => pdf2jsonRaw,
       async (text) => {
-        if (!geminiOCRService.isAvailable()) return null;
-        return geminiOCRService.extractFromText(text);
+        if (groqOCRService.isAvailable()) {
+          const result = await groqOCRService.extractFromText(text);
+          groqResult = result;
+          return result;
+        }
+        if (geminiOCRService.isAvailable()) {
+          return geminiOCRService.extractFromText(text);
+        }
+        return null;
       }
     );
 
     console.log(`[DEBUG] Consensus extraction: confidence=${consensus.overall_confidence}, status=${consensus.overall_status}, conflicts=${consensus.conflicts.length}, engines=${consensus.engines_used.join('+')}`);
+
+    // DSRS v7.3: Non-destructive consensus fallback. Use the consensus amount only when the
+    // AST kernel explicitly failed, has no internal line items, or its own line item sum is
+    // inconsistent with the consensus amount. This preserves AST correctness when it works and
+    // avoids trusting Gemini when the AST already extracted a valid amount.
+    const astInternalSum = madisonRawResult.amount_resolution_debug?.internalLineItemSum ?? 0;
+    const astAmount = madisonRawResult.amount ?? 0;
+    const consensusAmount = consensus.final.total_amount ?? 0;
+    const consensusLineItemsSum = (consensus.final.line_items || [])
+      .reduce((sum: number, li: any) => sum + (Number(li.total_amount) || 0), 0);
+
+    const consensusAmountMatchesItsLineItems = consensusAmount > 0
+      && Math.abs(consensusLineItemsSum - consensusAmount) / consensusAmount < 0.05;
+
+    // Normalize invoice number: remove spaces around dashes/slashes
+    const cleanInvoiceNumber = (value: string | null | undefined) =>
+      value ? value.replace(/\s*([\-\\/])\s*/g, '$1').trim() : null;
+
+    // Normalize PO number: extract PO002905 from strings like CSC_F26_PO002905_JAN 28
+    const cleanPONumber = (value: string | null | undefined) => {
+      if (!value) return null;
+      const poMatch = value.match(/\bPO(\d{4,6})\b/i);
+      if (poMatch) return 'PO' + poMatch[1].padStart(6, '0');
+      return value;
+    };
+
+    const astInternalSumBad = astInternalSum > 0
+      && consensusAmount > 0
+      && Math.abs(astInternalSum - consensusAmount) / consensusAmount > 0.5;
+
+    const astAmountBad = astAmount > 0
+      && consensusAmount > 0
+      && Math.abs(astAmount - consensusAmount) / consensusAmount > 0.5;
+
+    const astFailed = madisonRawResult.status === 'AST_FAILURE'
+      || (astInternalSum === 0 && !madisonRawResult.amount);
+
+    const useConsensusFallback = astFailed
+      || (consensusAmountMatchesItsLineItems && (astInternalSumBad || astAmountBad));
+
+    if (useConsensusFallback && consensusAmount) {
+      madisonRawResult.amount = consensusAmount;
+      madisonRawResult.status = 'EXTRACTED';
+      madisonRawResult.status_reason = 'amount_from_consensus_fallback';
+    }
 
     // Compute total quantity from line items if Madison didn't extract qty_shipped
     const lineItems = consensus.final.line_items || [];
@@ -237,26 +291,38 @@ export const uploadMadisonInvoice = async (
       : madisonRawResult.qty_shipped;
 
     // Merge consensus final fields with Madison metadata (keep bank details, qty, etc.)
+    // DSRS v7.3: In AST single-source mode, the AST amount is the authoritative source of truth.
+    // If the AST kernel fails to resolve an amount, fall back to the consensus amount so the
+    // upload is not rejected. In legacy/consensus mode, prefer the consensus amount when available.
     const finalAmount = AST_SINGLE_SOURCE_MODE
       ? (madisonRawResult.amount ?? consensus.final.total_amount)
-      : consensus.final.total_amount;
+      : (consensus.final.total_amount ?? madisonRawResult.amount);
+    const finalCurrency = AST_SINGLE_SOURCE_MODE
+      ? (madisonRawResult.currency ?? consensus.final.currency)
+      : consensus.final.currency;
 
     console.log('[AMOUNT_DEBUG]', {
       mode: AST_SINGLE_SOURCE_MODE ? 'AST' : 'CONSENSUS',
       madisonAmount: madisonRawResult.amount,
+      madisonCurrency: madisonRawResult.currency,
       consensusAmount: consensus.final.total_amount,
+      consensusCurrency: consensus.final.currency,
       finalAmount,
-      source: AST_SINGLE_SOURCE_MODE && madisonRawResult.amount !== null
-        ? 'MADISON'
-        : 'CONSENSUS'
+      finalCurrency,
+      source: AST_SINGLE_SOURCE_MODE ? 'MADISON_AST' : (consensus.final.total_amount !== null ? 'CONSENSUS' : 'MADISON')
     });
+
+    // DSRS v7.3: Capture the actual upload/receipt time as the SLA base date.
+    // This is the moment the invoice was received by the system, distinct from invoice_date.
+    const invoiceReceivedDate = new Date().toISOString();
 
     let madisonResult = {
       ...madisonRawResult,
       ...consensus.final,
       amount: finalAmount,
+      invoice_received_date: invoiceReceivedDate,
       vendor_name: consensus.final.vendor_name,
-      invoice_number: consensus.final.invoice_number,
+      invoice_number: cleanInvoiceNumber(consensus.final.invoice_number),
       invoice_date: consensus.final.invoice_date,
       due_date: AST_SINGLE_SOURCE_MODE
         ? (madisonRawResult.due_date || consensus.final.due_date || null)
@@ -264,8 +330,8 @@ export const uploadMadisonInvoice = async (
       payment_terms: AST_SINGLE_SOURCE_MODE
         ? (madisonRawResult.payment_terms || consensus.final.payment_terms || null)
         : (consensus.final.payment_terms || madisonRawResult.payment_terms || null),
-      currency: consensus.final.currency,
-      po_number: consensus.final.po_number || madisonRawResult.po_number || null,
+      currency: finalCurrency,
+      po_number: cleanPONumber(consensus.final.po_number || madisonRawResult.po_number || null),
       mpo_number: consensus.final.mpo_number || madisonRawResult.mpo_number || null,
       brand: consensus.final.brand || madisonRawResult.brand || null,
       brand_code: consensus.final.brand_code || madisonRawResult.brand_code || null,
@@ -274,6 +340,22 @@ export const uploadMadisonInvoice = async (
       qty_shipped: madisonRawResult.qty_shipped || computedQty || null,
       consensus,
     };
+
+    // If the Madison extractor mixed up two-column delivery/invoice addresses, prefer the Groq result.
+    if (groqResult?.ship_to) {
+      const current = madisonResult.ship_to || '';
+      if (!current || current.length > 300 || /MADISON\s*88/i.test(current) || /INVOICE\s*ADDRESS/i.test(current)) {
+        madisonResult.ship_to = groqResult.ship_to;
+        console.log('[DEBUG] ship_to overridden by Groq:', groqResult.ship_to);
+      }
+    }
+    if (groqResult?.sold_to) {
+      const current = madisonResult.sold_to || '';
+      if (!current || current.length > 300 || /PT\s*UWU/i.test(current) || /Delivery\s*address/i.test(current)) {
+        madisonResult.sold_to = groqResult.sold_to;
+        console.log('[DEBUG] sold_to overridden by Groq:', groqResult.sold_to);
+      }
+    }
 
     // Capture debug logs for account number extraction
     const debugLogs: any = {
@@ -287,16 +369,104 @@ export const uploadMadisonInvoice = async (
     // Generate a unique audit session id for the async PO audit (DSRS v7.3)
     const poAuditId = crypto.randomUUID();
 
-    // DSRS v7.3: PO validation is runtime-blocked in AST mode.
-    // PO system becomes async audit only, not runtime logic.
+    // DSRS v7.3: PO validation runs as a non-blocking check. In AST mode it is
+    // display-only — it NEVER overrides the AST extraction. The async audit is
+    // still scheduled for background checking and change tracking.
     let poValidation: any = null;
     if (AST_SINGLE_SOURCE_MODE) {
-      console.log('[DEBUG] AST zero-leak mode: PO validation skipped (runtime isolated)');
-      poValidation = {
-        mode: 'AST_ISOLATED',
-        skipped: true,
-        message: 'PO validation is disabled in AST single-source mode. Use async audit only.',
-      };
+      if (madisonResult.mpo_number || madisonResult.po_number) {
+        try {
+          const nextGenService = NextGenService.getInstance();
+          const nextGenData = await nextGenService.compareInvoiceWithPO({
+            po_number: madisonResult.po_number || undefined,
+            mpo_number: madisonResult.mpo_number || undefined,
+            amount: madisonResult.amount || 0,
+            vendor_name: madisonResult.vendor_name || '',
+            brand: madisonResult.brand || undefined,
+            season: madisonResult.season || undefined,
+            order_type: madisonResult.order_type || undefined,
+          });
+
+          const validationResult = await validateInvoiceAgainstPO(
+            {
+              vendor_name: madisonResult.vendor_name || '',
+              invoice_number: madisonResult.invoice_number || '',
+              invoice_date: madisonResult.invoice_date || '',
+              due_date: madisonResult.due_date || '',
+              document_type: madisonResult.document_type,
+              amount: madisonResult.amount || 0,
+              currency: madisonResult.currency || 'USD',
+              brand: madisonResult.brand || '',
+              season: madisonResult.season || '',
+              order_type: madisonResult.order_type || '',
+              po_reference_raw: madisonResult.po_reference_raw || '',
+              po_number: madisonResult.po_number || null,
+              mpo_number: madisonResult.mpo_number || '',
+            },
+            {
+              vendor_id: nextGenData.nextgen_data?.vendor_id || '',
+              vendor_name: nextGenData.nextgen_data?.vendor_name || '',
+              brand: nextGenData.nextgen_data?.brand || '',
+              season: nextGenData.nextgen_data?.season || '',
+              order_type: nextGenData.nextgen_data?.order_type || '',
+              currency: nextGenData.nextgen_data?.currency || '',
+              amount: nextGenData.nextgen_data?.amount || 0,
+              status: nextGenData.nextgen_data?.status || '',
+            }
+          );
+
+          poValidation = {
+            mode: 'AST_ISOLATED',
+            skipped: false,
+            message: 'PO validation completed (display-only in AST mode)',
+            ...nextGenData,
+            validation_result: validationResult,
+          };
+
+          console.log('[DEBUG] AST mode PO validation:', JSON.stringify(poValidation, null, 2));
+        } catch (nextGenError) {
+          console.error('[DEBUG] AST mode PO validation failed:', nextGenError);
+          poValidation = {
+            mode: 'AST_ISOLATED',
+            skipped: false,
+            message: 'PO validation failed (NextGen error)',
+            po_found: false,
+            is_match: false,
+            comparison: {
+              amount_match: false,
+              vendor_match: false,
+              brand_match: false,
+              season_match: false,
+              order_type_match: false,
+              differences: ['NextGen validation error'],
+            },
+            validation_result: {
+              status: 'REJECTED' as const,
+              confidence: 0,
+              summary: 'NextGen validation failed',
+              checks: {
+                mpo_found: false,
+                vendor_match: false,
+                vendor_match_score: 0,
+                brand_match: false,
+                brand_source: 'INVOICE' as const,
+                season_match: false,
+                order_type_match: false,
+                currency_match: false,
+                amount_variance_percent: 100,
+              },
+              issues: ['NextGen validation error'],
+              recommendation: 'Manual review required',
+            },
+          };
+        }
+      } else {
+        poValidation = {
+          mode: 'AST_ISOLATED',
+          skipped: true,
+          message: 'No PO/MPO number found — PO validation skipped',
+        };
+      }
 
       // DSRS v7.3 async audit — schedule background PO check without blocking upload
       poAuditService.scheduleAudit(
@@ -477,13 +647,20 @@ export const confirmOCR = async (
       invoice_number,
       invoice_date,
       due_date,
+      invoice_received_date,
       vendor_id,
       total_amount,
       currency,
       payment_terms,
       incoterm,
+      subtotal,
+      tax_amount,
+      discount_amount,
       bank_charges,
       freight_charges,
+      additional_charges,
+      ship_to,
+      sold_to,
       invoice_type,
       category,
       bill_to_entity,
@@ -503,14 +680,20 @@ export const confirmOCR = async (
         invoice_number,
         invoice_date,
         due_date,
-        invoice_received_date: new Date(),
+        invoice_received_date: invoice_received_date || new Date(),
         vendor_id,
         total_amount,
         currency,
         payment_terms,
         incoterm,
+        subtotal,
+        tax_amount,
+        discount_amount,
         bank_charges: bank_charges || 0,
         freight_charges: freight_charges || 0,
+        additional_charges: additional_charges || 0,
+        ship_to,
+        sold_to,
         invoice_type,
         category,
         bill_to_entity: bill_to_entity || 'MADISON_88_LTD',

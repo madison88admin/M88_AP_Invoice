@@ -383,8 +383,17 @@ export class ConsensusExtractor {
       return { value: val2, confidence: 'MEDIUM', source: 'gemini', gemini_value: val2 };
     }
 
-    const norm1 = String(val1).trim().toUpperCase();
-    const norm2 = String(val2).trim().toUpperCase();
+    // Normalize special fields before comparison
+    let norm1 = String(val1).trim().toUpperCase();
+    let norm2 = String(val2).trim().toUpperCase();
+    if (field === 'mpo_number') {
+      norm1 = this.normalizeMPO(norm1);
+      norm2 = this.normalizeMPO(norm2);
+    }
+    if (field === 'currency') {
+      norm1 = this.normalizeCurrency(norm1);
+      norm2 = this.normalizeCurrency(norm2);
+    }
 
     if (norm1 === norm2) {
       return {
@@ -404,10 +413,11 @@ export class ConsensusExtractor {
       reason: `${field} mismatch: "${val1}" vs "${val2}"`,
     });
 
+    // Prioritize Gemini when engines disagree
     return {
-      value: val1,
+      value: val2,
       confidence: 'CONFLICT',
-      source: 'pdf2json',
+      source: 'gemini',
       pdf2json_value: val1,
       gemini_value: val2,
       conflict_reason: `Engines disagree: "${val1}" vs "${val2}"`,
@@ -473,10 +483,11 @@ export class ConsensusExtractor {
       reason: `${field} significantly different: "${val1}" vs "${val2}"`,
     });
 
+    // Prioritize Gemini when engines disagree
     return {
-      value: val1,
+      value: val2,
       confidence: 'CONFLICT',
-      source: 'pdf2json',
+      source: 'gemini',
       pdf2json_value: val1,
       gemini_value: val2,
       conflict_reason: `Engines disagree on ${field}`,
@@ -521,10 +532,11 @@ export class ConsensusExtractor {
       reason: `${field} mismatch: ${val1} vs ${val2} (${(diff * 100).toFixed(2)}% difference)`,
     });
 
+    // Prioritize Gemini when engines disagree
     return {
-      value: val1,
+      value: val2,
       confidence: 'CONFLICT',
-      source: 'pdf2json',
+      source: 'gemini',
       pdf2json_value: val1,
       gemini_value: val2,
       conflict_reason: `Amount conflict: ${val1} vs ${val2}`,
@@ -576,10 +588,11 @@ export class ConsensusExtractor {
         severity: 'WARNING',
         reason: `Date mismatch: "${val1}" vs "${val2}"`,
       });
+      // Prioritize Gemini when date cannot be resolved from raw text
       return {
-        value: norm1,
+        value: norm2,
         confidence: 'CONFLICT',
-        source: 'pdf2json',
+        source: 'gemini',
         pdf2json_value: val1,
         gemini_value: val2,
       };
@@ -812,10 +825,11 @@ export class ConsensusExtractor {
       reason: `${field} mismatch: "${val1}" vs "${val2}"`,
     });
 
+    // Prioritize Gemini when vendor names disagree
     return {
-      value: val1,
+      value: val2,
       confidence: 'CONFLICT',
-      source: 'pdf2json',
+      source: 'gemini',
       pdf2json_value: val1,
       gemini_value: val2,
       conflict_reason: `Engines disagree on ${field}`,
@@ -861,10 +875,11 @@ export class ConsensusExtractor {
       reason: `${field} mismatch: "${val1}" vs "${val2}"`,
     });
 
+    // Prioritize Gemini when brand names disagree
     return {
-      value: val1,
+      value: val2,
       confidence: 'CONFLICT',
-      source: 'pdf2json',
+      source: 'gemini',
       pdf2json_value: val1,
       gemini_value: val2,
       conflict_reason: `Engines disagree on ${field}`,
@@ -976,6 +991,20 @@ export class ConsensusExtractor {
       .trim();
   }
 
+  private normalizeMPO(value: string): string {
+    if (!value) return value;
+    const mpoMatch = value.match(/MPO(\d+)/i);
+    if (mpoMatch) {
+      return 'MPO' + mpoMatch[1].padStart(6, '0');
+    }
+    return value.toUpperCase().trim();
+  }
+
+  private normalizeCurrency(value: string): string {
+    if (!value) return value;
+    return value.replace(/[\$\s]/g, '').toUpperCase().trim();
+  }
+
   private resolveDateFromRawText(rawText: string, candidates: string[]): string | null {
     const upperText = rawText.toUpperCase();
     const dateLabels = [
@@ -1049,10 +1078,11 @@ export class ConsensusExtractor {
       reason: `Line items total mismatch: ${total1} vs ${total2}`,
     });
 
+    // Prioritize Gemini when line items disagree
     return {
-      value: items1,
+      value: items2,
       confidence: 'MEDIUM',
-      source: 'pdf2json',
+      source: 'gemini',
       pdf2json_value: items1,
       gemini_value: items2,
     };

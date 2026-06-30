@@ -10,5 +10,7 @@ if (!isSupabaseConfigured) {
 }
 
 export const supabase = isSupabaseConfigured
-  ? createClient(supabaseUrl, supabaseAnonKey)
+  ? createClient(supabaseUrl, supabaseAnonKey, {
+      db: { schema: 'AP_Invoice' }
+    })
   : null;

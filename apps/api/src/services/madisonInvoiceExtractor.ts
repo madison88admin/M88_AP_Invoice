@@ -2246,20 +2246,24 @@ function extractBankDetails(text: string): { bank_name: string | null; swift_cod
   const swiftMatch = normalized.match(/Swift\s*code\s*:\s*([A-Z]{6}[A-Z0-9]{2,5})/i) ||
                       normalized.match(/SWIFT\s*BIC\s*[:\s]*([A-Z]{6}[A-Z0-9]{2,5})/i) ||
                       normalized.match(/SWIFT[:\s]*([A-Z]{6}[A-Z0-9]{2,5})/i) ||
-                      // Space-separated SWIFT, e.g. "Swift Code HSBC HKH HHKH"
-                      normalized.match(/Swift\s*Code\s*[:：]?\s*([A-Z]{4}\s+[A-Z]{2}\s+[A-Z0-9]{2,3})/i);
+                      // Space-separated SWIFT, e.g. "Swift Code HSBC HKH HHKH" (any grouping, 8 or 11 chars)
+                      normalized.match(/Swift\s*Code\s*[:：]?\s*([A-Z0-9](?:\s*[A-Z0-9]){7,10})/i);
 
   if (swiftMatch) {
-    swift_code = swiftMatch[1].replace(/\s+/g, '').toUpperCase();
-    confidence = Math.max(confidence, 0.90);
-    console.log('[extractBankDetails] Found SWIFT code:', swift_code);
+    const candidate = swiftMatch[1].replace(/\s+/g, '').toUpperCase();
+    // Validate BIC length (8 or 11) and basic format
+    if (/^[A-Z]{6}[A-Z0-9]{2,5}$/.test(candidate)) {
+      swift_code = candidate;
+      confidence = Math.max(confidence, 0.90);
+      console.log('[extractBankDetails] Found SWIFT code:', swift_code);
 
-    // Debug: Show text around SWIFT code to debug account number extraction
-    const swiftIndex = normalized.indexOf(swiftMatch[1]);
-    if (swiftIndex !== -1) {
-      const contextStart = Math.max(0, swiftIndex - 300);
-      const contextEnd = Math.min(normalized.length, swiftIndex + 300);
-      console.log('[extractBankDetails] Text around SWIFT code:', normalized.substring(contextStart, contextEnd));
+      // Debug: Show text around SWIFT code to debug account number extraction
+      const swiftIndex = normalized.indexOf(swiftMatch[1]);
+      if (swiftIndex !== -1) {
+        const contextStart = Math.max(0, swiftIndex - 300);
+        const contextEnd = Math.min(normalized.length, swiftIndex + 300);
+        console.log('[extractBankDetails] Text around SWIFT code:', normalized.substring(contextStart, contextEnd));
+      }
     }
   }
 

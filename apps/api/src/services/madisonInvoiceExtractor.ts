@@ -2186,62 +2186,62 @@ function extractBankDetails(text: string): { bank_name: string | null; swift_cod
   let confidence = 0.0;
 
   // Detect bank name
-  // DSRS v7.3: First try explicit Bank Name / Beneficiary / Our Bank labels.
-  // If no labeled bank name is found, fall back to known bank name patterns.
+  // DSRS v7.3: First try known bank names in the bank details section. Specific bank names
+  // (e.g., ICBC (Asia)) are more reliable than generic labels that may capture address text.
   // Stop labels expanded to avoid capturing invoice metadata (incoterm, payment terms, A/C, etc.).
-  const bankNameStopLabels = '(?:\\d|Swift|SWIFT|SWIFT\s*BIC|A\/C|Account|Beneficiary|Address|ADD|Tel|Fax|INCOTERM|Payment\s*Terms|BANK\s*ADD|BANK\s*ADDRESS|HS\s*CODE|C\/NO|A\/C\s*NAME|A\/C\s*NUMBER|A\/C\s*NO|SWIFT\s*CODE|Intermediary|Intermediary\s*Bank|$)';
-  const genericBankNamePatterns = [
-    new RegExp(`Bank\\s*Name\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,()]+?)(?=\\s*${bankNameStopLabels})`, 'i'),
-    new RegExp(`Beneficiary(?:['']s)?\\s*(?:Bank)?\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,()]+?)(?=\\s*${bankNameStopLabels})`, 'i'),
-    new RegExp(`Our\\s*Bank\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,()]+?)(?=\\s*${bankNameStopLabels})`, 'i'),
-    new RegExp(`Bank\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,()]+?)(?=\\s*${bankNameStopLabels})`, 'i'),
-    new RegExp(`Banker\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,()]+?)(?=\\s*${bankNameStopLabels})`, 'i'),
+  const bankPatterns = [
+    { name: 'HSBC Bank Plc', patterns: [/HSBC\s+Bank\s+Plc/i], confidence: 0.95 },
+    { name: 'HSBC Bank', patterns: [/HSBC\s+Bank/i], confidence: 0.95 },
+    { name: 'HSBC', patterns: [/HSBC/i], confidence: 0.95 },
+    { name: 'Standard Chartered Bank', patterns: [/Standard\s*Chartered/i], confidence: 0.95 },
+    { name: 'CITIBANK', patterns: [/CITIBANK/i], confidence: 0.95 },
+    { name: 'DBS Bank', patterns: [/DBS\s*Bank/i], confidence: 0.95 },
+    { name: 'Bank of America', patterns: [/Bank\s*of\s*America/i], confidence: 0.95 },
+    { name: 'Bank of America N.A. New York Branch', patterns: [/Bank\s*of\s*America\s*N\.A\.\s*New\s*York\s*Branch/i], confidence: 0.95 },
+    { name: 'Chase Bank', patterns: [/Chase\s*Bank/i], confidence: 0.95 },
+    { name: 'Wells Fargo', patterns: [/Wells\s*Fargo/i], confidence: 0.95 },
+    { name: 'ICBC (Asia)', patterns: [/ICBC\s*\(?Asia\)?/i], confidence: 0.95 },
+    { name: 'ICBC', patterns: [/ICBC/i], confidence: 0.95 },
   ];
 
-  for (const pattern of genericBankNamePatterns) {
-    const match = normalized.match(pattern);
-    if (match) {
-      bank_name = match[1].trim();
-      // Clean up trailing noise
-      bank_name = bank_name.replace(/\s*(?:Swift|SWIFT|A\/C|Account|Beneficiary).*$/i, '').trim();
-      // Remove trailing address/number fragments (e.g., "Bank Name 101-107, Street, City" -> "Bank Name")
-      bank_name = bank_name.replace(/\s+\d[\d\s,\-]*.*$/, '').trim();
-      // Collapse any internal line breaks or runs of whitespace into a single space
-      bank_name = bank_name.replace(/\s+/g, ' ').trim();
-      if (bank_name.length > 2) {
-        confidence = Math.max(confidence, 0.90);
-        console.log('[extractBankDetails] Found bank name from label:', bank_name);
+  for (const { name, patterns, confidence: bankConf } of bankPatterns) {
+    for (const pattern of patterns) {
+      if (pattern.test(normalized)) {
+        bank_name = name;
+        confidence = Math.max(confidence, bankConf);
+        console.log('[extractBankDetails] Found bank:', bank_name, 'confidence:', confidence);
         break;
       }
     }
+    if (bank_name) break;
   }
 
   if (!bank_name) {
-    const bankPatterns = [
-      { name: 'HSBC Bank Plc', patterns: [/HSBC\s+Bank\s+Plc/i], confidence: 0.95 },
-      { name: 'HSBC Bank', patterns: [/HSBC\s+Bank/i], confidence: 0.95 },
-      { name: 'HSBC', patterns: [/HSBC/i], confidence: 0.95 },
-      { name: 'Standard Chartered Bank', patterns: [/Standard\s*Chartered/i], confidence: 0.95 },
-      { name: 'CITIBANK', patterns: [/CITIBANK/i], confidence: 0.95 },
-      { name: 'DBS Bank', patterns: [/DBS\s*Bank/i], confidence: 0.95 },
-      { name: 'Bank of America', patterns: [/Bank\s*of\s*America/i], confidence: 0.95 },
-      { name: 'Bank of America N.A. New York Branch', patterns: [/Bank\s*of\s*America\s*N\.A\.\s*New\s*York\s*Branch/i], confidence: 0.95 },
-      { name: 'Chase Bank', patterns: [/Chase\s*Bank/i], confidence: 0.95 },
-      { name: 'Wells Fargo', patterns: [/Wells\s*Fargo/i], confidence: 0.95 },
-      { name: 'ICBC (Asia)', patterns: [/ICBC\s*\(?Asia\)?/i], confidence: 0.95 },
-      { name: 'ICBC', patterns: [/ICBC/i], confidence: 0.95 },
+    const bankNameStopLabels = '(?:\\d|Swift|SWIFT|SWIFT\s*BIC|A\/C|Account|Beneficiary|Address|ADD|Tel|Fax|INCOTERM|Payment\s*Terms|BANK\s*ADD|BANK\s*ADDRESS|HS\s*CODE|C\/NO|A\/C\s*NAME|A\/C\s*NUMBER|A\/C\s*NO|SWIFT\s*CODE|Intermediary|Intermediary\s*Bank|$)';
+    const genericBankNamePatterns = [
+      new RegExp(`Bank\\s*Name\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,()]+?)(?=\\s*${bankNameStopLabels})`, 'i'),
+      new RegExp(`Beneficiary(?:['']s)?\\s*(?:Bank)?\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,()]+?)(?=\\s*${bankNameStopLabels})`, 'i'),
+      new RegExp(`Our\\s*Bank\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,()]+?)(?=\\s*${bankNameStopLabels})`, 'i'),
+      new RegExp(`Bank\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,()]+?)(?=\\s*${bankNameStopLabels})`, 'i'),
+      new RegExp(`Banker\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,()]+?)(?=\\s*${bankNameStopLabels})`, 'i'),
     ];
 
-    for (const { name, patterns, confidence: bankConf } of bankPatterns) {
-      for (const pattern of patterns) {
-        if (pattern.test(normalized)) {
-          bank_name = name;
-          confidence = Math.max(confidence, bankConf);
-          console.log('[extractBankDetails] Found bank:', bank_name, 'confidence:', confidence);
+    for (const pattern of genericBankNamePatterns) {
+      const match = normalized.match(pattern);
+      if (match) {
+        bank_name = match[1].trim();
+        // Clean up trailing noise
+        bank_name = bank_name.replace(/\s*(?:Swift|SWIFT|A\/C|Account|Beneficiary).*$/i, '').trim();
+        // Remove trailing address/number fragments (e.g., "Bank Name 101-107, Street, City" -> "Bank Name")
+        bank_name = bank_name.replace(/\s+\d[\d\s,\-]*.*$/, '').trim();
+        // Collapse any internal line breaks or runs of whitespace into a single space
+        bank_name = bank_name.replace(/\s+/g, ' ').trim();
+        if (bank_name.length > 2) {
+          confidence = Math.max(confidence, 0.90);
+          console.log('[extractBankDetails] Found bank name from label:', bank_name);
           break;
         }
       }
-      if (bank_name) break;
     }
   }
 

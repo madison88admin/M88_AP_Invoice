@@ -534,6 +534,27 @@ export function buildInvoiceAST(
   const pageTexts = pages && pages.length > 0 ? pages : [normalizedText];
   const maxPageIndex = pageTexts.length - 1;
 
+  // Explicit pattern for G&F-style invoices: "TOTALUSD : 4,693.10" or "TOTAL USD : 4,693.10"
+  const explicitTotalMatch = normalizedText.match(/TOTAL\s*USD\s*[:：]\s*([0-9,]+\.[0-9]{2,3})/i);
+  if (explicitTotalMatch) {
+    const amount = parseFloat(explicitTotalMatch[1].replace(/,/g, ''));
+    if (amount > 0 && amount < 10_000_000) {
+      totalCandidates.push({
+        pageIndex: maxPageIndex,
+        lineIndex: 0,
+        pageLineCount: 1,
+        line: explicitTotalMatch[0],
+        amount,
+        label: 'TOTALUSD',
+        hasCurrencyContext: true,
+        currency: 'USD',
+        isPerUnit: false,
+        isPerThousand: false,
+        score: 200
+      });
+    }
+  }
+
   const detectedCurrency = (metadata.currency || 'USD').toUpperCase();
 
   // Pre-compute line item sum once

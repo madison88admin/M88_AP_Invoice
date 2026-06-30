@@ -27,6 +27,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
     dueDate: '',
     amount: '',
     currency: 'USD',
+    documentType: '' as '' | 'PI' | 'INV' | 'CI' | 'SI' | 'STATEMENT',
     category: '',
     brand: '',
     brandTier: '' as '' | 'TOP_10' | 'OTHER',
@@ -87,6 +88,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
           dueDate: formattedDueDate,
           amount: extraction.amount?.toString() || '',
           currency: extraction.currency || 'USD',
+          documentType: extraction.document_type || '',
           category: extraction.category || '',
           brand: brandToUse,
           brandTier: extraction.brand_tier || '',
@@ -117,6 +119,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
         dueDate: '',
         amount: '',
         currency: 'USD',
+        documentType: '',
         category: '',
         brand: '',
         brandTier: '',
@@ -169,6 +172,8 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
         vendor_name: formData.vendorName,
         amount: parseFloat(formData.amount),
         currency: formData.currency,
+        document_type: formData.documentType,
+        invoice_type: formData.documentType === 'PI' ? 'PROFORMA' : formData.documentType === 'INV' ? 'INVOICE' : formData.documentType,
         category: formData.category,
         brand: formData.brand,
         brand_tier: formData.brandTier,
@@ -222,6 +227,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
       dueDate: '',
       amount: '',
       currency: 'USD',
+      documentType: '',
       category: '',
       brand: '',
       brandTier: '',
@@ -776,7 +782,33 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                   </div>
                 </div>
 
-                {/* Row 4: Category */}
+                {/* Row 4: Document Type */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-400 mb-2">Document Type</label>
+                  <select
+                    value={formData.documentType}
+                    onChange={(e) => setFormData({ ...formData, documentType: e.target.value as any })}
+                    style={{
+                      width: '100%',
+                      padding: '10px 14px',
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                      borderRadius: '10px',
+                      color: 'white',
+                      outline: 'none',
+                      transition: 'all 150ms ease',
+                    }}
+                  >
+                    <option value="" style={{ background: '#0f172a' }}>Select document type</option>
+                    <option value="PI" style={{ background: '#0f172a' }}>Proforma Invoice (PI)</option>
+                    <option value="INV" style={{ background: '#0f172a' }}>Invoice (INV)</option>
+                    <option value="CI" style={{ background: '#0f172a' }}>Commercial Invoice (CI)</option>
+                    <option value="SI" style={{ background: '#0f172a' }}>Sales Invoice (SI)</option>
+                    <option value="STATEMENT" style={{ background: '#0f172a' }}>Statement</option>
+                  </select>
+                </div>
+
+                {/* Row 5: Category */}
                 <div>
                   <label className="block text-sm font-medium text-slate-400 mb-2">Category</label>
                   <select

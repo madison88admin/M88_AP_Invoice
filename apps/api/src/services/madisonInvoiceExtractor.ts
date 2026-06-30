@@ -2195,6 +2195,7 @@ function extractBankDetails(text: string): { bank_name: string | null; swift_cod
     new RegExp(`Beneficiary(?:['']s)?\\s*(?:Bank)?\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,]+?)(?=\\s*${bankNameStopLabels})`, 'i'),
     new RegExp(`Our\\s*Bank\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,]+?)(?=\\s*${bankNameStopLabels})`, 'i'),
     new RegExp(`Bank\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,]+?)(?=\\s*${bankNameStopLabels})`, 'i'),
+    new RegExp(`Banker\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,]+?)(?=\\s*${bankNameStopLabels})`, 'i'),
   ];
 
   for (const pattern of genericBankNamePatterns) {
@@ -2227,6 +2228,8 @@ function extractBankDetails(text: string): { bank_name: string | null; swift_cod
       { name: 'Bank of America N.A. New York Branch', patterns: [/Bank\s*of\s*America\s*N\.A\.\s*New\s*York\s*Branch/i], confidence: 0.95 },
       { name: 'Chase Bank', patterns: [/Chase\s*Bank/i], confidence: 0.95 },
       { name: 'Wells Fargo', patterns: [/Wells\s*Fargo/i], confidence: 0.95 },
+      { name: 'ICBC (Asia)', patterns: [/ICBC\s*\(?Asia\)?/i], confidence: 0.95 },
+      { name: 'ICBC', patterns: [/ICBC/i], confidence: 0.95 },
     ];
 
     for (const { name, patterns, confidence: bankConf } of bankPatterns) {
@@ -2246,7 +2249,9 @@ function extractBankDetails(text: string): { bank_name: string | null; swift_cod
   const swiftMatch = normalized.match(/Swift\s*code\s*:\s*([A-Z]{6}[A-Z0-9]{2,5})/i) ||
                       normalized.match(/SWIFT\s*BIC\s*[:\s]*([A-Z]{6}[A-Z0-9]{2,5})/i) ||
                       normalized.match(/SWIFT[:\s]*([A-Z]{6}[A-Z0-9]{2,5})/i) ||
-                      // Space-separated SWIFT, e.g. "Swift Code HSBC HKH HHKH" (any grouping, 8 or 11 chars)
+                      // Grouped space-separated SWIFT, e.g. "Swift Code HSBC HKH HHKH"
+                      normalized.match(/Swift\s*Code\s*[:：]?\s*([A-Z0-9]{2,4}(?:\s+[A-Z0-9]{2,4}){1,4})/i) ||
+                      // Single-letter spaced SWIFT, e.g. "Swift Code H S B C H K H H K H H"
                       normalized.match(/Swift\s*Code\s*[:：]?\s*([A-Z0-9](?:\s*[A-Z0-9]){7,10})/i);
 
   if (swiftMatch) {
@@ -2282,6 +2287,7 @@ function extractBankDetails(text: string): { bank_name: string | null; swift_cod
 
   // Extract account number with more flexible patterns
   const accountPatterns = [
+    /A\/C\s*NO\.?\s*[:\s]*([_\d\s\-]+(?:\s*\(USD\)|\s*\(HKD\)|\s*\(EUR\)|\s*\(CNY\))?)/i,
     /A\/C\s*NUMBER\s*[:\s]*([_\d\-]{5,30})/i,
     /A\/C\s*NO\.?\s*[:\s]*([_\d\-]{5,30})/i,
     /A\/C\s*(?:NO|NUMBER)?[:\s：]*([_\d\s\-]+)/i,

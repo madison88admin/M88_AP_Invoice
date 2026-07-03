@@ -255,7 +255,14 @@ export async function extractInvoiceFields(fileBuffer: Buffer) {
     /([\d,]+\.\d{2})\s*USD/i, // Amount followed by USD
   ];
 
+  const grandTotalPatterns = [
+    /Grand\s*Total\s*(?:USD|HKD|EUR|GBP|PHP|JPY|IDR)?\s*[:\s]*([\d,]+\.\d{2})/i,
+    /GrandTotal\s*[:\s]*([\d,]+\.\d{2})/i,
+    /Grand\s*Total\s*[:\s]*([\d,]+\.\d{2})/i,
+  ];
+
   let amount = 0;
+  let grand_total = 0;
 
   // Prose-based currency extraction (e.g., "settle in USD 96.68")
   const prosePatterns = [
@@ -276,6 +283,19 @@ export async function extractInvoiceFields(fileBuffer: Buffer) {
           logger.info(`[OCR] Amount extracted from pattern: ${amount}`);
           break;
         }
+      }
+    }
+  }
+
+  // Extract explicit Grand Total separately
+  for (const pattern of grandTotalPatterns) {
+    const m = text.match(pattern);
+    if (m && m[1]) {
+      const extractedGrandTotal = parseFloat(m[1].replace(/,/g, ''));
+      if (extractedGrandTotal > 0) {
+        grand_total = extractedGrandTotal;
+        logger.info(`[OCR] Grand Total extracted from pattern: ${grand_total}`);
+        break;
       }
     }
   }
@@ -307,16 +327,49 @@ export async function extractInvoiceFields(fileBuffer: Buffer) {
     }
   }
 
-  // Final fallback: if still 0, use the last non-zero decimal number
+  // FIX: Better fallback using weighted scoring by label proximity
+  // Don't use last decimal - could be tax, discount, or vendor balance
   if (amount === 0) {
     const allAmounts = text.match(/[\d,]+\.\d{2}/g);
     logger.info(`[OCR] All decimal amounts found: ${JSON.stringify(allAmounts)}`);
+    
     if (allAmounts && allAmounts.length > 0) {
-      const parsedAmounts = allAmounts.map(a => parseFloat(a.replace(/,/g, '')));
-      const nonZeroAmounts = parsedAmounts.filter(a => a > 0);
-      if (nonZeroAmounts.length > 0) {
-        amount = nonZeroAmounts[nonZeroAmounts.length - 1];
-        logger.info(`[OCR] Amount extracted as last non-zero decimal number: ${amount}`);
+      const amountCandidates: Array<{ value: number; score: number }> = [];
+
+      for (const match of allAmounts) {
+        const index = text.indexOf(match);
+        const before = text.substring(Math.max(0, index - 100), index);
+        const numValue = parseFloat(match.replace(/,/g, ''));
+
+        // Calculate confidence score based on surrounding text
+        let score = 0;
+        if (/TOTAL|GRAND|FINAL/i.test(before)) score += 100;
+        if (/AMOUNT|INVOICE|BILL|NET/i.test(before)) score += 80;
+        if (/SUBTOTAL|BALANCE|DUE/i.test(before)) score += 60;
+        if (/TAX|DISCOUNT|FREIGHT|BANK|VENDOR|BALANCE|COMMISSION/i.test(before))
+          score -= 80;
+        if (/DEPOSIT|ADVANCE|RETENTION|REFUND/i.test(before)) score -= 50;
+
+        // Penalize very small amounts (likely not invoice total)
+        if (numValue < 1) score -= 100;
+        // Penalize very large amounts (likely not single invoice)
+        if (numValue > 1000000) score -= 50;
+
+        amountCandidates.push({ value: numValue, score });
+      }
+
+      // Sort by score and pick the best
+      if (amountCandidates.length > 0) {
+        const best = amountCandidates.sort((a, b) => b.score - a.score)[0];
+        if (best.score >= 0) {
+          amount = best.value;
+          logger.info(`[OCR] Amount extracted using weighted scoring: ${amount} (score: ${best.score})`);
+        } else {
+          // If all scores are negative, use the largest amount
+          const largest = amountCandidates.sort((a, b) => b.value - a.value)[0];
+          amount = largest.value;
+          logger.info(`[OCR] Amount extracted as largest value: ${amount}`);
+        }
       }
     }
   }
@@ -440,6 +493,7 @@ export async function extractInvoiceFields(fileBuffer: Buffer) {
     invoice_date: invoice_date,
     due_date: due_date,
     amount: amount,
+    grand_total: grand_total,
     currency: currencyMatch?.[1] || 'USD',
     po_reference: po_reference,
     mpo_number: mpo_number,
@@ -467,6 +521,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
     invoice_received_date: new Date(),
     vendor_name: extracted.vendor_name || '',
     total_amount: extracted.amount || 0,
+    grand_total: extracted.grand_total || undefined,
     subtotal: undefined,
     currency: extracted.currency || 'USD',
     invoice_currency_original: extracted.currency || 'USD',

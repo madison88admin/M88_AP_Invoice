@@ -90,8 +90,11 @@ async function main() {
       name_aliases: ["Charming Printing & Packing", "CHARMING"],
       invoice_template_type: InvoiceTemplateType.PRO_FORMA,
       bank_name: "HSBC HK",
+      bank_name_alt: ["Hongkong and Shanghai Banking Corporation", "HSBC Hong Kong", "The Hongkong and Shanghai Banking Corporation Limited"],
       account_number: "808-190896-838",
+      account_number_alt: ["808190896838"],
       swift_code: "HSBCHKHH",
+      swift_code_alt: ["HSBCHKHHXXX"],
       supplier_location: "HK",
     },
     {

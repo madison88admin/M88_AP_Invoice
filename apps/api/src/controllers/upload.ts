@@ -10,8 +10,10 @@ import { validateInvoiceAgainstPO } from '../services/invoiceValidationAgent';
 import { poAuditService } from '../services/poAuditService';
 import { geminiOCRService } from '../services/geminiOCRService';
 import { groqOCRService } from '../services/groqOCRService';
+import { ollamaOCRService } from '../services/ollamaOCRService';
 import { consensusExtractor, RawExtractionResult } from '../services/consensusExtractor';
 import crypto from 'crypto';
+import { createChildLogger } from '../utils/logger';
 
 export const uploadInvoice = async (
   req: Request,
@@ -180,23 +182,43 @@ export const uploadMadisonInvoice = async (
   res: Response,
   next: NextFunction
 ) => {
+  // FIX: Add request correlation ID for debugging
+  const requestId = crypto.randomUUID();
+  const logger = createChildLogger(`extraction:${requestId}`);
+
+  logger.info(`[${requestId}] Upload endpoint started`, {
+    fileName: req.file?.originalname,
+    contentType: req.headers['content-type'],
+  });
+
   console.log('=== MADISON INVOICE UPLOAD ENDPOINT HIT ===', new Date().toISOString());
   console.log('File:', req.file ? req.file.originalname : 'NO FILE');
 
   try {
     if (!req.file) {
-      console.error('[ERROR] No file uploaded');
+      logger.error(`[${requestId}] No file uploaded`);
       throw new AppError('No file uploaded', 400);
     }
 
     const fileBuffer = req.file.buffer;
     const mimeType = req.file.mimetype;
 
+    logger.info(`[${requestId}] File received`, {
+      fileSize: fileBuffer.length,
+      mimeType: mimeType,
+    });
+
     console.log('[DEBUG] File buffer size:', fileBuffer.length);
     console.log('[DEBUG] MIME type:', mimeType);
 
     // Extract Madison-specific invoice fields (Engine 1)
+    const startTime = Date.now();
     const madisonRawResult = await extractMadisonInvoiceFields(fileBuffer);
+
+    logger.info(`[${requestId}] Madison extraction completed`, {
+      status: madisonRawResult.status || 'unknown',
+      duration_ms: Date.now() - startTime,
+    });
 
     console.log('[DEBUG] Madison extraction result:', JSON.stringify(madisonRawResult, null, 2));
 
@@ -219,22 +241,38 @@ export const uploadMadisonInvoice = async (
 
     console.log('[DEBUG] pdf2jsonRaw mapped for consensus:', JSON.stringify(pdf2jsonRaw, null, 2));
 
-    let groqResult: any = null;
+    const extractionContext = {
+      vendorName: madisonRawResult.vendor_name || undefined,
+    };
+
+    let fallbackResult: any = null;
     const consensus = await consensusExtractor.extract(
       madisonRawResult.raw_text || '',
       fileBuffer,
       async () => pdf2jsonRaw,
-      async (text) => {
+      async (text, _buffer, context) => {
         if (groqOCRService.isAvailable()) {
-          const result = await groqOCRService.extractFromText(text);
-          groqResult = result;
-          return result;
+          const result = await groqOCRService.extractFromText(text, context);
+          if (result) {
+            fallbackResult = result;
+            return result;
+          }
         }
         if (geminiOCRService.isAvailable()) {
-          return geminiOCRService.extractFromText(text);
+          const result = await geminiOCRService.extractFromText(text, context);
+          if (result) {
+            fallbackResult = result;
+            return result;
+          }
+        }
+        if (ollamaOCRService.isAvailable()) {
+          const result = await ollamaOCRService.extractFromText(text, context);
+          fallbackResult = result;
+          return result;
         }
         return null;
-      }
+      },
+      extractionContext
     );
 
     console.log(`[DEBUG] Consensus extraction: confidence=${consensus.overall_confidence}, status=${consensus.overall_status}, conflicts=${consensus.conflicts.length}, engines=${consensus.engines_used.join('+')}`);
@@ -341,19 +379,19 @@ export const uploadMadisonInvoice = async (
       consensus,
     };
 
-    // If the Madison extractor mixed up two-column delivery/invoice addresses, prefer the Groq result.
-    if (groqResult?.ship_to) {
+    // If the Madison extractor mixed up two-column delivery/invoice addresses, prefer the LLM fallback result.
+    if (fallbackResult?.ship_to) {
       const current = madisonResult.ship_to || '';
       if (!current || current.length > 300 || /MADISON\s*88/i.test(current) || /INVOICE\s*ADDRESS/i.test(current)) {
-        madisonResult.ship_to = groqResult.ship_to;
-        console.log('[DEBUG] ship_to overridden by Groq:', groqResult.ship_to);
+        madisonResult.ship_to = fallbackResult.ship_to;
+        console.log('[DEBUG] ship_to overridden by LLM fallback:', fallbackResult.ship_to);
       }
     }
-    if (groqResult?.sold_to) {
+    if (fallbackResult?.sold_to) {
       const current = madisonResult.sold_to || '';
       if (!current || current.length > 300 || /PT\s*UWU/i.test(current) || /Delivery\s*address/i.test(current)) {
-        madisonResult.sold_to = groqResult.sold_to;
-        console.log('[DEBUG] sold_to overridden by Groq:', groqResult.sold_to);
+        madisonResult.sold_to = fallbackResult.sold_to;
+        console.log('[DEBUG] sold_to overridden by LLM fallback:', fallbackResult.sold_to);
       }
     }
 

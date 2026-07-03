@@ -57,22 +57,34 @@ export async function compareBankDetails(
     };
   }
 
-  const vendor = invoice.vendor;
+  const vendor = invoice.vendor as any;
   const differences: string[] = [];
   let bankNameMatch = false;
   let accountNumberMatch = false;
   let swiftCodeMatch = false;
   let ibanMatch = false;
 
-  // Compare bank name (case-insensitive, partial match allowed)
-  if (invoiceBankDetails.bank_name && vendor.bank_name) {
+  // Compare bank name (case-insensitive, partial match allowed) including bank_name_alt aliases
+  if (invoiceBankDetails.bank_name) {
     const invBankName = invoiceBankDetails.bank_name.toLowerCase().trim();
-    const vendBankName = vendor.bank_name.toLowerCase().trim();
-    bankNameMatch = invBankName === vendBankName || 
-                    invBankName.includes(vendBankName) || 
-                    vendBankName.includes(invBankName);
+    const vendorBankNames = [vendor.bank_name, ...(vendor.bank_name_alt || [])].filter(Boolean);
+
+    for (const vendBankNameRaw of vendorBankNames) {
+      const vendBankName = vendBankNameRaw!.toLowerCase().trim();
+      if (
+        invBankName === vendBankName ||
+        invBankName.includes(vendBankName) ||
+        vendBankName.includes(invBankName)
+      ) {
+        bankNameMatch = true;
+        break;
+      }
+    }
+
     if (!bankNameMatch) {
-      differences.push(`Bank name mismatch: Invoice "${invoiceBankDetails.bank_name}" vs Vendor "${vendor.bank_name}"`);
+      const primaryBankName = vendor.bank_name || 'N/A';
+      const altBankNames = vendor.bank_name_alt?.join(', ') || 'none';
+      differences.push(`Bank name mismatch: Invoice "${invoiceBankDetails.bank_name}" vs Vendor "${primaryBankName}" (alt: ${altBankNames})`);
     }
   } else if (!invoiceBankDetails.bank_name && !vendor.bank_name) {
     // Both missing - can't verify
@@ -81,11 +93,22 @@ export async function compareBankDetails(
     differences.push(`Bank name missing from ${invoiceBankDetails.bank_name ? 'vendor' : 'invoice'}`);
   }
 
-  // Compare account number (exact match required)
-  if (invoiceBankDetails.account_number && vendor.account_number) {
-    accountNumberMatch = invoiceBankDetails.account_number.trim() === vendor.account_number.trim();
+  // Compare account number (exact match required) including account_number_alt aliases
+  if (invoiceBankDetails.account_number) {
+    const invAccount = invoiceBankDetails.account_number.trim();
+    const vendorAccounts = [vendor.account_number, ...(vendor.account_number_alt || [])].filter(Boolean);
+
+    for (const vendAccountRaw of vendorAccounts) {
+      if (invAccount === vendAccountRaw!.trim()) {
+        accountNumberMatch = true;
+        break;
+      }
+    }
+
     if (!accountNumberMatch) {
-      differences.push(`Account number mismatch`);
+      const primaryAccount = vendor.account_number || 'N/A';
+      const altAccounts = vendor.account_number_alt?.join(', ') || 'none';
+      differences.push(`Account number mismatch: Invoice "${invoiceBankDetails.account_number}" vs Vendor "${primaryAccount}" (alt: ${altAccounts})`);
     }
   } else if (!invoiceBankDetails.account_number && !vendor.account_number) {
     differences.push('Account number missing from both invoice and vendor record');
@@ -93,11 +116,22 @@ export async function compareBankDetails(
     differences.push(`Account number missing from ${invoiceBankDetails.account_number ? 'vendor' : 'invoice'}`);
   }
 
-  // Compare SWIFT code (exact match required)
-  if (invoiceBankDetails.swift_code && vendor.swift_code) {
-    swiftCodeMatch = invoiceBankDetails.swift_code.trim().toUpperCase() === vendor.swift_code.trim().toUpperCase();
+  // Compare SWIFT code (exact match required) including swift_code_alt aliases
+  if (invoiceBankDetails.swift_code) {
+    const invSwift = invoiceBankDetails.swift_code.trim().toUpperCase();
+    const vendorSwifts = [vendor.swift_code, ...(vendor.swift_code_alt || [])].filter(Boolean);
+
+    for (const vendSwiftRaw of vendorSwifts) {
+      if (invSwift === vendSwiftRaw!.trim().toUpperCase()) {
+        swiftCodeMatch = true;
+        break;
+      }
+    }
+
     if (!swiftCodeMatch) {
-      differences.push(`SWIFT code mismatch: Invoice "${invoiceBankDetails.swift_code}" vs Vendor "${vendor.swift_code}"`);
+      const primarySwift = vendor.swift_code || 'N/A';
+      const altSwifts = vendor.swift_code_alt?.join(', ') || 'none';
+      differences.push(`SWIFT code mismatch: Invoice "${invoiceBankDetails.swift_code}" vs Vendor "${primarySwift}" (alt: ${altSwifts})`);
     }
   } else if (!invoiceBankDetails.swift_code && !vendor.swift_code) {
     differences.push('SWIFT code missing from both invoice and vendor record');

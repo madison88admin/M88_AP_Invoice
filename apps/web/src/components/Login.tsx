@@ -1,10 +1,23 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { LayoutDashboard, Lock, User } from 'lucide-react';
+import { LayoutDashboard, Lock, Mail } from 'lucide-react';
+
+const QUICK_LOGINS = [
+  { label: 'Wyssa (Accounting)', email: 'wyssa.martinez@madison88.com', password: 'madison88' },
+  { label: 'Joy (Coordinator)', email: 'joy.yco@madison88.com', password: 'madison88' },
+  { label: 'Maricon (Coordinator)', email: 'maricon.alvarez@madison88.com', password: 'madison88' },
+  { label: 'Maricar (Manager)', email: 'maricar.tanaleon@madison88.com', password: 'madison88' },
+  { label: 'Maryann (Manager)', email: 'maryann.delmonte@madison88.com', password: 'madison88' },
+  { label: 'Edwin (Planning Mgr)', email: 'edwin.garcia@madison88.com', password: 'madison88' },
+  { label: 'Glecie (Planning Mgr)', email: 'glecie.yumena@madison88.com', password: 'madison88' },
+  { label: 'Lindsey (Sr Manager)', email: 'lindsey.castro@madison88.com', password: 'madison88' },
+  { label: 'Polly (President)', email: 'polly.madison@madison88.com', password: 'madison88' },
+  { label: 'JC (IT Admin)', email: 'jc@madison88.com', password: 'madison88' },
+];
 
 export default function Login() {
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -16,14 +29,19 @@ export default function Login() {
     setError('');
     setLoading(true);
 
-    const success = await login(username, password);
+    const success = await login(email, password);
     if (success) {
       navigate('/dashboard');
     } else {
-      setError('Invalid username or password');
+      setError('Invalid email or password');
     }
 
     setLoading(false);
+  };
+
+  const applyQuickLogin = (quickEmail: string, quickPassword: string) => {
+    setEmail(quickEmail);
+    setPassword(quickPassword);
   };
 
   return (
@@ -42,23 +60,23 @@ export default function Login() {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label htmlFor="username" className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>
-                Username
+              <label htmlFor="email" className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>
+                Email
               </label>
               <div className="relative">
-                <User className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5" style={{ color: 'var(--text-muted)' }} />
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5" style={{ color: 'var(--text-muted)' }} />
                 <input
-                  id="username"
-                  type="text"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
+                  id="email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                   className="w-full pl-10 pr-4 py-3 rounded-lg focus:outline-none focus:ring-2 transition-all"
                   style={{
                     background: 'var(--input-bg)',
                     border: '1px solid var(--input-border)',
                     color: 'var(--text-primary)'
                   }}
-                  placeholder="Enter your NextGen username"
+                  placeholder="Enter your Madison 88 email"
                   required
                 />
               </div>
@@ -116,6 +134,37 @@ export default function Login() {
               {loading ? 'Signing in...' : 'Sign in'}
             </button>
           </form>
+
+          <div className="mt-6 pt-6" style={{ borderTop: '1px solid var(--border-color)' }}>
+            <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>
+              Quick Login (development/demo only)
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {QUICK_LOGINS.map((item) => (
+                <button
+                  key={item.email}
+                  type="button"
+                  onClick={() => applyQuickLogin(item.email, item.password)}
+                  className="text-xs px-3 py-1 rounded-lg transition-all"
+                  style={{
+                    background: 'var(--bg-card-hover)',
+                    border: '1px solid var(--border-color)',
+                    color: 'var(--text-muted)'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = 'var(--input-bg)';
+                    e.currentTarget.style.color = 'var(--text-primary)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'var(--bg-card-hover)';
+                    e.currentTarget.style.color = 'var(--text-muted)';
+                  }}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     </div>

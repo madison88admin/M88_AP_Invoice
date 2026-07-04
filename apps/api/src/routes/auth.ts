@@ -7,6 +7,16 @@ import { validateNextGenCredentials } from '../services/nextGenAuthService';
 const router = Router() as Router;
 
 /**
+ * Extract a NextGen username from an email address.
+ * e.g. wyssa.martinez@madison88.com -> Wyssa, joy.yco@madison88.com -> Joy
+ */
+function extractUsernameFromEmail(email: string): string {
+  const localPart = email.trim().split('@')[0];
+  const firstName = localPart.split('.')[0];
+  return firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase();
+}
+
+/**
  * Map NextGen usernames to AP Invoice roles.
  * Configure via NEXTGEN_USER_ROLES env variable as JSON, e.g.:
  * {"Glecie":"PLANNING_MANAGER","Joy":"PURCHASING_COORDINATOR"}
@@ -29,17 +39,20 @@ function getRoleForUsername(username: string): UserRole {
     'Joy': 'PURCHASING_COORDINATOR',
     'Maricon': 'PURCHASING_COORDINATOR',
     'Maricar': 'PURCHASING_MANAGER',
-    'MaryAnn': 'PURCHASING_MANAGER',
+    'Maryann': 'PURCHASING_MANAGER',
     'Mary': 'ACCOUNTING_SUPERVISOR',
     'Lindsey': 'SR_MANAGER_GLOBAL_PRODUCTION',
     'Chris': 'CFO',
     'Polly': 'MS_POLLY',
     'Paul': 'IT_ADMIN',
-    'JC': 'IT_ADMIN',
+    'Jc': 'IT_ADMIN',
   };
 
   const normalized = username.trim();
-  const role = roleMap[normalized] || defaultMap[normalized] || 'IT_ADMIN';
+  const lower = normalized.toLowerCase();
+  const envKey = Object.keys(roleMap).find(k => k.toLowerCase() === lower);
+  const defaultKey = Object.keys(defaultMap).find(k => k.toLowerCase() === lower);
+  const role = (envKey && roleMap[envKey]) || (defaultKey && defaultMap[defaultKey]) || 'IT_ADMIN';
   return (role as UserRole) || UserRole.IT_ADMIN;
 }
 
@@ -63,12 +76,14 @@ function getBrandScopeForUsername(username: string): 'TOP_10' | 'OTHER' | undefi
  */
 router.post('/login', async (req, res, next) => {
   try {
-    const { username, password } = req.body;
-    if (!username || !password) {
-      throw new AppError('Username and password are required', 400);
+    const { email, username, password } = req.body;
+    const identifier = email || username;
+    if (!identifier || !password) {
+      throw new AppError('Email and password are required', 400);
     }
 
-    const valid = await validateNextGenCredentials(username, password);
+    const nextGenUsername = email ? extractUsernameFromEmail(email) : identifier;
+    const valid = await validateNextGenCredentials(nextGenUsername, password);
     if (!valid) {
       throw new AppError('Invalid credentials', 401);
     }
@@ -77,14 +92,14 @@ router.post('/login', async (req, res, next) => {
       throw new AppError('JWT_SECRET is not configured', 500);
     }
 
-    const role = getRoleForUsername(username);
-    const brandScope = role === 'PLANNING_MANAGER' ? getBrandScopeForUsername(username) : undefined;
-    const email = `${username.toLowerCase()}@madison88.com`;
+    const role = getRoleForUsername(nextGenUsername);
+    const brandScope = role === 'PLANNING_MANAGER' ? getBrandScopeForUsername(nextGenUsername) : undefined;
+    const userEmail = email || `${nextGenUsername.toLowerCase()}@madison88.com`;
     const token = jwt.sign(
       {
-        id: username,
-        email,
-        name: username,
+        id: nextGenUsername,
+        email: userEmail,
+        name: nextGenUsername,
         role,
         brand_scope: brandScope,
       },
@@ -95,9 +110,9 @@ router.post('/login', async (req, res, next) => {
     res.json({
       token,
       user: {
-        id: username,
-        email,
-        name: username,
+        id: nextGenUsername,
+        email: userEmail,
+        name: nextGenUsername,
         role,
         title: role.replace(/_/g, ' '),
         brand_scope: brandScope,

@@ -12,7 +12,7 @@ export interface AuthUser {
 
 interface AuthContextType {
   user: AuthUser | null;
-  login: (username: string, password: string) => Promise<boolean>;
+  login: (email: string, password: string) => Promise<boolean>;
   logout: () => void;
   isAuthenticated: boolean;
   isLoading: boolean;
@@ -59,9 +59,9 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     setIsLoading(false);
   }, []);
 
-  const login = async (username: string, password: string): Promise<boolean> => {
+  const login = async (email: string, password: string): Promise<boolean> => {
     try {
-      const response = await api.post('/api/auth/login', { username, password });
+      const response = await api.post('/api/auth/login', { email, password });
       const { token, user } = response.data;
       localStorage.setItem('auth_token', token);
       localStorage.setItem(SESSION_KEY, JSON.stringify(user));

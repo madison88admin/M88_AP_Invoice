@@ -591,7 +591,7 @@ export default function Dashboard() {
           },
           {
             label: 'Global Production Costs',
-            value: `$${mockInvoices.filter(i => i.total_amount > 2000).reduce((sum, i) => sum + i.total_amount, 0).toLocaleString()}``,
+            value: `$${mockInvoices.filter(i => i.total_amount > 2000).reduce((sum, i) => sum + i.total_amount, 0).toLocaleString()}`,
             icon: TrendingUp,
             color: '#4F46E5',
             trend: '+18%',

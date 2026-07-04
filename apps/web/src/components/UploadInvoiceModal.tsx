@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { Upload, FileText, X, Sparkles, CheckCircle, AlertTriangle } from 'lucide-react';
+import { Upload, FileText, X, Sparkles, CheckCircle, AlertTriangle, Save } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { invoiceApi } from '../lib/api';
 
@@ -20,6 +20,9 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
   const [poValidation, setPoValidation] = useState<any>(null);
   const [consensus, setConsensus] = useState<any>(null);
   const [requiresManualVendorAssignment, setRequiresManualVendorAssignment] = useState(false);
+  const [matchedVendorId, setMatchedVendorId] = useState<string | null>(null);
+  const [extractedBrandCode, setExtractedBrandCode] = useState<string | null>(null);
+  const [createdInvoiceId, setCreatedInvoiceId] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     vendorName: '',
     invoiceNumber: '',
@@ -43,6 +46,9 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
     notes: '',
     priority: 'medium' as 'low' | 'medium' | 'high',
   });
+  const [originalFormData, setOriginalFormData] = useState<typeof formData | null>(null);
+  const [correctionSaved, setCorrectionSaved] = useState(false);
+  const [isSavingCorrection, setIsSavingCorrection] = useState(false);
 
   const handleFileSelect = useCallback(async (selectedFile: File) => {
     console.log('[DEBUG] File selected:', selectedFile.name, selectedFile.size);
@@ -69,6 +75,8 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
         setPoValidation(response.data.po_validation);
         setConsensus(response.data.consensus);
         setRequiresManualVendorAssignment(response.data.requires_manual_vendor_assignment || false);
+        setMatchedVendorId(response.data.vendor_match?.vendor_id || null);
+        setExtractedBrandCode(extraction.brand_code || extraction.brand || null);
 
         // DSRS v7.3: Frontend treats extraction as SINGLE CANONICAL PAYLOAD.
         // PO validation is display-only; it NEVER drives form values, brand, amount, or qty.
@@ -81,19 +89,19 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
         const formattedDate = extraction.invoice_date || '';
         const formattedDueDate = extraction.due_date || '';
 
-        setFormData({
+        const extractedFormData: typeof formData = {
           vendorName: extraction.vendor_name || '',
           invoiceNumber: extraction.invoice_number || '',
           invoiceDate: formattedDate,
           dueDate: formattedDueDate,
           amount: extraction.amount?.toString() || '',
           currency: extraction.currency || 'USD',
-          documentType: extraction.document_type || '',
+          documentType: (extraction.document_type || '') as '' | 'PI' | 'INV' | 'CI' | 'SI' | 'STATEMENT',
           category: extraction.category || '',
           brand: brandToUse,
-          brandTier: extraction.brand_tier || '',
+          brandTier: (extraction.brand_tier || '') as '' | 'TOP_10' | 'OTHER',
           season: extraction.season || '',
-          orderType: extraction.order_type || '',
+          orderType: (extraction.order_type || '') as '' | 'BULK' | 'SMS' | 'SAMPLE',
           poNumber: extraction.po_number || '',
           mpoNumber: extraction.mpo_number || '',
           qtyShipped: extraction.qty_shipped?.toString() || '',
@@ -102,8 +110,11 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
           swiftCode: extraction.bank_details?.swift_code || '',
           accountNumber: extraction.bank_details?.account_number || '',
           notes: '',
-          priority: extraction.is_urgent ? 'high' : 'medium',
-        });
+          priority: (extraction.is_urgent ? 'high' : 'medium') as 'low' | 'medium' | 'high',
+        };
+        setFormData(extractedFormData);
+        setOriginalFormData(JSON.parse(JSON.stringify(extractedFormData)));
+        setCorrectionSaved(false);
       } else {
         console.log('[DEBUG] Madison extraction response missing success or extraction');
         console.log('[DEBUG] success:', response.data.success);
@@ -162,45 +173,32 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
     if (!file) return;
 
     setIsUploading(true);
-    setUploadProgress(0);
+    setUploadProgress(50);
 
     try {
-      // Store invoice in-memory (bypass Supabase for now)
-      const invoice = {
-        id: crypto.randomUUID(),
+      const invoicePayload = {
         invoice_number: formData.invoiceNumber,
-        vendor_name: formData.vendorName,
-        amount: parseFloat(formData.amount),
+        invoice_date: formData.invoiceDate,
+        due_date: formData.dueDate || undefined,
+        invoice_received_date: new Date().toISOString(),
+        vendor_id: matchedVendorId || undefined,
+        vendor_name_raw: formData.vendorName,
+        total_amount: parseFloat(formData.amount),
         currency: formData.currency,
-        document_type: formData.documentType,
-        invoice_type: formData.documentType === 'PI' ? 'PROFORMA' : formData.documentType === 'INV' ? 'INVOICE' : formData.documentType,
-        category: formData.category,
-        brand: formData.brand,
-        brand_tier: formData.brandTier,
-        season: formData.season,
-        order_type: formData.orderType,
-        po_number: formData.poNumber,
-        mpo_number: formData.mpoNumber,
-        qty_shipped: formData.qtyShipped ? parseFloat(formData.qtyShipped) : null,
-        payment_terms: formData.paymentTerms,
-        bank_name: formData.bankName,
-        swift_code: formData.swiftCode,
-        account_number: formData.accountNumber,
-        status: 'pending_validation',
-        priority: formData.priority,
-        date_issued: formData.invoiceDate,
-        date_due: formData.dueDate,
-        notes: formData.notes,
-        file_name: file.name,
-        file_size: file.size,
-        created_at: new Date().toISOString(),
+        invoice_type: formData.documentType === 'PI' ? 'PROFORMA' : formData.documentType === 'INV' ? 'INVOICE' : formData.documentType || undefined,
+        order_type: formData.orderType || undefined,
+        brand: formData.brand || undefined,
+        brand_code: extractedBrandCode || undefined,
+        season: formData.season || undefined,
+        mpo_number: formData.mpoNumber || undefined,
+        customer_po_number: formData.poNumber || undefined,
+        payment_terms: formData.paymentTerms || undefined,
+        source: 'UPLOAD',
       };
 
-      // Store in localStorage for persistence across page reloads
-      const existingInvoices = JSON.parse(localStorage.getItem('invoices') || '[]');
-      existingInvoices.push(invoice);
-      localStorage.setItem('invoices', JSON.stringify(existingInvoices));
-
+      const response = await invoiceApi.create(invoicePayload);
+      const createdInvoice = response.data;
+      setCreatedInvoiceId(createdInvoice.id);
       setUploadProgress(100);
 
       // Invalidate queries to refresh data
@@ -214,7 +212,80 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
     } catch (error) {
       console.error('Upload failed:', error);
       setIsUploading(false);
-      alert('Upload failed. Please try again.');
+      alert('Failed to save invoice to the server. Please try again.');
+    }
+  };
+
+  const handleSaveCorrection = async () => {
+    if (!originalFormData) return;
+
+    setIsSavingCorrection(true);
+    try {
+      const originalFields = {
+        vendor_name: originalFormData.vendorName,
+        invoice_number: originalFormData.invoiceNumber,
+        invoice_date: originalFormData.invoiceDate,
+        due_date: originalFormData.dueDate,
+        total_amount: originalFormData.amount ? parseFloat(originalFormData.amount) : undefined,
+        currency: originalFormData.currency,
+        document_type: originalFormData.documentType,
+        category: originalFormData.category,
+        brand: originalFormData.brand,
+        brand_tier: originalFormData.brandTier,
+        season: originalFormData.season,
+        order_type: originalFormData.orderType,
+        po_number: originalFormData.poNumber,
+        mpo_number: originalFormData.mpoNumber,
+        qty_shipped: originalFormData.qtyShipped ? parseFloat(originalFormData.qtyShipped) : undefined,
+        payment_terms: originalFormData.paymentTerms,
+        bank_name: originalFormData.bankName,
+        swift_code: originalFormData.swiftCode,
+        account_number: originalFormData.accountNumber,
+        priority: originalFormData.priority,
+      };
+
+      const correctedFields = {
+        vendor_name: formData.vendorName,
+        invoice_number: formData.invoiceNumber,
+        invoice_date: formData.invoiceDate,
+        due_date: formData.dueDate,
+        total_amount: formData.amount ? parseFloat(formData.amount) : undefined,
+        currency: formData.currency,
+        document_type: formData.documentType,
+        category: formData.category,
+        brand: formData.brand,
+        brand_tier: formData.brandTier,
+        season: formData.season,
+        order_type: formData.orderType,
+        po_number: formData.poNumber,
+        mpo_number: formData.mpoNumber,
+        qty_shipped: formData.qtyShipped ? parseFloat(formData.qtyShipped) : undefined,
+        payment_terms: formData.paymentTerms,
+        bank_name: formData.bankName,
+        swift_code: formData.swiftCode,
+        account_number: formData.accountNumber,
+        priority: formData.priority,
+      };
+
+      if (!createdInvoiceId) {
+        alert('Please upload and save the invoice first before saving a correction.');
+        return;
+      }
+
+      await invoiceApi.saveCorrection(createdInvoiceId, {
+        vendor_name: formData.vendorName,
+        raw_text: '',
+        original_fields: originalFields,
+        corrected_fields: correctedFields,
+        note: 'Manual correction from upload modal',
+      });
+
+      setCorrectionSaved(true);
+    } catch (error) {
+      console.error('Failed to save correction:', error);
+      alert('Failed to save correction. Please try again.');
+    } finally {
+      setIsSavingCorrection(false);
     }
   };
 
@@ -243,9 +314,15 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
       notes: '',
       priority: 'medium',
     });
+    setOriginalFormData(null);
+    setCorrectionSaved(false);
+    setIsSavingCorrection(false);
     setUploadProgress(0);
     setUploadComplete(false);
     setConsensus(null);
+    setMatchedVendorId(null);
+    setExtractedBrandCode(null);
+    setCreatedInvoiceId(null);
   };
 
   const handleClose = () => {
@@ -1237,23 +1314,52 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                     Cancel
                   </button>
                   {!isUploading ? (
-                    <button
-                      onClick={handleUpload}
-                      disabled={!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount || !formData.mpoNumber}
-                      style={{
-                        padding: '10px 24px',
-                        background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-                        border: 'none',
-                        borderRadius: '10px',
-                        color: 'white',
-                        cursor: (!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount || !formData.mpoNumber) ? 'not-allowed' : 'pointer',
-                        opacity: (!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount || !formData.mpoNumber) ? 0.4 : 1,
-                        boxShadow: (!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount || !formData.mpoNumber) ? 'none' : '0 0 20px rgba(99, 102, 241, 0.45)',
-                        transition: 'all 150ms ease',
-                      }}
-                    >
-                      Upload Invoice
-                    </button>
+                    <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                      <button
+                        onClick={handleSaveCorrection}
+                        disabled={isSavingCorrection || correctionSaved || !originalFormData}
+                        style={{
+                          padding: '10px 20px',
+                          background: correctionSaved ? 'rgba(34, 197, 94, 0.15)' : 'rgba(168, 85, 247, 0.15)',
+                          border: `1px solid ${correctionSaved ? 'rgba(34, 197, 94, 0.4)' : 'rgba(168, 85, 247, 0.4)'}`,
+                          borderRadius: '10px',
+                          color: correctionSaved ? '#22c55e' : '#c084fc',
+                          cursor: (isSavingCorrection || correctionSaved || !originalFormData) ? 'not-allowed' : 'pointer',
+                          opacity: (isSavingCorrection || correctionSaved || !originalFormData) ? 0.5 : 1,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          transition: 'all 150ms ease',
+                        }}
+                      >
+                        {correctionSaved ? (
+                          <>
+                            <CheckCircle className="h-4 w-4" /> Saved
+                          </>
+                        ) : (
+                          <>
+                            <Save className="h-4 w-4" /> Save Correction
+                          </>
+                        )}
+                      </button>
+                      <button
+                        onClick={handleUpload}
+                        disabled={!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount || !formData.mpoNumber}
+                        style={{
+                          padding: '10px 24px',
+                          background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                          border: 'none',
+                          borderRadius: '10px',
+                          color: 'white',
+                          cursor: (!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount || !formData.mpoNumber) ? 'not-allowed' : 'pointer',
+                          opacity: (!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount || !formData.mpoNumber) ? 0.4 : 1,
+                          boxShadow: (!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount || !formData.mpoNumber) ? 'none' : '0 0 20px rgba(99, 102, 241, 0.45)',
+                          transition: 'all 150ms ease',
+                        }}
+                      >
+                        Upload Invoice
+                      </button>
+                    </div>
                   ) : (
                     /* Upload Progress */
                     <div style={{ width: '200px' }}>

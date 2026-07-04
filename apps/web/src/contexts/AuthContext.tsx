@@ -1,14 +1,18 @@
-// TODO: TEMPORARY MOCK AUTH — replace with Azure AD / MSAL SSO
-// once Supabase backend is connected. See BRD section on
-// Authentication (Azure AD / Microsoft 365 SSO via MSAL).
-// Do not deploy this hardcoded user list to production.
-
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { mockAuth, MockUser } from '../lib/mockAuth';
+import api from '../lib/api';
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  title?: string;
+  brand_scope?: 'TOP_10' | 'OTHER';
+}
 
 interface AuthContextType {
-  user: MockUser | null;
-  login: (email: string, password: string) => boolean;
+  user: AuthUser | null;
+  login: (username: string, password: string) => Promise<boolean>;
   logout: () => void;
   isAuthenticated: boolean;
 }
@@ -27,31 +31,49 @@ interface AuthProviderProps {
   children: ReactNode;
 }
 
+const SESSION_KEY = 'auth_session';
+
 export const AuthProvider = ({ children }: AuthProviderProps) => {
-  const [user, setUser] = useState<MockUser | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   useEffect(() => {
-    // Check for existing session on mount
-    const currentUser = mockAuth.getCurrentUser();
-    if (currentUser) {
-      setUser(currentUser);
-      setIsAuthenticated(true);
+    const token = localStorage.getItem('auth_token');
+    const session = localStorage.getItem(SESSION_KEY);
+    const isJwt = !!token && token.split('.').length === 3;
+    if (session && isJwt) {
+      try {
+        const currentUser = JSON.parse(session) as AuthUser;
+        setUser(currentUser);
+        setIsAuthenticated(true);
+      } catch {
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem(SESSION_KEY);
+      }
+    } else {
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem(SESSION_KEY);
     }
   }, []);
 
-  const login = (email: string, password: string): boolean => {
-    const loggedInUser = mockAuth.login(email, password);
-    if (loggedInUser) {
-      setUser(loggedInUser);
+  const login = async (username: string, password: string): Promise<boolean> => {
+    try {
+      const response = await api.post('/api/auth/login', { username, password });
+      const { token, user } = response.data;
+      localStorage.setItem('auth_token', token);
+      localStorage.setItem(SESSION_KEY, JSON.stringify(user));
+      setUser(user as AuthUser);
       setIsAuthenticated(true);
       return true;
+    } catch (error) {
+      console.error('Login failed:', error);
+      return false;
     }
-    return false;
   };
 
   const logout = () => {
-    mockAuth.logout();
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem(SESSION_KEY);
     setUser(null);
     setIsAuthenticated(false);
   };

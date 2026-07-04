@@ -1,15 +1,10 @@
-// TODO: TEMPORARY MOCK AUTH — replace with Azure AD / MSAL SSO
-// once Supabase backend is connected. See BRD section on
-// Authentication (Azure AD / Microsoft 365 SSO via MSAL).
-// Do not deploy this hardcoded user list to production.
-
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { LayoutDashboard, Lock, Mail } from 'lucide-react';
+import { LayoutDashboard, Lock, User } from 'lucide-react';
 
 export default function Login() {
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -21,14 +16,11 @@ export default function Login() {
     setError('');
     setLoading(true);
 
-    // Simulate network delay for better UX
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    const success = login(email, password);
+    const success = await login(username, password);
     if (success) {
       navigate('/dashboard');
     } else {
-      setError('Invalid email or password');
+      setError('Invalid username or password');
     }
 
     setLoading(false);
@@ -37,7 +29,6 @@ export default function Login() {
   return (
     <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--bg-base)' }}>
       <div className="w-full max-w-md p-8">
-        {/* Logo and Branding */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-xl mb-4" style={{ background: 'var(--logo-bg)', boxShadow: '0 0 40px rgba(99,102,241,0.4)' }}>
             <LayoutDashboard className="w-8 h-8 text-white" />
@@ -46,29 +37,28 @@ export default function Login() {
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>AP Invoice System</p>
         </div>
 
-        {/* Login Form */}
         <div className="rounded-2xl p-8" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)' }}>
           <h2 className="text-xl font-semibold mb-6" style={{ color: 'var(--text-primary)' }}>Sign in</h2>
-          
+
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label htmlFor="email" className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>
-                Email
+              <label htmlFor="username" className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>
+                Username
               </label>
               <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5" style={{ color: 'var(--text-muted)' }} />
+                <User className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5" style={{ color: 'var(--text-muted)' }} />
                 <input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  id="username"
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
                   className="w-full pl-10 pr-4 py-3 rounded-lg focus:outline-none focus:ring-2 transition-all"
-                  style={{ 
-                    background: 'var(--input-bg)', 
+                  style={{
+                    background: 'var(--input-bg)',
                     border: '1px solid var(--input-border)',
                     color: 'var(--text-primary)'
                   }}
-                  placeholder="Enter your email"
+                  placeholder="Enter your NextGen username"
                   required
                 />
               </div>
@@ -86,8 +76,8 @@ export default function Login() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="w-full pl-10 pr-4 py-3 rounded-lg focus:outline-none focus:ring-2 transition-all"
-                  style={{ 
-                    background: 'var(--input-bg)', 
+                  style={{
+                    background: 'var(--input-bg)',
                     border: '1px solid var(--input-border)',
                     color: 'var(--text-primary)'
                   }}
@@ -107,7 +97,7 @@ export default function Login() {
               type="submit"
               disabled={loading}
               className="w-full py-3 rounded-lg font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{ 
+              style={{
                 background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-purple-hover))',
                 color: '#ffffff',
                 boxShadow: '0 0 20px rgba(99,102,241,0.45), 0 4px 15px rgba(0,0,0,0.3)'
@@ -126,342 +116,6 @@ export default function Login() {
               {loading ? 'Signing in...' : 'Sign in'}
             </button>
           </form>
-
-          {/* Dev Mode Notice */}
-          <div className="mt-6 pt-6" style={{ borderTop: '1px solid var(--border-color)' }}>
-            <p className="text-center text-xs" style={{ color: 'var(--text-subtle)' }}>
-              Dev mode — temporary login
-            </p>
-          </div>
-        </div>
-
-        {/* Quick Login Links for Demo */}
-        <div className="mt-6 text-center">
-          <p className="text-xs mb-3" style={{ color: 'var(--text-subtle)' }}>Quick demo accounts:</p>
-          <div className="flex flex-wrap justify-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setEmail('wyssa.martinez@madison88.com');
-                setPassword('madison88');
-              }}
-              className="text-xs px-3 py-1 rounded-lg transition-all"
-              style={{ 
-                background: 'var(--bg-card)', 
-                border: '1px solid var(--border-color)',
-                color: 'var(--text-muted)'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card-hover)';
-                e.currentTarget.style.color = 'var(--text-primary)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card)';
-                e.currentTarget.style.color = 'var(--text-muted)';
-              }}
-            >
-              Wyssa (Accounting)
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setEmail('joy.yco@madison88.com');
-                setPassword('madison88');
-              }}
-              className="text-xs px-3 py-1 rounded-lg transition-all"
-              style={{ 
-                background: 'var(--bg-card)', 
-                border: '1px solid var(--border-color)',
-                color: 'var(--text-muted)'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card-hover)';
-                e.currentTarget.style.color = 'var(--text-primary)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card)';
-                e.currentTarget.style.color = 'var(--text-muted)';
-              }}
-            >
-              Joy (Coordinator)
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setEmail('maricon.alvarez@madison88.com');
-                setPassword('madison88');
-              }}
-              className="text-xs px-3 py-1 rounded-lg transition-all"
-              style={{ 
-                background: 'var(--bg-card)', 
-                border: '1px solid var(--border-color)',
-                color: 'var(--text-muted)'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card-hover)';
-                e.currentTarget.style.color = 'var(--text-primary)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card)';
-                e.currentTarget.style.color = 'var(--text-muted)';
-              }}
-            >
-              Maricon (Coordinator)
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setEmail('maricar.tanaleon@madison88.com');
-                setPassword('madison88');
-              }}
-              className="text-xs px-3 py-1 rounded-lg transition-all"
-              style={{ 
-                background: 'var(--bg-card)', 
-                border: '1px solid var(--border-color)',
-                color: 'var(--text-muted)'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card-hover)';
-                e.currentTarget.style.color = 'var(--text-primary)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card)';
-                e.currentTarget.style.color = 'var(--text-muted)';
-              }}
-            >
-              Maricar (Manager)
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setEmail('maryann.delmonte@madison88.com');
-                setPassword('madison88');
-              }}
-              className="text-xs px-3 py-1 rounded-lg transition-all"
-              style={{ 
-                background: 'var(--bg-card)', 
-                border: '1px solid var(--border-color)',
-                color: 'var(--text-muted)'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card-hover)';
-                e.currentTarget.style.color = 'var(--text-primary)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card)';
-                e.currentTarget.style.color = 'var(--text-muted)';
-              }}
-            >
-              Mary Ann (Manager)
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setEmail('mary.delmonte@madison88.com');
-                setPassword('madison88');
-              }}
-              className="text-xs px-3 py-1 rounded-lg transition-all"
-              style={{ 
-                background: 'var(--bg-card)', 
-                border: '1px solid var(--border-color)',
-                color: 'var(--text-muted)'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card-hover)';
-                e.currentTarget.style.color = 'var(--text-primary)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card)';
-                e.currentTarget.style.color = 'var(--text-muted)';
-              }}
-            >
-              Mary (Supervisor)
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setEmail('edwin.garcia@madison88.com');
-                setPassword('madison88');
-              }}
-              className="text-xs px-3 py-1 rounded-lg transition-all"
-              style={{ 
-                background: 'var(--bg-card)', 
-                border: '1px solid var(--border-color)',
-                color: 'var(--text-muted)'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card-hover)';
-                e.currentTarget.style.color = 'var(--text-primary)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card)';
-                e.currentTarget.style.color = 'var(--text-muted)';
-              }}
-            >
-              Edwin (Planning TOP_10)
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setEmail('glecie.yumena@madison88.com');
-                setPassword('madison88');
-              }}
-              className="text-xs px-3 py-1 rounded-lg transition-all"
-              style={{ 
-                background: 'var(--bg-card)', 
-                border: '1px solid var(--border-color)',
-                color: 'var(--text-muted)'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card-hover)';
-                e.currentTarget.style.color = 'var(--text-primary)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card)';
-                e.currentTarget.style.color = 'var(--text-muted)';
-              }}
-            >
-              Glecie (Planning OTHER)
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setEmail('lindsey.schindler@madison88.com');
-                setPassword('madison88');
-              }}
-              className="text-xs px-3 py-1 rounded-lg transition-all"
-              style={{ 
-                background: 'var(--bg-card)', 
-                border: '1px solid var(--border-color)',
-                color: 'var(--text-muted)'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card-hover)';
-                e.currentTarget.style.color = 'var(--text-primary)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card)';
-                e.currentTarget.style.color = 'var(--text-muted)';
-              }}
-            >
-              Lindsey (Sr. Manager)
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setEmail('cc@madison88.com');
-                setPassword('madison88');
-              }}
-              className="text-xs px-3 py-1 rounded-lg transition-all"
-              style={{ 
-                background: 'var(--bg-card)', 
-                border: '1px solid var(--border-color)',
-                color: 'var(--text-muted)'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card-hover)';
-                e.currentTarget.style.color = 'var(--text-primary)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card)';
-                e.currentTarget.style.color = 'var(--text-muted)';
-              }}
-            >
-              CC (CFO)
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setEmail('polly@madison88.com');
-                setPassword('madison88');
-              }}
-              className="text-xs px-3 py-1 rounded-lg transition-all"
-              style={{ 
-                background: 'var(--bg-card)', 
-                border: '1px solid var(--border-color)',
-                color: 'var(--text-muted)'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card-hover)';
-                e.currentTarget.style.color = 'var(--text-primary)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card)';
-                e.currentTarget.style.color = 'var(--text-muted)';
-              }}
-            >
-              Polly (President)
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setEmail('paul.avendano@madison88.com');
-                setPassword('madison88');
-              }}
-              className="text-xs px-3 py-1 rounded-lg transition-all"
-              style={{ 
-                background: 'var(--bg-card)', 
-                border: '1px solid var(--border-color)',
-                color: 'var(--text-muted)'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card-hover)';
-                e.currentTarget.style.color = 'var(--text-primary)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card)';
-                e.currentTarget.style.color = 'var(--text-muted)';
-              }}
-            >
-              Paul (IT Admin)
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setEmail('jc@madison88.com');
-                setPassword('madison88');
-              }}
-              className="text-xs px-3 py-1 rounded-lg transition-all"
-              style={{ 
-                background: 'var(--bg-card)', 
-                border: '1px solid var(--border-color)',
-                color: 'var(--text-muted)'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card-hover)';
-                e.currentTarget.style.color = 'var(--text-primary)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card)';
-                e.currentTarget.style.color = 'var(--text-muted)';
-              }}
-            >
-              JC (IT Admin)
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setEmail('superadmin@madison88.com');
-                setPassword('madison88');
-              }}
-              className="text-xs px-3 py-1 rounded-lg transition-all"
-              style={{ 
-                background: 'var(--bg-card)', 
-                border: '1px solid var(--border-color)',
-                color: 'var(--text-muted)'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card-hover)';
-                e.currentTarget.style.color = 'var(--text-primary)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'var(--bg-card)';
-                e.currentTarget.style.color = 'var(--text-muted)';
-              }}
-            >
-              Superadmin
-            </button>
-          </div>
         </div>
       </div>
     </div>

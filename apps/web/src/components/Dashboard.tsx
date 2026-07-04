@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { InvoiceStatus, InvoiceCategory, InvoiceType } from '@ap-invoice/shared';
-import api, { invoiceApi } from '../lib/api';
+import { invoiceApi } from '../lib/api';
 import InvoiceTable from './InvoiceTable';
 import UploadInvoiceModal from './UploadInvoiceModal';
 import BottleneckView from './BottleneckView';
@@ -124,7 +124,7 @@ export default function Dashboard() {
     error: 0,
     total: 0,
   });
-  const [poAuditLoading, setPoAuditLoading] = useState(false);
+  const [poAuditLoading] = useState(false);
 
   // Use mock data
   const mockInvoices = invoices;
@@ -227,42 +227,19 @@ export default function Dashboard() {
     setTimeout(() => setCountUpStarted(true), 100);
   }, []);
 
-  // Fetch DSRS v7.3 async PO audit summary
+  // DSRS v7.3 PO audit summary is disabled until a production PO audit endpoint is available.
+  // The previous /api/test/po-audit/all route was removed with other test routes.
   useEffect(() => {
-    let mounted = true;
-
-    const fetchPoAuditSummary = async () => {
-      setPoAuditLoading(true);
-      try {
-        const res = await api.get('/api/test/po-audit/all');
-        const results: Array<{ status: string }> = res.data;
-        if (!mounted) return;
-
-        setPoAuditSummary({
-          matched: results.filter(r => r.status === 'MATCHED').length,
-          warnings: results.filter(r => r.status === 'WARNING').length,
-          mismatches: results.filter(r => r.status === 'MISMATCH').length,
-          pending: results.filter(r => r.status === 'PENDING' || r.status === 'RUNNING').length,
-          not_found: results.filter(r => r.status === 'NOT_FOUND').length,
-          skipped: results.filter(r => r.status === 'SKIPPED').length,
-          error: results.filter(r => r.status === 'ERROR').length,
-          total: results.length,
-        });
-      } catch (err) {
-        console.error('Failed to fetch PO audit summary:', err);
-      } finally {
-        if (mounted) setPoAuditLoading(false);
-      }
-    };
-
-    fetchPoAuditSummary();
-    // Refresh every 30 seconds
-    const interval = setInterval(fetchPoAuditSummary, 30000);
-
-    return () => {
-      mounted = false;
-      clearInterval(interval);
-    };
+    setPoAuditSummary({
+      matched: 0,
+      warnings: 0,
+      mismatches: 0,
+      pending: 0,
+      not_found: 0,
+      skipped: 0,
+      error: 0,
+      total: 0,
+    });
   }, []);
 
   // Count-up animations for each KPI - calculate from mock data

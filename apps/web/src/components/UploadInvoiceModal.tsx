@@ -176,16 +176,25 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
     setUploadProgress(50);
 
     try {
+      const documentType = formData.documentType;
+      const invoiceType =
+        documentType === 'PI' ? 'PROFORMA' :
+        documentType === 'INV' ? 'INVOICE' :
+        documentType === 'CI' ? 'COMMERCIAL' :
+        documentType === 'SI' ? 'SALES' :
+        documentType === 'STATEMENT' ? 'STATEMENT' :
+        'INVOICE';
+
       const invoicePayload = {
         invoice_number: formData.invoiceNumber,
-        invoice_date: formData.invoiceDate,
+        invoice_date: formData.invoiceDate || undefined,
         due_date: formData.dueDate || undefined,
         invoice_received_date: new Date().toISOString(),
         vendor_id: matchedVendorId || undefined,
         vendor_name_raw: formData.vendorName,
         total_amount: parseFloat(formData.amount),
         currency: formData.currency,
-        invoice_type: formData.documentType === 'PI' ? 'PROFORMA' : formData.documentType === 'INV' ? 'INVOICE' : formData.documentType || undefined,
+        invoice_type: invoiceType,
         order_type: formData.orderType || undefined,
         brand: formData.brand || undefined,
         brand_code: extractedBrandCode || undefined,
@@ -193,7 +202,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
         mpo_number: formData.mpoNumber || undefined,
         customer_po_number: formData.poNumber || undefined,
         payment_terms: formData.paymentTerms || undefined,
-        source: 'UPLOAD',
+        source: 'MANUAL_UPLOAD',
       };
 
       const response = await invoiceApi.create(invoicePayload);

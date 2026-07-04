@@ -74,6 +74,9 @@ export const createInvoice = async (invoiceData: any, userId: string) => {
   if (!isValidInvoiceSource(source)) {
     throw new AppError(`Invalid source: ${source}`, 400);
   }
+  if (mpo_number && !/^MPO\d{6}$/.test(String(mpo_number))) {
+    throw new AppError('MPO number must be MPO followed by exactly 6 digits (e.g. MPO015189)', 400);
+  }
 
   // Determine brand_tier from brand or brand_code
   let brand_tier: BrandTier | undefined;

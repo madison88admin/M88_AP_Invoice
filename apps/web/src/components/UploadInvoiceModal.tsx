@@ -1064,8 +1064,10 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                     <input
                       type="text"
                       value={formData.mpoNumber}
-                      onChange={(e) => setFormData({ ...formData, mpoNumber: e.target.value })}
-                      placeholder="e.g. MPO15371"
+                      onChange={(e) => setFormData({ ...formData, mpoNumber: e.target.value.toUpperCase() })}
+                      placeholder="e.g. MPO015189"
+                      pattern="^MPO\d{6}$"
+                      title="MPO must be MPO followed by exactly 6 digits (e.g. MPO015189)"
                       style={{
                         width: '100%',
                         padding: '10px 14px',

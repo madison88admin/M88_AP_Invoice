@@ -64,9 +64,9 @@ function validateBrandForApproval(brandCode: string | null | undefined): BrandVa
 /**
  * Determine the approval route based on invoice amount and brand
  * 3-tier system per new flow:
- * - Tier 1 (<=4999): Coordinator + Purchasing Manager
- * - Tier 2 (5000-99999): Coordinator + Purchasing Manager + MLO Account Holder + MLO Planning Manager + Sr. Manager GPO
- * - Tier 3 (>=100000): Coordinator + Purchasing Manager + MLO Account Holder + MLO Planning Manager + Sr. Manager GPO + Ms. Polly
+ * - Planning Tier (<=2000): Coordinator + Purchasing Manager (shared 7-day SLA)
+ * - Tier 2 (2001-99999): + MLO Account Holder + MLO Planning Manager + Sr. Manager GPO
+ * - Tier 3 (>=100000): + Ms. Polly
  */
 export function determineApprovalRoute(
   amount: number,
@@ -76,7 +76,7 @@ export function determineApprovalRoute(
   const tier = determineApprovalTier(amount);
   const route: ApprovalRouteStep[] = [];
 
-  // Tier 1: amount <= $4,999 → Coordinator + Purchasing Manager
+  // Planning Tier: amount <= $2,000 → Coordinator + Purchasing Manager (shared 7-day SLA)
   route.push({ role: SignatoryRole.COORDINATOR, assignee_name: 'Any Coordinator', sla_days: SLA_LIMITS.COORDINATOR_DAYS });
   route.push({ role: SignatoryRole.PURCHASING_MANAGER, assignee_name: 'Any Purchasing Manager', sla_days: SLA_LIMITS.PURCHASING_MANAGER_DAYS });
 
@@ -106,14 +106,14 @@ export function determineApprovalRoute(
 }
 
 /**
- * Check if an invoice qualifies for auto-approval (low-risk Tier 1)
- * Criteria: Tier 1 (≤$4,999) + vendor bank verified + OCR confidence ≥90% + no exceptions + not duplicate + vendor cumulative < $100
+ * Check if an invoice qualifies for auto-approval (low-risk Planning Tier)
+ * Criteria: Planning Tier (≤$2,000) + vendor bank verified + OCR confidence ≥90% + no exceptions + not duplicate + vendor cumulative < $100
  */
 async function isAutoApprovalEligible(invoice: any): Promise<{ eligible: boolean; reason?: string }> {
   const amount = Number(invoice.total_amount);
   const tier = determineApprovalTier(amount);
 
-  // Only Tier 1 invoices are eligible
+  // Only Planning Tier invoices are eligible
   if (tier !== 1) {
     return { eligible: false, reason: `Tier ${tier} requires manual approval` };
   }
@@ -165,7 +165,7 @@ async function isAutoApprovalEligible(invoice: any): Promise<{ eligible: boolean
 /**
  * Create approval request for a validated invoice
  * Sets invoice to PENDING_COORDINATOR and creates signature records
- * For low-risk Tier 1 invoices, auto-approves directly to APPROVED
+ * For low-risk Planning Tier invoices, auto-approves directly to APPROVED
  */
 export async function createApprovalRequest(invoiceId: string, userId: string) {
   const invoice = await prisma.invoice.findUnique({
@@ -181,6 +181,9 @@ export async function createApprovalRequest(invoiceId: string, userId: string) {
     throw new AppError('Invoice must be validated before requesting approval', 400);
   }
 
+  // NOTE: Vendor threshold is a warning only and does not block approval.
+  // The threshold exception remains visible for reporting but will not prevent approval.
+
   // Determine approval route based on amount and brand
   const amount = Number(invoice.total_amount);
   const brandName = invoice.brand || undefined;
@@ -188,7 +191,7 @@ export async function createApprovalRequest(invoiceId: string, userId: string) {
   const approvalRoute = determineApprovalRoute(amount, brandName, brandCode);
   const tier = determineApprovalTier(amount);
 
-  // Check auto-approval eligibility for low-risk Tier 1 invoices
+  // Check auto-approval eligibility for low-risk Planning Tier invoices
   const autoApproval = await isAutoApprovalEligible(invoice);
 
   if (autoApproval.eligible) {
@@ -367,12 +370,29 @@ export async function approveInvoice(
       },
     });
 
+    // Shared SLA for Planning function: Coordinator + Manager share 7 calendar days total
+    let slaHours = getSLAForRole(nextRole) * 24;
+    if (nextRole === SignatoryRole.PURCHASING_MANAGER) {
+      const coordinatorStage = await prisma.stageTimestamp.findFirst({
+        where: {
+          invoice_id: invoiceId,
+          stage: InvoiceStatus.PENDING_COORDINATOR,
+        },
+        orderBy: { entered_at: 'desc' },
+      });
+      if (coordinatorStage) {
+        const planningSLA = 7 * 24; // 7 calendar days shared
+        const elapsedHours = (new Date().getTime() - new Date(coordinatorStage.entered_at).getTime()) / (1000 * 60 * 60);
+        slaHours = Math.max(1, planningSLA - elapsedHours);
+      }
+    }
+
     await prisma.stageTimestamp.create({
       data: {
         invoice_id: invoiceId,
         stage: nextStatus as any,
         entered_at: new Date(),
-        sla_hours: getSLAForRole(nextRole) * 24,
+        sla_hours: slaHours,
       },
     });
 

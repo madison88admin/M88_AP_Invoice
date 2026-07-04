@@ -120,37 +120,41 @@ router.get('/test', (req: Request, res: Response) => {
     });
   }
 
-  // Test Case 5: Tier 1 invoice (amount <= $4,999) with any brand_code value, including null → no brand validation runs
+  // Test Case 5: Planning Tier invoice (amount <= $2,000) with any brand_code value, including null → no brand validation runs
   try {
-    const route5 = determineApprovalRoute(4999, undefined, undefined);
+    const route5 = determineApprovalRoute(2000, undefined, undefined);
+    const roles5 = route5.map((r: any) => r.role);
+    const expectedRoles5 = ['COORDINATOR', 'PURCHASING_MANAGER'];
     results.push({
       case: '5',
-      description: 'Tier 1 invoice ($4,999) with null brand_code → no brand validation runs',
-      expected: 'NO EXCEPTION (Tier 1)',
+      description: 'Planning Tier invoice ($2,000) with null brand_code → no brand validation runs',
+      expected_roles: expectedRoles5,
+      actual_roles: roles5,
+      expected: 'NO EXCEPTION (Planning Tier)',
       actual: 'NO EXCEPTION THROWN',
       threw_exception: false,
-      passed: true,
+      passed: JSON.stringify(roles5) === JSON.stringify(expectedRoles5),
       full_route: route5
     });
   } catch (error: any) {
     results.push({
       case: '5',
-      description: 'Tier 1 invoice ($4,999) with null brand_code → no brand validation runs',
-      expected: 'NO EXCEPTION (Tier 1)',
+      description: 'Planning Tier invoice ($2,000) with null brand_code → no brand validation runs',
+      expected: 'NO EXCEPTION (Planning Tier)',
       actual: error.message,
       threw_exception: true,
       passed: false
     });
   }
 
-  // Test Case 6: Tier 1 $1,500 → Coordinator + Purchasing Manager
+  // Test Case 6: Planning Tier $1,500 → Coordinator + Purchasing Manager
   try {
     const route6 = determineApprovalRoute(1500, 'Test Brand', 'TST');
     const roles = route6.map((r: any) => r.role);
     const expectedRoles = ['COORDINATOR', 'PURCHASING_MANAGER'];
     results.push({
       case: '6',
-      description: 'Tier 1 $1,500 → Coordinator + Purchasing Manager',
+      description: 'Planning Tier $1,500 → Coordinator + Purchasing Manager',
       expected_roles: expectedRoles,
       actual_roles: roles,
       passed: JSON.stringify(roles) === JSON.stringify(expectedRoles),
@@ -159,7 +163,7 @@ router.get('/test', (req: Request, res: Response) => {
   } catch (error: any) {
     results.push({
       case: '6',
-      description: 'Tier 1 $1,500 → Coordinator + Purchasing Manager',
+      description: 'Planning Tier $1,500 → Coordinator + Purchasing Manager',
       expected_roles: ['COORDINATOR', 'PURCHASING_MANAGER'],
       actual_roles: 'ERROR',
       passed: false,
@@ -167,24 +171,27 @@ router.get('/test', (req: Request, res: Response) => {
     });
   }
 
-  // Test Case 7: Tier 1 $3,000 → Coordinator + Purchasing Manager
+  // Test Case 7: Tier 2 $3,000 TOP_10 → full route with MLO + SR Manager
   try {
     const route7 = determineApprovalRoute(3000, 'Columbia Sportswear', 'CSC');
     const roles = route7.map((r: any) => r.role);
-    const expectedRoles = ['COORDINATOR', 'PURCHASING_MANAGER'];
+    const planningManager7 = route7.find((r: any) => r.role === 'MLO_PLANNING_MANAGER')?.assignee_name;
+    const expectedRoles = ['COORDINATOR', 'PURCHASING_MANAGER', 'MLO_ACCOUNT_HOLDER', 'MLO_PLANNING_MANAGER', 'SR_MANAGER_GLOBAL_PRODUCTION'];
     results.push({
       case: '7',
-      description: 'Tier 1 $3,000 → Coordinator + Purchasing Manager',
+      description: 'Tier 2 $3,000 TOP_10 → Coordinator + Manager + MLO + SR Manager',
       expected_roles: expectedRoles,
       actual_roles: roles,
-      passed: JSON.stringify(roles) === JSON.stringify(expectedRoles),
+      expected_planning_manager: 'Edwin Garcia',
+      actual_planning_manager: planningManager7,
+      passed: JSON.stringify(roles) === JSON.stringify(expectedRoles) && planningManager7 === 'Edwin Garcia',
       full_route: route7
     });
   } catch (error: any) {
     results.push({
       case: '7',
-      description: 'Tier 1 $3,000 → Coordinator + Purchasing Manager',
-      expected_roles: ['COORDINATOR', 'PURCHASING_MANAGER'],
+      description: 'Tier 2 $3,000 TOP_10 → Coordinator + Manager + MLO + SR Manager',
+      expected_roles: ['COORDINATOR', 'PURCHASING_MANAGER', 'MLO_ACCOUNT_HOLDER', 'MLO_PLANNING_MANAGER', 'SR_MANAGER_GLOBAL_PRODUCTION'],
       actual_roles: 'ERROR',
       passed: false,
       error_message: error.message

@@ -56,6 +56,7 @@ export async function validateInvoiceWithData(
     { fn: async () => checkMissingBankInfo(invoice), reason: ExceptionReason.MISSING_BANK_INFO },
     { fn: () => validateInvoiceTemplate(invoice.invoice_type as InvoiceType, invoice.invoice_template_type), reason: ExceptionReason.HANDWRITTEN_DOCUMENT },
     { fn: async () => validatePOAgainstNextGen(invoice), reason: ExceptionReason.AMOUNT_MISMATCH },
+    { fn: async () => validateVendorThreshold(invoice), reason: ExceptionReason.VENDOR_THRESHOLD_EXCEEDED },
   ];
 
   for (const rule of rules) {
@@ -207,11 +208,11 @@ export async function validateInvoice(invoiceId: string): Promise<InvoiceValidat
     exceptions.push({ reason: ExceptionReason.HANDWRITTEN_DOCUMENT, detail: templateResult.detail || '' });
   }
 
-  // RULE 17 — PO cross-check via NextGen (fetch-only, read from NextGen)
-  const poCheckResult = await validatePOAgainstNextGen(invoice);
-  results.push(poCheckResult);
-  if (!poCheckResult.passed) {
-    exceptions.push({ reason: poCheckResult.reason || ExceptionReason.AMOUNT_MISMATCH, detail: poCheckResult.detail || '' });
+  // RULE 18 — Vendor threshold exceeded
+  const vendorThresholdResult = await validateVendorThreshold(invoice);
+  results.push(vendorThresholdResult);
+  if (!vendorThresholdResult.passed) {
+    exceptions.push({ reason: ExceptionReason.VENDOR_THRESHOLD_EXCEEDED, detail: vendorThresholdResult.detail || '' });
   }
 
   const passed = results.every(r => r.passed);
@@ -576,7 +577,7 @@ async function validateBankDetails(invoice: any): Promise<ValidationResult> {
   };
 }
 
-// RULE 10 — Signature validation (4-tier per BRD v5.0)
+// RULE 10 — Signature validation (3-tier per new flow)
 function validateSignatures(amount: number, signatures: any[]): ValidationResult {
   // Check for "Computer-generated, no signature required" exemption
   if (signatures && signatures.some((sig: any) =>
@@ -594,7 +595,7 @@ function validateSignatures(amount: number, signatures: any[]): ValidationResult
 
   const tier = determineApprovalTier(amount);
 
-  // Tier 1: Coordinator required for all invoices
+  // Planning Tier: Coordinator required for all invoices
   if (!signedRoles.includes(SignatoryRole.COORDINATOR)) {
     return {
       passed: false,
@@ -611,19 +612,19 @@ function validateSignatures(amount: number, signatures: any[]): ValidationResult
         passed: false,
         reason: ExceptionReason.MISSING_SIGNATURE,
         message: 'Missing Purchasing Manager signature',
-        detail: 'A Purchasing Manager signature is required for invoices above $4,999',
+        detail: 'A Purchasing Manager signature is required for invoices above $2,000',
       };
     }
   }
 
-  // Tier 2+ ($5,000+): MLO Account Holder + MLO Planning Manager + Sr. Manager Global Production
+  // Tier 2+ ($2,001+): MLO Account Holder + MLO Planning Manager + Sr. Manager Global Production
   if (tier >= 2) {
     if (!signedRoles.includes(SignatoryRole.MLO_ACCOUNT_HOLDER)) {
       return {
         passed: false,
         reason: ExceptionReason.MISSING_SIGNATURE,
         message: 'Missing MLO Account Holder signature',
-        detail: 'An MLO Account Holder signature is required for invoices above $4,999',
+        detail: 'An MLO Account Holder signature is required for invoices above $2,000',
       };
     }
     if (!signedRoles.includes(SignatoryRole.MLO_PLANNING_MANAGER)) {
@@ -631,7 +632,7 @@ function validateSignatures(amount: number, signatures: any[]): ValidationResult
         passed: false,
         reason: ExceptionReason.MISSING_SIGNATURE,
         message: 'Missing MLO Planning Manager signature',
-        detail: 'An MLO Planning Manager signature is required for invoices above $4,999',
+        detail: 'An MLO Planning Manager signature is required for invoices above $2,000',
       };
     }
     if (!signedRoles.includes(SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION)) {
@@ -639,7 +640,7 @@ function validateSignatures(amount: number, signatures: any[]): ValidationResult
         passed: false,
         reason: ExceptionReason.MISSING_SIGNATURE,
         message: 'Missing Sr. Manager Global Production signature',
-        detail: 'Sr. Manager of Global Production Operations signature required for invoices above $4,999',
+        detail: 'Sr. Manager of Global Production Operations signature required for invoices above $2,000',
       };
     }
   }
@@ -934,6 +935,61 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
     return {
       passed: true,
       message: `NextGen unavailable — PO ${poRef} check deferred to pre-post stage`,
+    };
+  }
+}
+
+// RULE 18 — Vendor cumulative threshold
+async function validateVendorThreshold(invoice: any): Promise<ValidationResult> {
+  if (!invoice.vendor_id || !invoice.total_amount) {
+    return {
+      passed: true,
+      message: 'Cannot validate threshold without vendor and amount',
+    };
+  }
+
+  try {
+    // Configuration: 90-day lookback window and $500,000 threshold
+    const THRESHOLD_AMOUNT = 500000; // $500,000
+    const THRESHOLD_DAYS = 90; // 90-day cumulative window
+
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - THRESHOLD_DAYS);
+
+    // Calculate vendor cumulative total for the past 90 days (excluding current invoice and rejected invoices)
+    const vendorCumulative = await prisma.invoice.aggregate({
+      _sum: { total_amount: true },
+      where: {
+        vendor_id: invoice.vendor_id,
+        status: { not: InvoiceStatus.REJECTED as any },
+        created_at: { gte: cutoffDate },
+        id: { not: invoice.id }, // Exclude current invoice
+      },
+    });
+
+    const existingTotal = Number(vendorCumulative._sum.total_amount || 0);
+    const currentTotal = existingTotal + Number(invoice.total_amount);
+
+    if (currentTotal > THRESHOLD_AMOUNT) {
+      return {
+        passed: false,
+        reason: ExceptionReason.VENDOR_THRESHOLD_EXCEEDED,
+        message: `Vendor cumulative threshold exceeded`,
+        detail: `Vendor cumulative total $${currentTotal.toFixed(2)} exceeds $${THRESHOLD_AMOUNT.toLocaleString()} threshold for the last ${THRESHOLD_DAYS} days. Route to Purchasing Coordinator for approval. Existing: $${existingTotal.toFixed(2)}, Current invoice: $${Number(invoice.total_amount).toFixed(2)}`,
+      };
+    }
+
+    return {
+      passed: true,
+      message: `Vendor within cumulative threshold ($${currentTotal.toFixed(2)} of $${THRESHOLD_AMOUNT.toLocaleString()})`,
+    };
+  } catch (error) {
+    logger.warn(`Vendor threshold check failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    // Don't block on threshold check if there's an error
+    return {
+      passed: true,
+      message: 'Vendor threshold check deferred',
+      detail: 'Could not validate vendor threshold - will be checked during approval stage',
     };
   }
 }

@@ -134,8 +134,8 @@ export const INVOICE_TYPE_KEYWORDS: Record<string, InvoiceType> = {
 
 // ─── APPROVAL ROUTING (3 tiers per new flow) ───
 export const APPROVAL_THRESHOLDS = {
-  TIER_1: 4999.99,   // USD 0.1 to $4,999
-  TIER_2: 99999.99,  // USD $5,000 to $99,999
+  TIER_1: 2000.00,   // Planning Tier: USD 0.1 to $2,000 (Coordinator + Purchasing Manager shared SLA)
+  TIER_2: 99999.99,  // USD $2,001 to $99,999
   // Above TIER_2 = Tier 3 ($100,000+)
 };
 

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { InvoiceStatus, InvoiceCategory, InvoiceType } from '@ap-invoice/shared';
-import { invoiceApi } from '../lib/api';
+import api, { invoiceApi } from '../lib/api';
 import InvoiceTable from './InvoiceTable';
 import UploadInvoiceModal from './UploadInvoiceModal';
 import BottleneckView from './BottleneckView';
@@ -150,9 +150,9 @@ export default function Dashboard() {
       return mockInvoices.filter(i => i.uploaded_by === user.email);
     }
 
-    // SR_MANAGER_GLOBAL_PRODUCTION - only production invoices $5K+
+    // SR_MANAGER_GLOBAL_PRODUCTION - only production invoices $2K+
     if (role === 'SR_MANAGER_GLOBAL_PRODUCTION') {
-      return mockInvoices.filter(i => i.total_amount >= 5000);
+      return mockInvoices.filter(i => i.total_amount > 2000);
     }
 
     // MS_POLLY - only high-value invoices (>$100K)
@@ -234,12 +234,8 @@ export default function Dashboard() {
     const fetchPoAuditSummary = async () => {
       setPoAuditLoading(true);
       try {
-        const res = await fetch('/api/invoices/po-audit/all');
-        if (!res.ok) {
-          if (mounted) setPoAuditLoading(false);
-          return;
-        }
-        const results: Array<{ status: string }> = await res.json();
+        const res = await api.get('/api/test/po-audit/all');
+        const results: Array<{ status: string }> = res.data;
         if (!mounted) return;
 
         setPoAuditSummary({
@@ -578,8 +574,8 @@ export default function Dashboard() {
       case 'SR_MANAGER_GLOBAL_PRODUCTION':
         return [
           {
-            label: 'Production Invoices $5K+',
-            value: mockInvoices.filter(i => i.total_amount >= 5000).length,
+            label: 'Production Invoices $2K+',
+            value: mockInvoices.filter(i => i.total_amount > 2000).length,
             icon: Package,
             color: '#2563EB',
             trend: '+12%',
@@ -595,7 +591,7 @@ export default function Dashboard() {
           },
           {
             label: 'Global Production Costs',
-            value: `$${mockInvoices.filter(i => i.total_amount >= 5000).reduce((sum, i) => sum + i.total_amount, 0).toLocaleString()}`,
+            value: `$${mockInvoices.filter(i => i.total_amount > 2000).reduce((sum, i) => sum + i.total_amount, 0).toLocaleString()}``,
             icon: TrendingUp,
             color: '#4F46E5',
             trend: '+18%',
@@ -1327,8 +1323,8 @@ export default function Dashboard() {
           <div className="flex items-center gap-4 mb-6">
             {user && (
               <>
-                {/* Upload Invoice - Only for ACCOUNTING_ASSOCIATE */}
-                {user.role === 'ACCOUNTING_ASSOCIATE' && (
+                {/* Upload Invoice - Only for PURCHASING_COORDINATOR and IT_ADMIN */}
+                {(user.role === 'PURCHASING_COORDINATOR' || user.role === 'IT_ADMIN') && (
                   <button
                     onClick={() => {
                       console.log('Upload button clicked, showUploadModal:', showUploadModal);

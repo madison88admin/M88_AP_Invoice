@@ -6,6 +6,7 @@ import {
   processPayment,
   getScheduledPayments,
 } from '../services/postingService';
+import { logAudit } from '../services/auditLogService';
 
 export const postInvoiceController = async (
   req: AuthRequest,
@@ -15,6 +16,12 @@ export const postInvoiceController = async (
   try {
     const { id } = req.params;
     const result = await postInvoice(id, req.user!.id);
+    await logAudit({
+      invoice_id: id,
+      performed_by: req.user!.id,
+      action: 'INVOICE_POSTED',
+      note: `Invoice posted to accounting by ${req.user!.role}`,
+    });
     res.json(result);
   } catch (error) {
     next(error);
@@ -30,6 +37,12 @@ export const schedulePaymentController = async (
     const { id } = req.params;
     const { paymentDate } = req.body;
     const result = await schedulePayment(id, new Date(paymentDate), req.user!.id);
+    await logAudit({
+      invoice_id: id,
+      performed_by: req.user!.id,
+      action: 'PAYMENT_SCHEDULED',
+      note: `Payment scheduled for ${paymentDate} by ${req.user!.role}`,
+    });
     res.json(result);
   } catch (error) {
     next(error);
@@ -44,6 +57,11 @@ export const processPaymentController = async (
   try {
     const { paymentId } = req.params;
     const result = await processPayment(paymentId, req.user!.id);
+    await logAudit({
+      performed_by: req.user!.id,
+      action: 'PAYMENT_PROCESSED',
+      note: `Payment ${paymentId} processed by ${req.user!.role}`,
+    });
     res.json(result);
   } catch (error) {
     next(error);

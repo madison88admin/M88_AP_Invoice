@@ -8,6 +8,7 @@ import {
   Package, 
   BarChart3, 
   FileSearch,
+  ClipboardList,
   ChevronLeft,
   ChevronRight,
   Bell,
@@ -29,6 +30,7 @@ const navItems: NavItem[] = [
   { label: 'Batches', path: '/payment-batches', icon: Package },
   { label: 'Reports', path: '/reports', icon: BarChart3 },
   { label: 'Review', path: '/accounting-review', icon: FileSearch },
+  { label: 'Audit Logs', path: '/audit-logs', icon: ClipboardList },
 ];
 
 export default function Sidebar() {

@@ -20,6 +20,7 @@ import piFollowUpRoutes from './routes/piFollowUp';
 import slaReminderRoutes from './routes/slaReminder';
 import systemRoutes from './routes/system';
 import authRoutes from './routes/auth';
+import auditLogRoutes from './routes/audit';
 import { errorHandler } from './middleware/errorHandler';
 import { logger } from './utils/logger';
 import { connectDatabase, disconnectDatabase, isDbConnected } from './config/database';
@@ -79,6 +80,7 @@ app.use('/api/pi-follow-up', piFollowUpRoutes);
 app.use('/api/sla-reminder', slaReminderRoutes);
 app.use('/api/system', systemRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/audit-logs', auditLogRoutes);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

@@ -2,6 +2,7 @@ import prisma from '../config/database';
 import { InvoiceStatus, InvoiceType, InvoiceCategory, BrandTier, InvoiceSource } from '@ap-invoice/shared';
 import { AppError } from '../middleware/errorHandler';
 import { isTop10Brand, TOP_10_BRANDS } from '@ap-invoice/shared';
+import { logAudit } from './auditLogService';
 import crypto from 'crypto';
 
 function safeDate(value: any): Date | null {
@@ -221,6 +222,9 @@ export const getInvoiceById = async (id: string) => {
 };
 
 export const updateInvoiceStatus = async (id: string, status: InvoiceStatus, userId: string) => {
+  const existing = await prisma.invoice.findUnique({ where: { id } });
+  const oldStatus = existing?.status;
+
   const invoice = await prisma.invoice.update({
     where: { id },
     data: { status: status as any },
@@ -232,13 +236,11 @@ export const updateInvoiceStatus = async (id: string, status: InvoiceStatus, use
     },
   });
 
-  await prisma.auditLog.create({
-    data: {
-      invoice_id: invoice.id,
-      performed_by: userId,
-      action: 'STATUS_UPDATED',
-      note: `Status updated to ${status}`,
-    },
+  await logAudit({
+    invoice_id: invoice.id,
+    performed_by: userId,
+    action: 'STATUS_UPDATED',
+    note: `Status changed from ${oldStatus} to ${status}`,
   });
 
   return invoice;

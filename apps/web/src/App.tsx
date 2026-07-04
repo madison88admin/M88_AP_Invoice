@@ -10,6 +10,7 @@ import PaymentBatchManager from './components/PaymentBatchManager';
 import Reports from './components/Reports';
 import AccountingReview from './components/AccountingReview';
 import VendorManagement from './components/VendorManagement';
+import AuditLog from './components/AuditLog';
 import ProtectedRoute from './components/ProtectedRoute';
 
 function App() {
@@ -62,6 +63,11 @@ function App() {
             <Route path="/vendors" element={
               <ProtectedRoute>
                 <VendorManagement />
+              </ProtectedRoute>
+            } />
+            <Route path="/audit-logs" element={
+              <ProtectedRoute>
+                <AuditLog />
               </ProtectedRoute>
             } />
           </Routes>

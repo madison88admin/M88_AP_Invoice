@@ -31,6 +31,7 @@ export const invoiceApi = {
     });
   },
   confirmOCR: (id: string, data: any) => api.post(`/api/invoices/${id}/confirm-ocr`, data),
+  saveCorrection: (id: string, data: any) => api.post(`/api/invoices/${id}/correct-extraction`, data),
   validate: (id: string) => api.post(`/api/invoices/${id}/validate`),
   requestApproval: (id: string) => api.post(`/api/invoices/${id}/request-approval`),
   approve: (id: string, signerName: string) => api.post(`/api/invoices/${id}/approve`, { signerName }),
@@ -70,6 +71,10 @@ export const vendorApi = {
   update: (id: string, data: any) => api.patch(`/api/vendors/${id}`, data),
   getSuggestions: (search: string, limit?: number) => 
     api.get('/api/vendors/suggestions', { params: { search, limit } }),
+};
+
+export const auditLogApi = {
+  getAll: (params?: any) => api.get('/api/audit-logs', { params }),
 };
 
 export default api;

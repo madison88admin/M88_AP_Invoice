@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import { UserRole } from '@ap-invoice/shared';
 import { AppError } from '../middleware/errorHandler';
 import { validateNextGenCredentials } from '../services/nextGenAuthService';
+import { logAudit } from '../services/auditLogService';
 
 const router = Router() as Router;
 
@@ -154,6 +155,12 @@ router.post('/login', async (req, res, next) => {
       { expiresIn: '8h' }
     );
 
+    await logAudit({
+      performed_by: nextGenUsername,
+      action: 'USER_LOGIN',
+      note: `User ${nextGenUsername} (${userEmail}) logged in via NextGen as ${role}`,
+    });
+
     res.json({
       token,
       user: {
@@ -197,6 +204,12 @@ router.post('/demo-login', async (req, res, next) => {
     if (!demoUser) {
       throw new AppError('Invalid demo credentials', 401);
     }
+
+    await logAudit({
+      performed_by: demoUser.name,
+      action: 'USER_LOGIN_DEMO',
+      note: `User ${demoUser.name} (${demoUser.email}) logged in via demo login as ${demoUser.role}`,
+    });
 
     res.json(buildAuthResponse(demoUser, demoUser.name));
   } catch (error) {

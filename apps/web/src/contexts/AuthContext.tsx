@@ -13,6 +13,7 @@ export interface AuthUser {
 interface AuthContextType {
   user: AuthUser | null;
   login: (email: string, password: string) => Promise<boolean>;
+  demoLogin: (email: string, password: string) => Promise<boolean>;
   logout: () => void;
   isAuthenticated: boolean;
   isLoading: boolean;
@@ -59,17 +60,31 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     setIsLoading(false);
   }, []);
 
+  const handleAuthResponse = (response: any): boolean => {
+    const { token, user } = response.data;
+    localStorage.setItem('auth_token', token);
+    localStorage.setItem(SESSION_KEY, JSON.stringify(user));
+    setUser(user as AuthUser);
+    setIsAuthenticated(true);
+    return true;
+  };
+
   const login = async (email: string, password: string): Promise<boolean> => {
     try {
       const response = await api.post('/api/auth/login', { email, password });
-      const { token, user } = response.data;
-      localStorage.setItem('auth_token', token);
-      localStorage.setItem(SESSION_KEY, JSON.stringify(user));
-      setUser(user as AuthUser);
-      setIsAuthenticated(true);
-      return true;
+      return handleAuthResponse(response);
     } catch (error) {
       console.error('Login failed:', error);
+      return false;
+    }
+  };
+
+  const demoLogin = async (email: string, password: string): Promise<boolean> => {
+    try {
+      const response = await api.post('/api/auth/demo-login', { email, password });
+      return handleAuthResponse(response);
+    } catch (error) {
+      console.error('Demo login failed:', error);
       return false;
     }
   };
@@ -82,7 +97,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, isAuthenticated, isLoading }}>
+    <AuthContext.Provider value={{ user, login, demoLogin, logout, isAuthenticated, isLoading }}>
       {children}
     </AuthContext.Provider>
   );

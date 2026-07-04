@@ -7,6 +7,53 @@ import { validateNextGenCredentials } from '../services/nextGenAuthService';
 const router = Router() as Router;
 
 /**
+ * Demo users for quick login buttons. Only enabled when ENABLE_DEMO_LOGIN=true.
+ * These accounts are intentionally NOT authenticated against NextGen.
+ */
+const DEMO_USERS = [
+  { email: 'wyssa.martinez@madison88.com', name: 'Wyssa', role: 'ACCOUNTING_SUPERVISOR', password: 'madison88' },
+  { email: 'joy.yco@madison88.com', name: 'Joy', role: 'PURCHASING_COORDINATOR', password: 'madison88' },
+  { email: 'maricon.alvarez@madison88.com', name: 'Maricon', role: 'PURCHASING_COORDINATOR', password: 'madison88' },
+  { email: 'maricar.tanaleon@madison88.com', name: 'Maricar', role: 'PURCHASING_MANAGER', password: 'madison88' },
+  { email: 'maryann.delmonte@madison88.com', name: 'Maryann', role: 'PURCHASING_MANAGER', password: 'madison88' },
+  { email: 'edwin.garcia@madison88.com', name: 'Edwin', role: 'PLANNING_MANAGER', password: 'madison88', brand_scope: 'TOP_10' as const },
+  { email: 'glecie.yumena@madison88.com', name: 'Glecie', role: 'PLANNING_MANAGER', password: 'madison88', brand_scope: 'OTHER' as const },
+  { email: 'lindsey.castro@madison88.com', name: 'Lindsey', role: 'SR_MANAGER_GLOBAL_PRODUCTION', password: 'madison88' },
+  { email: 'polly.madison@madison88.com', name: 'Polly', role: 'MS_POLLY', password: 'madison88' },
+  { email: 'jc@madison88.com', name: 'JC', role: 'IT_ADMIN', password: 'madison88' },
+];
+
+const isDemoLoginEnabled = () => process.env.ENABLE_DEMO_LOGIN === 'true' || process.env.NODE_ENV === 'development';
+
+function buildAuthResponse(user: any, id: string) {
+  const brandScope = user.role === 'PLANNING_MANAGER' ? (user.brand_scope || undefined) : undefined;
+  const email = user.email;
+  const token = jwt.sign(
+    {
+      id,
+      email,
+      name: user.name,
+      role: user.role,
+      brand_scope: brandScope,
+    },
+    process.env.JWT_SECRET!,
+    { expiresIn: '8h' }
+  );
+
+  return {
+    token,
+    user: {
+      id,
+      email,
+      name: user.name,
+      role: user.role,
+      title: user.role.replace(/_/g, ' '),
+      brand_scope: brandScope,
+    },
+  };
+}
+
+/**
  * Extract a NextGen username from an email address.
  * e.g. wyssa.martinez@madison88.com -> Wyssa, joy.yco@madison88.com -> Joy
  */
@@ -118,6 +165,40 @@ router.post('/login', async (req, res, next) => {
         brand_scope: brandScope,
       },
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/auth/demo-login
+ * Bypass NextGen authentication for demo/development quick login buttons.
+ * Only available when ENABLE_DEMO_LOGIN=true or NODE_ENV=development.
+ */
+router.post('/demo-login', async (req, res, next) => {
+  try {
+    if (!isDemoLoginEnabled()) {
+      throw new AppError('Demo login is disabled', 403);
+    }
+
+    if (!process.env.JWT_SECRET) {
+      throw new AppError('JWT_SECRET is not configured', 500);
+    }
+
+    const { email, password } = req.body;
+    if (!email || !password) {
+      throw new AppError('Email and password are required', 400);
+    }
+
+    const demoUser = DEMO_USERS.find(
+      (u) => u.email.toLowerCase() === email.toLowerCase() && u.password === password
+    );
+
+    if (!demoUser) {
+      throw new AppError('Invalid demo credentials', 401);
+    }
+
+    res.json(buildAuthResponse(demoUser, demoUser.name));
   } catch (error) {
     next(error);
   }

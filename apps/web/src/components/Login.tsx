@@ -21,7 +21,7 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
+  const { login, demoLogin } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -39,9 +39,18 @@ export default function Login() {
     setLoading(false);
   };
 
-  const applyQuickLogin = (quickEmail: string, quickPassword: string) => {
+  const applyQuickLogin = async (quickEmail: string, quickPassword: string) => {
     setEmail(quickEmail);
     setPassword(quickPassword);
+    setError('');
+    setLoading(true);
+    const success = await demoLogin(quickEmail, quickPassword);
+    if (success) {
+      navigate('/dashboard');
+    } else {
+      setError('Demo login failed or is disabled');
+    }
+    setLoading(false);
   };
 
   return (

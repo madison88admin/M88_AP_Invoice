@@ -6,7 +6,7 @@ const supabaseAnonKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY;
 export const isSupabaseConfigured = !!(supabaseUrl && supabaseAnonKey);
 
 if (!isSupabaseConfigured) {
-  console.warn('Supabase URL or Anon Key is missing. Using mock data mode.');
+  console.warn('Supabase URL or Anon Key is missing. Supabase integration is disabled.');
 }
 
 export const supabase = isSupabaseConfigured

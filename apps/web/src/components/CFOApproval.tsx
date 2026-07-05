@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { FileText, Search, Filter, Download, Eye, CheckCircle, XCircle, DollarSign } from 'lucide-react';
+import { paymentBatchApi } from '../lib/api';
 
 interface PaymentBatch {
   id: string;
@@ -40,14 +41,31 @@ export default function CFOApproval() {
   const loadBatches = async () => {
     try {
       setLoading(true);
-      // In production, this would call the actual API
-      // const response = await paymentBatchApi.getAll({ status: filters.status });
-      // setBatches(response.data);
-      
-      // Mock data for now
-      setBatches([]);
+      const response = await paymentBatchApi.getAll();
+      const allBatches = response.data || [];
+      const filtered = filters.status ? allBatches.filter((b: any) => b.status === filters.status) : allBatches;
+      setBatches(filtered.map((b: any) => ({
+        id: b.id,
+        batch_number: b.batch_name || b.name || b.id,
+        total_amount: Number(b.total_amount || 0),
+        payment_count: b.invoice_count || 0,
+        status: b.status || 'DRAFT',
+        created_at: new Date(b.created_at),
+        processed_at: b.processed_at ? new Date(b.processed_at) : undefined,
+        payments: (b.payments || []).map((p: any) => ({
+          id: p.id,
+          amount: Number(p.amount || 0),
+          currency: p.currency || 'USD',
+          payment_date: p.payment_date ? new Date(p.payment_date) : new Date(),
+          invoice: {
+            invoice_number: p.invoice?.invoice_number || '',
+            vendor: { name: p.invoice?.vendor?.name || '' },
+          },
+        })),
+      })));
     } catch (error) {
       console.error('Failed to load payment batches:', error);
+      setBatches([]);
     } finally {
       setLoading(false);
     }
@@ -59,9 +77,7 @@ export default function CFOApproval() {
 
   const handleApprove = async (batchId: string) => {
     try {
-      // In production, this would call the actual API
-      // await paymentBatchApi.approve(batchId);
-      console.log('Approving batch:', batchId);
+      await paymentBatchApi.process(batchId);
       loadBatches();
     } catch (error) {
       console.error('Failed to approve batch:', error);
@@ -70,9 +86,7 @@ export default function CFOApproval() {
 
   const handleReject = async (batchId: string, reason: string) => {
     try {
-      // In production, this would call the actual API
-      // await paymentBatchApi.reject(batchId, reason);
-      console.log('Rejecting batch:', batchId, reason);
+      await paymentBatchApi.cancel(batchId, reason);
       loadBatches();
     } catch (error) {
       console.error('Failed to reject batch:', error);

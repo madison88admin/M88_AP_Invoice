@@ -36,7 +36,7 @@ const orderTypeColors: Record<OrderType, { bg: string; text: string }> = {
 };
 
 export default function InvoiceTable({ invoices, onInvoiceClick, loading = false }: InvoiceTableProps) {
-  // Use invoices as-is for mock data
+  // Use invoices as-is
   const sortedInvoices = invoices;
 
   if (loading) {
@@ -131,7 +131,7 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
                 <input type="checkbox" className="rounded border-white/20 text-[#6366f1] focus:ring-[#6366f1]" />
               </td>
               <td className="px-4 py-4 whitespace-nowrap" style={{ width: '32px' }}>
-                {/* Priority flag removed for mock data */}
+                {/* Priority flag column */}
               </td>
               <td className="px-6 py-4 whitespace-nowrap">
                 <div className="flex items-center">

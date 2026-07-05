@@ -91,8 +91,7 @@ export function determineApprovalRoute(
       ? MLO_ACCOUNT_HOLDER_EDWIN
       : MLO_ACCOUNT_HOLDER_GLECIE;
 
-    // Tier 2+: add MLO Account Holder and MLO Planning Manager
-    route.push({ role: SignatoryRole.MLO_ACCOUNT_HOLDER, assignee_name: mloAccountHolder, sla_days: SLA_LIMITS.MLO_ACCOUNT_HOLDER_DAYS });
+    // MLO Planning Manager step (the same person is the MLO account holder, so only one signature is needed)
     route.push({ role: SignatoryRole.MLO_PLANNING_MANAGER, assignee_name: mloAccountHolder, sla_days: SLA_LIMITS.MLO_PLANNING_MANAGER_DAYS });
 
     route.push({ role: SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION, assignee_name: SR_MANAGER_NAME, sla_days: SLA_LIMITS.SR_MANAGER_DAYS });
@@ -513,6 +512,7 @@ function mapUserRoleToSignatoryRole(userRole: string): SignatoryRole | null {
     'PURCHASING_MANAGER': SignatoryRole.PURCHASING_MANAGER,
     'MLO_ACCOUNT_HOLDER': SignatoryRole.MLO_ACCOUNT_HOLDER,
     'MLO_PLANNING_MANAGER': SignatoryRole.MLO_PLANNING_MANAGER,
+    'PLANNING_MANAGER': SignatoryRole.MLO_PLANNING_MANAGER,
     'SR_MANAGER_GLOBAL_PRODUCTION': SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION,
     'MS_POLLY': SignatoryRole.MS_POLLY,
     'ACCOUNTING_ASSOCIATE': SignatoryRole.ACCOUNTING_REVIEWER,

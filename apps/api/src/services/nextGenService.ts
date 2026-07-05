@@ -1100,39 +1100,10 @@ export class NextGenService {
   }
 
   /**
-   * Get mock PO data for development/testing
+   * No mock PO data is returned. When NextGen is not configured, external PO lookups return null.
    */
-  private getMockPOData(poNumber: string): NextGenPOData {
-    // Test different order_type values based on PO number
-    let orderType = 'BULK';
-    if (poNumber.includes('SAMPLE')) {
-      orderType = 'SAMPLE';
-    } else if (poNumber.includes('SMS')) {
-      orderType = 'SMS';
-    }
-
-    return {
-      po_number: poNumber,
-      mpo_number: `MPO${poNumber}`,
-      vendor_id: 'VENDOR-001',
-      vendor_name: 'Mock Vendor Name',
-      amount: 1000.00,
-      currency: 'USD',
-      order_date: new Date(),
-      brand: 'Columbia',
-      season: poNumber.includes('EMPTY_SEASON') ? '' : 'F26',
-      order_type: orderType,
-      status: 'OPEN',
-      line_items: [
-        {
-          item_code: 'ITEM-001',
-          description: 'Mock Item',
-          quantity: 100,
-          unit_price: 10.00,
-          total_amount: 1000.00,
-        },
-      ],
-    };
+  private getMockPOData(_poNumber: string): NextGenPOData | null {
+    return null;
   }
 
   /**

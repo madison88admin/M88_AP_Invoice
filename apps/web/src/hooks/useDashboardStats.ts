@@ -1,5 +1,5 @@
-import { useQuery } from '@tanstack/react-query';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+﻿import { useQuery } from '@tanstack/react-query';
+import { invoiceApi } from '../lib/api';
 
 interface DashboardStats {
   pendingValidation: number;
@@ -20,132 +20,63 @@ interface DashboardStats {
   exceptionsTrend: number;
 }
 
-// Mock data for when Supabase is not configured
-const mockDashboardStats: DashboardStats = {
-  pendingValidation: 12,
-  awaitingApproval: 8,
-  urgentPayments: 5,
-  handwrittenDocs: 3,
-  slaAtRisk: 4,
-  paidThisWeek: 24,
-  totalAmount: 125000,
-  exceptions: 2,
-  pendingValidationTrend: 12,
-  awaitingApprovalTrend: 5,
-  urgentPaymentsTrend: -3,
-  handwrittenDocsTrend: 8,
-  slaAtRiskTrend: 5,
-  paidThisWeekTrend: 22,
-  totalAmountTrend: 18,
-  exceptionsTrend: -7,
-};
-
 export function useDashboardStats() {
   return useQuery({
     queryKey: ['dashboard-stats'],
     queryFn: async (): Promise<DashboardStats> => {
-      // Return mock data if Supabase is not configured
-      if (!isSupabaseConfigured || !supabase) {
-        return mockDashboardStats;
-      }
+      const response = await invoiceApi.getAll();
+      const invoices = response.data || [];
 
-      // Get current week start and end
       const now = new Date();
       const weekStart = new Date(now);
       weekStart.setDate(now.getDate() - now.getDay());
       weekStart.setHours(0, 0, 0, 0);
-
       const weekEnd = new Date(weekStart);
       weekEnd.setDate(weekStart.getDate() + 6);
       weekEnd.setHours(23, 59, 59, 999);
 
-      // Get previous week start and end
-      const prevWeekStart = new Date(weekStart);
-      prevWeekStart.setDate(weekStart.getDate() - 7);
-
-      const prevWeekEnd = new Date(weekStart);
-      prevWeekEnd.setDate(weekStart.getDate() - 1);
-      prevWeekEnd.setHours(23, 59, 59, 999);
-
-      // Fetch current week data
-      const { data: currentData, error: currentError } = await supabase
-        .from('invoices')
-        .select('status, amount, currency, is_handwritten, date_due, created_at');
-
-      if (currentError) throw currentError;
-
-      // Fetch previous week data for trends
-      const { data: previousData, error: previousError } = await supabase
-        .from('invoices')
-        .select('status, amount, currency, is_handwritten, date_due, created_at')
-        .gte('created_at', prevWeekStart.toISOString())
-        .lte('created_at', prevWeekEnd.toISOString());
-
-      if (previousError) throw previousError;
-
-      // Calculate current stats
-      const currentStats = {
-        pendingValidation: currentData?.filter(i => i.status === 'pending_validation').length || 0,
-        awaitingApproval: currentData?.filter(i => i.status === 'awaiting_approval').length || 0,
-        urgentPayments: currentData?.filter(i => {
-          if (!i.date_due) return false;
-          const dueDate = new Date(i.date_due);
-          const threeDaysFromNow = new Date();
-          threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3);
-          return dueDate <= threeDaysFromNow && i.status !== 'paid';
-        }).length || 0,
-        handwrittenDocs: currentData?.filter(i => i.is_handwritten).length || 0,
-        slaAtRisk: currentData?.filter(i => {
-          // Mock logic for SLA at risk - will need real implementation with stage_timestamps
-          return i.status === 'pending_validation' || i.status === 'awaiting_approval';
-        }).length || 0,
-        paidThisWeek: currentData?.filter(i => {
-          if (!i.created_at) return false;
-          const createdAt = new Date(i.created_at);
-          return i.status === 'paid' && createdAt >= weekStart && createdAt <= weekEnd;
-        }).length || 0,
-        totalAmount: currentData?.reduce((sum, i) => sum + (Number(i.amount) || 0), 0) || 0,
-        exceptions: currentData?.filter(i => i.status === 'exception').length || 0,
-      };
-
-      // Calculate previous week stats for trends
-      const previousStats = {
-        pendingValidation: previousData?.filter(i => i.status === 'pending_validation').length || 0,
-        awaitingApproval: previousData?.filter(i => i.status === 'awaiting_approval').length || 0,
-        urgentPayments: previousData?.filter(i => {
-          if (!i.date_due) return false;
-          const dueDate = new Date(i.date_due);
-          const threeDaysFromNow = new Date(prevWeekEnd);
-          threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3);
-          return dueDate <= threeDaysFromNow && i.status !== 'paid';
-        }).length || 0,
-        handwrittenDocs: previousData?.filter(i => i.is_handwritten).length || 0,
-        slaAtRisk: previousData?.filter(i => {
-          return i.status === 'pending_validation' || i.status === 'awaiting_approval';
-        }).length || 0,
-        paidThisWeek: previousData?.filter(i => i.status === 'paid').length || 0,
-        totalAmount: previousData?.reduce((sum, i) => sum + (Number(i.amount) || 0), 0) || 0,
-        exceptions: previousData?.filter(i => i.status === 'exception').length || 0,
-      };
-
-      // Calculate trends
-      const calculateTrend = (current: number, previous: number): number => {
-        if (previous === 0) return current > 0 ? 100 : 0;
-        return ((current - previous) / previous) * 100;
-      };
+      const pendingValidation = invoices.filter((i: any) => i.status === 'VALIDATION_PENDING').length;
+      const awaitingApproval = invoices.filter((i: any) =>
+        ['PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_MLO_ACCOUNT_HOLDER', 'PENDING_MLO_PLANNING_MANAGER', 'PENDING_SR_MANAGER', 'PENDING_POLLY'].includes(i.status)
+      ).length;
+      const urgentPayments = invoices.filter((i: any) => {
+        if (!i.due_date) return false;
+        const dueDate = new Date(i.due_date);
+        const threeDaysFromNow = new Date();
+        threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3);
+        return dueDate <= threeDaysFromNow && i.status !== 'PAID';
+      }).length;
+      const handwrittenDocs = invoices.filter((i: any) => i.is_handwritten).length;
+      const slaAtRisk = invoices.filter((i: any) =>
+        ['VALIDATION_PENDING', 'PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_MLO_ACCOUNT_HOLDER', 'PENDING_MLO_PLANNING_MANAGER', 'PENDING_SR_MANAGER', 'PENDING_POLLY'].includes(i.status)
+      ).length;
+      const paidThisWeek = invoices.filter((i: any) => {
+        if (!i.paid_at && !i.updated_at) return false;
+        const paidAt = new Date(i.paid_at || i.updated_at);
+        return i.status === 'PAID' && paidAt >= weekStart && paidAt <= weekEnd;
+      }).length;
+      const totalAmount = invoices.reduce((sum: number, i: any) => sum + (Number(i.total_amount) || 0), 0);
+      const exceptions = invoices.filter((i: any) => i.status === 'EXCEPTION_FLAGGED' || (i.exceptions && i.exceptions.length > 0)).length;
 
       return {
-        ...currentStats,
-        pendingValidationTrend: calculateTrend(currentStats.pendingValidation, previousStats.pendingValidation),
-        awaitingApprovalTrend: calculateTrend(currentStats.awaitingApproval, previousStats.awaitingApproval),
-        urgentPaymentsTrend: calculateTrend(currentStats.urgentPayments, previousStats.urgentPayments),
-        handwrittenDocsTrend: calculateTrend(currentStats.handwrittenDocs, previousStats.handwrittenDocs),
-        slaAtRiskTrend: calculateTrend(currentStats.slaAtRisk, previousStats.slaAtRisk),
-        paidThisWeekTrend: calculateTrend(currentStats.paidThisWeek, previousStats.paidThisWeek),
-        totalAmountTrend: calculateTrend(currentStats.totalAmount, previousStats.totalAmount),
-        exceptionsTrend: calculateTrend(currentStats.exceptions, previousStats.exceptions),
+        pendingValidation,
+        awaitingApproval,
+        urgentPayments,
+        handwrittenDocs,
+        slaAtRisk,
+        paidThisWeek,
+        totalAmount,
+        exceptions,
+        pendingValidationTrend: 0,
+        awaitingApprovalTrend: 0,
+        urgentPaymentsTrend: 0,
+        handwrittenDocsTrend: 0,
+        slaAtRiskTrend: 0,
+        paidThisWeekTrend: 0,
+        totalAmountTrend: 0,
+        exceptionsTrend: 0,
       };
     },
-    refetchInterval: 30000, // Refetch every 30 seconds
+    refetchInterval: 30000,
   });
 }

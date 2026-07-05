@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { useMockData } from '../contexts/MockDataContext';
 import { Package, Play, X, AlertCircle, CheckCircle, Clock, DollarSign, ArrowLeft } from 'lucide-react';
+import { paymentBatchApi } from '../lib/api';
 
 interface Payment {
   id: string;
@@ -31,7 +31,6 @@ interface PaymentBatch {
 }
 
 export default function PaymentBatchManager() {
-  const { invoices } = useMockData();
   const [batches, setBatches] = useState<PaymentBatch[]>([]);
   const [selectedBatch, setSelectedBatch] = useState<PaymentBatch | null>(null);
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -39,66 +38,50 @@ export default function PaymentBatchManager() {
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
 
+  const loadBatches = async () => {
+    try {
+      setLoading(true);
+      const response = await paymentBatchApi.getAll();
+      const data = response.data || [];
+      setBatches(data.map((b: any) => ({
+        id: b.id,
+        batch_number: b.batch_name || b.name || b.id,
+        total_amount: Number(b.total_amount || 0),
+        payment_count: b.invoice_count || 0,
+        status: b.status || 'DRAFT',
+        created_at: b.created_at || new Date().toISOString(),
+        processed_at: b.processed_at || undefined,
+        cancelled_at: b.cancelled_at || undefined,
+        cancellation_reason: b.cancellation_reason || undefined,
+        payments: (b.payments || []).map((p: any) => ({
+          id: p.id,
+          amount: Number(p.amount || 0),
+          scheduled_date: p.payment_date || p.scheduled_date || new Date().toISOString(),
+          status: p.status || 'SCHEDULED',
+          invoice: {
+            id: p.invoice?.id || p.invoice_id,
+            invoice_number: p.invoice?.invoice_number || '',
+            vendor: { name: p.invoice?.vendor?.name || '' },
+          },
+        })),
+      })));
+    } catch (error) {
+      console.error('Failed to load payment batches:', error);
+      setBatches([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    // Create mock payment batches from invoices
-    const mockBatches: PaymentBatch[] = [
-      {
-        id: 'batch-1',
-        batch_number: 'PB-2024-001',
-        total_amount: invoices.filter(i => i.status === 'PAYMENT_SCHEDULED').reduce((sum, i) => sum + i.total_amount, 0),
-        payment_count: invoices.filter(i => i.status === 'PAYMENT_SCHEDULED').length,
-        status: 'PENDING_CFO',
-        created_at: new Date().toISOString(),
-        payments: invoices.filter(i => i.status === 'PAYMENT_SCHEDULED').map(invoice => ({
-          id: invoice.id,
-          amount: invoice.total_amount,
-          scheduled_date: invoice.qb_posted_at || new Date().toISOString(),
-          status: invoice.status,
-          invoice: {
-            id: invoice.id,
-            invoice_number: invoice.invoice_number,
-            vendor: {
-              name: invoice.vendor_name
-            }
-          }
-        }))
-      },
-      {
-        id: 'batch-2',
-        batch_number: 'PB-2024-002',
-        total_amount: invoices.filter(i => i.status === 'PAID').reduce((sum, i) => sum + i.total_amount, 0),
-        payment_count: invoices.filter(i => i.status === 'PAID').length,
-        status: 'PROCESSED',
-        created_at: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-        processed_at: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
-        payments: invoices.filter(i => i.status === 'PAID').slice(0, 3).map(invoice => ({
-          id: invoice.id,
-          amount: invoice.total_amount,
-          scheduled_date: invoice.qb_posted_at || new Date().toISOString(),
-          status: invoice.status,
-          invoice: {
-            id: invoice.id,
-            invoice_number: invoice.invoice_number,
-            vendor: {
-              name: invoice.vendor_name
-            }
-          }
-        }))
-      }
-    ];
-    setBatches(mockBatches);
-    setLoading(false);
-  }, [invoices]);
+    loadBatches();
+  }, []);
 
   const handleProcessBatch = async (batchId: string) => {
     setProcessing(true);
     try {
-      // Mock processing - update batch status to PROCESSED
-      setBatches(prev => prev.map(batch => 
-        batch.id === batchId 
-          ? { ...batch, status: 'PROCESSED' as const, processed_at: new Date().toISOString() }
-          : batch
-      ));
+      await paymentBatchApi.process(batchId);
+      await loadBatches();
       setSelectedBatch(null);
     } catch (error) {
       console.error('Failed to process batch:', error);
@@ -111,12 +94,8 @@ export default function PaymentBatchManager() {
     if (!selectedBatch || !cancelReason) return;
     setProcessing(true);
     try {
-      // Mock cancellation - update batch status to CANCELLED
-      setBatches(prev => prev.map(batch => 
-        batch.id === selectedBatch.id 
-          ? { ...batch, status: 'CANCELLED' as const, cancelled_at: new Date().toISOString(), cancellation_reason: cancelReason }
-          : batch
-      ));
+      await paymentBatchApi.cancel(selectedBatch.id, cancelReason);
+      await loadBatches();
       setShowCancelModal(false);
       setCancelReason('');
       setSelectedBatch(null);

@@ -50,7 +50,7 @@ export default function Reports() {
   const { invoices } = useMockData();
   const [activeTab, setActiveTab] = useState<'kpi' | 'volume' | 'payments' | 'vendors' | 'exceptions' | 'activity'>('kpi');
 
-  // Calculate KPI metrics from mock data
+  // Calculate KPI metrics from real invoice data
   const kpiMetrics: KPIMetrics = {
     total_invoices: invoices.length,
     pending_approvals: invoices.filter(i => i.status === 'PENDING_MANAGER' || i.status === 'PENDING_MLO_PLANNING_MANAGER' || i.status === 'PENDING_SR_MANAGER' || i.status === 'PENDING_POLLY').length,
@@ -58,26 +58,59 @@ export default function Reports() {
     scheduled_payments: invoices.filter(i => i.status === 'PAYMENT_SCHEDULED').length,
     total_amount_pending: invoices.filter(i => i.status !== 'PAID').reduce((sum, i) => sum + i.total_amount, 0),
     approval_rate: invoices.length > 0 ? (invoices.filter(i => i.status === 'PAID').length / invoices.length) * 100 : 0,
-    average_processing_time: 3.5, // Mock value
+    average_processing_time: invoices.length > 0
+      ? Math.round(
+          invoices
+            .filter(i => i.stage_timestamps && i.stage_timestamps.length > 0)
+            .reduce((sum, i) => {
+              const first = new Date(i.stage_timestamps[0].entered_at).getTime();
+              const last = i.stage_timestamps[i.stage_timestamps.length - 1].exited_at
+                ? new Date(i.stage_timestamps[i.stage_timestamps.length - 1].exited_at!).getTime()
+                : Date.now();
+              return sum + (last - first) / (1000 * 60 * 60 * 24);
+            }, 0) / invoices.filter(i => i.stage_timestamps && i.stage_timestamps.length > 0).length * 10
+        ) / 10
+      : 0,
   };
 
-  // Calculate invoice volume data from mock data
-  const invoiceVolumeData: InvoiceVolumeData[] = [
-    { date: '2024-01-01', total_invoices: 5, approved_invoices: 3, rejected_invoices: 0, pending_invoices: 2, total_amount: 15000 },
-    { date: '2024-01-08', total_invoices: 8, approved_invoices: 5, rejected_invoices: 1, pending_invoices: 2, total_amount: 22000 },
-    { date: '2024-01-15', total_invoices: 12, approved_invoices: 8, rejected_invoices: 1, pending_invoices: 3, total_amount: 35000 },
-    { date: '2024-01-22', total_invoices: 10, approved_invoices: 7, rejected_invoices: 0, pending_invoices: 3, total_amount: 28000 },
-    { date: '2024-01-29', total_invoices: 15, approved_invoices: 10, rejected_invoices: 2, pending_invoices: 3, total_amount: 42000 },
-  ];
+  // Calculate invoice volume data from real invoices, grouped by week
+  const invoiceVolumeData: InvoiceVolumeData[] = (() => {
+    const buckets = new Map<string, InvoiceVolumeData>();
+    invoices.forEach(inv => {
+      const date = new Date(inv.invoice_date || inv.created_at || Date.now());
+      const weekStart = new Date(date);
+      weekStart.setDate(date.getDate() - date.getDay());
+      weekStart.setHours(0, 0, 0, 0);
+      const key = weekStart.toISOString().split('T')[0];
+      const existing = buckets.get(key);
+      if (existing) {
+        existing.total_invoices++;
+        existing.total_amount += inv.total_amount;
+        if (inv.status === 'PAID' || inv.status === 'APPROVED') existing.approved_invoices++;
+        if (inv.status === 'REJECTED') existing.rejected_invoices++;
+        if (['VALIDATION_PENDING', 'PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_MLO_ACCOUNT_HOLDER', 'PENDING_MLO_PLANNING_MANAGER', 'PENDING_SR_MANAGER', 'PENDING_POLLY'].includes(inv.status)) existing.pending_invoices++;
+      } else {
+        buckets.set(key, {
+          date: key,
+          total_invoices: 1,
+          approved_invoices: ['PAID', 'APPROVED'].includes(inv.status) ? 1 : 0,
+          rejected_invoices: inv.status === 'REJECTED' ? 1 : 0,
+          pending_invoices: ['VALIDATION_PENDING', 'PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_MLO_ACCOUNT_HOLDER', 'PENDING_MLO_PLANNING_MANAGER', 'PENDING_SR_MANAGER', 'PENDING_POLLY'].includes(inv.status) ? 1 : 0,
+          total_amount: inv.total_amount,
+        });
+      }
+    });
+    return Array.from(buckets.values()).sort((a, b) => a.date.localeCompare(b.date)).slice(-12);
+  })();
 
-  // Calculate payment status data from mock data
+  // Calculate payment status data from real invoice data
   const paymentStatusData: PaymentStatusData[] = [
     { status: 'Paid', count: invoices.filter(i => i.status === 'PAID').length, total_amount: invoices.filter(i => i.status === 'PAID').reduce((sum, i) => sum + i.total_amount, 0) },
     { status: 'Pending', count: invoices.filter(i => i.status === 'PENDING_MANAGER' || i.status === 'PENDING_MLO_PLANNING_MANAGER' || i.status === 'PENDING_SR_MANAGER' || i.status === 'PENDING_POLLY').length, total_amount: invoices.filter(i => i.status === 'PENDING_MANAGER' || i.status === 'PENDING_MLO_PLANNING_MANAGER' || i.status === 'PENDING_SR_MANAGER' || i.status === 'PENDING_POLLY').reduce((sum, i) => sum + i.total_amount, 0) },
     { status: 'Scheduled', count: invoices.filter(i => i.status === 'PAYMENT_SCHEDULED').length, total_amount: invoices.filter(i => i.status === 'PAYMENT_SCHEDULED').reduce((sum, i) => sum + i.total_amount, 0) },
   ];
 
-  // Calculate vendor spending data from mock data
+  // Calculate vendor spending data from real invoice data
   const vendorSpendingData: VendorSpendingData[] = invoices.reduce((acc: VendorSpendingData[], invoice) => {
     const existing = acc.find(v => v.vendor_name === invoice.vendor_name);
     if (existing) {
@@ -86,7 +119,7 @@ export default function Reports() {
       existing.average_amount = existing.total_amount / existing.total_invoices;
     } else {
       acc.push({
-        vendor_id: invoice.id,
+        vendor_id: invoice.vendor_id,
         vendor_name: invoice.vendor_name,
         total_invoices: 1,
         total_amount: invoice.total_amount,
@@ -96,14 +129,36 @@ export default function Reports() {
     return acc;
   }, []).slice(0, 10);
 
-  // Calculate exception rate data from mock data
-  const exceptionRateData: ExceptionRateData[] = [
-    { date: '2024-01-01', total_invoices: 5, invoices_with_exceptions: 1, exception_rate: 20 },
-    { date: '2024-01-08', total_invoices: 8, invoices_with_exceptions: 2, exception_rate: 25 },
-    { date: '2024-01-15', total_invoices: 12, invoices_with_exceptions: 1, exception_rate: 8.3 },
-    { date: '2024-01-22', total_invoices: 10, invoices_with_exceptions: 0, exception_rate: 0 },
-    { date: '2024-01-29', total_invoices: 15, invoices_with_exceptions: 2, exception_rate: 13.3 },
-  ];
+  // Calculate exception rate data from real invoices, grouped by week
+  const exceptionRateData: ExceptionRateData[] = (() => {
+    const buckets = new Map<string, { date: string; total_invoices: number; invoices_with_exceptions: number }>();
+    invoices.forEach(inv => {
+      const date = new Date(inv.invoice_date || inv.created_at || Date.now());
+      const weekStart = new Date(date);
+      weekStart.setDate(date.getDate() - date.getDay());
+      weekStart.setHours(0, 0, 0, 0);
+      const key = weekStart.toISOString().split('T')[0];
+      const existing = buckets.get(key);
+      const hasExceptions = (inv.exceptions && inv.exceptions.length > 0) || inv.status === 'EXCEPTION_FLAGGED';
+      if (existing) {
+        existing.total_invoices++;
+        if (hasExceptions) existing.invoices_with_exceptions++;
+      } else {
+        buckets.set(key, {
+          date: key,
+          total_invoices: 1,
+          invoices_with_exceptions: hasExceptions ? 1 : 0,
+        });
+      }
+    });
+    return Array.from(buckets.values())
+      .map(b => ({
+        ...b,
+        exception_rate: b.total_invoices > 0 ? Math.round((b.invoices_with_exceptions / b.total_invoices) * 1000) / 10 : 0,
+      }))
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .slice(-12);
+  })();
 
   return (
     <div className="min-h-screen relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%)' }}>

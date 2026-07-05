@@ -126,12 +126,12 @@ export default function Dashboard() {
   });
   const [poAuditLoading] = useState(false);
 
-  // Use mock data
-  const mockInvoices = invoices;
+  // Use live invoice data from the API
+  const allInvoices = invoices;
 
   // Filter invoices based on user role and permissions
   const getRoleFilteredInvoices = () => {
-    if (!user) return mockInvoices;
+    if (!user) return allInvoices;
 
     const role = user.role;
 
@@ -139,59 +139,59 @@ export default function Dashboard() {
     if (role === 'PLANNING_MANAGER' && user.brand_scope) {
       const top10Brands = ['TNF', 'UA', 'VNS', 'ARC', 'CSC', 'HH', 'BUR', 'TM', 'FR', 'ON'];
       if (user.brand_scope === 'TOP_10') {
-        return mockInvoices.filter(i => top10Brands.includes(i.brand_code || ''));
+        return allInvoices.filter(i => top10Brands.includes(i.brand_code || ''));
       } else {
-        return mockInvoices.filter(i => !top10Brands.includes(i.brand_code || ''));
+        return allInvoices.filter(i => !top10Brands.includes(i.brand_code || ''));
       }
     }
 
     // ACCOUNTING_ASSOCIATE - only their uploaded invoices
     if (role === 'ACCOUNTING_ASSOCIATE') {
-      return mockInvoices.filter(i => i.uploaded_by === user.email);
+      return allInvoices.filter(i => i.uploaded_by === user.email);
     }
 
     // SR_MANAGER_GLOBAL_PRODUCTION - only production invoices $2K+
     if (role === 'SR_MANAGER_GLOBAL_PRODUCTION') {
-      return mockInvoices.filter(i => i.total_amount > 2000);
+      return allInvoices.filter(i => i.total_amount > 2000);
     }
 
     // MS_POLLY - only high-value invoices (>$100K)
     if (role === 'MS_POLLY') {
-      return mockInvoices.filter(i => i.total_amount >= 100000);
+      return allInvoices.filter(i => i.total_amount >= 100000);
     }
 
     // CFO - all invoices (financial overview)
     if (role === 'CFO') {
-      return mockInvoices;
+      return allInvoices;
     }
 
     // IT_ADMIN - all invoices (read-only for debugging)
     if (role === 'IT_ADMIN') {
-      return mockInvoices;
+      return allInvoices;
     }
 
     // SUPERADMIN - all invoices
     if (role === 'SUPERADMIN') {
-      return mockInvoices;
+      return allInvoices;
     }
 
     // PURCHASING_COORDINATOR - pending their approval
     if (role === 'PURCHASING_COORDINATOR') {
-      return mockInvoices.filter(i => i.status === 'PENDING_COORDINATOR');
+      return allInvoices.filter(i => i.status === 'PENDING_COORDINATOR');
     }
 
     // PURCHASING_MANAGER - pending their approval
     if (role === 'PURCHASING_MANAGER') {
-      return mockInvoices.filter(i => i.status === 'PENDING_MANAGER');
+      return allInvoices.filter(i => i.status === 'PENDING_MANAGER');
     }
 
     // ACCOUNTING_SUPERVISOR - all invoices
     if (role === 'ACCOUNTING_SUPERVISOR') {
-      return mockInvoices;
+      return allInvoices;
     }
 
     // Default: use existing role-based filter
-    return filterInvoicesByRole(mockInvoices, role);
+    return filterInvoicesByRole(allInvoices, role);
   };
 
   const roleFilteredInvoices = getRoleFilteredInvoices();
@@ -242,10 +242,10 @@ export default function Dashboard() {
     });
   }, []);
 
-  // Count-up animations for each KPI - calculate from mock data
-  const pendingValidationCount = useCountUp(mockInvoices.filter(i => i.status === InvoiceStatus.VALIDATION_PENDING).length, 1200, countUpStarted);
-  const awaitingApprovalCount = useCountUp(mockInvoices.filter(i => i.status === InvoiceStatus.PENDING_MANAGER || i.status === InvoiceStatus.PENDING_MLO_PLANNING_MANAGER || i.status === InvoiceStatus.PENDING_SR_MANAGER || i.status === InvoiceStatus.PENDING_POLLY).length, 1200, countUpStarted);
-  const urgentPaymentsCount = useCountUp(mockInvoices.filter(i => {
+  // Count-up animations for each KPI - calculate from live invoice data
+  const pendingValidationCount = useCountUp(allInvoices.filter(i => i.status === InvoiceStatus.VALIDATION_PENDING).length, 1200, countUpStarted);
+  const awaitingApprovalCount = useCountUp(allInvoices.filter(i => i.status === InvoiceStatus.PENDING_MANAGER || i.status === InvoiceStatus.PENDING_MLO_PLANNING_MANAGER || i.status === InvoiceStatus.PENDING_SR_MANAGER || i.status === InvoiceStatus.PENDING_POLLY).length, 1200, countUpStarted);
+  const urgentPaymentsCount = useCountUp(allInvoices.filter(i => {
     const currentStage = i.stage_timestamps.find(st => !st.exited_at);
     if (!currentStage) return false;
     const enteredAt = new Date(currentStage.entered_at);
@@ -254,8 +254,8 @@ export default function Dashboard() {
     const remainingHours = currentStage.sla_hours - elapsedHours;
     return remainingHours <= 24 && remainingHours > 0;
   }).length, 1200, countUpStarted);
-  const totalAmountCount = useCountUp(Math.floor(mockInvoices.reduce((sum, i) => sum + i.total_amount, 0)), 1200, countUpStarted);
-  const exceptionsCount = useCountUp(mockInvoices.filter(i => i.exceptions.length > 0).length, 1200, countUpStarted);
+  const totalAmountCount = useCountUp(Math.floor(allInvoices.reduce((sum, i) => sum + i.total_amount, 0)), 1200, countUpStarted);
+  const exceptionsCount = useCountUp(allInvoices.filter(i => i.exceptions.length > 0).length, 1200, countUpStarted);
 
   const showToast = (message: string, type: 'success' | 'error' | 'warning' | 'info' = 'info') => {
     const id = Date.now().toString();
@@ -366,7 +366,7 @@ export default function Dashboard() {
         return [
           {
             label: 'My Invoices',
-            value: mockInvoices.filter(i => i.uploaded_by === user.email).length,
+            value: allInvoices.filter(i => i.uploaded_by === user.email).length,
             icon: FileText,
             color: '#2563EB',
             trend: '+12%',
@@ -382,7 +382,7 @@ export default function Dashboard() {
           },
           {
             label: 'Validated Today',
-            value: mockInvoices.filter(i => i.status === InvoiceStatus.APPROVED).length,
+            value: allInvoices.filter(i => i.status === InvoiceStatus.APPROVED).length,
             icon: CheckCircle,
             color: '#059669',
             trend: '+22%',
@@ -402,7 +402,7 @@ export default function Dashboard() {
         return [
           {
             label: 'Pending My Approval',
-            value: mockInvoices.filter(i => i.status === 'PENDING_COORDINATOR').length,
+            value: allInvoices.filter(i => i.status === 'PENDING_COORDINATOR').length,
             icon: Clock,
             color: '#7C3AED',
             trend: '+5%',
@@ -410,7 +410,7 @@ export default function Dashboard() {
           },
           {
             label: 'PO Validation Results',
-            value: mockInvoices.filter(i => i.po_validation?.po_found).length,
+            value: allInvoices.filter(i => i.po_validation?.po_found).length,
             icon: CheckCircle,
             color: '#059669',
             trend: '+18%',
@@ -418,7 +418,7 @@ export default function Dashboard() {
           },
           {
             label: 'Vendor Mismatches',
-            value: mockInvoices.filter(i => i.po_validation?.comparison?.vendor_match === false).length,
+            value: allInvoices.filter(i => i.po_validation?.comparison?.vendor_match === false).length,
             icon: AlertTriangle,
             color: '#DC2626',
             trend: '-3%',
@@ -426,7 +426,7 @@ export default function Dashboard() {
           },
           {
             label: 'Approved This Week',
-            value: mockInvoices.filter(i => i.status === 'APPROVED').length,
+            value: allInvoices.filter(i => i.status === 'APPROVED').length,
             icon: CheckSquare,
             color: '#059669',
             trend: '+22%',
@@ -438,7 +438,7 @@ export default function Dashboard() {
         return [
           {
             label: 'Pending My Approval',
-            value: mockInvoices.filter(i => i.status === 'PENDING_MANAGER').length,
+            value: allInvoices.filter(i => i.status === 'PENDING_MANAGER').length,
             icon: Clock,
             color: '#7C3AED',
             trend: '+5%',
@@ -455,7 +455,7 @@ export default function Dashboard() {
           },
           {
             label: 'PO Validation Summary',
-            value: mockInvoices.filter(i => i.po_validation?.po_found).length,
+            value: allInvoices.filter(i => i.po_validation?.po_found).length,
             icon: CheckCircle,
             color: '#059669',
             trend: '+18%',
@@ -463,7 +463,7 @@ export default function Dashboard() {
           },
           {
             label: 'Escalated Items',
-            value: mockInvoices.filter(i => i.status === InvoiceStatus.ON_HOLD).length,
+            value: allInvoices.filter(i => i.status === InvoiceStatus.ON_HOLD).length,
             icon: AlertTriangle,
             color: '#F59E0B',
             trend: '+2%',
@@ -475,7 +475,7 @@ export default function Dashboard() {
         return [
           {
             label: 'All Invoices Overview',
-            value: mockInvoices.length,
+            value: allInvoices.length,
             icon: FileText,
             color: '#2563EB',
             trend: '+12%',
@@ -483,7 +483,7 @@ export default function Dashboard() {
           },
           {
             label: 'Pending from Associates',
-            value: mockInvoices.filter(i => i.status === 'VALIDATION_PENDING').length,
+            value: allInvoices.filter(i => i.status === 'VALIDATION_PENDING').length,
             icon: Clock,
             color: '#7C3AED',
             trend: '+5%',
@@ -499,7 +499,7 @@ export default function Dashboard() {
           },
           {
             label: 'Ready for Posting',
-            value: mockInvoices.filter(i => i.status === 'APPROVED').length,
+            value: allInvoices.filter(i => i.status === 'APPROVED').length,
             icon: CheckCircle,
             color: '#059669',
             trend: '+22%',
@@ -510,8 +510,8 @@ export default function Dashboard() {
       case 'PLANNING_MANAGER':
         const brandScope = user.brand_scope;
         const filteredByBrand = brandScope === 'TOP_10'
-          ? mockInvoices.filter(i => ['TNF', 'UA', 'VNS', 'ARC', 'CSC', 'HH', 'BUR', 'TM', 'FR', 'ON'].includes(i.brand_code || ''))
-          : mockInvoices.filter(i => !['TNF', 'UA', 'VNS', 'ARC', 'CSC', 'HH', 'BUR', 'TM', 'FR', 'ON'].includes(i.brand_code || ''));
+          ? allInvoices.filter(i => ['TNF', 'UA', 'VNS', 'ARC', 'CSC', 'HH', 'BUR', 'TM', 'FR', 'ON'].includes(i.brand_code || ''))
+          : allInvoices.filter(i => !['TNF', 'UA', 'VNS', 'ARC', 'CSC', 'HH', 'BUR', 'TM', 'FR', 'ON'].includes(i.brand_code || ''));
 
         return [
           {
@@ -552,7 +552,7 @@ export default function Dashboard() {
         return [
           {
             label: 'Production Invoices $2K+',
-            value: mockInvoices.filter(i => i.total_amount > 2000).length,
+            value: allInvoices.filter(i => i.total_amount > 2000).length,
             icon: Package,
             color: '#2563EB',
             trend: '+12%',
@@ -560,7 +560,7 @@ export default function Dashboard() {
           },
           {
             label: 'Pending My Approval',
-            value: mockInvoices.filter(i => i.status === 'PENDING_SR_MANAGER').length,
+            value: allInvoices.filter(i => i.status === 'PENDING_SR_MANAGER').length,
             icon: Clock,
             color: '#7C3AED',
             trend: '+5%',
@@ -568,7 +568,7 @@ export default function Dashboard() {
           },
           {
             label: 'Global Production Costs',
-            value: `$${mockInvoices.filter(i => i.total_amount > 2000).reduce((sum, i) => sum + i.total_amount, 0).toLocaleString()}`,
+            value: `$${allInvoices.filter(i => i.total_amount > 2000).reduce((sum, i) => sum + i.total_amount, 0).toLocaleString()}`,
             icon: TrendingUp,
             color: '#4F46E5',
             trend: '+18%',
@@ -576,7 +576,7 @@ export default function Dashboard() {
           },
           {
             label: 'Tier 3+ Approvals',
-            value: mockInvoices.filter(i => (i.approval_tier || 0) >= 3).length,
+            value: allInvoices.filter(i => (i.approval_tier || 0) >= 3).length,
             icon: Shield,
             color: '#059669',
             trend: '+22%',
@@ -604,7 +604,7 @@ export default function Dashboard() {
           },
           {
             label: 'High-Value Alerts',
-            value: mockInvoices.filter(i => i.total_amount >= 50000).length,
+            value: allInvoices.filter(i => i.total_amount >= 50000).length,
             icon: AlertTriangle,
             color: '#DC2626',
             trend: '+2%',
@@ -612,7 +612,7 @@ export default function Dashboard() {
           },
           {
             label: 'Payment Batches',
-            value: mockInvoices.filter(i => i.status === 'PAYMENT_SCHEDULED').length,
+            value: allInvoices.filter(i => i.status === 'PAYMENT_SCHEDULED').length,
             icon: Package,
             color: '#7C3AED',
             trend: '+8%',
@@ -624,7 +624,7 @@ export default function Dashboard() {
         return [
           {
             label: 'Total Invoices This Month',
-            value: mockInvoices.length,
+            value: allInvoices.length,
             icon: FileText,
             color: '#2563EB',
             trend: '+12%',
@@ -640,7 +640,7 @@ export default function Dashboard() {
           },
           {
             label: 'Pending My Approval',
-            value: mockInvoices.filter(i => i.status === 'PENDING_POLLY').length,
+            value: allInvoices.filter(i => i.status === 'PENDING_POLLY').length,
             icon: Clock,
             color: '#7C3AED',
             trend: '+5%',
@@ -712,7 +712,7 @@ export default function Dashboard() {
           },
           {
             label: 'All Invoices',
-            value: mockInvoices.length,
+            value: allInvoices.length,
             icon: FileText,
             color: '#2563EB',
             trend: '+12%',

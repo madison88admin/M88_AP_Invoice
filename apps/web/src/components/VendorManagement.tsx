@@ -4,6 +4,7 @@ import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { Building2, Search, Plus, Edit, Trash2, ArrowLeft, Building, Save, X } from 'lucide-react';
 import { MockVendor } from '../lib/mockData';
+import { vendorApi } from '../lib/api';
 
 export default function VendorManagement() {
   const { vendors } = useMockData();
@@ -34,11 +35,7 @@ export default function VendorManagement() {
 
     try {
       setSaving(true);
-      // Update vendor in mock data
-      const vendorIndex = vendors.findIndex(v => v.id === editingVendor.id);
-      if (vendorIndex !== -1) {
-        vendors[vendorIndex] = { ...vendors[vendorIndex], ...editingVendor } as MockVendor;
-      }
+      await vendorApi.update(editingVendor.id, editingVendor);
       setShowEditModal(false);
       setEditingVendor({});
     } catch (error) {

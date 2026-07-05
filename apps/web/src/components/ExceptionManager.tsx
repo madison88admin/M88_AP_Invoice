@@ -4,9 +4,10 @@ import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { AlertTriangle, CheckCircle, XCircle, ArrowLeft } from 'lucide-react';
 import { MockException } from '../lib/mockData';
+import { exceptionApi } from '../lib/api';
 
 export default function ExceptionManager() {
-  const { invoices } = useMockData();
+  const { invoices, resolveException } = useMockData();
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [selectedException, setSelectedException] = useState<MockException | null>(null);
@@ -28,20 +29,7 @@ export default function ExceptionManager() {
     if (!selectedException || !resolution.trim() || !user) return;
 
     try {
-      // Update exception status to RESOLVED
-      const invoice = invoices.find(inv => inv.id === selectedException.invoice_id);
-      if (invoice) {
-        const exceptionIndex = invoice.exceptions.findIndex(exc => exc.id === selectedException.id);
-        if (exceptionIndex !== -1) {
-          invoice.exceptions[exceptionIndex] = {
-            ...invoice.exceptions[exceptionIndex],
-            status: 'RESOLVED',
-            resolution_notes: resolution,
-            resolved_at: new Date().toISOString(),
-            resolved_by: user.name,
-          };
-        }
-      }
+      await resolveException(selectedException.invoice_id, selectedException.id, resolution);
       setSelectedException(null);
       setShowResolveModal(false);
       setResolution('');
@@ -54,20 +42,7 @@ export default function ExceptionManager() {
     if (!selectedException || !waiverReason.trim() || !user) return;
 
     try {
-      // Update exception status to WAIVED
-      const invoice = invoices.find(inv => inv.id === selectedException.invoice_id);
-      if (invoice) {
-        const exceptionIndex = invoice.exceptions.findIndex(exc => exc.id === selectedException.id);
-        if (exceptionIndex !== -1) {
-          invoice.exceptions[exceptionIndex] = {
-            ...invoice.exceptions[exceptionIndex],
-            status: 'WAIVED',
-            resolution_notes: waiverReason,
-            resolved_at: new Date().toISOString(),
-            resolved_by: user.name,
-          };
-        }
-      }
+      await exceptionApi.waive(selectedException.id, waiverReason);
       setSelectedException(null);
       setShowWaiveModal(false);
       setWaiverReason('');

@@ -5,6 +5,24 @@ import { useAuth } from '../contexts/AuthContext';
 import { CheckCircle, XCircle, Clock, ArrowLeft } from 'lucide-react';
 import { MockInvoice } from '../lib/mockData';
 
+const mapUserRoleToSignatoryRole = (role: string): string | null => {
+  const mapping: Record<string, string> = {
+    'PURCHASING_COORDINATOR': 'COORDINATOR',
+    'PURCHASING_MANAGER': 'PURCHASING_MANAGER',
+    'PLANNING_MANAGER': 'MLO_PLANNING_MANAGER',
+    'MLO_PLANNING_MANAGER': 'MLO_PLANNING_MANAGER',
+    'MLO_ACCOUNT_HOLDER': 'MLO_ACCOUNT_HOLDER',
+    'SR_MANAGER_GLOBAL_PRODUCTION': 'SR_MANAGER_GLOBAL_PRODUCTION',
+    'MS_POLLY': 'MS_POLLY',
+    'ACCOUNTING_ASSOCIATE': 'ACCOUNTING_REVIEWER',
+    'ACCOUNTING_SUPERVISOR': 'ACCOUNTING_REVIEWER',
+    'CFO': 'ACCOUNTING_REVIEWER',
+    'IT_ADMIN': 'COORDINATOR',
+    'ADMIN': 'COORDINATOR',
+  };
+  return mapping[role] || null;
+};
+
 export default function ApprovalInbox() {
   const { invoices, approveInvoice, rejectInvoice } = useMockData();
   const { user } = useAuth();
@@ -23,13 +41,13 @@ export default function ApprovalInbox() {
     setLoading(false);
   }, [invoices]);
 
-  // Filter invoices to show only pending approvals
+  // Filter invoices to show only pending approvals for the current user's role
   const pendingApprovals = invoices.filter(invoice => {
     if (!invoice.signatures || invoice.signatures.length === 0) return false;
     const pending = invoice.signatures.find(s => !s.signed_at);
     if (!pending) return false;
-    // Check if current user's role matches the pending signatory role
-    return pending.signatory_role === user?.role;
+    const userSignatoryRole = user ? mapUserRoleToSignatoryRole(user.role) : null;
+    return userSignatoryRole ? pending.signatory_role === userSignatoryRole : false;
   });
 
   // Pagination logic

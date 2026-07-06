@@ -209,31 +209,7 @@ export async function postInvoice(invoiceId: string, userId: string) {
     },
   });
 
-  // Auto-schedule payment after QB posting
-  try {
-    const paymentDate = invoice.due_date || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // due_date or +30 days
-    const payment = await schedulePayment(invoiceId, paymentDate, userId);
-    await prisma.auditLog.create({
-      data: {
-        invoice_id: invoiceId,
-        action: 'AUTO_PAYMENT_SCHEDULED',
-        performed_by: 'system',
-        note: `Payment auto-scheduled after QB posting for ${invoice.currency} ${Number(invoice.total_amount).toFixed(2)} on ${paymentDate.toISOString().split('T')[0]}`,
-      },
-    });
-    return { ...postingResult, payment_scheduled: true, payment_id: payment.id, payment_date: paymentDate };
-  } catch (scheduleError) {
-    // Log but don't fail the posting
-    await prisma.auditLog.create({
-      data: {
-        invoice_id: invoiceId,
-        action: 'AUTO_PAYMENT_SCHEDULE_FAILED',
-        performed_by: 'system',
-        note: `Auto-schedule payment failed after QB posting: ${scheduleError instanceof Error ? scheduleError.message : 'unknown error'}`,
-      },
-    });
-    return { ...postingResult, payment_scheduled: false };
-  }
+  return { ...postingResult, payment_scheduled: false };
 }
 
 async function postToQuickBooks(invoice: any, glAccount: string, qbMemo: string) {

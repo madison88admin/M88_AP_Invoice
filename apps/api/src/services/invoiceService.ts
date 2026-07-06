@@ -72,11 +72,11 @@ export const createInvoice = async (invoiceData: any, userId: string) => {
   if (!isValidInvoiceType(invoice_type)) {
     throw new AppError(`Invalid invoice type: ${invoice_type}`, 400);
   }
-  if (!isValidInvoiceSource(source)) {
+  if (source && !isValidInvoiceSource(source)) {
     throw new AppError(`Invalid source: ${source}`, 400);
   }
-  if (mpo_number && !/^MPO\d{6}$/.test(String(mpo_number))) {
-    throw new AppError('MPO number must be MPO followed by exactly 6 digits (e.g. MPO015189)', 400);
+  if (mpo_number && !/^MPO\d{5,8}$/.test(String(mpo_number))) {
+    throw new AppError('MPO number must be MPO followed by 5 to 8 digits (e.g. MPO15371 or MPO015189)', 400);
   }
 
   // Determine brand_tier from brand or brand_code

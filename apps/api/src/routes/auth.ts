@@ -12,7 +12,8 @@ const router = Router() as Router;
  * These accounts are intentionally NOT authenticated against NextGen.
  */
 const DEMO_USERS = [
-  { email: 'wyssa.martinez@madison88.com', name: 'Wyssa', role: 'ACCOUNTING_SUPERVISOR', password: 'madison88' },
+  { email: 'wyssa.martinez@madison88.com', name: 'Wyssa', role: 'ACCOUNTING_ASSOCIATE', password: 'madison88' },
+  { email: 'al@madison88.com', name: 'AL', role: 'ACCOUNTING_SUPERVISOR', password: 'madison88' },
   { email: 'joy.yco@madison88.com', name: 'Joy', role: 'PURCHASING_COORDINATOR', password: 'madison88' },
   { email: 'maricon.alvarez@madison88.com', name: 'Maricon', role: 'PURCHASING_COORDINATOR', password: 'madison88' },
   { email: 'maricar.tanaleon@madison88.com', name: 'Maricar', role: 'PURCHASING_MANAGER', password: 'madison88' },

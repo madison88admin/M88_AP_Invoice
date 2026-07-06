@@ -235,18 +235,35 @@ export async function validateInvoice(invoiceId: string): Promise<InvoiceValidat
       data: { status: InvoiceStatus.EXCEPTION_FLAGGED as any },
     });
   } else {
-    // Update invoice status to VALIDATION_PENDING
-    await prisma.invoice.update({
-      where: { id: invoiceId },
-      data: { status: InvoiceStatus.VALIDATION_PENDING as any },
-    });
+    // Batch threshold check: hold invoices below $100 cumulative per vendor
+    const batchCheck = await checkBatchThreshold(invoiceId);
 
-    // Auto-create approval request when validation passes
-    try {
-      await createApprovalRequest(invoiceId, 'system');
-    } catch (error) {
-      // Log error but don't fail validation if approval request fails
-      logger.error('Failed to create approval request:', error);
+    if (batchCheck.held) {
+      // Invoice is held — status already updated to ON_HOLD by checkBatchThreshold
+      exceptions.push({
+        reason: ExceptionReason.BATCH_THRESHOLD_NOT_MET,
+        detail: `Vendor cumulative amount $${batchCheck.cumulative.toFixed(2)} is below $100 batch threshold. Invoice held until threshold is reached.`,
+      });
+      results.push({
+        passed: false,
+        reason: ExceptionReason.BATCH_THRESHOLD_NOT_MET,
+        message: 'Batch threshold not met',
+        detail: `Vendor cumulative amount $${batchCheck.cumulative.toFixed(2)} is below $100 batch threshold.`,
+      });
+    } else {
+      // Update invoice status to VALIDATION_PENDING
+      await prisma.invoice.update({
+        where: { id: invoiceId },
+        data: { status: InvoiceStatus.VALIDATION_PENDING as any },
+      });
+
+      // Auto-create approval request when validation passes
+      try {
+        await createApprovalRequest(invoiceId, 'system');
+      } catch (error) {
+        // Log error but don't fail validation if approval request fails
+        logger.error('Failed to create approval request:', error);
+      }
     }
   }
 
@@ -992,4 +1009,71 @@ async function validateVendorThreshold(invoice: any): Promise<ValidationResult> 
       detail: 'Could not validate vendor threshold - will be checked during approval stage',
     };
   }
+}
+
+/**
+ * Batch threshold check: hold invoices for a vendor until cumulative reaches $100.
+ * Once reached, the vendor is "approved" and invoices proceed through the workflow.
+ */
+export async function checkBatchThreshold(invoiceId: string): Promise<{ held: boolean; cumulative: number; released: number }> {
+  const BATCH_THRESHOLD = 100;
+
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    include: { vendor: true },
+  });
+
+  if (!invoice || !invoice.vendor_id) {
+    return { held: false, cumulative: 0, released: 0 };
+  }
+
+  // Calculate cumulative for this vendor across all non-rejected, non-on-hold invoices
+  // Include the current invoice and any held invoices that would be released together
+  const vendorCumulative = await prisma.invoice.aggregate({
+    _sum: { total_amount: true },
+    where: {
+      vendor_id: invoice.vendor_id,
+      status: { not: InvoiceStatus.REJECTED as any },
+      created_at: { gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1) },
+    },
+  });
+
+  const cumulative = Number(vendorCumulative._sum.total_amount || 0);
+  const held = cumulative < BATCH_THRESHOLD;
+
+  if (held) {
+    // Mark current invoice as ON_HOLD
+    await prisma.invoice.update({
+      where: { id: invoiceId },
+      data: { status: InvoiceStatus.ON_HOLD as any },
+    });
+
+    await prisma.exception.create({
+      data: {
+        invoice_id: invoiceId,
+        reason: ExceptionReason.BATCH_THRESHOLD_NOT_MET as any,
+        detail: `Vendor cumulative amount $${cumulative.toFixed(2)} is below $${BATCH_THRESHOLD} batch threshold. Invoice held until threshold is reached.`,
+      },
+    });
+
+    return { held: true, cumulative, released: 0 };
+  }
+
+  // Threshold reached: release any other held invoices for this vendor
+  const heldInvoices = await prisma.invoice.findMany({
+    where: {
+      vendor_id: invoice.vendor_id,
+      status: InvoiceStatus.ON_HOLD as any,
+      id: { not: invoiceId },
+    },
+  });
+
+  for (const heldInvoice of heldInvoices) {
+    await prisma.invoice.update({
+      where: { id: heldInvoice.id },
+      data: { status: InvoiceStatus.VALIDATION_PENDING as any },
+    });
+  }
+
+  return { held: false, cumulative, released: heldInvoices.length };
 }

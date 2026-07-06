@@ -193,12 +193,13 @@ export default function Dashboard() {
       return allInvoices;
     }
 
-    // PURCHASING_COORDINATOR - pending their approval or validation (they upload first)
+    // PURCHASING_COORDINATOR - pending their approval, validation, or batch hold (they upload first)
     if (role === 'PURCHASING_COORDINATOR') {
       return allInvoices.filter(i =>
         i.status === 'PENDING_COORDINATOR' ||
         i.status === 'VALIDATION_PENDING' ||
-        i.status === 'EXCEPTION_FLAGGED'
+        i.status === 'EXCEPTION_FLAGGED' ||
+        i.status === 'ON_HOLD'
       );
     }
 

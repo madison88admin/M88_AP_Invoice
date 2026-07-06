@@ -30,6 +30,7 @@ router.get('/:id/po-status', async (req, res, next) => {
 });
 router.post('/:id/confirm-ocr', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), uploadController.confirmOCR);
 router.post('/:id/correct-extraction', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), correctionController.saveCorrection);
+router.post('/corrections', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), correctionController.saveStandaloneCorrection);
 router.post('/corrections/similar', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), correctionController.getSimilarCorrections);
 router.post('/:id/validate', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), validationController.validateInvoiceController);
 router.post('/:id/request-approval', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), approvalController.requestApproval);

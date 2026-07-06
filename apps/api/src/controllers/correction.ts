@@ -44,6 +44,43 @@ export const saveCorrection = async (
   }
 };
 
+export const saveStandaloneCorrection = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { vendor_name, invoice_template_type, raw_text, original_fields, corrected_fields, note } = req.body;
+
+    if (!corrected_fields || Object.keys(corrected_fields).length === 0) {
+      throw new AppError('corrected_fields is required', 400);
+    }
+
+    const log = await correctionLogService.saveCorrection({
+      vendor_name,
+      invoice_template_type,
+      raw_text,
+      original_fields,
+      corrected_fields,
+      note,
+    });
+
+    await logAudit({
+      performed_by: req.user?.id,
+      action: 'CORRECTION_SAVED',
+      note: `Standalone correction saved for vendor ${vendor_name || 'unknown'}. Fields: ${Object.keys(corrected_fields).join(', ')}`,
+    });
+
+    res.status(201).json({
+      success: true,
+      id: log.id,
+      message: 'Correction saved and will be used for future extractions',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const getSimilarCorrections = async (
   req: AuthRequest,
   res: Response,

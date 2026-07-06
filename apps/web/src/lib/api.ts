@@ -32,6 +32,7 @@ export const invoiceApi = {
   },
   confirmOCR: (id: string, data: any) => api.post(`/api/invoices/${id}/confirm-ocr`, data),
   saveCorrection: (id: string, data: any) => api.post(`/api/invoices/${id}/correct-extraction`, data),
+  saveStandaloneCorrection: (data: any) => api.post('/api/invoices/corrections', data),
   validate: (id: string) => api.post(`/api/invoices/${id}/validate`),
   requestApproval: (id: string) => api.post(`/api/invoices/${id}/request-approval`),
   approve: (id: string, signerName: string) => api.post(`/api/invoices/${id}/approve`, { signerName }),

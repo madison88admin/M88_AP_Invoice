@@ -10,7 +10,7 @@ import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { MockInvoice } from '../lib/mockData';
 import { hasPermission, filterInvoicesByRole } from '../lib/roleAccess';
-import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, User, LayoutDashboard, Building2, ChevronLeft, LogOut } from 'lucide-react';
+import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, User, LayoutDashboard, Building2, ChevronLeft, LogOut, Edit } from 'lucide-react';
 
 // Custom hook for number count-up animation
 function useCountUp(end: number, duration: number = 1200, start: boolean = true) {
@@ -115,6 +115,9 @@ export default function Dashboard() {
   const [validationResult, setValidationResult] = useState<any>(null);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editFormData, setEditFormData] = useState<any>({});
+  const [savingEdit, setSavingEdit] = useState(false);
   const [posting, setPosting] = useState(false);
   const [showSchedulePaymentModal, setShowSchedulePaymentModal] = useState(false);
   const [paymentDate, setPaymentDate] = useState('');
@@ -329,6 +332,52 @@ export default function Dashboard() {
     } catch (error) {
       console.error('Failed to approve invoice:', error);
       showToast('Failed to approve invoice', 'error');
+    }
+  };
+
+  const handleOpenEdit = () => {
+    if (!selectedInvoice) return;
+    const invoice = selectedInvoice as any;
+    setEditFormData({
+      invoice_number: invoice.invoice_number || '',
+      invoice_date: invoice.invoice_date ? new Date(invoice.invoice_date).toISOString().split('T')[0] : '',
+      due_date: invoice.due_date ? new Date(invoice.due_date).toISOString().split('T')[0] : '',
+      total_amount: invoice.total_amount || '',
+      currency: invoice.currency || 'USD',
+      payment_terms: invoice.payment_terms || '',
+      incoterm: invoice.incoterm || '',
+      brand: invoice.brand || '',
+      brand_code: invoice.brand_code || '',
+      mpo_number: invoice.mpo_number || '',
+      customer_po_number: invoice.customer_po_number || '',
+      season: invoice.season || '',
+      bill_to_entity: invoice.bill_to_entity || '',
+      vendor_name_raw: invoice.vendor_name_raw || '',
+    });
+    setShowEditModal(true);
+  };
+
+  const handleEditChange = (field: string, value: string) => {
+    setEditFormData((prev: any) => ({ ...prev, [field]: value }));
+  };
+
+  const handleSaveEdit = async () => {
+    if (!selectedInvoice) return;
+    setSavingEdit(true);
+    try {
+      const payload = {
+        ...editFormData,
+        total_amount: editFormData.total_amount ? parseFloat(editFormData.total_amount) : undefined,
+      };
+      const response = await invoiceApi.update(selectedInvoice.id, payload);
+      setSelectedInvoice(response.data);
+      setShowEditModal(false);
+      showToast('Invoice updated successfully', 'success');
+    } catch (error: any) {
+      console.error('Failed to update invoice:', error);
+      showToast(error?.response?.data?.message || error?.response?.data?.error?.message || 'Failed to update invoice', 'error');
+    } finally {
+      setSavingEdit(false);
     }
   };
 
@@ -1902,6 +1951,17 @@ export default function Dashboard() {
                 <p className="text-sm font-medium text-white">{selectedInvoice.bill_to_entity}</p>
               </div>
               
+              {/* Coordinator Edit Button */}
+              {user && (user.role === 'PURCHASING_COORDINATOR' || user.role === 'IT_ADMIN') && (
+                <button
+                  onClick={handleOpenEdit}
+                  className="w-full flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  <Edit className="h-4 w-4 mr-2" />
+                  Edit Invoice
+                </button>
+              )}
+
               {/* Validation Button */}
               {selectedInvoice.status === (InvoiceStatus.VALIDATION_PENDING as any) && (
                 <button
@@ -2151,6 +2211,64 @@ export default function Dashboard() {
                   className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:bg-slate-600 disabled:cursor-not-allowed"
                 >
                   Schedule Payment
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Invoice Modal - Glassmorphism */}
+      {showEditModal && selectedInvoice && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-[#0f172a]/85 backdrop-blur-20 rounded-16 border border-white/10 shadow-2xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto" style={{ borderRadius: '16px', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+            <div className="p-6">
+              <h3 className="text-lg font-semibold text-white mb-4">
+                Edit Invoice
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {[
+                  { label: 'Invoice Number', field: 'invoice_number', type: 'text' },
+                  { label: 'Invoice Date', field: 'invoice_date', type: 'date' },
+                  { label: 'Due Date', field: 'due_date', type: 'date' },
+                  { label: 'Total Amount', field: 'total_amount', type: 'number' },
+                  { label: 'Currency', field: 'currency', type: 'text' },
+                  { label: 'Payment Terms', field: 'payment_terms', type: 'text' },
+                  { label: 'Incoterm', field: 'incoterm', type: 'text' },
+                  { label: 'Brand', field: 'brand', type: 'text' },
+                  { label: 'Brand Code', field: 'brand_code', type: 'text' },
+                  { label: 'MPO Number', field: 'mpo_number', type: 'text' },
+                  { label: 'Customer PO Number', field: 'customer_po_number', type: 'text' },
+                  { label: 'Season', field: 'season', type: 'text' },
+                  { label: 'Bill To Entity', field: 'bill_to_entity', type: 'text' },
+                  { label: 'Vendor Name Raw', field: 'vendor_name_raw', type: 'text' },
+                ].map(({ label, field, type }) => (
+                  <div key={field}>
+                    <label className="block text-sm font-medium text-slate-300 mb-1">
+                      {label}
+                    </label>
+                    <input
+                      type={type}
+                      value={editFormData[field] || ''}
+                      onChange={(e) => handleEditChange(field, e.target.value)}
+                      className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white"
+                    />
+                  </div>
+                ))}
+              </div>
+              <div className="mt-6 flex justify-end space-x-3">
+                <button
+                  onClick={() => setShowEditModal(false)}
+                  className="px-4 py-2 text-slate-300 hover:text-white"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveEdit}
+                  disabled={savingEdit}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:bg-slate-600 disabled:cursor-not-allowed"
+                >
+                  {savingEdit ? 'Saving...' : 'Save Changes'}
                 </button>
               </div>
             </div>

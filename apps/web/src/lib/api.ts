@@ -23,6 +23,7 @@ export const invoiceApi = {
   getById: (id: string) => api.get(`/api/invoices/${id}`),
   create: (data: any) => api.post('/api/invoices', data),
   updateStatus: (id: string, status: string) => api.patch(`/api/invoices/${id}/status`, { status }),
+  update: (id: string, data: any) => api.patch(`/api/invoices/${id}`, data),
   upload: (file: File) => {
     const formData = new FormData();
     formData.append('file', file);

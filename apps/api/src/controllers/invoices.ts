@@ -73,3 +73,20 @@ export const updateInvoiceStatus = async (
     next(error);
   }
 };
+
+export const updateInvoice = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const invoice = await invoiceService.updateInvoice(
+      req.params.id,
+      req.body,
+      req.user!.id
+    );
+    res.json(invoice);
+  } catch (error) {
+    next(error);
+  }
+};

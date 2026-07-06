@@ -42,5 +42,6 @@ router.post('/', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), 
 router.get('/', invoiceController.getInvoices);
 router.get('/:id', invoiceController.getInvoiceById);
 router.patch('/:id/status', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), invoiceController.updateInvoiceStatus);
+router.patch('/:id', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), invoiceController.updateInvoice);
 
 export default router;

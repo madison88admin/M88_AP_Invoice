@@ -269,6 +269,33 @@ export const updateInvoiceStatus = async (id: string, status: InvoiceStatus, use
   return invoice;
 };
 
+export const updateInvoice = async (id: string, invoiceData: any, userId: string) => {
+  const existing = await prisma.invoice.findUnique({ where: { id } });
+  if (!existing) {
+    throw new AppError('Invoice not found', 404);
+  }
+
+  const invoice = await prisma.invoice.update({
+    where: { id },
+    data: invoiceData,
+    include: {
+      vendor: true,
+      signatures: true,
+      exceptions: true,
+      stage_timestamps: true,
+    },
+  });
+
+  await logAudit({
+    invoice_id: invoice.id,
+    performed_by: userId,
+    action: 'INVOICE_UPDATED',
+    note: `Invoice updated by coordinator. Fields: ${Object.keys(invoiceData).join(', ')}`,
+  });
+
+  return invoice;
+};
+
 export const checkDuplicate = async (invoiceData: any) => {
   const { invoice_number, vendor_id, amount, invoice_date } = invoiceData;
   

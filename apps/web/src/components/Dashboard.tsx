@@ -88,6 +88,24 @@ function useCountUp(end: number, duration: number = 1200, start: boolean = true)
   return { count, startAnimation };
 }
 
+const canUserApproveStatus = (role: string | undefined, status: string): boolean => {
+  if (!role) return false;
+  const mapping: Record<string, string[]> = {
+    'PURCHASING_COORDINATOR': ['PENDING_COORDINATOR'],
+    'PURCHASING_MANAGER': ['PENDING_MANAGER'],
+    'PLANNING_MANAGER': ['PENDING_MLO_PLANNING_MANAGER', 'PENDING_MLO_ACCOUNT_HOLDER'],
+    'SR_MANAGER_GLOBAL_PRODUCTION': ['PENDING_SR_MANAGER'],
+    'MS_POLLY': ['PENDING_POLLY'],
+    'ACCOUNTING_SUPERVISOR': ['PENDING_ACCOUNTING'],
+    'ACCOUNTING_ASSOCIATE': ['PENDING_ACCOUNTING'],
+    'CFO': ['PENDING_ACCOUNTING'],
+    'PRESIDENT': ['PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_MLO_PLANNING_MANAGER', 'PENDING_SR_MANAGER', 'PENDING_POLLY', 'PENDING_ACCOUNTING'],
+    'IT_ADMIN': ['PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_MLO_PLANNING_MANAGER', 'PENDING_SR_MANAGER', 'PENDING_POLLY', 'PENDING_ACCOUNTING'],
+    'ADMIN': ['PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_MLO_PLANNING_MANAGER', 'PENDING_SR_MANAGER', 'PENDING_POLLY', 'PENDING_ACCOUNTING'],
+  };
+  return (mapping[role] || []).includes(status);
+};
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
@@ -1893,7 +1911,7 @@ export default function Dashboard() {
               )}
 
               {/* Approval Actions */}
-              {selectedInvoice.status === (InvoiceStatus.PENDING_COORDINATOR as any) && user && (
+              {selectedInvoice.status && user && canUserApproveStatus(user.role, String(selectedInvoice.status)) && (
                 <div className="space-y-2">
                   {hasPermission(user.role, 'canApprove') && (
                     <button

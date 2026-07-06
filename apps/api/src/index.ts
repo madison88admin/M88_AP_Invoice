@@ -21,6 +21,7 @@ import slaReminderRoutes from './routes/slaReminder';
 import systemRoutes from './routes/system';
 import authRoutes from './routes/auth';
 import auditLogRoutes from './routes/audit';
+import testRoutes from './routes/test';
 import { errorHandler } from './middleware/errorHandler';
 import { logger } from './utils/logger';
 import { connectDatabase, disconnectDatabase, isDbConnected } from './config/database';
@@ -81,6 +82,9 @@ app.use('/api/sla-reminder', slaReminderRoutes);
 app.use('/api/system', systemRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/audit-logs', auditLogRoutes);
+if (process.env.NODE_ENV === 'development' || process.env.ENABLE_TEST_ROUTES === 'true') {
+  app.use('/api/test', testRoutes);
+}
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

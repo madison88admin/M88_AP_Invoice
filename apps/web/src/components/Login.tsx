@@ -4,15 +4,17 @@ import { useAuth } from '../contexts/AuthContext';
 import { LayoutDashboard, Lock, Mail } from 'lucide-react';
 
 const QUICK_LOGINS = [
-  { label: 'Wyssa (Accounting)', email: 'wyssa.martinez@madison88.com', password: 'madison88' },
+  { label: 'Wyssa (Accounting Associate)', email: 'wyssa.martinez@madison88.com', password: 'madison88' },
+  { label: 'AL (Accounting Supervisor)', email: 'al@madison88.com', password: 'madison88' },
   { label: 'Joy (Coordinator)', email: 'joy.yco@madison88.com', password: 'madison88' },
   { label: 'Maricon (Coordinator)', email: 'maricon.alvarez@madison88.com', password: 'madison88' },
   { label: 'Maricar (Manager)', email: 'maricar.tanaleon@madison88.com', password: 'madison88' },
   { label: 'Maryann (Manager)', email: 'maryann.delmonte@madison88.com', password: 'madison88' },
+  { label: 'Maryan (MLO Account Holder)', email: 'maryan.untiveros@madison88.com', password: 'madison88' },
   { label: 'Edwin (Planning Mgr)', email: 'edwin.garcia@madison88.com', password: 'madison88' },
   { label: 'Glecie (Planning Mgr)', email: 'glecie.yumena@madison88.com', password: 'madison88' },
   { label: 'Lindsey (Sr Manager)', email: 'lindsey.castro@madison88.com', password: 'madison88' },
-  { label: 'Polly (President)', email: 'polly.madison@madison88.com', password: 'madison88' },
+  { label: 'Polly (Ms Polly)', email: 'polly.madison@madison88.com', password: 'madison88' },
   { label: 'JC (IT Admin)', email: 'jc@madison88.com', password: 'madison88' },
 ];
 

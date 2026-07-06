@@ -276,18 +276,23 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
         priority: formData.priority,
       };
 
-      if (!createdInvoiceId) {
-        alert('Please upload and save the invoice first before saving a correction.');
-        return;
+      if (createdInvoiceId) {
+        await invoiceApi.saveCorrection(createdInvoiceId, {
+          vendor_name: formData.vendorName,
+          raw_text: '',
+          original_fields: originalFields,
+          corrected_fields: correctedFields,
+          note: 'Manual correction from upload modal',
+        });
+      } else {
+        await invoiceApi.saveStandaloneCorrection({
+          vendor_name: formData.vendorName,
+          raw_text: '',
+          original_fields: originalFields,
+          corrected_fields: correctedFields,
+          note: 'Manual correction from upload modal (no invoice yet)',
+        });
       }
-
-      await invoiceApi.saveCorrection(createdInvoiceId, {
-        vendor_name: formData.vendorName,
-        raw_text: '',
-        original_fields: originalFields,
-        corrected_fields: correctedFields,
-        note: 'Manual correction from upload modal',
-      });
 
       setCorrectionSaved(true);
     } catch (error) {

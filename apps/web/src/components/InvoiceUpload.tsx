@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { Upload, FileText, AlertCircle, CheckCircle, X, ArrowLeft } from 'lucide-react';
+import { Upload, FileText, AlertCircle, CheckCircle, X, ArrowLeft, Save } from 'lucide-react';
 import { invoiceApi, vendorApi } from '../lib/api';
 import { InvoiceType, InvoiceCategory, PaymentTerms, BillToEntity } from '@ap-invoice/shared';
 
@@ -73,10 +73,12 @@ export default function InvoiceUpload() {
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [ocrResult, setOcrResult] = useState<OCRResult | null>(null);
+  const [originalOcrResult, setOriginalOcrResult] = useState<OCRResult | null>(null);
   const [vendorMatch, setVendorMatch] = useState<any>(null);
   const [requiresManualVendor, setRequiresManualVendor] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [correctionSaved, setCorrectionSaved] = useState(false);
   const [vendorSuggestions, setVendorSuggestions] = useState<any[]>([]);
   const [selectedVendor, setSelectedVendor] = useState<string>('');
 
@@ -109,12 +111,14 @@ export default function InvoiceUpload() {
 
     try {
       const response = await invoiceApi.upload(file);
-      setOcrResult(response.data.extraction || response.data.ocr_result);
+      const extraction = response.data.extraction || response.data.ocr_result;
+      setOcrResult(extraction);
+      setOriginalOcrResult(extraction ? JSON.parse(JSON.stringify(extraction)) : null);
       setVendorMatch(response.data.vendor_match);
       setRequiresManualVendor(response.data.requires_manual_vendor_assignment);
+      setCorrectionSaved(false);
 
       if (response.data.requires_manual_vendor_assignment) {
-        const extraction = response.data.extraction || response.data.ocr_result;
         const suggestions = await vendorApi.getSuggestions(extraction?.vendor_name);
         setVendorSuggestions(suggestions.data);
       }
@@ -187,13 +191,82 @@ export default function InvoiceUpload() {
     }
   };
 
+  const handleSaveCorrection = async () => {
+    if (!ocrResult || !originalOcrResult) return;
+
+    setUploading(true);
+    setError(null);
+
+    try {
+      const originalFields = {
+        vendor_name: originalOcrResult.vendor_name,
+        invoice_number: originalOcrResult.invoice_number,
+        invoice_date: originalOcrResult.invoice_date,
+        due_date: originalOcrResult.due_date,
+        total_amount: originalOcrResult.total_amount,
+        currency: originalOcrResult.currency,
+        invoice_currency_original: originalOcrResult.invoice_currency_original,
+        payment_terms: originalOcrResult.payment_terms,
+        incoterm: originalOcrResult.incoterm,
+        invoice_type: originalOcrResult.invoice_type,
+        category: originalOcrResult.category,
+        bill_to_entity: originalOcrResult.bill_to_entity,
+        ship_to: originalOcrResult.ship_to,
+        sold_to: originalOcrResult.sold_to,
+        brand: originalOcrResult.brand,
+        brand_code: originalOcrResult.brand_code,
+        season: originalOcrResult.season,
+        mpo_number: originalOcrResult.mpo_number,
+        customer_po_number: originalOcrResult.customer_po_number,
+      };
+
+      const correctedFields = {
+        vendor_name: ocrResult.vendor_name,
+        invoice_number: ocrResult.invoice_number,
+        invoice_date: ocrResult.invoice_date,
+        due_date: ocrResult.due_date,
+        total_amount: ocrResult.total_amount,
+        currency: ocrResult.currency,
+        invoice_currency_original: ocrResult.invoice_currency_original,
+        payment_terms: ocrResult.payment_terms,
+        incoterm: ocrResult.incoterm,
+        invoice_type: ocrResult.invoice_type,
+        category: ocrResult.category,
+        bill_to_entity: ocrResult.bill_to_entity,
+        ship_to: ocrResult.ship_to,
+        sold_to: ocrResult.sold_to,
+        brand: ocrResult.brand,
+        brand_code: ocrResult.brand_code,
+        season: ocrResult.season,
+        mpo_number: ocrResult.mpo_number,
+        customer_po_number: ocrResult.customer_po_number,
+      };
+
+      await invoiceApi.saveStandaloneCorrection({
+        vendor_name: ocrResult.vendor_name,
+        raw_text: '',
+        original_fields: originalFields,
+        corrected_fields: correctedFields,
+        note: 'Manual correction from upload review',
+      });
+
+      setCorrectionSaved(true);
+    } catch (err: any) {
+      setError(err.response?.data?.error?.message || 'Failed to save correction');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const handleReset = () => {
     setFile(null);
     setOcrResult(null);
+    setOriginalOcrResult(null);
     setVendorMatch(null);
     setRequiresManualVendor(false);
     setError(null);
     setSuccess(false);
+    setCorrectionSaved(false);
     setVendorSuggestions([]);
     setSelectedVendor('');
   };
@@ -566,6 +639,21 @@ export default function InvoiceUpload() {
               className="flex-1 py-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
             >
               {uploading ? 'Confirming...' : 'Confirm & Create Invoice'}
+            </button>
+            <button
+              onClick={handleSaveCorrection}
+              disabled={uploading || correctionSaved || !originalOcrResult}
+              className="px-6 py-3 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 transition-colors disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {correctionSaved ? (
+                <>
+                  <CheckCircle className="h-4 w-4" /> Saved
+                </>
+              ) : (
+                <>
+                  <Save className="h-4 w-4" /> Save Correction
+                </>
+              )}
             </button>
             <button
               onClick={handleReset}

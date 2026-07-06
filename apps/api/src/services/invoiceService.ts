@@ -3,6 +3,7 @@ import { InvoiceStatus, InvoiceType, InvoiceCategory, BrandTier, InvoiceSource }
 import { AppError } from '../middleware/errorHandler';
 import { isTop10Brand, TOP_10_BRANDS } from '@ap-invoice/shared';
 import { logAudit } from './auditLogService';
+import { matchVendor } from './vendorMatchingService';
 import crypto from 'crypto';
 
 function safeDate(value: any): Date | null {
@@ -89,6 +90,28 @@ export const createInvoice = async (invoiceData: any, userId: string) => {
     brand_tier = BrandTier.OTHER;
   }
 
+  // Resolve vendor_id: use provided ID, match by name, or create new vendor
+  let resolvedVendorId = vendor_id;
+  if (!resolvedVendorId) {
+    const vendorName = vendor_name_raw || '';
+    if (!vendorName.trim()) {
+      throw new AppError('Vendor name or vendor_id is required', 400);
+    }
+    const matched = await matchVendor(vendorName);
+    if (matched) {
+      resolvedVendorId = matched.vendor_id;
+    } else {
+      const newVendor = await prisma.vendor.create({
+        data: {
+          name: vendorName.trim(),
+          name_aliases: [],
+          invoice_template_type: 'NO_DATA' as any,
+        },
+      });
+      resolvedVendorId = newVendor.id;
+    }
+  }
+
   const invoice = await prisma.invoice.create({
     data: {
       invoice_number: String(invoice_number).trim(),
@@ -98,7 +121,7 @@ export const createInvoice = async (invoiceData: any, userId: string) => {
       date_range_start: safeDate(date_range_start),
       date_range_end: safeDate(date_range_end),
       parent_invoice_id,
-      vendor_id,
+      vendor_id: resolvedVendorId,
       total_amount: parsedAmount,
       invoice_currency_original,
       exchange_rate_to_usd: exchange_rate_to_usd ? parseFloat(exchange_rate_to_usd) : null,

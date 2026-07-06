@@ -93,6 +93,14 @@ export async function validateInvoice(invoiceId: string): Promise<InvoiceValidat
     throw new AppError('Invoice not found', 404);
   }
 
+  // Clear previous pending exceptions before re-running validation so edits can be validated cleanly
+  await prisma.exception.deleteMany({
+    where: {
+      invoice_id: invoiceId,
+      status: 'PENDING' as any,
+    },
+  });
+
   const results: ValidationResult[] = [];
   const exceptions: Array<{ reason: ExceptionReason; detail: string }> = [];
 
@@ -1050,6 +1058,7 @@ export async function checkBatchThreshold(invoiceId: string): Promise<{ held: bo
     where: {
       vendor_id: invoice.vendor_id,
       status: InvoiceStatus.ON_HOLD as any,
+      id: { not: invoiceId },
       created_at: { gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1) },
     },
   });

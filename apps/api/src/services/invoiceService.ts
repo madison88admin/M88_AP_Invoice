@@ -269,10 +269,22 @@ export const updateInvoiceStatus = async (id: string, status: InvoiceStatus, use
   return invoice;
 };
 
-export const updateInvoice = async (id: string, invoiceData: any, userId: string) => {
+export const updateInvoice = async (id: string, invoiceData: any, userId: string, userRole: string) => {
   const existing = await prisma.invoice.findUnique({ where: { id } });
   if (!existing) {
     throw new AppError('Invoice not found', 404);
+  }
+
+  // Only coordinators, accounting supervisors, or admins can edit invoice data
+  const allowedRoles = ['PURCHASING_COORDINATOR', 'ACCOUNTING_SUPERVISOR', 'ADMIN', 'SUPERADMIN', 'IT_ADMIN'];
+  if (!allowedRoles.includes(userRole)) {
+    throw new AppError('Not authorized to edit invoice data', 403);
+  }
+
+  // Prevent editing invoices that are already posted or paid
+  const lockedStatuses = ['APPROVED', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID', 'REJECTED'];
+  if (lockedStatuses.includes(existing.status)) {
+    throw new AppError(`Cannot edit invoice in ${existing.status} status`, 400);
   }
 
   const invoice = await prisma.invoice.update({

@@ -167,11 +167,6 @@ export default function Dashboard() {
       }
     }
 
-    // ACCOUNTING_ASSOCIATE - only their uploaded invoices
-    if (role === 'ACCOUNTING_ASSOCIATE') {
-      return allInvoices.filter(i => i.uploaded_by === user.email);
-    }
-
     // SR_MANAGER_GLOBAL_PRODUCTION - only production invoices $2K+
     if (role === 'SR_MANAGER_GLOBAL_PRODUCTION') {
       return allInvoices.filter(i => i.total_amount > 2000);
@@ -1984,7 +1979,8 @@ export default function Dashboard() {
 
               {/* Validation Button */}
               {(selectedInvoice.status === (InvoiceStatus.VALIDATION_PENDING as any) ||
-                selectedInvoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any)) && (
+                selectedInvoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any) ||
+                selectedInvoice.status === (InvoiceStatus.ON_HOLD as any)) && (
                 <button
                   onClick={handleValidate}
                   disabled={validating}
@@ -1992,7 +1988,7 @@ export default function Dashboard() {
                   style={{ boxShadow: '0 0 20px rgba(99,102,241,0.4)' }}
                 >
                   <Shield className="h-4 w-4 mr-2" />
-                  {validating ? 'Validating...' : (selectedInvoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any) ? 'Re-Validate After Fix' : 'Run Validation')}
+                  {validating ? 'Validating...' : (selectedInvoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any) || selectedInvoice.status === (InvoiceStatus.ON_HOLD as any) ? 'Re-Validate' : 'Run Validation')}
                 </button>
               )}
 

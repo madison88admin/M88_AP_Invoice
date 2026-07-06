@@ -83,7 +83,8 @@ export const updateInvoice = async (
     const invoice = await invoiceService.updateInvoice(
       req.params.id,
       req.body,
-      req.user!.id
+      req.user!.id,
+      req.user!.role
     );
     res.json(invoice);
   } catch (error) {

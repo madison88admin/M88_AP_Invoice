@@ -5,11 +5,15 @@ import { invoiceApi, vendorApi } from '../lib/api';
 import InvoiceTable from './InvoiceTable';
 import UploadInvoiceModal from './UploadInvoiceModal';
 import BottleneckView from './BottleneckView';
+import AuditLogViewer from './AuditLogViewer';
+import MyTasksWidget from './MyTasksWidget';
+import StatusGuide from './StatusGuide';
 import { ThemeToggle } from './ThemeToggle';
 import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { MockInvoice } from '../lib/mockData';
-import { hasPermission, filterInvoicesByRole } from '../lib/roleAccess';
+import { hasPermission, filterInvoicesByRole, canUserApproveStatus } from '../lib/roleAccess';
+import { cn } from '../lib/utils';
 import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, User, LayoutDashboard, Building2, ChevronLeft, LogOut, Edit } from 'lucide-react';
 
 // Custom hook for number count-up animation
@@ -88,24 +92,6 @@ function useCountUp(end: number, duration: number = 1200, start: boolean = true)
   return { count, startAnimation };
 }
 
-const canUserApproveStatus = (role: string | undefined, status: string): boolean => {
-  if (!role) return false;
-  const mapping: Record<string, string[]> = {
-    'PURCHASING_COORDINATOR': ['PENDING_COORDINATOR'],
-    'PURCHASING_MANAGER': ['PENDING_MANAGER'],
-    'PLANNING_MANAGER': ['PENDING_MLO_PLANNING_MANAGER', 'PENDING_MLO_ACCOUNT_HOLDER'],
-    'SR_MANAGER_GLOBAL_PRODUCTION': ['PENDING_SR_MANAGER'],
-    'MS_POLLY': ['PENDING_POLLY'],
-    'ACCOUNTING_SUPERVISOR': ['PENDING_ACCOUNTING'],
-    'ACCOUNTING_ASSOCIATE': ['PENDING_ACCOUNTING'],
-    'CFO': ['PENDING_ACCOUNTING'],
-    'PRESIDENT': ['PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_MLO_PLANNING_MANAGER', 'PENDING_SR_MANAGER', 'PENDING_POLLY', 'PENDING_ACCOUNTING'],
-    'IT_ADMIN': ['PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_MLO_PLANNING_MANAGER', 'PENDING_SR_MANAGER', 'PENDING_POLLY', 'PENDING_ACCOUNTING'],
-    'ADMIN': ['PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_MLO_PLANNING_MANAGER', 'PENDING_SR_MANAGER', 'PENDING_POLLY', 'PENDING_ACCOUNTING'],
-  };
-  return (mapping[role] || []).includes(status);
-};
-
 export default function Dashboard() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
@@ -129,6 +115,8 @@ export default function Dashboard() {
     brand: undefined as string | undefined,
     brand_code: undefined as string | undefined,
     search: undefined as string | undefined,
+    dateFrom: undefined as string | undefined,
+    dateTo: undefined as string | undefined,
   });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -235,6 +223,11 @@ export default function Dashboard() {
         inv.brand_code,
       ].filter(Boolean).join(' ').toLowerCase();
       if (!searchable.includes(term)) return false;
+    }
+    if (filters.dateFrom || filters.dateTo) {
+      const invDate = new Date(inv.invoice_date);
+      if (filters.dateFrom && invDate < new Date(filters.dateFrom)) return false;
+      if (filters.dateTo && invDate > new Date(filters.dateTo)) return false;
     }
     return true;
   });
@@ -1602,9 +1595,22 @@ export default function Dashboard() {
               )}
             </div>
 
+          {/* My Tasks Widget */}
+          {user && user.role !== 'MS_POLLY' && user.role !== 'IT_ADMIN' && user.role !== 'SUPERADMIN' && (
+            <MyTasksWidget
+              user={user}
+              invoices={allInvoices}
+              onFilterClick={(status) => setFilters({ ...filters, status })}
+            />
+          )}
+
           {/* Filters - Glassmorphism - Role-specific visibility */}
           {user && user.role !== 'MS_POLLY' && user.role !== 'IT_ADMIN' && user.role !== 'SUPERADMIN' && (
             <div className="p-4 mb-6" style={{ background: 'rgba(255, 255, 255, 0.04)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', border: '1px solid rgba(255, 255, 255, 0.07)', borderRadius: '16px' }}>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-white">Filter Invoices</h3>
+                <StatusGuide />
+              </div>
               <div className="flex flex-col md:flex-row items-start md:items-center gap-4">
                 <div className="relative w-full md:flex-1">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -1686,8 +1692,25 @@ export default function Dashboard() {
                   <option value="FR" className="bg-[#0f172a]">FR</option>
                   <option value="ON" className="bg-[#0f172a]">ON</option>
                 </select>
+                <div className="flex items-center gap-2 w-full md:w-auto">
+                  <input
+                    type="date"
+                    value={filters.dateFrom || ''}
+                    onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value || undefined })}
+                    className="px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-[#6366f1]"
+                    placeholder="From"
+                  />
+                  <span className="text-slate-500">-</span>
+                  <input
+                    type="date"
+                    value={filters.dateTo || ''}
+                    onChange={(e) => setFilters({ ...filters, dateTo: e.target.value || undefined })}
+                    className="px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-[#6366f1]"
+                    placeholder="To"
+                  />
+                </div>
                 <button
-                  onClick={() => setFilters({ status: undefined, category: undefined, type: undefined, brand: undefined, brand_code: undefined, search: undefined })}
+                  onClick={() => setFilters({ status: undefined, category: undefined, type: undefined, brand: undefined, brand_code: undefined, search: undefined, dateFrom: undefined, dateTo: undefined })}
                   className="w-full md:w-auto px-4 py-2 border border-white/10 text-slate-300 rounded-lg hover:bg-white/10 transition-colors font-medium"
                 >
                   Clear
@@ -1955,6 +1978,25 @@ export default function Dashboard() {
                 <p className="text-sm text-slate-400">Status</p>
                 <p className="text-sm font-medium text-white">{selectedInvoice.status}</p>
               </div>
+              {(selectedInvoice as any).ocr_confidence_score !== undefined && (selectedInvoice as any).ocr_confidence_score !== null && (
+                <div>
+                  <p className="text-sm text-slate-400">OCR Confidence</p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <div className="flex-1 h-2 bg-white/10 rounded-full overflow-hidden">
+                      <div
+                        className={cn(
+                          'h-full rounded-full',
+                          Number((selectedInvoice as any).ocr_confidence_score) >= 0.9 ? 'bg-green-500' : 'bg-amber-500'
+                        )}
+                        style={{ width: `${Math.round(Number((selectedInvoice as any).ocr_confidence_score) * 100)}%` }}
+                      />
+                    </div>
+                    <span className="text-xs text-white">
+                      {Math.round(Number((selectedInvoice as any).ocr_confidence_score) * 100)}%
+                    </span>
+                  </div>
+                </div>
+              )}
               <div>
                 <p className="text-sm text-slate-400">Payment Terms</p>
                 <p className="text-sm font-medium text-white">{selectedInvoice.payment_terms}</p>
@@ -2064,6 +2106,9 @@ export default function Dashboard() {
                   Schedule Payment
                 </button>
               )}
+
+              {/* Audit Log */}
+              <AuditLogViewer invoiceId={selectedInvoice.id} />
 
               {/* Validation Results - Detailed 17-Rule Display */}
               {validationResult && (

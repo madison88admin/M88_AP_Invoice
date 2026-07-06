@@ -35,6 +35,19 @@ const orderTypeColors: Record<OrderType, { bg: string; text: string }> = {
   SAMPLE: { bg: 'bg-purple-500/20', text: 'text-purple-400' },
 };
 
+function getSLAStatus(invoice: MockInvoice): { label: string; color: string } | null {
+  const timestamps = (invoice as any).stage_timestamps || [];
+  const current = timestamps.find((t: any) => t.stage === invoice.status && !t.exited_at);
+  if (!current || !current.sla_hours) return null;
+  const entered = new Date(current.entered_at).getTime();
+  const due = entered + current.sla_hours * 60 * 60 * 1000;
+  const remaining = due - Date.now();
+  const hoursRemaining = remaining / (1000 * 60 * 60);
+  if (remaining <= 0) return { label: 'Overdue', color: 'bg-red-500 text-white' };
+  if (hoursRemaining <= 24) return { label: 'Due soon', color: 'bg-amber-500 text-black' };
+  return null;
+}
+
 export default function InvoiceTable({ invoices, onInvoiceClick, loading = false }: InvoiceTableProps) {
   // Use invoices as-is
   const sortedInvoices = invoices;
@@ -191,15 +204,25 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
                 {(invoice.category || invoice.invoice_type).replace(/_/g, ' ')}
               </td>
               <td className="px-6 py-4 whitespace-nowrap">
-                <span
-                  className={cn(
-                    'px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full',
-                    statusColors[invoice.status]?.bg,
-                    statusColors[invoice.status]?.text
-                  )}
-                >
-                  {invoice.status.replace(/_/g, ' ')}
-                </span>
+                <div className="flex flex-col gap-1">
+                  <span
+                    className={cn(
+                      'px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full w-fit',
+                      statusColors[invoice.status]?.bg,
+                      statusColors[invoice.status]?.text
+                    )}
+                  >
+                    {invoice.status.replace(/_/g, ' ')}
+                  </span>
+                  {(() => {
+                    const sla = getSLAStatus(invoice);
+                    return sla ? (
+                      <span className={cn('px-2 py-0.5 inline-flex text-[10px] leading-4 font-semibold rounded-full w-fit', sla.color)}>
+                        {sla.label}
+                      </span>
+                    ) : null;
+                  })()}
+                </div>
               </td>
               <td className="px-6 py-4 whitespace-nowrap" style={{ width: '160px' }} onClick={(e) => e.stopPropagation()}>
                 <POValidationBadge

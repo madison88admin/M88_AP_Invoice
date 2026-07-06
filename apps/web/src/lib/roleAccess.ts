@@ -236,7 +236,7 @@ export const ROLE_STAGE_ACCESS: Record<string, string[]> = {
   ACCOUNTING_SUPERVISOR: ['VALIDATION_PENDING', 'PENDING_ACCOUNTING', 'APPROVED', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED'],
   PURCHASING_COORDINATOR: ['VALIDATION_PENDING', 'EXCEPTION_FLAGGED', 'PENDING_COORDINATOR', 'ON_HOLD'],
   PURCHASING_MANAGER: ['PENDING_COORDINATOR', 'PENDING_MANAGER'],
-  MLO_ACCOUNT_HOLDER: ['PENDING_MLO_ACCOUNT_HOLDER'],
+  MLO_ACCOUNT_HOLDER: ['PENDING_MLO_ACCOUNT_HOLDER', 'PENDING_MLO_PLANNING_MANAGER'],
   PLANNING_MANAGER: ['PENDING_MLO_PLANNING_MANAGER'],
   SR_MANAGER_GLOBAL_PRODUCTION: ['PENDING_SR_MANAGER'],
   MS_POLLY: ['PENDING_POLLY'],
@@ -259,6 +259,13 @@ export function canAccessStage(role: string, stage: string): boolean {
   const accessibleStages = ROLE_STAGE_ACCESS[role];
   if (!accessibleStages) return false;
   return accessibleStages.includes(stage);
+}
+
+// Check if a user with the given role can approve/reject an invoice in the given status
+export function canUserApproveStatus(role: string, status: string): boolean {
+  if (!hasPermission(role, 'canApprove')) return false;
+  if (role === 'ADMIN' || role === 'SUPERADMIN' || role === 'PRESIDENT') return true;
+  return canAccessStage(role, status);
 }
 
 // Get invoices filtered by role's accessible stages

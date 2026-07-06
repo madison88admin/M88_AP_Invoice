@@ -545,13 +545,20 @@ async function validateBankDetails(invoice: any): Promise<ValidationResult> {
 
   const ocrBankInfo = (invoice as any).ocr_raw_data?.bank_info;
 
-  // If OCR didn't extract bank info, flag as missing
+  // If OCR didn't extract bank info, allow workflow to proceed if vendor has bank details on file.
+  // This avoids blocking digital/manual invoices where OCR bank extraction is unavailable.
   if (!ocrBankInfo || !ocrBankInfo.swift_code || !ocrBankInfo.account_number) {
+    if (invoice.vendor?.swift_code && invoice.vendor?.account_number) {
+      return {
+        passed: true,
+        message: 'Vendor bank details on file; OCR bank extraction not required',
+      };
+    }
     return {
       passed: false,
       reason: ExceptionReason.MISSING_BANK_INFO,
       message: 'Bank details not extracted from OCR',
-      detail: 'OCR did not extract complete bank information - manual review required',
+      detail: 'OCR did not extract complete bank information and vendor bank details are incomplete',
     };
   }
 
@@ -603,6 +610,15 @@ function validateSignatures(amount: number, signatures: any[]): ValidationResult
     return {
       passed: true,
       message: 'Computer-generated invoice - signature not required',
+    };
+  }
+
+  // Digital workflow: signatures are created during approval. If no signatures
+  // exist yet, skip validation so the invoice can proceed to approval request.
+  if (!signatures || signatures.length === 0) {
+    return {
+      passed: true,
+      message: 'Digital workflow - signatures will be collected during approval',
     };
   }
 
@@ -1027,18 +1043,20 @@ export async function checkBatchThreshold(invoiceId: string): Promise<{ held: bo
     return { held: false, cumulative: 0, released: 0 };
   }
 
-  // Calculate cumulative for this vendor across all non-rejected, non-on-hold invoices
-  // Include the current invoice and any held invoices that would be released together
-  const vendorCumulative = await prisma.invoice.aggregate({
-    _sum: { total_amount: true },
+  // Calculate cumulative for this vendor using only ON_HOLD invoices plus the current invoice.
+  // This ensures invoices are held/released as each new invoice is validated, matching the
+  // user's batch workflow: hold until cumulative reaches $100, then release all held invoices.
+  const heldInvoices = await prisma.invoice.findMany({
     where: {
       vendor_id: invoice.vendor_id,
-      status: { not: InvoiceStatus.REJECTED as any },
+      status: InvoiceStatus.ON_HOLD as any,
       created_at: { gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1) },
     },
   });
 
-  const cumulative = Number(vendorCumulative._sum.total_amount || 0);
+  const heldTotal = heldInvoices.reduce((sum, inv) => sum + Number(inv.total_amount), 0);
+  const currentAmount = Number(invoice.total_amount);
+  const cumulative = heldTotal + currentAmount;
   const held = cumulative < BATCH_THRESHOLD;
 
   if (held) {
@@ -1059,21 +1077,42 @@ export async function checkBatchThreshold(invoiceId: string): Promise<{ held: bo
     return { held: true, cumulative, released: 0 };
   }
 
-  // Threshold reached: release any other held invoices for this vendor
-  const heldInvoices = await prisma.invoice.findMany({
-    where: {
-      vendor_id: invoice.vendor_id,
-      status: InvoiceStatus.ON_HOLD as any,
-      id: { not: invoiceId },
-    },
-  });
+  // Threshold reached: release all held invoices for this vendor together with current invoice
+  const heldInvoiceIds = heldInvoices.map((inv) => inv.id);
 
   for (const heldInvoice of heldInvoices) {
     await prisma.invoice.update({
       where: { id: heldInvoice.id },
       data: { status: InvoiceStatus.VALIDATION_PENDING as any },
     });
+
+    // Create approval request for each released invoice
+    try {
+      await createApprovalRequest(heldInvoice.id, 'system');
+    } catch (error) {
+      logger.error('Failed to create approval request for released invoice:', error);
+    }
+
+    // Resolve the batch threshold exception since the cumulative has been reached
+    const batchExceptions = await prisma.exception.findMany({
+      where: {
+        invoice_id: heldInvoice.id,
+        reason: ExceptionReason.BATCH_THRESHOLD_NOT_MET as any,
+        status: 'PENDING' as any,
+      },
+    });
+    for (const exc of batchExceptions) {
+      await prisma.exception.update({
+        where: { id: exc.id },
+        data: {
+          status: 'RESOLVED' as any,
+          resolved_at: new Date(),
+          resolved_by: 'system',
+          resolution_notes: `Auto-resolved: vendor cumulative reached $${cumulative.toFixed(2)} and threshold $${BATCH_THRESHOLD} met`,
+        },
+      });
+    }
   }
 
-  return { held: false, cumulative, released: heldInvoices.length };
+  return { held: false, cumulative, released: heldInvoiceIds.length };
 }

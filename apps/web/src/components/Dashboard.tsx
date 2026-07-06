@@ -128,6 +128,7 @@ export default function Dashboard() {
     type: undefined as InvoiceType | undefined,
     brand: undefined as string | undefined,
     brand_code: undefined as string | undefined,
+    search: undefined as string | undefined,
   });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -224,6 +225,17 @@ export default function Dashboard() {
     if (filters.category && inv.category !== filters.category) return false;
     if (filters.type && inv.invoice_type !== filters.type) return false;
     if (filters.brand && inv.brand !== filters.brand) return false;
+    if (filters.search) {
+      const term = filters.search.toLowerCase();
+      const searchable = [
+        inv.invoice_number,
+        inv.vendor_name_raw,
+        inv.vendor?.name,
+        inv.brand,
+        inv.brand_code,
+      ].filter(Boolean).join(' ').toLowerCase();
+      if (!searchable.includes(term)) return false;
+    }
     return true;
   });
 
@@ -1598,7 +1610,9 @@ export default function Dashboard() {
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                   <input
                     type="text"
-                    placeholder="Search invoices..."
+                    placeholder="Search invoice number, vendor, or brand..."
+                    value={filters.search || ''}
+                    onChange={(e) => setFilters({ ...filters, search: e.target.value || undefined })}
                     className="w-full pl-10 pr-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent text-white placeholder-slate-400"
                   />
                 </div>
@@ -1673,7 +1687,7 @@ export default function Dashboard() {
                   <option value="ON" className="bg-[#0f172a]">ON</option>
                 </select>
                 <button
-                  onClick={() => setFilters({ status: undefined, category: undefined, type: undefined, brand: undefined, brand_code: undefined })}
+                  onClick={() => setFilters({ status: undefined, category: undefined, type: undefined, brand: undefined, brand_code: undefined, search: undefined })}
                   className="w-full md:w-auto px-4 py-2 border border-white/10 text-slate-300 rounded-lg hover:bg-white/10 transition-colors font-medium"
                 >
                   Clear

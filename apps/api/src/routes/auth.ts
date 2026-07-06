@@ -20,6 +20,7 @@ const DEMO_USERS = [
   { email: 'maryann.delmonte@madison88.com', name: 'Maryann', role: 'PURCHASING_MANAGER', password: 'madison88' },
   { email: 'edwin.garcia@madison88.com', name: 'Edwin', role: 'PLANNING_MANAGER', password: 'madison88', brand_scope: 'TOP_10' as const },
   { email: 'glecie.yumena@madison88.com', name: 'Glecie', role: 'PLANNING_MANAGER', password: 'madison88', brand_scope: 'OTHER' as const },
+  { email: 'maryan.untiveros@madison88.com', name: 'Maryan', role: 'MLO_ACCOUNT_HOLDER', password: 'madison88' },
   { email: 'lindsey.castro@madison88.com', name: 'Lindsey', role: 'SR_MANAGER_GLOBAL_PRODUCTION', password: 'madison88' },
   { email: 'polly.madison@madison88.com', name: 'Polly', role: 'MS_POLLY', password: 'madison88' },
   { email: 'jc@madison88.com', name: 'JC', role: 'IT_ADMIN', password: 'madison88' },

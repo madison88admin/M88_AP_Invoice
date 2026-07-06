@@ -308,27 +308,28 @@ export async function approveInvoice(
     throw new AppError('Invoice not found', 404);
   }
 
-  // Map user role to signatory role
-  const signatoryRole = mapUserRoleToSignatoryRole(userRole);
-  if (!signatoryRole) {
+  // Map user role to allowed signatory roles
+  const signatoryRoles = mapUserRoleToSignatoryRoles(userRole);
+  if (signatoryRoles.length === 0) {
     throw new AppError('User does not have approval authority', 403);
   }
 
-  // Find the unsigned signature for this role
+  // Find the first unsigned signature matching any allowed role
   const pendingSignature = invoice.signatures.find(
-    (sig: any) => sig.signatory_role === signatoryRole && !sig.signed_at
+    (sig: any) => signatoryRoles.includes(sig.signatory_role) && !sig.signed_at
   );
 
   if (!pendingSignature) {
     throw new AppError('No pending approval found for this role', 404);
   }
 
+  const signedRole = pendingSignature.signatory_role;
+
   // Update the signature with full attribution
   await prisma.signature.update({
     where: { id: pendingSignature.id },
     data: {
       signatory_name: signerName,
-      signatory_role: signatoryRole as any,
       signed_at: new Date(),
       signature_type: 'DIGITAL',
     },
@@ -346,14 +347,26 @@ export async function approveInvoice(
       invoice_id: invoiceId,
       action: 'APPROVED',
       performed_by: userId,
-      note: `Invoice approved by ${signerName} (${signatoryRole})`,
+      note: `Invoice approved by ${signerName} (${signedRole})`,
     },
   });
 
-  // Find next unsigned signature
-  const remainingSignatures = invoice.signatures.filter(
-    (sig: any) => !sig.signed_at && sig.id !== pendingSignature.id
+  // Find next unsigned signature, respecting the approval route order
+  const approvalRoute = determineApprovalRoute(
+    Number(invoice.total_amount),
+    invoice.brand || undefined,
+    invoice.brand_code || undefined
   );
+  const routeOrder = approvalRoute.map((step) => step.role);
+  const remainingSignatures = invoice.signatures
+    .filter((sig: any) => !sig.signed_at && sig.id !== pendingSignature.id)
+    .sort((a: any, b: any) => {
+      const indexA = routeOrder.indexOf(a.signatory_role);
+      const indexB = routeOrder.indexOf(b.signatory_role);
+      if (indexA === -1) return 1;
+      if (indexB === -1) return -1;
+      return indexA - indexB;
+    });
 
   if (remainingSignatures.length > 0) {
     // Advance to next approval stage
@@ -463,20 +476,22 @@ export async function rejectInvoice(
     throw new AppError('Invoice not found', 404);
   }
 
-  // Map user role to signatory role
-  const signatoryRole = mapUserRoleToSignatoryRole(userRole);
-  if (!signatoryRole) {
+  // Map user role to allowed signatory roles
+  const signatoryRoles = mapUserRoleToSignatoryRoles(userRole);
+  if (signatoryRoles.length === 0) {
     throw new AppError('User does not have approval authority', 403);
   }
 
-  // Find the unsigned signature for this role
+  // Find the first unsigned signature matching any allowed role
   const pendingSignature = invoice.signatures.find(
-    (sig: any) => sig.signatory_role === signatoryRole && !sig.signed_at
+    (sig: any) => signatoryRoles.includes(sig.signatory_role) && !sig.signed_at
   );
 
   if (!pendingSignature) {
     throw new AppError('No pending approval found for this role', 404);
   }
+
+  const signedRole = pendingSignature.signatory_role;
 
   // Update invoice status to REJECTED
   await prisma.invoice.update({
@@ -496,7 +511,7 @@ export async function rejectInvoice(
       invoice_id: invoiceId,
       action: 'REJECTED',
       performed_by: userId,
-      note: `Invoice rejected by ${signatoryRole}. Reason: ${reason}`,
+      note: `Invoice rejected by ${signedRole}. Reason: ${reason}`,
     },
   });
 
@@ -504,25 +519,27 @@ export async function rejectInvoice(
 }
 
 /**
- * Map user role to SignatoryRole
+ * Map user role to SignatoryRole(s) the user is allowed to sign.
+ * MLO Account Holder is mapped to both MLO_ACCOUNT_HOLDER and MLO_PLANNING_MANAGER
+ * because the same person fills both roles in the approval chain.
  */
-function mapUserRoleToSignatoryRole(userRole: string): SignatoryRole | null {
-  const mapping: Record<string, SignatoryRole> = {
-    'PURCHASING_COORDINATOR': SignatoryRole.COORDINATOR,
-    'PURCHASING_MANAGER': SignatoryRole.PURCHASING_MANAGER,
-    'MLO_ACCOUNT_HOLDER': SignatoryRole.MLO_ACCOUNT_HOLDER,
-    'MLO_PLANNING_MANAGER': SignatoryRole.MLO_PLANNING_MANAGER,
-    'PLANNING_MANAGER': SignatoryRole.MLO_PLANNING_MANAGER,
-    'SR_MANAGER_GLOBAL_PRODUCTION': SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION,
-    'MS_POLLY': SignatoryRole.MS_POLLY,
-    'ACCOUNTING_ASSOCIATE': SignatoryRole.ACCOUNTING_REVIEWER,
-    'ACCOUNTING_SUPERVISOR': SignatoryRole.ACCOUNTING_REVIEWER,
-    'CFO': SignatoryRole.ACCOUNTING_REVIEWER,
-    'IT_ADMIN': SignatoryRole.COORDINATOR,
-    'ADMIN': SignatoryRole.COORDINATOR,
+function mapUserRoleToSignatoryRoles(userRole: string): SignatoryRole[] {
+  const mapping: Record<string, SignatoryRole[]> = {
+    'PURCHASING_COORDINATOR': [SignatoryRole.COORDINATOR],
+    'PURCHASING_MANAGER': [SignatoryRole.PURCHASING_MANAGER],
+    'MLO_ACCOUNT_HOLDER': [SignatoryRole.MLO_ACCOUNT_HOLDER, SignatoryRole.MLO_PLANNING_MANAGER],
+    'MLO_PLANNING_MANAGER': [SignatoryRole.MLO_PLANNING_MANAGER],
+    'PLANNING_MANAGER': [SignatoryRole.MLO_PLANNING_MANAGER],
+    'SR_MANAGER_GLOBAL_PRODUCTION': [SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION],
+    'MS_POLLY': [SignatoryRole.MS_POLLY],
+    'ACCOUNTING_ASSOCIATE': [SignatoryRole.ACCOUNTING_REVIEWER],
+    'ACCOUNTING_SUPERVISOR': [SignatoryRole.ACCOUNTING_REVIEWER],
+    'CFO': [SignatoryRole.ACCOUNTING_REVIEWER],
+    'IT_ADMIN': [SignatoryRole.COORDINATOR],
+    'ADMIN': [SignatoryRole.COORDINATOR],
   };
 
-  return mapping[userRole] || null;
+  return mapping[userRole] || [];
 }
 
 function getSLAForRole(signerRole: string): number {
@@ -557,8 +574,8 @@ function getEmailForRole(signerRole: string): string | null {
  * Get pending approvals for a specific user role
  */
 export async function getPendingApprovals(userRole: string) {
-  const signatoryRole = mapUserRoleToSignatoryRole(userRole);
-  if (!signatoryRole) {
+  const signatoryRoles = mapUserRoleToSignatoryRoles(userRole);
+  if (signatoryRoles.length === 0) {
     return [];
   }
 
@@ -577,7 +594,7 @@ export async function getPendingApprovals(userRole: string) {
       status: { in: pendingStatuses as any[] },
       signatures: {
         some: {
-          signatory_role: signatoryRole as any,
+          signatory_role: { in: signatoryRoles as any[] },
           signed_at: null,
         },
       },
@@ -586,7 +603,7 @@ export async function getPendingApprovals(userRole: string) {
       vendor: true,
       signatures: {
         where: {
-          signatory_role: signatoryRole as any,
+          signatory_role: { in: signatoryRoles as any[] },
         },
       },
     },

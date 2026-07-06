@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { InvoiceStatus, InvoiceCategory, InvoiceType } from '@ap-invoice/shared';
-import { invoiceApi } from '../lib/api';
+import { invoiceApi, vendorApi } from '../lib/api';
 import InvoiceTable from './InvoiceTable';
 import UploadInvoiceModal from './UploadInvoiceModal';
 import BottleneckView from './BottleneckView';
@@ -121,6 +121,7 @@ export default function Dashboard() {
   const [posting, setPosting] = useState(false);
   const [showSchedulePaymentModal, setShowSchedulePaymentModal] = useState(false);
   const [paymentDate, setPaymentDate] = useState('');
+  const [vendors, setVendors] = useState<any[]>([]);
   const [filters, setFilters] = useState({
     status: undefined as InvoiceStatus | undefined,
     category: undefined as InvoiceCategory | undefined,
@@ -335,7 +336,7 @@ export default function Dashboard() {
     }
   };
 
-  const handleOpenEdit = () => {
+  const handleOpenEdit = async () => {
     if (!selectedInvoice) return;
     const invoice = selectedInvoice as any;
     setEditFormData({
@@ -353,7 +354,15 @@ export default function Dashboard() {
       season: invoice.season || '',
       bill_to_entity: invoice.bill_to_entity || '',
       vendor_name_raw: invoice.vendor_name_raw || '',
+      vendor_id: invoice.vendor_id || '',
     });
+    try {
+      const response = await vendorApi.getAll();
+      setVendors(response.data || []);
+    } catch (error) {
+      console.error('Failed to load vendors:', error);
+      setVendors([]);
+    }
     setShowEditModal(true);
   };
 
@@ -368,6 +377,7 @@ export default function Dashboard() {
       const payload = {
         ...editFormData,
         total_amount: editFormData.total_amount ? parseFloat(editFormData.total_amount) : undefined,
+        vendor_id: editFormData.vendor_id || undefined,
       };
       const response = await invoiceApi.update(selectedInvoice.id, payload);
       setSelectedInvoice(response.data);
@@ -1951,8 +1961,18 @@ export default function Dashboard() {
                 <p className="text-sm font-medium text-white">{selectedInvoice.bill_to_entity}</p>
               </div>
               
-              {/* Coordinator Edit Button */}
-              {user && (user.role === 'PURCHASING_COORDINATOR' || user.role === 'IT_ADMIN') && (
+              {/* Batch Threshold Indicator */}
+              {selectedInvoice.status === (InvoiceStatus.ON_HOLD as any) && (
+                <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+                  <p className="text-xs text-amber-400 font-medium">On Hold — Batch Threshold</p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Held until vendor cumulative reaches $100. Another invoice for this vendor will release this batch.
+                  </p>
+                </div>
+              )}
+
+              {/* Edit Invoice Button */}
+              {user && hasPermission(user.role, 'canEditInvoice') && (
                 <button
                   onClick={handleOpenEdit}
                   className="w-full flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
@@ -1963,7 +1983,8 @@ export default function Dashboard() {
               )}
 
               {/* Validation Button */}
-              {selectedInvoice.status === (InvoiceStatus.VALIDATION_PENDING as any) && (
+              {(selectedInvoice.status === (InvoiceStatus.VALIDATION_PENDING as any) ||
+                selectedInvoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any)) && (
                 <button
                   onClick={handleValidate}
                   disabled={validating}
@@ -1971,7 +1992,18 @@ export default function Dashboard() {
                   style={{ boxShadow: '0 0 20px rgba(99,102,241,0.4)' }}
                 >
                   <Shield className="h-4 w-4 mr-2" />
-                  {validating ? 'Validating...' : 'Run Validation'}
+                  {validating ? 'Validating...' : (selectedInvoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any) ? 'Re-Validate After Fix' : 'Run Validation')}
+                </button>
+              )}
+
+              {/* Resolve Exceptions Button */}
+              {selectedInvoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any) && user && hasPermission(user.role, 'canEditInvoice') && (
+                <button
+                  onClick={() => navigate('/exceptions')}
+                  className="w-full flex items-center justify-center px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors"
+                >
+                  <AlertTriangle className="h-4 w-4 mr-2" />
+                  Resolve Exceptions
                 </button>
               )}
 
@@ -2255,6 +2287,28 @@ export default function Dashboard() {
                     />
                   </div>
                 ))}
+
+                {/* Vendor Assignment Dropdown */}
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-slate-300 mb-1">
+                    Assigned Vendor
+                  </label>
+                  <select
+                    value={editFormData.vendor_id || ''}
+                    onChange={(e) => handleEditChange('vendor_id', e.target.value)}
+                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white"
+                  >
+                    <option value="" className="bg-[#0f172a]">No vendor assigned</option>
+                    {vendors.map((vendor) => (
+                      <option key={vendor.id} value={vendor.id} className="bg-[#0f172a]">
+                        {vendor.name} {vendor.swift_code ? `(SWIFT: ${vendor.swift_code})` : '(No bank info)'}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Select a vendor with bank info to pass bank validation.
+                  </p>
+                </div>
               </div>
               <div className="mt-6 flex justify-end space-x-3">
                 <button

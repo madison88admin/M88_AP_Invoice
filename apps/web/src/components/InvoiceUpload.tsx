@@ -59,6 +59,10 @@ interface OCRResult {
     signatory_role: string;
     signature_type: string;
   }>;
+  order_type?: string;
+  ocr_confidence_score?: number;
+  raw_data?: any;
+  po_validation?: any;
   amount_resolution_debug?: {
     method: string;
     confidence: number;
@@ -152,7 +156,9 @@ export default function InvoiceUpload() {
         date_range_start: ocrResult.date_range_start,
         date_range_end: ocrResult.date_range_end,
         vendor_id: finalVendorId,
+        vendor_name_raw: ocrResult.vendor_name,
         total_amount: ocrResult.total_amount,
+        invoice_currency_original: ocrResult.invoice_currency_original,
         exchange_rate_to_usd: ocrResult.exchange_rate_to_usd,
         currency: ocrResult.currency,
         payment_terms: String(ocrResult.payment_terms) as PaymentTerms,
@@ -167,18 +173,23 @@ export default function InvoiceUpload() {
         sold_to: ocrResult.sold_to,
         invoice_type: ocrResult.invoice_type,
         category: ocrResult.category,
-        bill_to_entity: ocrResult.bill_to_entity,
-        is_handwritten: ocrResult.is_handwritten,
-        is_urgent: ocrResult.is_urgent,
-        priority_flag: ocrResult.is_urgent,
-        priority_pay_date: ocrResult.priority_pay_date,
+        order_type: ocrResult.order_type,
         brand: ocrResult.brand,
         brand_code: ocrResult.brand_code,
         season: ocrResult.season,
         mpo_number: ocrResult.mpo_number,
         customer_po_number: ocrResult.customer_po_number,
-        bank_info: ocrResult.bank_info,
+        bill_to_entity: ocrResult.bill_to_entity,
+        is_handwritten: ocrResult.is_handwritten,
+        is_urgent: ocrResult.is_urgent,
+        priority_flag: ocrResult.is_urgent,
+        priority_pay_date: ocrResult.priority_pay_date,
+        bank_info: ocrResult.bank_info || (ocrResult as any).bank_details,
         signatures: ocrResult.signatures,
+        ocr_confidence_score: ocrResult.ocr_confidence_score,
+        ocr_raw_data: ocrResult.raw_data,
+        po_validation: ocrResult.po_validation,
+        qty_shipped: (ocrResult as any).qty_shipped,
       });
 
       setSuccess(true);
@@ -244,7 +255,7 @@ export default function InvoiceUpload() {
 
       await invoiceApi.saveStandaloneCorrection({
         vendor_name: ocrResult.vendor_name,
-        raw_text: '',
+        raw_text: (ocrResult as any).raw_text || (originalOcrResult as any).raw_text || '',
         original_fields: originalFields,
         corrected_fields: correctedFields,
         note: 'Manual correction from upload review',
@@ -252,7 +263,7 @@ export default function InvoiceUpload() {
 
       setCorrectionSaved(true);
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || 'Failed to save correction');
+      setError(err?.response?.data?.message || err?.response?.data?.error?.message || err?.message || 'Failed to save correction');
     } finally {
       setUploading(false);
     }
@@ -273,16 +284,19 @@ export default function InvoiceUpload() {
 
   if (success) {
     return (
-      <div className="bg-white rounded-lg shadow-sm p-8 border border-gray-200">
+      <div className="rounded-2xl p-8" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
         <div className="flex flex-col items-center justify-center py-12">
-          <div className="bg-green-100 p-4 rounded-full mb-4">
-            <CheckCircle className="h-12 w-12 text-green-600" />
+          <div className="p-4 rounded-full mb-4" style={{ background: 'color-mix(in srgb, var(--accent-green) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-green) 20%, transparent)' }}>
+            <CheckCircle className="h-12 w-12" style={{ color: 'var(--accent-green)' }} strokeWidth={1.75} />
           </div>
-          <h3 className="text-xl font-semibold text-gray-900 mb-2">Invoice Uploaded Successfully</h3>
-          <p className="text-gray-500 mb-6">The invoice has been processed and added to the system.</p>
+          <h3 className="text-xl font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Invoice Uploaded Successfully</h3>
+          <p className="mb-6" style={{ color: 'var(--text-muted)' }}>The invoice has been processed and added to the system.</p>
           <Link
             to="/"
-            className="px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
+            className="px-6 py-2.5 rounded-xl transition-colors text-sm font-medium"
+            style={{ background: 'var(--accent-purple)', color: '#fff' }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--accent-purple-hover)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--accent-purple)'; }}
           >
             Return to Dashboard
           </Link>
@@ -292,13 +306,16 @@ export default function InvoiceUpload() {
   }
 
   return (
-    <div className="bg-white rounded-lg shadow-sm p-8 border border-gray-200">
+    <div className="rounded-2xl p-8" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center">
-          <Link to="/" className="mr-4 text-gray-400 hover:text-gray-600">
-            <ArrowLeft className="h-6 w-6" />
+          <Link to="/" className="mr-4 transition-colors" style={{ color: 'var(--text-muted)' }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
+          >
+            <ArrowLeft className="h-5 w-5" strokeWidth={1.75} />
           </Link>
-          <h2 className="text-2xl font-bold text-gray-900">Upload Invoice</h2>
+          <h2 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Upload Invoice</h2>
         </div>
       </div>
 
@@ -307,13 +324,14 @@ export default function InvoiceUpload() {
           <div
             onDrop={handleDrop}
             onDragOver={handleDragOver}
-            className="border-2 border-dashed border-gray-300 rounded-lg p-12 text-center hover:border-primary-500 transition-colors cursor-pointer"
+            className="border-2 border-dashed rounded-2xl p-12 text-center transition-colors cursor-pointer"
+            style={{ borderColor: 'var(--border-color)', background: 'var(--bg-elevated)' }}
           >
-            <Upload className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <p className="text-gray-600 mb-2">
+            <Upload className="h-12 w-12 mx-auto mb-4" style={{ color: 'var(--text-muted)' }} strokeWidth={1.75} />
+            <p className="mb-2" style={{ color: 'var(--text-secondary)' }}>
               Drag and drop your invoice PDF or image here, or click to browse
             </p>
-            <p className="text-sm text-gray-400">Supported formats: PDF, JPG, PNG</p>
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Supported formats: PDF, JPG, PNG</p>
             <input
               type="file"
               accept=".pdf,.jpg,.jpeg,.png"
@@ -323,32 +341,38 @@ export default function InvoiceUpload() {
             />
             <label
               htmlFor="file-input"
-              className="mt-4 inline-block px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors cursor-pointer"
+              className="mt-4 inline-block px-4 py-2 rounded-xl transition-colors cursor-pointer text-sm font-medium"
+              style={{ background: 'var(--bg-card-hover)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-elevated)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
             >
               Browse Files
             </label>
           </div>
 
           {file && (
-            <div className="mt-6 p-4 bg-gray-50 rounded-lg flex items-center justify-between">
+            <div className="mt-6 p-4 rounded-xl flex items-center justify-between" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
               <div className="flex items-center">
-                <FileText className="h-5 w-5 text-gray-400 mr-3" />
-                <span className="text-sm font-medium text-gray-900">{file.name}</span>
-                <span className="text-xs text-gray-500 ml-2">({(file.size / 1024).toFixed(1)} KB)</span>
+                <FileText className="h-5 w-5 mr-3" style={{ color: 'var(--text-muted)' }} strokeWidth={1.75} />
+                <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{file.name}</span>
+                <span className="text-xs ml-2" style={{ color: 'var(--text-muted)' }}>({(file.size / 1024).toFixed(1)} KB)</span>
               </div>
               <button
                 onClick={() => setFile(null)}
-                className="text-gray-400 hover:text-gray-600"
+                className="transition-colors"
+                style={{ color: 'var(--text-muted)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
               >
-                <X className="h-5 w-5" />
+                <X className="h-5 w-5" strokeWidth={1.75} />
               </button>
             </div>
           )}
 
           {error && (
-            <div className="mt-6 p-4 bg-red-50 rounded-lg flex items-start">
-              <AlertCircle className="h-5 w-5 text-red-600 mr-3 mt-0.5" />
-              <p className="text-sm text-red-700">{error}</p>
+            <div className="mt-6 p-4 rounded-xl flex items-start" style={{ background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}>
+              <AlertCircle className="h-5 w-5 mr-3 mt-0.5" style={{ color: 'var(--accent-red)' }} strokeWidth={1.75} />
+              <p className="text-sm" style={{ color: 'var(--accent-red)' }}>{error}</p>
             </div>
           )}
 
@@ -356,7 +380,13 @@ export default function InvoiceUpload() {
             <button
               onClick={handleUpload}
               disabled={uploading}
-              className="mt-6 w-full py-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
+              className="mt-6 w-full py-3 rounded-xl transition-colors disabled:cursor-not-allowed text-sm font-semibold"
+              style={uploading
+                ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' }
+                : { background: 'var(--accent-purple)', color: '#fff' }
+              }
+              onMouseEnter={(e) => { if (!uploading) e.currentTarget.style.background = 'var(--accent-purple-hover)'; }}
+              onMouseLeave={(e) => { if (!uploading) e.currentTarget.style.background = 'var(--accent-purple)'; }}
             >
               {uploading ? 'Processing...' : 'Process Invoice'}
             </button>
@@ -364,27 +394,27 @@ export default function InvoiceUpload() {
         </>
       ) : (
         <div className="space-y-6">
-          <div className="p-4 bg-blue-50 rounded-lg">
-            <h3 className="font-semibold text-blue-900 mb-2">OCR Extraction Results</h3>
-            <p className="text-sm text-blue-700">Review and confirm the extracted information below.</p>
+          <div className="p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-purple) 20%, transparent)' }}>
+            <h3 className="font-semibold mb-2" style={{ color: 'var(--accent-purple)' }}>OCR Extraction Results</h3>
+            <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Review and confirm the extracted information below.</p>
           </div>
 
           {ocrResult.is_handwritten && (
-            <div className="p-4 bg-orange-50 rounded-lg flex items-start">
-              <AlertCircle className="h-5 w-5 text-orange-600 mr-3 mt-0.5" />
+            <div className="p-4 rounded-xl flex items-start" style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}>
+              <AlertCircle className="h-5 w-5 mr-3 mt-0.5" style={{ color: 'var(--accent-amber)' }} strokeWidth={1.75} />
               <div>
-                <p className="text-sm font-medium text-orange-900">Handwritten Document Detected</p>
-                <p className="text-sm text-orange-700">This invoice was flagged as handwritten. Manual data entry by Purchasing Coordinator may be required.</p>
+                <p className="text-sm font-medium" style={{ color: 'var(--accent-amber)' }}>Handwritten Document Detected</p>
+                <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>This invoice was flagged as handwritten. Manual data entry by Purchasing Coordinator may be required.</p>
               </div>
             </div>
           )}
 
           {ocrResult.is_urgent && (
-            <div className="p-4 bg-red-50 rounded-lg flex items-start">
-              <AlertCircle className="h-5 w-5 text-red-600 mr-3 mt-0.5" />
+            <div className="p-4 rounded-xl flex items-start" style={{ background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}>
+              <AlertCircle className="h-5 w-5 mr-3 mt-0.5" style={{ color: 'var(--accent-red)' }} strokeWidth={1.75} />
               <div>
-                <p className="text-sm font-medium text-red-900">Urgent Payment Flag Detected</p>
-                <p className="text-sm text-red-700">
+                <p className="text-sm font-medium" style={{ color: 'var(--accent-red)' }}>Urgent Payment Flag Detected</p>
+                <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
                   {ocrResult.priority_pay_date 
                     ? `Priority payment requested by ${new Date(ocrResult.priority_pay_date).toLocaleDateString()}`
                     : 'Priority payment requested - immediate attention required'}
@@ -395,85 +425,94 @@ export default function InvoiceUpload() {
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Invoice Number</label>
+              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Invoice Number</label>
               <input
                 type="text"
                 value={ocrResult.invoice_number}
                 onChange={(e) => setOcrResult({ ...ocrResult, invoice_number: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Invoice Date</label>
+              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Invoice Date</label>
               <input
                 type="date"
                 value={ocrResult.invoice_date}
                 onChange={(e) => setOcrResult({ ...ocrResult, invoice_date: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Due Date</label>
+              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Due Date</label>
               <input
                 type="date"
                 value={ocrResult.due_date || ''}
                 onChange={(e) => setOcrResult({ ...ocrResult, due_date: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Invoice Received Date</label>
+              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Invoice Received Date</label>
               <input
                 type="date"
                 value={ocrResult.invoice_received_date || ''}
                 onChange={(e) => setOcrResult({ ...ocrResult, invoice_received_date: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Vendor Name</label>
+              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Vendor Name</label>
               <input
                 type="text"
                 value={ocrResult.vendor_name}
                 onChange={(e) => setOcrResult({ ...ocrResult, vendor_name: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Amount (USD)</label>
+              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Amount (USD)</label>
               <input
                 type="number"
                 step="0.01"
                 value={ocrResult.total_amount}
                 onChange={(e) => setOcrResult({ ...ocrResult, total_amount: parseFloat(e.target.value) })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Original Currency</label>
+              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Original Currency</label>
               <input
                 type="text"
                 value={ocrResult.invoice_currency_original || ''}
                 onChange={(e) => setOcrResult({ ...ocrResult, invoice_currency_original: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Exchange Rate to USD</label>
+              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Exchange Rate to USD</label>
               <input
                 type="number"
                 step="0.0001"
                 value={ocrResult.exchange_rate_to_usd || ''}
                 onChange={(e) => setOcrResult({ ...ocrResult, exchange_rate_to_usd: parseFloat(e.target.value) })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Payment Terms</label>
+              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Payment Terms</label>
               <select
                 value={ocrResult.payment_terms}
                 onChange={(e) => setOcrResult({ ...ocrResult, payment_terms: e.target.value as PaymentTerms })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
               >
                 <option value="">Select payment terms...</option>
                 <option value="NET_30">NET 30</option>
@@ -491,20 +530,22 @@ export default function InvoiceUpload() {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Incoterm</label>
+              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Incoterm</label>
               <input
                 type="text"
                 value={ocrResult.incoterm || ''}
                 onChange={(e) => setOcrResult({ ...ocrResult, incoterm: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Invoice Type</label>
+              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Invoice Type</label>
               <select
                 value={ocrResult.invoice_type}
                 onChange={(e) => setOcrResult({ ...ocrResult, invoice_type: e.target.value as InvoiceType })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
               >
                 {Object.values(InvoiceType).map(type => (
                   <option key={type} value={type}>{type}</option>
@@ -512,11 +553,12 @@ export default function InvoiceUpload() {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Category</label>
               <select
                 value={ocrResult.category}
                 onChange={(e) => setOcrResult({ ...ocrResult, category: e.target.value as InvoiceCategory })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
               >
                 {Object.values(InvoiceCategory).map((category: InvoiceCategory) => (
                   <option key={category} value={category}>{category.replace(/_/g, ' ')}</option>
@@ -524,11 +566,12 @@ export default function InvoiceUpload() {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Bill To Entity</label>
+              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Bill To Entity</label>
               <select
                 value={ocrResult.bill_to_entity || ''}
                 onChange={(e) => setOcrResult({ ...ocrResult, bill_to_entity: e.target.value as BillToEntity })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
               >
                 <option value="">Select Entity</option>
                 {Object.values(BillToEntity).map((entity) => (
@@ -537,83 +580,91 @@ export default function InvoiceUpload() {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Date Range Start</label>
+              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Date Range Start</label>
               <input
                 type="date"
                 value={ocrResult.date_range_start || ''}
                 onChange={(e) => setOcrResult({ ...ocrResult, date_range_start: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Date Range End</label>
+              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Date Range End</label>
               <input
                 type="date"
                 value={ocrResult.date_range_end || ''}
                 onChange={(e) => setOcrResult({ ...ocrResult, date_range_end: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Priority Pay Date</label>
+              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Priority Pay Date</label>
               <input
                 type="date"
                 value={ocrResult.priority_pay_date || ''}
                 onChange={(e) => setOcrResult({ ...ocrResult, priority_pay_date: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Bank Charges</label>
+              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Bank Charges</label>
               <input
                 type="number"
                 step="0.01"
                 value={ocrResult.bank_charges}
                 onChange={(e) => setOcrResult({ ...ocrResult, bank_charges: parseFloat(e.target.value) })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Freight Charges</label>
+              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Freight Charges</label>
               <input
                 type="number"
                 step="0.01"
                 value={ocrResult.freight_charges}
                 onChange={(e) => setOcrResult({ ...ocrResult, freight_charges: parseFloat(e.target.value) })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Additional Charges</label>
+              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Additional Charges</label>
               <input
                 type="number"
                 step="0.01"
                 value={ocrResult.additional_charges}
                 onChange={(e) => setOcrResult({ ...ocrResult, additional_charges: parseFloat(e.target.value) })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+            <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Notes</label>
             <textarea
               value={''}
               onChange={() => {}}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+              className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+              style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
               rows={2}
             />
           </div>
 
           {requiresManualVendor && (
-            <div className="p-4 bg-yellow-50 rounded-lg">
-              <label className="block text-sm font-medium text-yellow-900 mb-2">
+            <div className="p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}>
+              <label className="block text-sm font-medium mb-2" style={{ color: 'var(--accent-amber)' }}>
                 Vendor Not Found - Please Select from Suggestions
               </label>
               <select
                 value={selectedVendor}
                 onChange={(e) => setSelectedVendor(e.target.value)}
-                className="w-full px-3 py-2 border border-yellow-300 rounded-md focus:outline-none focus:ring-yellow-500 focus:border-yellow-500"
+                className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                style={{ background: 'var(--input-bg)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)', color: 'var(--text-primary)' }}
               >
                 <option value="">Select a vendor...</option>
                 {vendorSuggestions.map((vendor) => (
@@ -626,9 +677,9 @@ export default function InvoiceUpload() {
           )}
 
           {error && (
-            <div className="p-4 bg-red-50 rounded-lg flex items-start">
-              <AlertCircle className="h-5 w-5 text-red-600 mr-3 mt-0.5" />
-              <p className="text-sm text-red-700">{error}</p>
+            <div className="p-4 rounded-xl flex items-start" style={{ background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}>
+              <AlertCircle className="h-5 w-5 mr-3 mt-0.5" style={{ color: 'var(--accent-red)' }} strokeWidth={1.75} />
+              <p className="text-sm" style={{ color: 'var(--accent-red)' }}>{error}</p>
             </div>
           )}
 
@@ -636,28 +687,43 @@ export default function InvoiceUpload() {
             <button
               onClick={handleConfirm}
               disabled={uploading || (requiresManualVendor && !selectedVendor)}
-              className="flex-1 py-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
+              className="flex-1 py-3 rounded-xl transition-colors disabled:cursor-not-allowed text-sm font-semibold"
+              style={uploading || (requiresManualVendor && !selectedVendor)
+                ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' }
+                : { background: 'var(--accent-lime)', color: 'var(--bg-base)' }
+              }
+              onMouseEnter={(e) => { if (!(uploading || (requiresManualVendor && !selectedVendor))) e.currentTarget.style.background = 'var(--accent-lime-hover)'; }}
+              onMouseLeave={(e) => { if (!(uploading || (requiresManualVendor && !selectedVendor))) e.currentTarget.style.background = 'var(--accent-lime)'; }}
             >
               {uploading ? 'Confirming...' : 'Confirm & Create Invoice'}
             </button>
             <button
               onClick={handleSaveCorrection}
               disabled={uploading || correctionSaved || !originalOcrResult}
-              className="px-6 py-3 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 transition-colors disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed flex items-center gap-2"
+              className="px-6 py-3 rounded-xl transition-colors disabled:cursor-not-allowed flex items-center gap-2 text-sm font-medium"
+              style={uploading || correctionSaved || !originalOcrResult
+                ? { background: 'var(--bg-elevated)', color: 'var(--text-muted)', border: '1px solid var(--border-color)', cursor: 'not-allowed' }
+                : { background: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)', color: 'var(--accent-purple)', border: '1px solid color-mix(in srgb, var(--accent-purple) 20%, transparent)' }
+              }
+              onMouseEnter={(e) => { if (!(uploading || correctionSaved || !originalOcrResult)) e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-purple) 20%, transparent)'; }}
+              onMouseLeave={(e) => { if (!(uploading || correctionSaved || !originalOcrResult)) e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-purple) 10%, transparent)'; }}
             >
               {correctionSaved ? (
                 <>
-                  <CheckCircle className="h-4 w-4" /> Saved
+                  <CheckCircle className="h-4 w-4" strokeWidth={1.75} /> Saved
                 </>
               ) : (
                 <>
-                  <Save className="h-4 w-4" /> Save Correction
+                  <Save className="h-4 w-4" strokeWidth={1.75} /> Save Correction
                 </>
               )}
             </button>
             <button
               onClick={handleReset}
-              className="px-6 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+              className="px-6 py-3 transition-colors text-sm font-medium"
+              style={{ color: 'var(--text-secondary)' }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
             >
               Cancel
             </button>

@@ -39,6 +39,7 @@ export const invoiceApi = {
   approve: (id: string, signerName: string) => api.post(`/api/invoices/${id}/approve`, { signerName }),
   reject: (id: string, reason: string) => api.post(`/api/invoices/${id}/reject`, { reason }),
   post: (id: string) => api.post(`/api/invoices/${id}/post`),
+  releaseHold: (id: string) => api.post(`/api/invoices/${id}/release-hold`),
   schedulePayment: (id: string, paymentDate: string) => api.post(`/api/invoices/${id}/schedule-payment`, { paymentDate }),
 };
 
@@ -78,6 +79,22 @@ export const vendorApi = {
 
 export const auditLogApi = {
   getAll: (params?: any) => api.get('/api/audit-logs', { params }),
+};
+
+export const analyticsApi = {
+  getDashboard: (days?: number) => api.get('/api/analytics/dashboard', { params: { days } }),
+  getConfidence: (days?: number) => api.get('/api/analytics/confidence', { params: { days } }),
+  getVendors: (days?: number) => api.get('/api/analytics/vendors', { params: { days } }),
+  getErrors: (days?: number) => api.get('/api/analytics/errors', { params: { days } }),
+  getTimeline: (days?: number) => api.get('/api/analytics/timeline', { params: { days } }),
+  getPerformance: (days?: number) => api.get('/api/analytics/performance', { params: { days } }),
+};
+
+export const notificationApi = {
+  getAll: (limit?: number) => api.get('/api/notifications', { params: { limit } }),
+  getUnreadCount: () => api.get('/api/notifications/unread-count'),
+  markAsRead: (id: string) => api.patch(`/api/notifications/${id}/read`),
+  markAllAsRead: () => api.patch('/api/notifications/mark-all-read'),
 };
 
 export default api;

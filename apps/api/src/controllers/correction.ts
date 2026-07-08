@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import { correctionLogService } from '../services/correctionLogService';
+import { fieldDecisionEngine } from '../services/fieldDecisionEngine';
 import { AppError } from '../middleware/errorHandler';
 import { logAudit } from '../services/auditLogService';
 
@@ -17,7 +18,7 @@ export const saveCorrection = async (
       throw new AppError('corrected_fields is required', 400);
     }
 
-    const log = await correctionLogService.saveCorrection({
+    await fieldDecisionEngine.saveCorrection({
       invoice_id: invoiceId,
       vendor_name,
       invoice_template_type,
@@ -36,7 +37,6 @@ export const saveCorrection = async (
 
     res.status(201).json({
       success: true,
-      id: log.id,
       message: 'Correction saved and will be used for future extractions',
     });
   } catch (error) {
@@ -56,7 +56,7 @@ export const saveStandaloneCorrection = async (
       throw new AppError('corrected_fields is required', 400);
     }
 
-    const log = await correctionLogService.saveCorrection({
+    await fieldDecisionEngine.saveCorrection({
       vendor_name,
       invoice_template_type,
       raw_text,
@@ -73,7 +73,6 @@ export const saveStandaloneCorrection = async (
 
     res.status(201).json({
       success: true,
-      id: log.id,
       message: 'Correction saved and will be used for future extractions',
     });
   } catch (error) {

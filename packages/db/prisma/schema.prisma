@@ -84,6 +84,7 @@ model Invoice {
   brand_tier            BrandTier?
   season                String?
   order_type            OrderType?
+  qty_shipped           Int?
   incoterm              String?
   hs_code               String?
   grand_total           Decimal?
@@ -91,6 +92,7 @@ model Invoice {
   // Invoice classification
   invoice_type          InvoiceType
   invoice_template_type InvoiceTemplateType?
+  category              InvoiceCategory @default(TRIMS)
   parent_invoice_id     String?
   parent_invoice        Invoice?      @relation("PItoCI", fields: [parent_invoice_id], references: [id])
   child_invoices        Invoice[]     @relation("PItoCI")
@@ -111,7 +113,14 @@ model Invoice {
   is_duplicate          Boolean       @default(false)
   ocr_confidence_score  Decimal?
   is_handwritten        Boolean       @default(false)
+  ocr_raw_data          Json?
+  po_validation         Json?
   exception_reasons     ExceptionReason[]
+  
+  // Extracted bank info (fallback when vendor bank details are missing)
+  bank_name             String?
+  swift_code            String?
+  account_number        String?
   
   // Duplicate detection hash
   invoice_hash          String?       @unique
@@ -167,6 +176,7 @@ model Signature {
   signatory_role SignatoryRole
   signed_at     DateTime?
   signature_type SignatureType
+  ocr_detected  Boolean       @default(false)
   created_at    DateTime      @default(now())
   
   @@index([invoice_id])
@@ -347,6 +357,7 @@ enum ExceptionReason {
   MISSING_BRAND_TIER
   VENDOR_THRESHOLD_EXCEEDED
   BATCH_THRESHOLD_NOT_MET
+  PO_NOT_FOUND
 }
 
 enum BillToEntity {
@@ -428,4 +439,25 @@ model CorrectionLog {
   @@index([use_count])
   @@index([created_at])
   @@map("APInvoice_CorrectionLog")
+}
+
+model Notification {
+  id           String   @id @default(uuid())
+  invoice_id   String?
+  invoice_number String?
+  vendor_name  String?
+  title        String
+  message      String
+  type         String   @default("info") // info, success, warning, error
+  category     String   @default("stage") // stage, exception, approval, upload, payment
+  target_role  String?  // null = all roles, or specific role
+  is_read      Boolean  @default(false)
+  read_at      DateTime?
+  created_at   DateTime @default(now())
+
+  @@index([target_role])
+  @@index([is_read])
+  @@index([created_at])
+  @@index([invoice_id])
+  @@map("APInvoice_Notification")
 }

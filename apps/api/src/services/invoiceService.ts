@@ -4,6 +4,8 @@ import { AppError } from '../middleware/errorHandler';
 import { isTop10Brand, TOP_10_BRANDS } from '@ap-invoice/shared';
 import { logAudit } from './auditLogService';
 import { matchVendor } from './vendorMatchingService';
+import { fieldDecisionEngine } from './fieldDecisionEngine';
+import { inAppNotificationService } from './inAppNotificationService';
 import crypto from 'crypto';
 
 function safeDate(value: any): Date | null {
@@ -45,10 +47,12 @@ export const createInvoice = async (invoiceData: any, userId: string) => {
     ship_to,
     sold_to,
     invoice_type,
+    category,
     order_type,
     brand,
     brand_code,
     season,
+    qty_shipped,
     mpo_number,
     customer_po_number,
     bill_to_entity,
@@ -60,6 +64,12 @@ export const createInvoice = async (invoiceData: any, userId: string) => {
     qb_account_class,
     vendor_name_raw,
     source,
+    po_validation,
+    ocr_raw_data,
+    bank_name,
+    swift_code,
+    account_number,
+    ocr_confidence_score,
   } = invoiceData;
 
   // Validate required fields
@@ -69,6 +79,18 @@ export const createInvoice = async (invoiceData: any, userId: string) => {
   const parsedAmount = parseFloat(total_amount);
   if (isNaN(parsedAmount) || parsedAmount <= 0) {
     throw new AppError('Total amount must be a positive number', 400);
+  }
+
+  // Check for duplicate invoice number
+  const existingInvoice = await prisma.invoice.findUnique({
+    where: { invoice_number: String(invoice_number).trim() },
+    select: { id: true, status: true },
+  });
+  if (existingInvoice) {
+    throw new AppError(
+      `Invoice number "${invoice_number}" already exists (status: ${existingInvoice.status}). Duplicate invoices are not allowed.`,
+      409
+    );
   }
   if (!isValidInvoiceType(invoice_type)) {
     throw new AppError(`Invalid invoice type: ${invoice_type}`, 400);
@@ -137,11 +159,13 @@ export const createInvoice = async (invoiceData: any, userId: string) => {
       ship_to: ship_to || null,
       sold_to: sold_to || null,
       invoice_type,
+      category: category || 'TRIMS',
       order_type,
       brand,
       brand_code,
       brand_tier,
       season,
+      qty_shipped: qty_shipped ? parseInt(qty_shipped) : null,
       mpo_number,
       customer_po_number,
       bill_to_entity: bill_to_entity || 'MADISON_88_LTD',
@@ -153,7 +177,13 @@ export const createInvoice = async (invoiceData: any, userId: string) => {
       qb_account_class,
       vendor_name_raw: vendor_name_raw || '',
       source: source || 'MANUAL_UPLOAD',
-      status: InvoiceStatus.VALIDATION_PENDING as any,
+      status: InvoiceStatus.RECEIVED as any,
+      po_validation: po_validation || undefined,
+      ocr_raw_data: ocr_raw_data || undefined,
+      bank_name: bank_name || undefined,
+      swift_code: swift_code || undefined,
+      account_number: account_number || undefined,
+      ocr_confidence_score: ocr_confidence_score ? parseFloat(ocr_confidence_score) : null,
     },
     include: {
       vendor: true,
@@ -172,7 +202,32 @@ export const createInvoice = async (invoiceData: any, userId: string) => {
     },
   });
 
-  return invoice;
+  // Notify: new invoice arrived
+  await inAppNotificationService.notifyStageTransition(
+    invoice.id, String(invoice_number), vendor_name_raw || 'Unknown', '', 'RECEIVED'
+  );
+
+  // Auto-trigger validation so batch threshold and other checks run immediately
+  try {
+    const { validateInvoice } = await import('./validationService');
+    await validateInvoice(invoice.id);
+  } catch (error) {
+    // Log but don't fail creation if validation has issues
+    console.error('[AutoValidation] Failed after invoice creation:', error);
+  }
+
+  // Re-fetch to return the updated invoice with validation results
+  const updatedInvoice = await prisma.invoice.findUnique({
+    where: { id: invoice.id },
+    include: {
+      vendor: true,
+      signatures: true,
+      exceptions: true,
+      stage_timestamps: true,
+    },
+  });
+
+  return updatedInvoice || invoice;
 };
 
 export const getInvoices = async (filters: any) => {
@@ -287,9 +342,29 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     throw new AppError(`Cannot edit invoice in ${existing.status} status`, 400);
   }
 
+  // Convert date strings to Date objects for Prisma DateTime fields
+  const data: Record<string, any> = {};
+
+  // Only copy defined, non-undefined values — prevents accidental null overwrites
+  const protectedFields = ['id', 'created_at', 'updated_at', 'status', 'source', 'approval_tier', 'qb_posted_at', 'vendor_id'];
+  for (const [key, value] of Object.entries(invoiceData)) {
+    if (value === undefined) continue;
+    if (protectedFields.includes(key)) continue;
+    data[key] = value;
+  }
+
+  const dateFields = ['invoice_date', 'due_date', 'invoice_received_date', 'date_range_start', 'date_range_end', 'priority_pay_date'];
+  for (const field of dateFields) {
+    if (data[field] !== undefined && data[field] !== null && data[field] !== '') {
+      data[field] = safeDate(data[field]);
+    } else if (data[field] === '') {
+      data[field] = null;
+    }
+  }
+
   const invoice = await prisma.invoice.update({
     where: { id },
-    data: invoiceData,
+    data,
     include: {
       vendor: true,
       signatures: true,
@@ -304,6 +379,33 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     action: 'INVOICE_UPDATED',
     note: `Invoice updated by coordinator. Fields: ${Object.keys(invoiceData).join(', ')}`,
   });
+
+  // Feed edits into AI learning system — compare original vs updated fields
+  try {
+    const originalFields: Record<string, any> = {};
+    const correctedFields: Record<string, any> = {};
+    for (const key of Object.keys(invoiceData)) {
+      if (invoiceData[key] === undefined) continue;
+      const oldVal = (existing as any)[key];
+      const newVal = invoiceData[key];
+      if (oldVal !== undefined && String(oldVal) !== String(newVal)) {
+        originalFields[key] = oldVal;
+        correctedFields[key] = newVal;
+      }
+    }
+    if (Object.keys(correctedFields).length > 0) {
+      await fieldDecisionEngine.saveCorrection({
+        invoice_id: invoice.id,
+        vendor_name: existing.vendor_name_raw || invoice.vendor_name_raw || undefined,
+        original_fields: originalFields,
+        corrected_fields: correctedFields,
+        note: 'Auto-logged from dashboard edit',
+      });
+      console.log(`[AI Learning] Correction logged from edit: ${Object.keys(correctedFields).join(', ')}`);
+    }
+  } catch (learnError) {
+    console.error('[AI Learning] Failed to log correction from edit:', learnError);
+  }
 
   return invoice;
 };

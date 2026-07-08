@@ -1,7 +1,8 @@
 import prisma from '../config/database';
-import { InvoiceStatus, ExceptionReason } from '@ap-invoice/shared';
+import { InvoiceStatus, ExceptionReason, SLA_LIMITS, calcWorkingHoursElapsed } from '@ap-invoice/shared';
 import { AppError } from '../middleware/errorHandler';
 import { nextGenService } from './nextGenService';
+import { inAppNotificationService } from './inAppNotificationService';
 
 // QuickBooks Online API configuration
 const QB_CLIENT_ID = process.env.QB_CLIENT_ID || '';
@@ -62,8 +63,9 @@ async function prePostCheck(invoice: any): Promise<PrePostResult> {
   const qb_memo = invoice.qb_memo || memoParts.join('_');
 
   // 3. Amount vs PO variance via NextGen (new check)
+  // Skip for STATEMENT documents — monthly aggregates won't match a single PO
   const poRef = invoice.mpo_number || invoice.po_number;
-  if (poRef) {
+  if (poRef && invoice.invoice_type !== 'STATEMENT') {
     try {
       const po = invoice.mpo_number
         ? await nextGenService.getFullPOByMPO(invoice.mpo_number)
@@ -125,7 +127,7 @@ export async function postInvoice(invoiceId: string, userId: string) {
     throw new AppError('Invoice not found', 404);
   }
 
-  if (invoice.status !== InvoiceStatus.APPROVED as any) {
+  if (invoice.status !== InvoiceStatus.APPROVED as any && invoice.status !== InvoiceStatus.PENDING_ACCOUNTING as any && invoice.status !== InvoiceStatus.ON_HOLD as any) {
     throw new AppError('Invoice must be approved before posting', 400);
   }
 
@@ -149,10 +151,15 @@ export async function postInvoice(invoiceId: string, userId: string) {
   if (!check.ready) {
     // Create exceptions for blocking flags and route to accounting review
     for (const flag of check.flags) {
+      const flagReason = flag.type === 'AMOUNT_VARIANCE'
+        ? ExceptionReason.AMOUNT_MISMATCH
+        : flag.type === 'PO_NOT_FOUND'
+        ? ExceptionReason.PO_NOT_FOUND
+        : ExceptionReason.AMOUNT_MISMATCH;
       await prisma.exception.create({
         data: {
           invoice_id: invoiceId,
-          reason: (flag.type === 'AMOUNT_VARIANCE' ? ExceptionReason.AMOUNT_MISMATCH : ExceptionReason.HANDWRITTEN_DOCUMENT) as any,
+          reason: flagReason as any,
           detail: `[PRE-POST ${flag.severity.toUpperCase()}] ${flag.detail}`,
         },
       });
@@ -160,8 +167,23 @@ export async function postInvoice(invoiceId: string, userId: string) {
 
     await prisma.invoice.update({
       where: { id: invoiceId },
-      data: { status: InvoiceStatus.EXCEPTION_FLAGGED as any },
+      data: { status: InvoiceStatus.ON_HOLD as any },
     });
+
+    // Exit the PENDING_ACCOUNTING stage timestamp — SLA stops ticking while on hold
+    const accountingStage = await prisma.stageTimestamp.findFirst({
+      where: { invoice_id: invoiceId, stage: InvoiceStatus.PENDING_ACCOUNTING as any, exited_at: null },
+    });
+    if (accountingStage) {
+      const elapsedHours = calcWorkingHoursElapsed(new Date(accountingStage.entered_at), new Date());
+      await prisma.stageTimestamp.update({
+        where: { id: accountingStage.id },
+        data: {
+          exited_at: new Date(),
+          is_breached: elapsedHours > accountingStage.sla_hours,
+        },
+      });
+    }
 
     await prisma.auditLog.create({
       data: {
@@ -172,7 +194,7 @@ export async function postInvoice(invoiceId: string, userId: string) {
       },
     });
 
-    return { posted: false, status: 'EXCEPTION_FLAGGED', flags: check.flags };
+    return { posted: false, status: 'ON_HOLD', flags: check.flags };
   }
 
   // Log any warnings (non-blocking) as audit trail
@@ -190,12 +212,38 @@ export async function postInvoice(invoiceId: string, userId: string) {
   // Post to QuickBooks Online
   const postingResult = await postToQuickBooks(invoice, check.gl_account, check.qb_memo);
 
+  // Exit PENDING_ACCOUNTING stage timestamp
+  const accountingStage = await prisma.stageTimestamp.findFirst({
+    where: { invoice_id: invoiceId, stage: InvoiceStatus.PENDING_ACCOUNTING as any, exited_at: null },
+  });
+  if (accountingStage) {
+    const elapsedHours = calcWorkingHoursElapsed(new Date(accountingStage.entered_at), new Date());
+    await prisma.stageTimestamp.update({
+      where: { id: accountingStage.id },
+      data: {
+        exited_at: new Date(),
+        is_breached: elapsedHours > accountingStage.sla_hours,
+      },
+    });
+  }
+
   // Update invoice status to POSTED_TO_QB
   await prisma.invoice.update({
     where: { id: invoiceId },
     data: {
       status: InvoiceStatus.POSTED_TO_QB as any,
       qb_posted_at: new Date(),
+    },
+  });
+  await inAppNotificationService.notifyStageTransition(invoiceId, invoice.invoice_number, invoice.vendor?.name || 'Unknown', '', 'POSTED_TO_QB');
+
+  // Create stage timestamp for POSTED_TO_QB
+  await prisma.stageTimestamp.create({
+    data: {
+      invoice_id: invoiceId,
+      stage: InvoiceStatus.POSTED_TO_QB as any,
+      entered_at: new Date(),
+      sla_hours: SLA_LIMITS.PAYMENT_DAYS * 24,
     },
   });
 
@@ -289,10 +337,36 @@ export async function schedulePayment(
     },
   });
 
+  // Exit POSTED_TO_QB stage timestamp
+  const postedStage = await prisma.stageTimestamp.findFirst({
+    where: { invoice_id: invoiceId, stage: InvoiceStatus.POSTED_TO_QB as any, exited_at: null },
+  });
+  if (postedStage) {
+    const elapsedHours = calcWorkingHoursElapsed(new Date(postedStage.entered_at), new Date());
+    await prisma.stageTimestamp.update({
+      where: { id: postedStage.id },
+      data: {
+        exited_at: new Date(),
+        is_breached: elapsedHours > postedStage.sla_hours,
+      },
+    });
+  }
+
   // Update invoice status to PAYMENT_SCHEDULED
   await prisma.invoice.update({
     where: { id: invoiceId },
     data: { status: InvoiceStatus.PAYMENT_SCHEDULED as any },
+  });
+  await inAppNotificationService.notifyStageTransition(invoiceId, invoice.invoice_number, invoice.vendor?.name || 'Unknown', '', 'PAYMENT_SCHEDULED');
+
+  // Create stage timestamp for PAYMENT_SCHEDULED
+  await prisma.stageTimestamp.create({
+    data: {
+      invoice_id: invoiceId,
+      stage: InvoiceStatus.PAYMENT_SCHEDULED as any,
+      entered_at: new Date(),
+      sla_hours: SLA_LIMITS.PAYMENT_DAYS * 24,
+    },
   });
 
   // Create audit log entry
@@ -340,6 +414,35 @@ export async function processPayment(paymentId: string, userId: string) {
     where: { id: payment.invoice_id },
     data: { status: InvoiceStatus.PAID as any },
   });
+  const paidInvoice = await prisma.invoice.findUnique({ where: { id: payment.invoice_id }, include: { vendor: true } });
+  await inAppNotificationService.notifyStageTransition(payment.invoice_id, paidInvoice?.invoice_number || '', paidInvoice?.vendor?.name || 'Unknown', '', 'PAID');
+
+  // Exit PAYMENT_SCHEDULED stage timestamp
+  const scheduledStage = await prisma.stageTimestamp.findFirst({
+    where: { invoice_id: payment.invoice_id, stage: InvoiceStatus.PAYMENT_SCHEDULED as any, exited_at: null },
+  });
+  if (scheduledStage) {
+    const elapsedHours = calcWorkingHoursElapsed(new Date(scheduledStage.entered_at), new Date());
+    await prisma.stageTimestamp.update({
+      where: { id: scheduledStage.id },
+      data: {
+        exited_at: new Date(),
+        is_breached: elapsedHours > scheduledStage.sla_hours,
+      },
+    });
+  }
+
+  // Create stage timestamp for PAID (final stage)
+  await prisma.stageTimestamp.create({
+    data: {
+      invoice_id: payment.invoice_id,
+      stage: InvoiceStatus.PAID as any,
+      entered_at: new Date(),
+      sla_hours: 0,
+      exited_at: new Date(),
+      is_breached: false,
+    },
+  });
 
   // Create audit log entry
   await prisma.auditLog.create({
@@ -365,6 +468,68 @@ async function simulatePaymentProcessing(payment: any) {
     currency: payment.currency,
     vendor_id: payment.vendor_id,
   };
+}
+
+/**
+ * Release an invoice from ON_HOLD back to APPROVED
+ * Used when pre-post check issues have been resolved manually
+ */
+export async function releaseFromHold(invoiceId: string, userId: string) {
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    include: { exceptions: true },
+  });
+
+  if (!invoice) {
+    throw new AppError('Invoice not found', 404);
+  }
+
+  if (invoice.status !== InvoiceStatus.ON_HOLD as any) {
+    throw new AppError('Invoice is not on hold', 400);
+  }
+
+  // Resolve any PENDING exceptions that were created by the pre-post check
+  const pendingExceptions = invoice.exceptions.filter(
+    (exc: any) => exc.status === 'PENDING'
+  );
+  for (const exc of pendingExceptions) {
+    await prisma.exception.update({
+      where: { id: exc.id },
+      data: {
+        status: 'RESOLVED' as any,
+        resolved_at: new Date(),
+        resolved_by: userId,
+        resolution_notes: `Auto-resolved: invoice released from ON_HOLD by user. Pre-post issue manually addressed.`,
+      },
+    });
+  }
+
+  // Update invoice status back to PENDING_ACCOUNTING so it can be re-posted
+  await prisma.invoice.update({
+    where: { id: invoiceId },
+    data: { status: InvoiceStatus.PENDING_ACCOUNTING as any },
+  });
+
+  // Re-enter PENDING_ACCOUNTING stage since the previous one was exited when the pre-post check failed
+  await prisma.stageTimestamp.create({
+    data: {
+      invoice_id: invoiceId,
+      stage: InvoiceStatus.PENDING_ACCOUNTING as any,
+      entered_at: new Date(),
+      sla_hours: SLA_LIMITS.ACCOUNTING_DAYS * 24,
+    },
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      invoice_id: invoiceId,
+      action: 'RELEASED_FROM_HOLD',
+      performed_by: userId,
+      note: `Invoice released from ON_HOLD back to PENDING_ACCOUNTING by user. ${pendingExceptions.length} pre-post exception(s) auto-resolved.`,
+    },
+  });
+
+  return { message: 'Invoice released from hold', invoice_id: invoiceId };
 }
 
 export async function getScheduledPayments() {

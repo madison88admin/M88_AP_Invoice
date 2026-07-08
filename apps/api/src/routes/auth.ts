@@ -90,6 +90,7 @@ function getRoleForUsername(username: string): UserRole {
     'Maricon': 'PURCHASING_COORDINATOR',
     'Maricar': 'PURCHASING_MANAGER',
     'Maryann': 'PURCHASING_MANAGER',
+    'Maryan': 'MLO_ACCOUNT_HOLDER',
     'Wyssa': 'ACCOUNTING_ASSOCIATE',
     'Al': 'ACCOUNTING_SUPERVISOR',
     'Lindsey': 'SR_MANAGER_GLOBAL_PRODUCTION',

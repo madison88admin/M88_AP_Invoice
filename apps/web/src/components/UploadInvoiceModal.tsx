@@ -19,6 +19,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
   const [uploadComplete, setUploadComplete] = useState(false);
   const [poValidation, setPoValidation] = useState<any>(null);
   const [consensus, setConsensus] = useState<any>(null);
+  const [ocrRawData, setOcrRawData] = useState<any>(null);
   const [requiresManualVendorAssignment, setRequiresManualVendorAssignment] = useState(false);
   const [matchedVendorId, setMatchedVendorId] = useState<string | null>(null);
   const [extractedBrandCode, setExtractedBrandCode] = useState<string | null>(null);
@@ -74,6 +75,15 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
         // Set PO validation and consensus results (display-only in AST mode)
         setPoValidation(response.data.po_validation);
         setConsensus(response.data.consensus);
+        setOcrRawData({
+          extraction,
+          bank_info: extraction.bank_details || {
+            bank_name: extraction.bank_name || '',
+            swift_code: extraction.swift_code || '',
+            account_number: extraction.account_number || '',
+          },
+          signatures: extraction.signatures || [],
+        });
         setRequiresManualVendorAssignment(response.data.requires_manual_vendor_assignment || false);
         setMatchedVendorId(response.data.vendor_match?.vendor_id || null);
         setExtractedBrandCode(extraction.brand_code || extraction.brand || null);
@@ -185,24 +195,53 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
         documentType === 'STATEMENT' ? 'STATEMENT' :
         'INVOICE';
 
+      const ext = ocrRawData?.extraction || {};
+
       const invoicePayload = {
         invoice_number: formData.invoiceNumber,
         invoice_date: formData.invoiceDate || undefined,
         due_date: formData.dueDate || undefined,
         invoice_received_date: new Date().toISOString(),
+        date_range_start: ext.date_range_start || undefined,
+        date_range_end: ext.date_range_end || undefined,
         vendor_id: matchedVendorId || undefined,
         vendor_name_raw: formData.vendorName,
         total_amount: parseFloat(formData.amount),
+        invoice_currency_original: ext.invoice_currency_original || ext.currency || undefined,
+        exchange_rate_to_usd: ext.exchange_rate_to_usd || undefined,
         currency: formData.currency,
+        payment_terms: formData.paymentTerms || undefined,
+        incoterm: ext.incoterm || undefined,
+        subtotal: ext.subtotal || undefined,
+        tax_amount: ext.tax_amount || undefined,
+        discount_amount: ext.discount_amount || undefined,
+        bank_charges: ext.bank_charges || 0,
+        freight_charges: ext.freight_charges || 0,
+        additional_charges: ext.additional_charges || 0,
+        ship_to: ext.ship_to || undefined,
+        sold_to: ext.sold_to || undefined,
         invoice_type: invoiceType,
+        category: ext.category || 'TRIMS',
         order_type: formData.orderType || undefined,
         brand: formData.brand || undefined,
         brand_code: extractedBrandCode || undefined,
         season: formData.season || undefined,
+        qty_shipped: formData.qtyShipped ? parseFloat(formData.qtyShipped) : ext.qty_shipped || undefined,
         mpo_number: formData.mpoNumber || undefined,
         customer_po_number: formData.poNumber || undefined,
-        payment_terms: formData.paymentTerms || undefined,
+        bill_to_entity: ext.bill_to_entity || 'MADISON_88_LTD',
+        is_handwritten: ext.is_handwritten || false,
+        is_urgent: formData.priority === 'high' || ext.is_urgent || false,
+        priority_flag: formData.priority === 'high' || ext.is_urgent || false,
+        priority_pay_date: ext.priority_pay_date || undefined,
+        bank_name: formData.bankName || undefined,
+        swift_code: formData.swiftCode || undefined,
+        account_number: formData.accountNumber || undefined,
+        ocr_confidence_score: ext.ocr_confidence_score || undefined,
+        signatures: ext.signatures || undefined,
         source: 'MANUAL_UPLOAD',
+        po_validation: poValidation || undefined,
+        ocr_raw_data: ocrRawData || undefined,
       };
 
       const response = await invoiceApi.create(invoicePayload);
@@ -218,10 +257,11 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
         setUploadComplete(true);
         setIsUploading(false);
       }, 500);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Upload failed:', error);
       setIsUploading(false);
-      alert('Failed to save invoice to the server. Please try again.');
+      const serverMessage = error?.response?.data?.message || error?.response?.data?.error?.message;
+      alert(serverMessage || 'Failed to save invoice to the server. Please try again.');
     }
   };
 
@@ -276,10 +316,12 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
         priority: formData.priority,
       };
 
+      const rawText = ocrRawData?.extraction?.raw_text || ocrRawData?.extraction?.rawText || '';
+
       if (createdInvoiceId) {
         await invoiceApi.saveCorrection(createdInvoiceId, {
           vendor_name: formData.vendorName,
-          raw_text: '',
+          raw_text: rawText,
           original_fields: originalFields,
           corrected_fields: correctedFields,
           note: 'Manual correction from upload modal',
@@ -287,7 +329,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
       } else {
         await invoiceApi.saveStandaloneCorrection({
           vendor_name: formData.vendorName,
-          raw_text: '',
+          raw_text: rawText,
           original_fields: originalFields,
           corrected_fields: correctedFields,
           note: 'Manual correction from upload modal (no invoice yet)',
@@ -295,9 +337,10 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
       }
 
       setCorrectionSaved(true);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to save correction:', error);
-      alert('Failed to save correction. Please try again.');
+      const message = error?.response?.data?.message || error?.response?.data?.error?.message || error?.message || 'Failed to save correction. Please try again.';
+      alert(message);
     } finally {
       setIsSavingCorrection(false);
     }
@@ -334,6 +377,8 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
     setUploadProgress(0);
     setUploadComplete(false);
     setConsensus(null);
+    setOcrRawData(null);
+    setPoValidation(null);
     setMatchedVendorId(null);
     setExtractedBrandCode(null);
     setCreatedInvoiceId(null);
@@ -353,7 +398,8 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
             style={{
               position: 'fixed',
               inset: 0,
-              background: '#000000',
+              background: 'rgba(0,0,0,0.6)',
+              backdropFilter: 'blur(4px)',
               zIndex: 1000,
             }}
             onClick={handleClose}
@@ -369,10 +415,10 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
               width: '600px',
               maxHeight: '90vh',
               overflowY: 'auto',
-              background: '#1e1b4b',
-              border: '2px solid #ffffff',
+              background: 'var(--bg-card)',
+              border: '1px solid var(--border-color)',
               borderRadius: '24px',
-              boxShadow: '0 24px 80px #000000',
+              boxShadow: '0 24px 80px rgba(0, 0, 0, 0.5)',
               padding: '32px',
               zIndex: 1001,
             }}
@@ -385,7 +431,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                 position: 'absolute',
                 top: '16px',
                 right: '16px',
-                background: 'rgba(255, 255, 255, 0.1)',
+                background: 'var(--bg-elevated)',
                 border: 'none',
                 borderRadius: '8px',
                 padding: '8px',
@@ -393,19 +439,19 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                 transition: 'background 150ms ease',
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)';
+                e.currentTarget.style.background = 'var(--bg-card-hover)';
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
+                e.currentTarget.style.background = 'var(--bg-elevated)';
               }}
             >
-              <X className="h-5 w-5 text-white" />
+              <X className="h-5 w-5" style={{ color: 'var(--text-primary)' }} />
             </button>
 
             {/* Header */}
             <div className="mb-6">
-              <h2 className="text-2xl font-bold text-white mb-2">Upload Invoice</h2>
-              <p className="text-sm text-slate-400">Supported formats: PDF, PNG, JPG, XLSX</p>
+              <h2 className="text-2xl font-bold mb-2" style={{ color: 'var(--text-primary)' }}>Upload Invoice</h2>
+              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Supported formats: PDF, PNG, JPG, XLSX</p>
             </div>
 
             {/* Drag & Drop Zone */}
@@ -416,9 +462,9 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                 onDragLeave={handleDragLeave}
                 style={{
                   height: '200px',
-                  border: isDragging ? '2px dashed rgba(99, 102, 241, 0.8)' : '2px dashed rgba(99, 102, 241, 0.4)',
+                  border: isDragging ? '2px dashed color-mix(in srgb, var(--accent-purple) 80%, transparent)' : '2px dashed color-mix(in srgb, var(--accent-purple) 40%, transparent)',
                   borderRadius: '16px',
-                  background: isDragging ? 'rgba(99, 102, 241, 0.1)' : 'rgba(99, 102, 241, 0.05)',
+                  background: isDragging ? 'color-mix(in srgb, var(--accent-purple) 10%, transparent)' : 'color-mix(in srgb, var(--accent-purple) 5%, transparent)',
                   display: 'flex',
                   flexDirection: 'column',
                   alignItems: 'center',
@@ -429,21 +475,21 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                 }}
                 onClick={() => document.getElementById('file-input')?.click()}
               >
-                <Upload className="h-12 w-12 text-indigo-400 mb-4" style={{ opacity: 0.7 }} />
-                <p className="text-white text-base mb-2">Drag & drop your invoice here</p>
-                <p className="text-slate-500 text-sm mb-4">or</p>
+                <Upload className="h-12 w-12 mb-4" style={{ color: 'var(--accent-purple)', opacity: 0.7 }} />
+                <p className="text-base mb-2" style={{ color: 'var(--text-primary)' }}>Drag & drop your invoice here</p>
+                <p className="text-sm mb-4" style={{ color: 'var(--text-muted)' }}>or</p>
                 <button
                   style={{
                     padding: '8px 16px',
                     background: 'transparent',
-                    border: '1px solid rgba(99, 102, 241, 0.6)',
+                    border: '1px solid color-mix(in srgb, var(--accent-purple) 60%, transparent)',
                     borderRadius: '8px',
-                    color: '#818cf8',
+                    color: 'var(--accent-violet)',
                     cursor: 'pointer',
                     transition: 'all 150ms ease',
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.background = 'rgba(99, 102, 241, 0.1)';
+                    e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-purple) 10%, transparent)';
                   }}
                   onMouseLeave={(e) => {
                     e.currentTarget.style.background = 'transparent';
@@ -463,8 +509,8 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
               /* File Preview */
               <div
                 style={{
-                  background: 'rgba(255, 255, 255, 0.05)',
-                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                  background: 'var(--bg-elevated)',
+                  border: '1px solid var(--border-color)',
                   borderRadius: '12px',
                   padding: '12px 16px',
                   marginBottom: '24px',
@@ -474,10 +520,10 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                 }}
               >
                 <div className="flex items-center gap-3">
-                  <FileText className="h-5 w-5 text-indigo-400" />
+                  <FileText className="h-5 w-5" style={{ color: 'var(--accent-purple)' }} />
                   <div>
-                    <p className="text-sm text-white font-medium">{file.name}</p>
-                    <p className="text-xs text-slate-400">{(file.size / 1024).toFixed(1)} KB</p>
+                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{file.name}</p>
+                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{(file.size / 1024).toFixed(1)} KB</p>
                   </div>
                 </div>
                 <button
@@ -489,7 +535,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                     padding: '4px',
                   }}
                 >
-                  <X className="h-5 w-5 text-slate-400 hover:text-white transition-colors" />
+                  <X className="h-5 w-5" style={{ color: 'var(--text-muted)' }} />
                 </button>
               </div>
             )}
@@ -500,14 +546,14 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                 style={{
                   marginBottom: '24px',
                   padding: '16px',
-                  background: 'rgba(99, 102, 241, 0.05)',
+                  background: 'color-mix(in srgb, var(--accent-purple) 5%, transparent)',
                   borderRadius: '12px',
-                  border: '1px solid rgba(99, 102, 241, 0.2)',
+                  border: '1px solid color-mix(in srgb, var(--accent-purple) 20%, transparent)',
                 }}
               >
                 <div className="flex items-center gap-3 mb-3">
-                  <Sparkles className="h-5 w-5 text-indigo-400 animate-pulse" />
-                  <p className="text-sm text-white">AI is extracting data...</p>
+                  <Sparkles className="h-5 w-5 animate-pulse" style={{ color: 'var(--accent-purple)' }} />
+                  <p className="text-sm" style={{ color: 'var(--text-primary)' }}>AI is extracting data...</p>
                 </div>
                 <div className="space-y-2">
                   {[...Array(4)].map((_, i) => (
@@ -516,7 +562,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                       className="h-3 rounded animate-shimmer"
                       style={{
                         width: `${Math.random() * 40 + 60}%`,
-                        background: 'linear-gradient(90deg, rgba(255,255,255,0.03) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.03) 75%)',
+                        background: 'linear-gradient(90deg, var(--bg-elevated) 25%, var(--bg-card-hover) 50%, var(--bg-elevated) 75%)',
                         backgroundSize: '200% 100%',
                         animation: `shimmer 1.5s ease-in-out infinite`,
                         animationDelay: `${i * 0.2}s`,
@@ -536,16 +582,16 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                     style={{
                       background:
                         consensus.overall_status === 'APPROVED'
-                          ? 'rgba(34, 197, 94, 0.1)'
+                          ? 'color-mix(in srgb, var(--accent-lime) 10%, transparent)'
                           : consensus.overall_status === 'REVIEW_REQUIRED'
-                            ? 'rgba(234, 179, 8, 0.1)'
-                            : 'rgba(239, 68, 68, 0.1)',
+                            ? 'color-mix(in srgb, var(--accent-amber) 10%, transparent)'
+                            : 'color-mix(in srgb, var(--accent-red) 10%, transparent)',
                       border:
                         consensus.overall_status === 'APPROVED'
-                          ? '1px solid rgba(34, 197, 94, 0.3)'
+                          ? '1px solid color-mix(in srgb, var(--accent-lime) 30%, transparent)'
                           : consensus.overall_status === 'REVIEW_REQUIRED'
-                            ? '1px solid rgba(234, 179, 8, 0.3)'
-                            : '1px solid rgba(239, 68, 68, 0.3)',
+                            ? '1px solid color-mix(in srgb, var(--accent-amber) 30%, transparent)'
+                            : '1px solid color-mix(in srgb, var(--accent-red) 30%, transparent)',
                       borderRadius: '10px',
                       padding: '12px 16px',
                       marginBottom: '16px',
@@ -564,28 +610,28 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                           fontSize: '13px',
                           color:
                             consensus.overall_status === 'APPROVED'
-                              ? '#22c55e'
+                              ? 'var(--accent-lime)'
                               : consensus.overall_status === 'REVIEW_REQUIRED'
-                                ? '#eab308'
-                                : '#ef4444',
+                                ? 'var(--accent-amber)'
+                                : 'var(--accent-red)',
                         }}
                       >
                         Extraction Confidence: {consensus.overall_confidence}% — {consensus.overall_status.replace(/_/g, ' ')}
                       </span>
                     </div>
-                    <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '8px' }}>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '8px' }}>
                       Engines: {consensus.engines_used?.join(' + ') || 'pdf2json+madison'}
                       {consensus.extraction_time_ms ? ` · ${consensus.extraction_time_ms}ms` : ''}
                     </div>
                     {consensus.engine_notes && (
-                      <div style={{ fontSize: '11px', color: '#fbbf24', marginBottom: '8px', fontStyle: 'italic' }}>
+                      <div style={{ fontSize: '11px', color: 'var(--accent-amber)', marginBottom: '8px', fontStyle: 'italic' }}>
                         {consensus.engine_notes}
                       </div>
                     )}
                     {consensus.conflicts && consensus.conflicts.length > 0 && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '8px' }}>
                         {consensus.conflicts.map((conflict: any, i: number) => (
-                          <div key={i} style={{ fontSize: '11px', color: '#f87171' }}>
+                          <div key={i} style={{ fontSize: '11px', color: 'var(--accent-red)' }}>
                             {conflict.severity === 'CRITICAL' ? '🔴' : '⚠️'} {conflict.reason}
                           </div>
                         ))}
@@ -599,15 +645,15 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                   <div
                     style={{
                       background: (poValidation.mode === 'AST_ISOLATED' && poValidation.skipped)
-                        ? 'rgba(59, 130, 246, 0.1)'
+                        ? 'color-mix(in srgb, var(--accent-blue) 10%, transparent)'
                         : poValidation.validation_result?.status === 'AUTO_APPROVED'
-                          ? 'rgba(34, 197, 94, 0.1)'
-                          : 'rgba(239, 68, 68, 0.1)',
+                          ? 'color-mix(in srgb, var(--accent-lime) 10%, transparent)'
+                          : 'color-mix(in srgb, var(--accent-red) 10%, transparent)',
                       border: (poValidation.mode === 'AST_ISOLATED' && poValidation.skipped)
-                        ? '1px solid rgba(59, 130, 246, 0.3)'
+                        ? '1px solid color-mix(in srgb, var(--accent-blue) 30%, transparent)'
                         : poValidation.validation_result?.status === 'AUTO_APPROVED'
-                          ? '1px solid rgba(34, 197, 94, 0.3)'
-                          : '1px solid rgba(239, 68, 68, 0.3)',
+                          ? '1px solid color-mix(in srgb, var(--accent-lime) 30%, transparent)'
+                          : '1px solid color-mix(in srgb, var(--accent-red) 30%, transparent)',
                       borderRadius: '10px',
                       padding: '12px 16px',
                       marginBottom: '16px',
@@ -621,7 +667,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                             ? '✅'
                             : '⚠️'}
                       </span>
-                      <span style={{ fontSize: '13px', color: (poValidation.mode === 'AST_ISOLATED' && poValidation.skipped) ? '#3b82f6' : poValidation.validation_result?.status === 'AUTO_APPROVED' ? '#22c55e' : '#ef4444' }}>
+                      <span style={{ fontSize: '13px', color: (poValidation.mode === 'AST_ISOLATED' && poValidation.skipped) ? 'var(--accent-blue)' : poValidation.validation_result?.status === 'AUTO_APPROVED' ? 'var(--accent-lime)' : 'var(--accent-red)' }}>
                         {(poValidation.mode === 'AST_ISOLATED' && poValidation.skipped)
                           ? 'PO Validation Skipped'
                           : poValidation.validation_result?.status === 'AUTO_APPROVED'
@@ -636,58 +682,58 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                       </span>
                     </div>
                     {(poValidation.mode === 'AST_ISOLATED' && poValidation.skipped) && (
-                      <div style={{ fontSize: '12px', color: '#94a3b8' }}>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                         {poValidation.message}
                       </div>
                     )}
                     {(!poValidation.skipped || poValidation.mode !== 'AST_ISOLATED') && poValidation.po_found && poValidation.validation_result?.checks && (
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px' }}>
                         {poValidation.validation_result.checks.currency_match !== undefined && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#94a3b8' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: 'var(--text-muted)' }}>
                             {poValidation.validation_result.checks.currency_match ? (
-                              <CheckCircle className="h-3 w-3 text-green-500" />
+                              <CheckCircle className="h-3 w-3" style={{ color: 'var(--accent-lime)' }} />
                             ) : (
-                              <AlertTriangle className="h-3 w-3 text-amber-500" />
+                              <AlertTriangle className="h-3 w-3" style={{ color: 'var(--accent-amber)' }} />
                             )}
                             <span>Currency</span>
                           </div>
                         )}
                         {poValidation.validation_result.checks.vendor_match !== undefined && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#94a3b8' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: 'var(--text-muted)' }}>
                             {poValidation.validation_result.checks.vendor_match ? (
-                              <CheckCircle className="h-3 w-3 text-green-500" />
+                              <CheckCircle className="h-3 w-3" style={{ color: 'var(--accent-lime)' }} />
                             ) : (
-                              <AlertTriangle className="h-3 w-3 text-amber-500" />
+                              <AlertTriangle className="h-3 w-3" style={{ color: 'var(--accent-amber)' }} />
                             )}
                             <span>Vendor</span>
                           </div>
                         )}
                         {poValidation.validation_result.checks.brand_match !== undefined && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#94a3b8' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: 'var(--text-muted)' }}>
                             {poValidation.validation_result.checks.brand_match ? (
-                              <CheckCircle className="h-3 w-3 text-green-500" />
+                              <CheckCircle className="h-3 w-3" style={{ color: 'var(--accent-lime)' }} />
                             ) : (
-                              <AlertTriangle className="h-3 w-3 text-amber-500" />
+                              <AlertTriangle className="h-3 w-3" style={{ color: 'var(--accent-amber)' }} />
                             )}
                             <span>Brand</span>
                           </div>
                         )}
                         {poValidation.validation_result.checks.season_match !== undefined && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#94a3b8' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: 'var(--text-muted)' }}>
                             {poValidation.validation_result.checks.season_match ? (
-                              <CheckCircle className="h-3 w-3 text-green-500" />
+                              <CheckCircle className="h-3 w-3" style={{ color: 'var(--accent-lime)' }} />
                             ) : (
-                              <AlertTriangle className="h-3 w-3 text-amber-500" />
+                              <AlertTriangle className="h-3 w-3" style={{ color: 'var(--accent-amber)' }} />
                             )}
                             <span>Season</span>
                           </div>
                         )}
                         {poValidation.validation_result.checks.order_type_match !== undefined && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#94a3b8' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: 'var(--text-muted)' }}>
                             {poValidation.validation_result.checks.order_type_match ? (
-                              <CheckCircle className="h-3 w-3 text-green-500" />
+                              <CheckCircle className="h-3 w-3" style={{ color: 'var(--accent-lime)' }} />
                             ) : (
-                              <AlertTriangle className="h-3 w-3 text-amber-500" />
+                              <AlertTriangle className="h-3 w-3" style={{ color: 'var(--accent-amber)' }} />
                             )}
                             <span>Order Type</span>
                           </div>
@@ -700,7 +746,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                 {/* Row 1: Vendor Name | Invoice Number */}
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-2">Vendor Name *</label>
+                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>Vendor Name *</label>
                     <input
                       type="text"
                       value={formData.vendorName}
@@ -708,31 +754,31 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                       style={{
                         width: '100%',
                         padding: '10px 14px',
-                        background: 'rgba(255, 255, 255, 0.05)',
-                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        background: 'var(--input-bg)',
+                        border: '1px solid var(--input-border)',
                         borderRadius: '10px',
-                        color: 'white',
+                        color: 'var(--text-primary)',
                         outline: 'none',
                         transition: 'all 150ms ease',
                       }}
                       placeholder="Enter vendor name"
                       onFocus={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.6)';
-                        e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+                        e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--accent-purple) 60%, transparent)';
+                        e.currentTarget.style.boxShadow = '0 0 0 3px color-mix(in srgb, var(--accent-purple) 15%, transparent)';
                       }}
                       onBlur={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                        e.currentTarget.style.borderColor = 'var(--input-border)';
                         e.currentTarget.style.boxShadow = 'none';
                       }}
                     />
                     {requiresManualVendorAssignment && (
-                      <div style={{ fontSize: '12px', color: '#f59e0b', marginTop: '4px' }}>
+                      <div style={{ fontSize: '12px', color: 'var(--accent-amber)', marginTop: '4px' }}>
                         Vendor not recognized — please confirm or correct the vendor name above.
                       </div>
                     )}
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-2">Invoice Number *</label>
+                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>Invoice Number *</label>
                     <input
                       type="text"
                       value={formData.invoiceNumber}
@@ -740,20 +786,20 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                       style={{
                         width: '100%',
                         padding: '10px 14px',
-                        background: 'rgba(255, 255, 255, 0.05)',
-                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        background: 'var(--input-bg)',
+                        border: '1px solid var(--input-border)',
                         borderRadius: '10px',
-                        color: 'white',
+                        color: 'var(--text-primary)',
                         outline: 'none',
                         transition: 'all 150ms ease',
                       }}
                       placeholder="Enter invoice number"
                       onFocus={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.6)';
-                        e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+                        e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--accent-purple) 60%, transparent)';
+                        e.currentTarget.style.boxShadow = '0 0 0 3px color-mix(in srgb, var(--accent-purple) 15%, transparent)';
                       }}
                       onBlur={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                        e.currentTarget.style.borderColor = 'var(--input-border)';
                         e.currentTarget.style.boxShadow = 'none';
                       }}
                     />
@@ -763,7 +809,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                 {/* Row 2: Invoice Date | Due Date */}
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-2">Invoice Date *</label>
+                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>Invoice Date *</label>
                     <input
                       type="date"
                       value={formData.invoiceDate}
@@ -771,25 +817,25 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                       style={{
                         width: '100%',
                         padding: '10px 14px',
-                        background: 'rgba(255, 255, 255, 0.05)',
-                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        background: 'var(--input-bg)',
+                        border: '1px solid var(--input-border)',
                         borderRadius: '10px',
-                        color: 'white',
+                        color: 'var(--text-primary)',
                         outline: 'none',
                         transition: 'all 150ms ease',
                       }}
                       onFocus={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.6)';
-                        e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+                        e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--accent-purple) 60%, transparent)';
+                        e.currentTarget.style.boxShadow = '0 0 0 3px color-mix(in srgb, var(--accent-purple) 15%, transparent)';
                       }}
                       onBlur={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                        e.currentTarget.style.borderColor = 'var(--input-border)';
                         e.currentTarget.style.boxShadow = 'none';
                       }}
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-2">Due Date *</label>
+                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>Due Date *</label>
                     <input
                       type="date"
                       value={formData.dueDate}
@@ -797,19 +843,19 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                       style={{
                         width: '100%',
                         padding: '10px 14px',
-                        background: 'rgba(255, 255, 255, 0.05)',
-                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        background: 'var(--input-bg)',
+                        border: '1px solid var(--input-border)',
                         borderRadius: '10px',
-                        color: 'white',
+                        color: 'var(--text-primary)',
                         outline: 'none',
                         transition: 'all 150ms ease',
                       }}
                       onFocus={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.6)';
-                        e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+                        e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--accent-purple) 60%, transparent)';
+                        e.currentTarget.style.boxShadow = '0 0 0 3px color-mix(in srgb, var(--accent-purple) 15%, transparent)';
                       }}
                       onBlur={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                        e.currentTarget.style.borderColor = 'var(--input-border)';
                         e.currentTarget.style.boxShadow = 'none';
                       }}
                     />
@@ -819,7 +865,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                 {/* Row 3: Amount | Currency */}
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-2">Amount *</label>
+                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>Amount *</label>
                     <input
                       type="number"
                       step="0.01"
@@ -828,107 +874,107 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                       style={{
                         width: '100%',
                         padding: '10px 14px',
-                        background: 'rgba(255, 255, 255, 0.05)',
-                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        background: 'var(--input-bg)',
+                        border: '1px solid var(--input-border)',
                         borderRadius: '10px',
-                        color: 'white',
+                        color: 'var(--text-primary)',
                         outline: 'none',
                         transition: 'all 150ms ease',
                       }}
                       placeholder="0.00"
                       onFocus={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.6)';
-                        e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+                        e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--accent-purple) 60%, transparent)';
+                        e.currentTarget.style.boxShadow = '0 0 0 3px color-mix(in srgb, var(--accent-purple) 15%, transparent)';
                       }}
                       onBlur={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                        e.currentTarget.style.borderColor = 'var(--input-border)';
                         e.currentTarget.style.boxShadow = 'none';
                       }}
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-2">Currency</label>
+                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>Currency</label>
                     <select
                       value={formData.currency}
                       onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
                       style={{
                         width: '100%',
                         padding: '10px 14px',
-                        background: 'rgba(255, 255, 255, 0.05)',
-                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        background: 'var(--input-bg)',
+                        border: '1px solid var(--input-border)',
                         borderRadius: '10px',
-                        color: 'white',
+                        color: 'var(--text-primary)',
                         outline: 'none',
                         transition: 'all 150ms ease',
                       }}
                     >
-                      <option value="USD" style={{ background: '#0f172a' }}>USD</option>
-                      <option value="HKD" style={{ background: '#0f172a' }}>HKD</option>
-                      <option value="IDR" style={{ background: '#0f172a' }}>IDR</option>
-                      <option value="PHP" style={{ background: '#0f172a' }}>PHP</option>
-                      <option value="EUR" style={{ background: '#0f172a' }}>EUR</option>
-                      <option value="GBP" style={{ background: '#0f172a' }}>GBP</option>
-                      <option value="JPY" style={{ background: '#0f172a' }}>JPY</option>
+                      <option value="USD" style={{ background: 'var(--input-bg)' }}>USD</option>
+                      <option value="HKD" style={{ background: 'var(--input-bg)' }}>HKD</option>
+                      <option value="IDR" style={{ background: 'var(--input-bg)' }}>IDR</option>
+                      <option value="PHP" style={{ background: 'var(--input-bg)' }}>PHP</option>
+                      <option value="EUR" style={{ background: 'var(--input-bg)' }}>EUR</option>
+                      <option value="GBP" style={{ background: 'var(--input-bg)' }}>GBP</option>
+                      <option value="JPY" style={{ background: 'var(--input-bg)' }}>JPY</option>
                     </select>
                   </div>
                 </div>
 
                 {/* Row 4: Document Type */}
                 <div>
-                  <label className="block text-sm font-medium text-slate-400 mb-2">Document Type</label>
+                  <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>Document Type</label>
                   <select
                     value={formData.documentType}
                     onChange={(e) => setFormData({ ...formData, documentType: e.target.value as any })}
                     style={{
                       width: '100%',
                       padding: '10px 14px',
-                      background: 'rgba(255, 255, 255, 0.05)',
-                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                      background: 'var(--bg-elevated)',
+                      border: '1px solid var(--input-border)',
                       borderRadius: '10px',
-                      color: 'white',
+                      color: 'var(--text-primary)',
                       outline: 'none',
                       transition: 'all 150ms ease',
                     }}
                   >
-                    <option value="" style={{ background: '#0f172a' }}>Select document type</option>
-                    <option value="PI" style={{ background: '#0f172a' }}>Proforma Invoice (PI)</option>
-                    <option value="INV" style={{ background: '#0f172a' }}>Invoice (INV)</option>
-                    <option value="CI" style={{ background: '#0f172a' }}>Commercial Invoice (CI)</option>
-                    <option value="SI" style={{ background: '#0f172a' }}>Sales Invoice (SI)</option>
-                    <option value="STATEMENT" style={{ background: '#0f172a' }}>Statement</option>
+                    <option value="" style={{ background: 'var(--input-bg)' }}>Select document type</option>
+                    <option value="PI" style={{ background: 'var(--input-bg)' }}>Proforma Invoice (PI)</option>
+                    <option value="INV" style={{ background: 'var(--input-bg)' }}>Invoice (INV)</option>
+                    <option value="CI" style={{ background: 'var(--input-bg)' }}>Commercial Invoice (CI)</option>
+                    <option value="SI" style={{ background: 'var(--input-bg)' }}>Sales Invoice (SI)</option>
+                    <option value="STATEMENT" style={{ background: 'var(--input-bg)' }}>Statement</option>
                   </select>
                 </div>
 
                 {/* Row 5: Category */}
                 <div>
-                  <label className="block text-sm font-medium text-slate-400 mb-2">Category</label>
+                  <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>Category</label>
                   <select
                     value={formData.category}
                     onChange={(e) => setFormData({ ...formData, category: e.target.value })}
                     style={{
                       width: '100%',
                       padding: '10px 14px',
-                      background: 'rgba(255, 255, 255, 0.05)',
-                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                      background: 'var(--bg-elevated)',
+                      border: '1px solid var(--input-border)',
                       borderRadius: '10px',
-                      color: 'white',
+                      color: 'var(--text-primary)',
                       outline: 'none',
                       transition: 'all 150ms ease',
                     }}
                   >
-                    <option value="" style={{ background: '#0f172a' }}>Select category</option>
-                    <option value="Trims" style={{ background: '#0f172a' }}>Trims</option>
-                    <option value="Yarn" style={{ background: '#0f172a' }}>Yarn</option>
-                    <option value="Sample" style={{ background: '#0f172a' }}>Sample</option>
-                    <option value="Shipping" style={{ background: '#0f172a' }}>Shipping</option>
-                    <option value="Lab" style={{ background: '#0f172a' }}>Lab</option>
+                    <option value="" style={{ background: 'var(--input-bg)' }}>Select category</option>
+                    <option value="Trims" style={{ background: 'var(--input-bg)' }}>Trims</option>
+                    <option value="Yarn" style={{ background: 'var(--input-bg)' }}>Yarn</option>
+                    <option value="Sample" style={{ background: 'var(--input-bg)' }}>Sample</option>
+                    <option value="Shipping" style={{ background: 'var(--input-bg)' }}>Shipping</option>
+                    <option value="Lab" style={{ background: 'var(--input-bg)' }}>Lab</option>
                   </select>
                 </div>
 
                 {/* Row 5: Brand | Brand Tier */}
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-2">Brand</label>
+                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>Brand</label>
                     <input
                       type="text"
                       value={formData.brand}
@@ -937,47 +983,47 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                       style={{
                         width: '100%',
                         padding: '10px 14px',
-                        background: 'rgba(255, 255, 255, 0.05)',
-                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        background: 'var(--input-bg)',
+                        border: '1px solid var(--input-border)',
                         borderRadius: '10px',
-                        color: 'white',
+                        color: 'var(--text-primary)',
                         outline: 'none',
                         transition: 'all 150ms ease',
                       }}
                       onFocus={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.6)';
-                        e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+                        e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--accent-purple) 60%, transparent)';
+                        e.currentTarget.style.boxShadow = '0 0 0 3px color-mix(in srgb, var(--accent-purple) 15%, transparent)';
                       }}
                       onBlur={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                        e.currentTarget.style.borderColor = 'var(--input-border)';
                         e.currentTarget.style.boxShadow = 'none';
                       }}
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-2">Brand Tier</label>
+                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>Brand Tier</label>
                     <select
                       value={formData.brandTier}
                       onChange={(e) => setFormData({ ...formData, brandTier: e.target.value as '' | 'TOP_10' | 'OTHER' })}
                       style={{
                         width: '100%',
                         padding: '10px 14px',
-                        background: 'rgba(255, 255, 255, 0.05)',
-                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        background: 'var(--input-bg)',
+                        border: '1px solid var(--input-border)',
                         borderRadius: '10px',
-                        color: 'white',
+                        color: 'var(--text-primary)',
                         outline: 'none',
                         transition: 'all 150ms ease',
                       }}
                     >
-                      <option value="" style={{ background: '#0f172a' }}>Select tier</option>
-                      <option value="TOP_10" style={{ background: '#0f172a' }}>Top 10</option>
-                      <option value="OTHER" style={{ background: '#0f172a' }}>Other</option>
+                      <option value="" style={{ background: 'var(--input-bg)' }}>Select tier</option>
+                      <option value="TOP_10" style={{ background: 'var(--input-bg)' }}>Top 10</option>
+                      <option value="OTHER" style={{ background: 'var(--input-bg)' }}>Other</option>
                     </select>
                   </div>
                 </div>
                 {formData.brand && !formData.brandTier && (
-                  <div style={{ fontSize: '12px', color: '#f59e0b', marginTop: '4px' }}>
+                  <div style={{ fontSize: '12px', color: 'var(--accent-amber)', marginTop: '4px' }}>
                     Brand tier could not be determined automatically — please confirm before submitting.
                   </div>
                 )}
@@ -985,7 +1031,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                 {/* Row 6: Season | Order Type */}
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-2">Season</label>
+                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>Season</label>
                     <input
                       type="text"
                       value={formData.season}
@@ -994,43 +1040,43 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                       style={{
                         width: '100%',
                         padding: '10px 14px',
-                        background: 'rgba(255, 255, 255, 0.05)',
-                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        background: 'var(--input-bg)',
+                        border: '1px solid var(--input-border)',
                         borderRadius: '10px',
-                        color: 'white',
+                        color: 'var(--text-primary)',
                         outline: 'none',
                         transition: 'all 150ms ease',
                       }}
                       onFocus={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.6)';
-                        e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+                        e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--accent-purple) 60%, transparent)';
+                        e.currentTarget.style.boxShadow = '0 0 0 3px color-mix(in srgb, var(--accent-purple) 15%, transparent)';
                       }}
                       onBlur={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                        e.currentTarget.style.borderColor = 'var(--input-border)';
                         e.currentTarget.style.boxShadow = 'none';
                       }}
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-2">Order Type</label>
+                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>Order Type</label>
                     <select
                       value={formData.orderType}
                       onChange={(e) => setFormData({ ...formData, orderType: e.target.value as '' | 'BULK' | 'SMS' | 'SAMPLE' })}
                       style={{
                         width: '100%',
                         padding: '10px 14px',
-                        background: 'rgba(255, 255, 255, 0.05)',
-                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        background: 'var(--input-bg)',
+                        border: '1px solid var(--input-border)',
                         borderRadius: '10px',
-                        color: 'white',
+                        color: 'var(--text-primary)',
                         outline: 'none',
                         transition: 'all 150ms ease',
                       }}
                     >
-                      <option value="" style={{ background: '#0f172a' }}>Select type</option>
-                      <option value="BULK" style={{ background: '#0f172a' }}>Bulk</option>
-                      <option value="SMS" style={{ background: '#0f172a' }}>SMS</option>
-                      <option value="SAMPLE" style={{ background: '#0f172a' }}>Sample</option>
+                      <option value="" style={{ background: 'var(--input-bg)' }}>Select type</option>
+                      <option value="BULK" style={{ background: 'var(--input-bg)' }}>Bulk</option>
+                      <option value="SMS" style={{ background: 'var(--input-bg)' }}>SMS</option>
+                      <option value="SAMPLE" style={{ background: 'var(--input-bg)' }}>Sample</option>
                     </select>
                   </div>
                 </div>
@@ -1038,7 +1084,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                 {/* Row 7: PO Number | MPO Number */}
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-2">PO Number</label>
+                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>PO Number</label>
                     <input
                       type="text"
                       value={formData.poNumber}
@@ -1047,48 +1093,48 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                       style={{
                         width: '100%',
                         padding: '10px 14px',
-                        background: 'rgba(255, 255, 255, 0.05)',
-                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        background: 'var(--input-bg)',
+                        border: '1px solid var(--input-border)',
                         borderRadius: '10px',
-                        color: 'white',
+                        color: 'var(--text-primary)',
                         outline: 'none',
                         transition: 'all 150ms ease',
                       }}
                       onFocus={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.6)';
-                        e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+                        e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--accent-purple) 60%, transparent)';
+                        e.currentTarget.style.boxShadow = '0 0 0 3px color-mix(in srgb, var(--accent-purple) 15%, transparent)';
                       }}
                       onBlur={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                        e.currentTarget.style.borderColor = 'var(--input-border)';
                         e.currentTarget.style.boxShadow = 'none';
                       }}
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-2">MPO Number *</label>
+                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>MPO Number *</label>
                     <input
                       type="text"
                       value={formData.mpoNumber}
                       onChange={(e) => setFormData({ ...formData, mpoNumber: e.target.value.toUpperCase() })}
                       placeholder="e.g. MPO015189"
-                      pattern="^MPO\d{6}$"
-                      title="MPO must be MPO followed by exactly 6 digits (e.g. MPO015189)"
+                      pattern="^MPO\d{5,8}$"
+                      title="MPO must be MPO followed by 5 to 8 digits (e.g. MPO14751 or MPO015189)"
                       style={{
                         width: '100%',
                         padding: '10px 14px',
-                        background: 'rgba(255, 255, 255, 0.05)',
-                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        background: 'var(--input-bg)',
+                        border: '1px solid var(--input-border)',
                         borderRadius: '10px',
-                        color: 'white',
+                        color: 'var(--text-primary)',
                         outline: 'none',
                         transition: 'all 150ms ease',
                       }}
                       onFocus={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.6)';
-                        e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+                        e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--accent-purple) 60%, transparent)';
+                        e.currentTarget.style.boxShadow = '0 0 0 3px color-mix(in srgb, var(--accent-purple) 15%, transparent)';
                       }}
                       onBlur={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                        e.currentTarget.style.borderColor = 'var(--input-border)';
                         e.currentTarget.style.boxShadow = 'none';
                       }}
                     />
@@ -1097,7 +1143,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
 
                 {/* Row 8: QTY SHIPPED (full width) */}
                 <div>
-                  <label className="block text-sm font-medium text-slate-400 mb-2">QTY SHIPPED</label>
+                  <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>QTY SHIPPED</label>
                   <input
                     type="number"
                     value={formData.qtyShipped}
@@ -1106,19 +1152,19 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                     style={{
                       width: '100%',
                       padding: '10px 14px',
-                      background: 'rgba(255, 255, 255, 0.05)',
-                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                      background: 'var(--bg-elevated)',
+                      border: '1px solid var(--input-border)',
                       borderRadius: '10px',
-                      color: 'white',
+                      color: 'var(--text-primary)',
                       outline: 'none',
                       transition: 'all 150ms ease',
                     }}
                     onFocus={(e) => {
-                      e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.6)';
-                      e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+                      e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--accent-purple) 60%, transparent)';
+                      e.currentTarget.style.boxShadow = '0 0 0 3px color-mix(in srgb, var(--accent-purple) 15%, transparent)';
                     }}
                     onBlur={(e) => {
-                      e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                      e.currentTarget.style.borderColor = 'var(--input-border)';
                       e.currentTarget.style.boxShadow = 'none';
                     }}
                   />
@@ -1126,7 +1172,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
 
                 {/* Row 9: Payment Terms (full width) */}
                 <div>
-                  <label className="block text-sm font-medium text-slate-400 mb-2">Payment Terms</label>
+                  <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>Payment Terms</label>
                   <input
                     type="text"
                     value={formData.paymentTerms}
@@ -1135,19 +1181,19 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                     style={{
                       width: '100%',
                       padding: '10px 14px',
-                      background: 'rgba(255, 255, 255, 0.05)',
-                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                      background: 'var(--bg-elevated)',
+                      border: '1px solid var(--input-border)',
                       borderRadius: '10px',
-                      color: 'white',
+                      color: 'var(--text-primary)',
                       outline: 'none',
                       transition: 'all 150ms ease',
                     }}
                     onFocus={(e) => {
-                      e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.6)';
-                      e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+                      e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--accent-purple) 60%, transparent)';
+                      e.currentTarget.style.boxShadow = '0 0 0 3px color-mix(in srgb, var(--accent-purple) 15%, transparent)';
                     }}
                     onBlur={(e) => {
-                      e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                      e.currentTarget.style.borderColor = 'var(--input-border)';
                       e.currentTarget.style.boxShadow = 'none';
                     }}
                   />
@@ -1156,7 +1202,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                 {/* Row 9: Bank Name | SWIFT Code | Account Number (3 columns) */}
                 <div className="grid grid-cols-3 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-2">Bank Name</label>
+                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>Bank Name</label>
                     <input
                       type="text"
                       value={formData.bankName}
@@ -1164,25 +1210,25 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                       style={{
                         width: '100%',
                         padding: '10px 14px',
-                        background: 'rgba(255, 255, 255, 0.05)',
-                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        background: 'var(--input-bg)',
+                        border: '1px solid var(--input-border)',
                         borderRadius: '10px',
-                        color: 'white',
+                        color: 'var(--text-primary)',
                         outline: 'none',
                         transition: 'all 150ms ease',
                       }}
                       onFocus={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.6)';
-                        e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+                        e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--accent-purple) 60%, transparent)';
+                        e.currentTarget.style.boxShadow = '0 0 0 3px color-mix(in srgb, var(--accent-purple) 15%, transparent)';
                       }}
                       onBlur={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                        e.currentTarget.style.borderColor = 'var(--input-border)';
                         e.currentTarget.style.boxShadow = 'none';
                       }}
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-2">SWIFT Code</label>
+                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>SWIFT Code</label>
                     <input
                       type="text"
                       value={formData.swiftCode}
@@ -1190,25 +1236,25 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                       style={{
                         width: '100%',
                         padding: '10px 14px',
-                        background: 'rgba(255, 255, 255, 0.05)',
-                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        background: 'var(--input-bg)',
+                        border: '1px solid var(--input-border)',
                         borderRadius: '10px',
-                        color: 'white',
+                        color: 'var(--text-primary)',
                         outline: 'none',
                         transition: 'all 150ms ease',
                       }}
                       onFocus={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.6)';
-                        e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+                        e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--accent-purple) 60%, transparent)';
+                        e.currentTarget.style.boxShadow = '0 0 0 3px color-mix(in srgb, var(--accent-purple) 15%, transparent)';
                       }}
                       onBlur={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                        e.currentTarget.style.borderColor = 'var(--input-border)';
                         e.currentTarget.style.boxShadow = 'none';
                       }}
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-2">Account Number</label>
+                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>Account Number</label>
                     <input
                       type="text"
                       value={formData.accountNumber}
@@ -1216,19 +1262,19 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                       style={{
                         width: '100%',
                         padding: '10px 14px',
-                        background: 'rgba(255, 255, 255, 0.05)',
-                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        background: 'var(--input-bg)',
+                        border: '1px solid var(--input-border)',
                         borderRadius: '10px',
-                        color: 'white',
+                        color: 'var(--text-primary)',
                         outline: 'none',
                         transition: 'all 150ms ease',
                       }}
                       onFocus={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.6)';
-                        e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+                        e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--accent-purple) 60%, transparent)';
+                        e.currentTarget.style.boxShadow = '0 0 0 3px color-mix(in srgb, var(--accent-purple) 15%, transparent)';
                       }}
                       onBlur={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                        e.currentTarget.style.borderColor = 'var(--input-border)';
                         e.currentTarget.style.boxShadow = 'none';
                       }}
                     />
@@ -1237,7 +1283,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
 
                 {/* Row 10: Notes */}
                 <div>
-                  <label className="block text-sm font-medium text-slate-400 mb-2">Notes / Description</label>
+                  <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>Notes / Description</label>
                   <textarea
                     value={formData.notes}
                     onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
@@ -1245,21 +1291,21 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                     style={{
                       width: '100%',
                       padding: '10px 14px',
-                      background: 'rgba(255, 255, 255, 0.05)',
-                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                      background: 'var(--bg-elevated)',
+                      border: '1px solid var(--input-border)',
                       borderRadius: '10px',
-                      color: 'white',
+                      color: 'var(--text-primary)',
                       outline: 'none',
                       transition: 'all 150ms ease',
                       resize: 'none',
                     }}
                     placeholder="Add any additional notes..."
                     onFocus={(e) => {
-                      e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.6)';
-                      e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+                      e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--accent-purple) 60%, transparent)';
+                      e.currentTarget.style.boxShadow = '0 0 0 3px color-mix(in srgb, var(--accent-purple) 15%, transparent)';
                     }}
                     onBlur={(e) => {
-                      e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                      e.currentTarget.style.borderColor = 'var(--input-border)';
                       e.currentTarget.style.boxShadow = 'none';
                     }}
                   />
@@ -1267,7 +1313,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
 
                 {/* Row 6: Priority Toggle */}
                 <div>
-                  <label className="block text-sm font-medium text-slate-400 mb-2">Priority</label>
+                  <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>Priority</label>
                   <div className="flex gap-2">
                     {(['low', 'medium', 'high'] as const).map((priority) => (
                       <button
@@ -1277,13 +1323,13 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                           flex: 1,
                           padding: '8px 16px',
                           background: formData.priority === priority
-                            ? 'linear-gradient(135deg, #6366f1, #8b5cf6)'
-                            : 'rgba(255, 255, 255, 0.05)',
+                            ? 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))'
+                            : 'var(--bg-elevated)',
                           border: formData.priority === priority
                             ? 'none'
-                            : '1px solid rgba(255, 255, 255, 0.1)',
+                            : '1px solid var(--border-color)',
                           borderRadius: '8px',
-                          color: formData.priority === priority ? 'white' : '#94a3b8',
+                          color: formData.priority === priority ? 'var(--text-inverse)' : 'var(--text-muted)',
                           cursor: 'pointer',
                           transition: 'all 150ms ease',
                           fontSize: '14px',
@@ -1301,7 +1347,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
             {/* Footer */}
             <div
               style={{
-                borderTop: '1px solid rgba(255, 255, 255, 0.06)',
+                borderTop: '1px solid var(--border-color)',
                 paddingTop: '20px',
                 display: 'flex',
                 justifyContent: 'space-between',
@@ -1316,15 +1362,15 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                       padding: '10px 20px',
                       background: 'transparent',
                       border: 'none',
-                      color: '#94a3b8',
+                      color: 'var(--text-muted)',
                       cursor: 'pointer',
                       transition: 'color 150ms ease',
                     }}
                     onMouseEnter={(e) => {
-                      e.currentTarget.style.color = 'white';
+                      e.currentTarget.style.color = 'var(--text-primary)';
                     }}
                     onMouseLeave={(e) => {
-                      e.currentTarget.style.color = '#94a3b8';
+                      e.currentTarget.style.color = 'var(--text-muted)';
                     }}
                   >
                     Cancel
@@ -1336,10 +1382,10 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                         disabled={isSavingCorrection || correctionSaved || !originalFormData}
                         style={{
                           padding: '10px 20px',
-                          background: correctionSaved ? 'rgba(34, 197, 94, 0.15)' : 'rgba(168, 85, 247, 0.15)',
-                          border: `1px solid ${correctionSaved ? 'rgba(34, 197, 94, 0.4)' : 'rgba(168, 85, 247, 0.4)'}`,
+                          background: correctionSaved ? 'color-mix(in srgb, var(--accent-lime) 15%, transparent)' : 'color-mix(in srgb, var(--accent-violet) 15%, transparent)',
+                          border: `1px solid ${correctionSaved ? 'color-mix(in srgb, var(--accent-lime) 30%, transparent)' : 'color-mix(in srgb, var(--accent-violet) 40%, transparent)'}`,
                           borderRadius: '10px',
-                          color: correctionSaved ? '#22c55e' : '#c084fc',
+                          color: correctionSaved ? 'var(--accent-lime)' : 'var(--accent-violet)',
                           cursor: (isSavingCorrection || correctionSaved || !originalFormData) ? 'not-allowed' : 'pointer',
                           opacity: (isSavingCorrection || correctionSaved || !originalFormData) ? 0.5 : 1,
                           display: 'flex',
@@ -1363,13 +1409,13 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                         disabled={!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount || !formData.mpoNumber}
                         style={{
                           padding: '10px 24px',
-                          background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                          background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))',
                           border: 'none',
                           borderRadius: '10px',
-                          color: 'white',
+                          color: 'var(--text-inverse)',
                           cursor: (!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount || !formData.mpoNumber) ? 'not-allowed' : 'pointer',
                           opacity: (!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount || !formData.mpoNumber) ? 0.4 : 1,
-                          boxShadow: (!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount || !formData.mpoNumber) ? 'none' : '0 0 20px rgba(99, 102, 241, 0.45)',
+                          boxShadow: (!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount || !formData.mpoNumber) ? 'none' : '0 0 20px color-mix(in srgb, var(--accent-purple) 45%, transparent)',
                           transition: 'all 150ms ease',
                         }}
                       >
@@ -1379,11 +1425,11 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                   ) : (
                     /* Upload Progress */
                     <div style={{ width: '200px' }}>
-                      <p className="text-xs text-slate-300 mb-2">Uploading invoice...</p>
+                      <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>Uploading invoice...</p>
                       <div
                         style={{
                           height: '6px',
-                          background: 'rgba(255, 255, 255, 0.06)',
+                          background: 'var(--bg-elevated)',
                           borderRadius: '999px',
                           overflow: 'hidden',
                         }}
@@ -1392,7 +1438,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                           style={{
                             height: '100%',
                             width: `${uploadProgress}%`,
-                            background: 'linear-gradient(90deg, #6366f1, #8b5cf6)',
+                            background: 'linear-gradient(90deg, var(--accent-purple), var(--accent-violet))',
                             borderRadius: '999px',
                             transition: 'width 200ms ease',
                           }}
@@ -1409,17 +1455,17 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                       width: '48px',
                       height: '48px',
                       borderRadius: '50%',
-                      background: 'rgba(34, 197, 94, 0.2)',
+                      background: 'color-mix(in srgb, var(--accent-lime) 15%, transparent)',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
                     }}
                   >
-                    <CheckCircle className="h-6 w-6 text-green-400" />
+                    <CheckCircle className="h-6 w-6" style={{ color: 'var(--accent-lime)' }} />
                   </div>
                   <div>
-                    <p className="text-white font-medium">Invoice uploaded successfully!</p>
-                    <p className="text-sm text-slate-400">It will appear in your dashboard shortly.</p>
+                    <p className="font-medium" style={{ color: 'var(--text-primary)' }}>Invoice uploaded successfully!</p>
+                    <p className="text-sm" style={{ color: 'var(--text-muted)' }}>It will appear in your dashboard shortly.</p>
                   </div>
                   <div className="flex gap-2">
                     <button
@@ -1427,9 +1473,9 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                       style={{
                         padding: '8px 16px',
                         background: 'transparent',
-                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        border: '1px solid var(--border-color)',
                         borderRadius: '8px',
-                        color: 'white',
+                        color: 'var(--text-primary)',
                         cursor: 'pointer',
                         transition: 'all 150ms ease',
                       }}
@@ -1440,10 +1486,10 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                       onClick={handleClose}
                       style={{
                         padding: '8px 16px',
-                        background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                        background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))',
                         border: 'none',
                         borderRadius: '8px',
-                        color: 'white',
+                        color: 'var(--text-inverse)',
                         cursor: 'pointer',
                         transition: 'all 150ms ease',
                       }}

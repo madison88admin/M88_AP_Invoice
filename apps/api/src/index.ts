@@ -14,6 +14,7 @@ import exceptionRoutes from './routes/exceptions';
 import paymentBatchRoutes from './routes/paymentBatches';
 import reportRoutes from './routes/reports';
 import dashboardRoutes from './routes/dashboard';
+import analyticsRoutes from './routes/analytics';
 import bankMatchingRoutes from './routes/bankMatching';
 import nextGenRoutes from './routes/nextGen';
 import piFollowUpRoutes from './routes/piFollowUp';
@@ -21,6 +22,7 @@ import slaReminderRoutes from './routes/slaReminder';
 import systemRoutes from './routes/system';
 import authRoutes from './routes/auth';
 import auditLogRoutes from './routes/audit';
+import notificationRoutes from './routes/notifications';
 import testRoutes from './routes/test';
 import { errorHandler } from './middleware/errorHandler';
 import { logger } from './utils/logger';
@@ -28,6 +30,8 @@ import { connectDatabase, disconnectDatabase, isDbConnected } from './config/dat
 import { geminiOCRService } from './services/geminiOCRService';
 import { groqOCRService } from './services/groqOCRService';
 import { ollamaOCRService } from './services/ollamaOCRService';
+import { qwenOCRService } from './services/qwenOCRService';
+import { checkAndSendSLAReminders } from './services/slaReminderService';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -75,6 +79,7 @@ app.use('/api/exceptions', exceptionRoutes);
 app.use('/api/payment-batches', paymentBatchRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/analytics', analyticsRoutes);
 app.use('/api/bank-matching', bankMatchingRoutes);
 app.use('/api/nextgen', nextGenRoutes);
 app.use('/api/pi-follow-up', piFollowUpRoutes);
@@ -82,6 +87,7 @@ app.use('/api/sla-reminder', slaReminderRoutes);
 app.use('/api/system', systemRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/audit-logs', auditLogRoutes);
+app.use('/api/notifications', notificationRoutes);
 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_TEST_ROUTES === 'true') {
   app.use('/api/test', testRoutes);
 }
@@ -138,6 +144,8 @@ const startServer = async () => {
     const ollamaAvailable = ollamaOCRService.isAvailable();
     const ollamaConfigured = !!process.env.OLLAMA_BASE_URL;
     const ollamaHealthy = ollamaAvailable && await ollamaOCRService.healthCheck();
+    const qwenAvailable = qwenOCRService.isAvailable();
+    const qwenConfigured = !!(process.env.DASHSCOPE_API_KEY || process.env.QWEN_API_KEY);
     const nextgenConfigured = !!(process.env.NEXTGEN_USERNAME && process.env.NEXTGEN_PASSWORD);
 
     if (!geminiConfigured) {
@@ -164,6 +172,14 @@ const startServer = async () => {
       logger.info(`✅ Ollama OCR enabled (model: ${process.env.OLLAMA_MODEL || 'qwen2.5vl:latest'})`);
     }
 
+    if (!qwenConfigured) {
+      logger.warn('⚠️  DASHSCOPE_API_KEY is not set — Qwen OCR engine disabled. Add DASHSCOPE_API_KEY to apps/api/.env to enable parallel Gemini+Qwen dual-LLM extraction.');
+    } else if (!qwenAvailable) {
+      logger.warn('⚠️  DASHSCOPE_API_KEY is set but Qwen service failed to initialize. Check API key and model name.');
+    } else {
+      logger.info(`✅ Qwen OCR enabled (model: ${process.env.QWEN_MODEL || 'qwen-plus'}) — parallel with Gemini`);
+    }
+
     if (!nextgenConfigured) {
       logger.warn('⚠️  NEXTGEN_USERNAME/NEXTGEN_PASSWORD not set — NextGen PO cross-check disabled.');
     } else {
@@ -176,9 +192,33 @@ const startServer = async () => {
 
     server.setTimeout(600000); // 10 minutes
 
+    // SLA reminder scheduler — runs every hour
+    const SLA_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+    const slaInterval = setInterval(async () => {
+      try {
+        const result = await checkAndSendSLAReminders();
+        if (result.sent > 0 || result.escalated > 0) {
+          logger.info(`SLA check: ${result.sent} reminders sent, ${result.escalated} escalations`);
+        }
+      } catch (err) {
+        logger.error('SLA reminder scheduler error:', err);
+      }
+    }, SLA_CHECK_INTERVAL_MS);
+
+    // Run once on startup after 30 seconds
+    setTimeout(async () => {
+      try {
+        const result = await checkAndSendSLAReminders();
+        logger.info(`Initial SLA check: ${result.sent} reminders, ${result.escalated} escalations`);
+      } catch (err) {
+        logger.error('Initial SLA check error:', err);
+      }
+    }, 30000);
+
     // Graceful shutdown
     const shutdown = async () => {
       logger.info('Shutting down server...');
+      clearInterval(slaInterval);
       server.close();
       await disconnectDatabase();
       process.exit(0);

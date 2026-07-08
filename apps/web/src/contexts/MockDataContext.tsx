@@ -13,6 +13,7 @@ import {
 } from '../lib/mockData';
 import { InvoiceStatus } from '@ap-invoice/shared';
 import { invoiceApi, vendorApi, paymentBatchApi, exceptionApi } from '../lib/api';
+import { useAuth } from './AuthContext';
 
 interface MockDataContextType {
   invoices: MockInvoice[];
@@ -20,13 +21,14 @@ interface MockDataContextType {
   paymentBatches: MockPaymentBatch[];
   reports: typeof MOCK_REPORTS;
   loading: boolean;
+  isRefreshing: boolean;
   error: string | null;
-  refresh: () => Promise<void>;
+  refresh: (silent?: boolean) => Promise<void>;
   updateInvoice: (id: string, updates: Partial<MockInvoice>) => void;
   approveInvoice: (id: string, signerName: string, signerRole: string) => Promise<void>;
   rejectInvoice: (id: string, reason: string) => Promise<void>;
   postToQuickBooks: (id: string) => Promise<void>;
-  resolveException: (invoiceId: string, exceptionId: string, resolution: string) => Promise<void>;
+  resolveException: (invoiceId: string, exceptionId: string, resolution: string) => Promise<{ approvalWarning?: string } | void>;
   createPaymentBatch: (invoiceIds: string[], batchName: string) => Promise<void>;
   approvePaymentBatch: (batchId: string, approver: string) => Promise<void>;
   getInvoicesByStatus: (status: InvoiceStatus) => MockInvoice[];
@@ -89,6 +91,7 @@ const apiInvoiceToMock = (invoice: any): MockInvoice => {
     order_type: invoice.order_type || undefined,
     po_number: invoice.customer_po_number || undefined,
     mpo_number: invoice.mpo_number || undefined,
+    qty_shipped: invoice.qty_shipped || undefined,
     status: invoice.status || 'VALIDATION_PENDING',
     current_stage: invoice.current_approver_role || undefined,
     bank_name: vendor.bank_name || invoice.bank_name || undefined,
@@ -138,8 +141,25 @@ const apiInvoiceToMock = (invoice: any): MockInvoice => {
     bill_to_entity: invoice.bill_to_entity || undefined,
     priority_flag: invoice.priority_flag || false,
     is_urgent: invoice.is_urgent || false,
+    is_handwritten: invoice.is_handwritten || false,
     ocr_confidence_score: invoice.ocr_confidence_score || undefined,
+    ocr_raw_data: invoice.ocr_raw_data || undefined,
     approval_tier: invoice.approval_tier || undefined,
+    po_validation: invoice.po_validation || undefined,
+    vendor_name_raw: invoice.vendor_name_raw || undefined,
+    ship_to: invoice.ship_to || undefined,
+    sold_to: invoice.sold_to || undefined,
+    subtotal: invoice.subtotal !== null ? Number(invoice.subtotal) : undefined,
+    tax_amount: invoice.tax_amount !== null ? Number(invoice.tax_amount) : undefined,
+    discount_amount: invoice.discount_amount !== null ? Number(invoice.discount_amount) : undefined,
+    bank_charges: invoice.bank_charges !== null ? Number(invoice.bank_charges) : undefined,
+    freight_charges: invoice.freight_charges !== null ? Number(invoice.freight_charges) : undefined,
+    additional_charges: invoice.additional_charges !== null ? Number(invoice.additional_charges) : undefined,
+    exchange_rate_to_usd: invoice.exchange_rate_to_usd !== null ? Number(invoice.exchange_rate_to_usd) : undefined,
+    invoice_currency_original: invoice.invoice_currency_original || undefined,
+    date_range_start: invoice.date_range_start ? dateToString(invoice.date_range_start) : undefined,
+    date_range_end: invoice.date_range_end ? dateToString(invoice.date_range_end) : undefined,
+    priority_pay_date: invoice.priority_pay_date ? dateToString(invoice.priority_pay_date) : undefined,
   };
 };
 
@@ -161,35 +181,50 @@ const apiBatchToMock = (batch: any): MockPaymentBatch => ({
 });
 
 export const MockDataProvider = ({ children }: MockDataProviderProps) => {
+  const { user, isAuthenticated } = useAuth();
   const [invoices, setInvoices] = useState<MockInvoice[]>(MOCK_INVOICES);
   const [vendors, setVendors] = useState<MockVendor[]>(MOCK_VENDORS);
   const [paymentBatches, setPaymentBatches] = useState<MockPaymentBatch[]>(MOCK_PAYMENT_BATCHES);
   const [reports] = useState(MOCK_REPORTS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const refresh = useCallback(async () => {
+  // Only fetch payment batches for roles that have permission
+  const canFetchPaymentBatches = user && ['ACCOUNTING_SUPERVISOR', 'CFO', 'SUPERADMIN', 'IT_ADMIN'].includes(user.role);
+
+  const refresh = useCallback(async (silent = false) => {
+    if (!isAuthenticated) return;
     try {
-      setLoading(true);
+      if (silent) setIsRefreshing(true); else setLoading(true);
       setError(null);
-      const [invoiceRes, vendorRes, batchRes] = await Promise.all([
+      const fetches: Promise<any>[] = [
         invoiceApi.getAll().catch(() => ({ data: [] })),
         vendorApi.getAll().catch(() => ({ data: [] })),
-        paymentBatchApi.getAll().catch(() => ({ data: [] })),
-      ]);
+      ];
+      if (canFetchPaymentBatches) {
+        fetches.push(paymentBatchApi.getAll().catch(() => ({ data: [] })));
+      }
+      const [invoiceRes, vendorRes, batchRes] = await Promise.all(fetches);
       setInvoices((invoiceRes.data || []).map(apiInvoiceToMock));
       setVendors((vendorRes.data || []).map(apiVendorToMock));
-      setPaymentBatches((batchRes.data || []).map(apiBatchToMock));
+      if (canFetchPaymentBatches) {
+        setPaymentBatches((batchRes?.data || []).map(apiBatchToMock));
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to load data');
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
-  }, []);
+  }, [isAuthenticated, canFetchPaymentBatches]);
 
   useEffect(() => {
+    if (!isAuthenticated) return;
     refresh();
-  }, [refresh]);
+    const interval = setInterval(() => refresh(true), 30000);
+    return () => clearInterval(interval);
+  }, [refresh, isAuthenticated]);
 
   const updateInvoice = useCallback((id: string, updates: Partial<MockInvoice>) => {
     setInvoices(prev => prev.map(inv => (inv.id === id ? { ...inv, ...updates } : inv)));
@@ -220,9 +255,10 @@ export const MockDataProvider = ({ children }: MockDataProviderProps) => {
   );
 
   const resolveException = useCallback(
-    async (_invoiceId: string, exceptionId: string, resolution: string) => {
-      await exceptionApi.resolve(exceptionId, resolution);
+    async (_invoiceId: string, exceptionId: string, resolution: string): Promise<{ approvalWarning?: string } | void> => {
+      const res = await exceptionApi.resolve(exceptionId, resolution);
       await refresh();
+      return res.data;
     },
     [refresh]
   );
@@ -266,6 +302,7 @@ export const MockDataProvider = ({ children }: MockDataProviderProps) => {
         paymentBatches,
         reports,
         loading,
+        isRefreshing,
         error,
         refresh,
         updateInvoice,

@@ -1,5 +1,5 @@
 import prisma from '../config/database';
-import { InvoiceStatus, SignatoryRole, SignatureType, ExceptionReason, BrandTier } from '@ap-invoice/shared';
+import { InvoiceStatus, SignatoryRole, SignatureType, ExceptionReason, BrandTier, calcWorkingHoursElapsed } from '@ap-invoice/shared';
 import { AppError } from '../middleware/errorHandler';
 import {
   APPROVAL_THRESHOLDS,
@@ -15,6 +15,7 @@ import {
   mapSignatoryRoleToPendingStatus,
 } from '@ap-invoice/shared';
 import { sendApprovalRequestNotification } from './notificationService';
+import { inAppNotificationService } from './inAppNotificationService';
 import { logger } from '../utils/logger';
 
 interface ApprovalRouteStep {
@@ -91,7 +92,10 @@ export function determineApprovalRoute(
       ? MLO_ACCOUNT_HOLDER_EDWIN
       : MLO_ACCOUNT_HOLDER_GLECIE;
 
-    // MLO Planning Manager step (the same person is the MLO account holder, so only one signature is needed)
+    // MLO Account Holder approval step
+    route.push({ role: SignatoryRole.MLO_ACCOUNT_HOLDER, assignee_name: mloAccountHolder, sla_days: SLA_LIMITS.MLO_ACCOUNT_HOLDER_DAYS });
+
+    // MLO Planning Manager approval step
     route.push({ role: SignatoryRole.MLO_PLANNING_MANAGER, assignee_name: mloAccountHolder, sla_days: SLA_LIMITS.MLO_PLANNING_MANAGER_DAYS });
 
     route.push({ role: SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION, assignee_name: SR_MANAGER_NAME, sla_days: SLA_LIMITS.SR_MANAGER_DAYS });
@@ -106,7 +110,9 @@ export function determineApprovalRoute(
 
 /**
  * Check if an invoice qualifies for auto-approval (low-risk Planning Tier)
- * Criteria: Planning Tier (≤$2,000) + vendor bank verified + OCR confidence ≥90% + no exceptions + not duplicate + vendor cumulative < $100
+ * Criteria: Planning Tier (≤$2,000) + vendor bank verified + OCR confidence ≥90% + no exceptions + not duplicate
+ * Note: Batch threshold ($100 cumulative) is handled separately by checkBatchThreshold in validationService.
+ * Invoices below the batch threshold are held ON_HOLD and never reach this function.
  */
 async function isAutoApprovalEligible(invoice: any): Promise<{ eligible: boolean; reason?: string }> {
   const amount = Number(invoice.total_amount);
@@ -141,23 +147,6 @@ async function isAutoApprovalEligible(invoice: any): Promise<{ eligible: boolean
     return { eligible: false, reason: `${exceptions.length} unresolved exception(s)` };
   }
 
-  // Vendor cumulative amount this month must be less than $100
-  const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const vendorCumulative = await prisma.invoice.aggregate({
-    _sum: { total_amount: true },
-    where: {
-      vendor_id: invoice.vendor_id,
-      status: { not: 'REJECTED' as any },
-      created_at: { gte: startOfMonth },
-      id: { not: invoice.id },
-    },
-  });
-  const cumulativeAmount = Number(vendorCumulative._sum.total_amount || 0);
-  if (cumulativeAmount >= 100) {
-    return { eligible: false, reason: `Vendor cumulative amount $${cumulativeAmount.toFixed(2)} this month exceeds $100 threshold` };
-  }
-
   return { eligible: true };
 }
 
@@ -166,7 +155,11 @@ async function isAutoApprovalEligible(invoice: any): Promise<{ eligible: boolean
  * Sets invoice to PENDING_COORDINATOR and creates signature records
  * For low-risk Planning Tier invoices, auto-approves directly to APPROVED
  */
-export async function createApprovalRequest(invoiceId: string, userId: string) {
+export async function createApprovalRequest(
+  invoiceId: string,
+  userId: string,
+  options?: { fromExceptionResolution?: boolean }
+) {
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
     include: { vendor: true },
@@ -187,7 +180,46 @@ export async function createApprovalRequest(invoiceId: string, userId: string) {
   const amount = Number(invoice.total_amount);
   const brandName = invoice.brand || undefined;
   const brandCode = invoice.brand_code || undefined;
-  const approvalRoute = determineApprovalRoute(amount, brandName, brandCode);
+  let approvalRoute: ApprovalRouteStep[];
+  try {
+    approvalRoute = determineApprovalRoute(amount, brandName, brandCode);
+  } catch (routeError: any) {
+    // When called from exception resolution, don't re-flag (creates infinite loop).
+    // Instead, throw so the caller can handle it — the invoice stays in VALIDATION_PENDING.
+    if (options?.fromExceptionResolution) {
+      await prisma.auditLog.create({
+        data: {
+          invoice_id: invoiceId,
+          action: 'APPROVAL_REQUEST_FAILED',
+          performed_by: userId,
+          note: `Approval request could not be created: ${routeError.message}. Invoice remains in VALIDATION_PENDING — please update brand_code and manually request approval.`,
+        },
+      });
+      throw routeError;
+    }
+    // Missing or unrecognized brand for Tier 2+ — flag as exception instead of silently failing
+    await prisma.invoice.update({
+      where: { id: invoiceId },
+      data: { status: InvoiceStatus.EXCEPTION_FLAGGED as any },
+    });
+    await inAppNotificationService.notifyStageTransition(invoiceId, invoice.invoice_number, invoice.vendor?.name || 'Unknown', '', 'EXCEPTION');
+    await prisma.exception.create({
+      data: {
+        invoice_id: invoiceId,
+        reason: ExceptionReason.MISSING_PO_REFERENCE as any,
+        detail: routeError.message || 'Approval route could not be determined. Please confirm brand/tier.',
+      },
+    });
+    await prisma.auditLog.create({
+      data: {
+        invoice_id: invoiceId,
+        action: 'EXCEPTION_FLAGGED',
+        performed_by: 'system',
+        note: routeError.message || 'Approval route could not be determined',
+      },
+    });
+    return [{ exception_flagged: true, invoice_id: invoiceId }];
+  }
   const tier = determineApprovalTier(amount);
 
   // Check auto-approval eligibility for low-risk Planning Tier invoices
@@ -195,23 +227,59 @@ export async function createApprovalRequest(invoiceId: string, userId: string) {
 
   if (autoApproval.eligible) {
     // Auto-approve: skip the approval chain entirely
+    // Create stage timestamps for both Coordinator and PM stages (exited immediately for SLA records)
+    const now = new Date();
+
+    await prisma.stageTimestamp.create({
+      data: {
+        invoice_id: invoiceId,
+        stage: InvoiceStatus.PENDING_COORDINATOR as any,
+        entered_at: now,
+        exited_at: now,
+        sla_hours: SLA_LIMITS.COORDINATOR_DAYS * 24,
+        is_breached: false,
+      },
+    });
+
+    await prisma.stageTimestamp.create({
+      data: {
+        invoice_id: invoiceId,
+        stage: InvoiceStatus.PENDING_MANAGER as any,
+        entered_at: now,
+        exited_at: now,
+        sla_hours: SLA_LIMITS.PURCHASING_MANAGER_DAYS * 24,
+        is_breached: false,
+      },
+    });
+
     await prisma.invoice.update({
       where: { id: invoiceId },
       data: {
-        status: InvoiceStatus.APPROVED as any,
+        status: InvoiceStatus.PENDING_ACCOUNTING as any,
         approval_tier: tier,
         current_approver_role: null,
       },
     });
+    await inAppNotificationService.notifyStageTransition(invoiceId, invoice.invoice_number, invoice.vendor?.name || 'Unknown', '', 'PENDING_ACCOUNTING');
 
-    // Create a single auto-signed Coordinator signature
+    // Create auto-signed signatures for both Coordinator and PM
     await prisma.signature.create({
       data: {
         invoice_id: invoiceId,
         signatory_role: SignatoryRole.COORDINATOR as any,
         signatory_name: 'AUTO-APPROVED',
         signature_type: SignatureType.COMPUTER_GENERATED as any,
-        signed_at: new Date(),
+        signed_at: now,
+      },
+    });
+
+    await prisma.signature.create({
+      data: {
+        invoice_id: invoiceId,
+        signatory_role: SignatoryRole.PURCHASING_MANAGER as any,
+        signatory_name: 'AUTO-APPROVED',
+        signature_type: SignatureType.COMPUTER_GENERATED as any,
+        signed_at: now,
       },
     });
 
@@ -273,6 +341,7 @@ export async function createApprovalRequest(invoiceId: string, userId: string) {
       current_approver_role: SignatoryRole.COORDINATOR,
     },
   });
+  await inAppNotificationService.notifyStageTransition(invoiceId, invoice.invoice_number, invoice.vendor?.name || 'Unknown', '', 'PENDING_COORDINATOR');
 
   // Create audit log entry
   await prisma.auditLog.create({
@@ -323,6 +392,18 @@ export async function approveInvoice(
     throw new AppError('No pending approval found for this role', 404);
   }
 
+  // Enforce sequential signing: all signatures created before this one must be signed
+  const sortedSignatures = [...invoice.signatures].sort(
+    (a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  );
+  const pendingIndex = sortedSignatures.findIndex((s: any) => s.id === pendingSignature.id);
+  const priorUnsigned = sortedSignatures.slice(0, pendingIndex).filter((s: any) => !s.signed_at);
+
+  if (priorUnsigned.length > 0) {
+    const waitingFor = priorUnsigned.map((s: any) => s.signatory_role).join(', ');
+    throw new AppError(`Cannot approve yet — waiting for prior approval(s): ${waitingFor}`, 403);
+  }
+
   const signedRole = pendingSignature.signatory_role;
 
   // Update the signature with full attribution
@@ -335,11 +416,20 @@ export async function approveInvoice(
     },
   });
 
-  // Exit current stage timestamp
-  await prisma.stageTimestamp.updateMany({
+  // Exit current stage timestamp — calculate breach status
+  const currentStage = await prisma.stageTimestamp.findFirst({
     where: { invoice_id: invoiceId, exited_at: null },
-    data: { exited_at: new Date() },
   });
+  if (currentStage) {
+    const elapsedHours = calcWorkingHoursElapsed(new Date(currentStage.entered_at), new Date());
+    await prisma.stageTimestamp.update({
+      where: { id: currentStage.id },
+      data: {
+        exited_at: new Date(),
+        is_breached: elapsedHours > currentStage.sla_hours,
+      },
+    });
+  }
 
   // Create audit log entry
   await prisma.auditLog.create({
@@ -352,12 +442,20 @@ export async function approveInvoice(
   });
 
   // Find next unsigned signature, respecting the approval route order
-  const approvalRoute = determineApprovalRoute(
-    Number(invoice.total_amount),
-    invoice.brand || undefined,
-    invoice.brand_code || undefined
-  );
-  const routeOrder = approvalRoute.map((step) => step.role);
+  let routeOrder: string[];
+  try {
+    const approvalRoute = determineApprovalRoute(
+      Number(invoice.total_amount),
+      invoice.brand || undefined,
+      invoice.brand_code || undefined
+    );
+    routeOrder = approvalRoute.map((step) => step.role);
+  } catch {
+    // Fallback: use creation order of remaining signatures if route can't be re-computed
+    routeOrder = invoice.signatures
+      .filter((sig: any) => !sig.signed_at && sig.id !== pendingSignature.id)
+      .map((sig: any) => sig.signatory_role);
+  }
   const remainingSignatures = invoice.signatures
     .filter((sig: any) => !sig.signed_at && sig.id !== pendingSignature.id)
     .sort((a: any, b: any) => {
@@ -381,6 +479,7 @@ export async function approveInvoice(
         current_approver_role: nextRole,
       },
     });
+    await inAppNotificationService.notifyStageTransition(invoiceId, invoice.invoice_number, invoice.vendor?.name || 'Unknown', '', nextStatus as string, nextRole);
 
     // Shared SLA for Planning function: Coordinator + Manager share 7 calendar days total
     let slaHours = getSLAForRole(nextRole) * 24;
@@ -394,7 +493,7 @@ export async function approveInvoice(
       });
       if (coordinatorStage) {
         const planningSLA = 7 * 24; // 7 calendar days shared
-        const elapsedHours = (new Date().getTime() - new Date(coordinatorStage.entered_at).getTime()) / (1000 * 60 * 60);
+        const elapsedHours = calcWorkingHoursElapsed(new Date(coordinatorStage.entered_at), new Date());
         slaHours = Math.max(1, planningSLA - elapsedHours);
       }
     }
@@ -426,14 +525,16 @@ export async function approveInvoice(
       // Don't block the approval flow if notification fails
     }
   } else {
-    // All approvals complete — update invoice status to APPROVED
+    // All approvals complete — update invoice status to PENDING_ACCOUNTING
+    // Accounting team sees it in their pending approvals and posts to QuickBooks
     await prisma.invoice.update({
       where: { id: invoiceId },
       data: {
-        status: InvoiceStatus.APPROVED as any,
+        status: InvoiceStatus.PENDING_ACCOUNTING as any,
         current_approver_role: null,
       },
     });
+    await inAppNotificationService.notifyStageTransition(invoiceId, invoice.invoice_number, invoice.vendor?.name || 'Unknown', '', 'APPROVED');
 
     // Enter Accounting stage
     await prisma.stageTimestamp.create({
@@ -469,14 +570,13 @@ export async function rejectInvoice(
 ) {
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
-    include: { signatures: true },
+    include: { signatures: true, vendor: true },
   });
 
   if (!invoice) {
     throw new AppError('Invoice not found', 404);
   }
 
-  // Map user role to allowed signatory roles
   const signatoryRoles = mapUserRoleToSignatoryRoles(userRole);
   if (signatoryRoles.length === 0) {
     throw new AppError('User does not have approval authority', 403);
@@ -491,6 +591,18 @@ export async function rejectInvoice(
     throw new AppError('No pending approval found for this role', 404);
   }
 
+  // Enforce sequential signing: all signatures created before this one must be signed
+  const sortedSignatures = [...invoice.signatures].sort(
+    (a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  );
+  const pendingIndex = sortedSignatures.findIndex((s: any) => s.id === pendingSignature.id);
+  const priorUnsigned = sortedSignatures.slice(0, pendingIndex).filter((s: any) => !s.signed_at);
+
+  if (priorUnsigned.length > 0) {
+    const waitingFor = priorUnsigned.map((s: any) => s.signatory_role).join(', ');
+    throw new AppError(`Cannot reject yet — waiting for prior approval(s): ${waitingFor}`, 403);
+  }
+
   const signedRole = pendingSignature.signatory_role;
 
   // Update invoice status to REJECTED
@@ -498,12 +610,22 @@ export async function rejectInvoice(
     where: { id: invoiceId },
     data: { status: InvoiceStatus.REJECTED as any },
   });
+  await inAppNotificationService.notifyStageTransition(invoiceId, invoice.invoice_number, invoice.vendor?.name || 'Unknown', '', 'REJECTED');
 
-  // Exit current stage timestamp
-  await prisma.stageTimestamp.updateMany({
+  // Exit current stage timestamp — calculate breach status
+  const currentStage = await prisma.stageTimestamp.findFirst({
     where: { invoice_id: invoiceId, exited_at: null },
-    data: { exited_at: new Date() },
   });
+  if (currentStage) {
+    const elapsedHours = calcWorkingHoursElapsed(new Date(currentStage.entered_at), new Date());
+    await prisma.stageTimestamp.update({
+      where: { id: currentStage.id },
+      data: {
+        exited_at: new Date(),
+        is_breached: elapsedHours > currentStage.sla_hours,
+      },
+    });
+  }
 
   // Create audit log entry
   await prisma.auditLog.create({
@@ -535,6 +657,7 @@ function mapUserRoleToSignatoryRoles(userRole: string): SignatoryRole[] {
     'ACCOUNTING_ASSOCIATE': [SignatoryRole.ACCOUNTING_REVIEWER],
     'ACCOUNTING_SUPERVISOR': [SignatoryRole.ACCOUNTING_REVIEWER],
     'CFO': [SignatoryRole.ACCOUNTING_REVIEWER],
+    'PRESIDENT': [SignatoryRole.ACCOUNTING_REVIEWER],
     'IT_ADMIN': [SignatoryRole.COORDINATOR],
     'ADMIN': [SignatoryRole.COORDINATOR],
   };
@@ -572,6 +695,7 @@ function getEmailForRole(signerRole: string): string | null {
 
 /**
  * Get pending approvals for a specific user role
+ * Only returns invoices where it's actually this role's turn to approve
  */
 export async function getPendingApprovals(userRole: string) {
   const signatoryRoles = mapUserRoleToSignatoryRoles(userRole);
@@ -579,15 +703,25 @@ export async function getPendingApprovals(userRole: string) {
     return [];
   }
 
-  // Query across all PENDING_* statuses
-  const pendingStatuses = [
-    InvoiceStatus.PENDING_COORDINATOR,
-    InvoiceStatus.PENDING_MANAGER,
-    InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER,
-    InvoiceStatus.PENDING_MLO_PLANNING_MANAGER,
-    InvoiceStatus.PENDING_SR_MANAGER,
-    InvoiceStatus.PENDING_POLLY,
-  ];
+  // Map signatory roles to their corresponding pending statuses
+  // Only query statuses where it's this role's turn
+  const roleToPendingStatus: Record<string, string> = {
+    [SignatoryRole.COORDINATOR]: InvoiceStatus.PENDING_COORDINATOR,
+    [SignatoryRole.PURCHASING_MANAGER]: InvoiceStatus.PENDING_MANAGER,
+    [SignatoryRole.MLO_ACCOUNT_HOLDER]: InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER,
+    [SignatoryRole.MLO_PLANNING_MANAGER]: InvoiceStatus.PENDING_MLO_PLANNING_MANAGER,
+    [SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION]: InvoiceStatus.PENDING_SR_MANAGER,
+    [SignatoryRole.MS_POLLY]: InvoiceStatus.PENDING_POLLY,
+    [SignatoryRole.ACCOUNTING_REVIEWER]: InvoiceStatus.PENDING_ACCOUNTING,
+  };
+
+  const pendingStatuses = signatoryRoles
+    .map(role => roleToPendingStatus[role])
+    .filter(Boolean);
+
+  if (pendingStatuses.length === 0) {
+    return [];
+  }
 
   const pendingApprovals = await prisma.invoice.findMany({
     where: {

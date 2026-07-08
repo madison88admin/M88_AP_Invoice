@@ -1,20 +1,24 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { InvoiceStatus, InvoiceCategory, InvoiceType } from '@ap-invoice/shared';
-import { invoiceApi, vendorApi } from '../lib/api';
+import { InvoiceStatus, InvoiceCategory, InvoiceType, calcWorkingHoursElapsed } from '@ap-invoice/shared';
+import { invoiceApi, notificationApi } from '../lib/api';
 import InvoiceTable from './InvoiceTable';
 import UploadInvoiceModal from './UploadInvoiceModal';
 import BottleneckView from './BottleneckView';
 import AuditLogViewer from './AuditLogViewer';
 import MyTasksWidget from './MyTasksWidget';
 import StatusGuide from './StatusGuide';
+import StatCard from './ui/StatCard';
+import AuditTile from './ui/AuditTile';
+import SidebarItem from './ui/SidebarItem';
 import { ThemeToggle } from './ThemeToggle';
 import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { MockInvoice } from '../lib/mockData';
 import { hasPermission, filterInvoicesByRole, canUserApproveStatus } from '../lib/roleAccess';
 import { cn } from '../lib/utils';
-import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, User, LayoutDashboard, Building2, ChevronLeft, LogOut, Edit } from 'lucide-react';
+import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, LogOut, Edit, Unlock } from 'lucide-react';
+import { Skeleton, SkeletonBar } from './ui/Skeleton';
 
 // Custom hook for number count-up animation
 function useCountUp(end: number, duration: number = 1200, start: boolean = true) {
@@ -92,12 +96,36 @@ function useCountUp(end: number, duration: number = 1200, start: boolean = true)
   return { count, startAnimation };
 }
 
+// Calculate week-over-week trend for a set of invoices.
+// Compares count in the last 7 days vs the previous 7 days.
+function calcTrend(invoiceList: { created_at?: string }[]): { trend: string; trendUp: boolean } {
+  const now = Date.now();
+  const sevenDays = 7 * 24 * 60 * 60 * 1000;
+  const thisWeek = invoiceList.filter(inv => {
+    if (!inv.created_at) return false;
+    const d = new Date(inv.created_at).getTime();
+    return d > now - sevenDays && d <= now;
+  }).length;
+  const lastWeek = invoiceList.filter(inv => {
+    if (!inv.created_at) return false;
+    const d = new Date(inv.created_at).getTime();
+    return d > now - 2 * sevenDays && d <= now - sevenDays;
+  }).length;
+
+  if (lastWeek === 0 && thisWeek === 0) return { trend: '—', trendUp: false };
+  if (lastWeek === 0) return { trend: `+${thisWeek}`, trendUp: true };
+  const pct = Math.round(((thisWeek - lastWeek) / lastWeek) * 100);
+  if (pct === 0) return { trend: '0%', trendUp: false };
+  return { trend: `${pct > 0 ? '+' : ''}${pct}%`, trendUp: pct > 0 };
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
-  const { invoices } = useMockData();
+  const { invoices, refresh, loading: ctxLoading } = useMockData();
   const [selectedInvoice, setSelectedInvoice] = useState<MockInvoice | null>(null);
   const [validating, setValidating] = useState(false);
+  const [requestingApproval, setRequestingApproval] = useState(false);
   const [validationResult, setValidationResult] = useState<any>(null);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
@@ -107,7 +135,6 @@ export default function Dashboard() {
   const [posting, setPosting] = useState(false);
   const [showSchedulePaymentModal, setShowSchedulePaymentModal] = useState(false);
   const [paymentDate, setPaymentDate] = useState('');
-  const [vendors, setVendors] = useState<any[]>([]);
   const [filters, setFilters] = useState({
     status: undefined as InvoiceStatus | undefined,
     category: undefined as InvoiceCategory | undefined,
@@ -120,11 +147,12 @@ export default function Dashboard() {
   });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
-  const [progressAnimated, setProgressAnimated] = useState(false);
   const [toasts, setToasts] = useState<{ id: string; message: string; type: 'success' | 'error' | 'warning' | 'info' }[]>([]);
   const [countUpStarted, setCountUpStarted] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [poAuditSummary, setPoAuditSummary] = useState({
     matched: 0,
     warnings: 0,
@@ -166,11 +194,6 @@ export default function Dashboard() {
       return allInvoices.filter(i => i.total_amount >= 100000);
     }
 
-    // CFO - all invoices (financial overview)
-    if (role === 'CFO') {
-      return allInvoices;
-    }
-
     // IT_ADMIN - all invoices (read-only for debugging)
     if (role === 'IT_ADMIN') {
       return allInvoices;
@@ -184,6 +207,7 @@ export default function Dashboard() {
     // PURCHASING_COORDINATOR - pending their approval, validation, or batch hold (they upload first)
     if (role === 'PURCHASING_COORDINATOR') {
       return allInvoices.filter(i =>
+        i.status === 'RECEIVED' ||
         i.status === 'PENDING_COORDINATOR' ||
         i.status === 'VALIDATION_PENDING' ||
         i.status === 'EXCEPTION_FLAGGED' ||
@@ -194,11 +218,6 @@ export default function Dashboard() {
     // PURCHASING_MANAGER - pending their approval
     if (role === 'PURCHASING_MANAGER') {
       return allInvoices.filter(i => i.status === 'PENDING_MANAGER');
-    }
-
-    // ACCOUNTING_SUPERVISOR - all invoices
-    if (role === 'ACCOUNTING_SUPERVISOR') {
-      return allInvoices;
     }
 
     // Default: use existing role-based filter
@@ -213,14 +232,17 @@ export default function Dashboard() {
     if (filters.category && inv.category !== filters.category) return false;
     if (filters.type && inv.invoice_type !== filters.type) return false;
     if (filters.brand && inv.brand !== filters.brand) return false;
+    if (filters.brand_code && inv.brand_code !== filters.brand_code) return false;
     if (filters.search) {
       const term = filters.search.toLowerCase();
       const searchable = [
         inv.invoice_number,
-        inv.vendor_name_raw,
+        inv.vendor_name,
         inv.vendor?.name,
         inv.brand,
         inv.brand_code,
+        inv.po_number,
+        inv.mpo_number,
       ].filter(Boolean).join(' ').toLowerCase();
       if (!searchable.includes(term)) return false;
     }
@@ -232,6 +254,9 @@ export default function Dashboard() {
     return true;
   });
 
+  // Count how many filters are currently active (for the "Clear" affordance)
+  const activeFilterCount = Object.values(filters).filter(v => v !== undefined && v !== '').length;
+
   // Sort invoices by invoice date (newest first) to show those approaching due dates first
   const sortedInvoices = [...filteredInvoices].sort((a, b) => {
     const dateA = new Date(a.invoice_date);
@@ -242,22 +267,67 @@ export default function Dashboard() {
   // Pagination: show 4 invoices per page
   const [currentPage, setCurrentPage] = useState(1);
   const invoicesPerPage = 4;
-  const totalPages = Math.ceil(sortedInvoices.length / invoicesPerPage);
-  const startIndex = (currentPage - 1) * invoicesPerPage;
+  const totalPages = Math.max(1, Math.ceil(sortedInvoices.length / invoicesPerPage));
+
+  // Reset to page 1 whenever the active filters change, so a narrowed result set
+  // never leaves the user stranded on a now-empty page.
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filters]);
+
+  // Clamp the current page so it can never exceed the available pages.
+  const safePage = Math.min(currentPage, totalPages);
+  const startIndex = (safePage - 1) * invoicesPerPage;
   const endIndex = startIndex + invoicesPerPage;
   const displayedInvoices = sortedInvoices.slice(startIndex, endIndex);
 
-  // Update loading state
+  // Sync loading state with context and trigger count-up animations
   useEffect(() => {
-    setLoading(false);
-    // Start count-up animations after loading is complete
-    setTimeout(() => setCountUpStarted(true), 100);
-  }, []);
+    setLoading(ctxLoading);
+    if (!ctxLoading) {
+      setTimeout(() => setCountUpStarted(true), 100);
+    }
+  }, [ctxLoading]);
 
-  // DSRS v7.3 PO audit summary is disabled until a production PO audit endpoint is available.
-  // The previous /api/test/po-audit/all route was removed with other test routes.
+  // Compute PO audit summary dynamically from each invoice's NextGen validation result.
   useEffect(() => {
-    setPoAuditSummary({
+    const summary = allInvoices.reduce((acc, invoice) => {
+      const pv = invoice.po_validation;
+      acc.total++;
+      if (!pv) {
+        acc.pending++;
+        return acc;
+      }
+      if (pv.mode === 'AST_ISOLATED' && pv.skipped) {
+        acc.skipped++;
+        return acc;
+      }
+      if (!pv.po_found) {
+        acc.not_found++;
+        return acc;
+      }
+      const comparison = pv.comparison || pv.validation_result?.checks;
+      const hasMismatch = comparison &&
+        (comparison.vendor_match === false || comparison.amount_match === false ||
+         comparison.brand_match === false || comparison.season_match === false ||
+         comparison.order_type_match === false || comparison.currency_match === false);
+      const hasWarning = comparison &&
+        (typeof comparison.amount_variance_percent === 'number' && comparison.amount_variance_percent > 0 && comparison.amount_variance_percent <= 5);
+      if (hasMismatch) {
+        acc.mismatches++;
+      } else if (hasWarning) {
+        acc.warnings++;
+      } else if (pv.is_match || pv.validation_result?.status === 'AUTO_APPROVED') {
+        acc.matched++;
+      } else if (pv.validation_result?.status === 'REJECTED') {
+        acc.mismatches++;
+      } else if (pv.validation_result?.status === 'REVIEW_REQUIRED') {
+        acc.warnings++;
+      } else {
+        acc.matched++;
+      }
+      return acc;
+    }, {
       matched: 0,
       warnings: 0,
       mismatches: 0,
@@ -267,7 +337,8 @@ export default function Dashboard() {
       error: 0,
       total: 0,
     });
-  }, []);
+    setPoAuditSummary(summary);
+  }, [allInvoices]);
 
   // Count-up animations for each KPI - calculate from live invoice data
   const pendingValidationCount = useCountUp(allInvoices.filter(i => i.status === InvoiceStatus.VALIDATION_PENDING).length, 1200, countUpStarted);
@@ -277,7 +348,7 @@ export default function Dashboard() {
     if (!currentStage) return false;
     const enteredAt = new Date(currentStage.entered_at);
     const now = new Date();
-    const elapsedHours = (now.getTime() - enteredAt.getTime()) / (1000 * 60 * 60);
+    const elapsedHours = calcWorkingHoursElapsed(enteredAt, now);
     const remainingHours = currentStage.sla_hours - elapsedHours;
     return remainingHours <= 24 && remainingHours > 0;
   }).length, 1200, countUpStarted);
@@ -294,11 +365,49 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    // Animate progress bars after component mounts
-    setTimeout(() => setProgressAnimated(true), 100);
-    // Trigger count-up animations
+    // Trigger count-up animations after component mounts
     setTimeout(() => setCountUpStarted(true), 200);
   }, []);
+
+  // Fetch notifications and unread count
+  const fetchNotifications = async () => {
+    try {
+      const [notifRes, countRes] = await Promise.all([
+        notificationApi.getAll(20).catch(() => ({ data: [] })),
+        notificationApi.getUnreadCount().catch(() => ({ data: { count: 0 } })),
+      ]);
+      setNotifications(notifRes.data || []);
+      setUnreadCount(countRes.data?.count || 0);
+    } catch {
+      // silent fail
+    }
+  };
+
+  useEffect(() => {
+    fetchNotifications();
+    const interval = setInterval(fetchNotifications, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleMarkAllRead = async () => {
+    try {
+      await notificationApi.markAllAsRead();
+      setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+      setUnreadCount(0);
+    } catch {
+      // silent fail
+    }
+  };
+
+  const handleMarkRead = async (id: string) => {
+    try {
+      await notificationApi.markAsRead(id);
+      setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
+      setUnreadCount(prev => Math.max(0, prev - 1));
+    } catch {
+      // silent fail
+    }
+  };
 
 
   const handleValidate = async () => {
@@ -308,13 +417,31 @@ export default function Dashboard() {
       setValidating(true);
       const response = await invoiceApi.validate(selectedInvoice.id);
       setValidationResult(response.data);
-      // Reload selected invoice with updated data
+      await refresh();
       const updatedInvoice = await invoiceApi.getById(selectedInvoice.id);
       setSelectedInvoice(updatedInvoice.data);
     } catch (error) {
       console.error('Failed to validate invoice:', error);
     } finally {
       setValidating(false);
+    }
+  };
+
+  const handleRequestApproval = async () => {
+    if (!selectedInvoice) return;
+    try {
+      setRequestingApproval(true);
+      await invoiceApi.requestApproval(selectedInvoice.id);
+      showToast('Approval requested successfully', 'success');
+      await refresh();
+      const updated = await invoiceApi.getById(selectedInvoice.id);
+      setSelectedInvoice(updated.data);
+    } catch (error: any) {
+      console.error('Failed to request approval:', error);
+      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to request approval';
+      showToast(msg, 'error');
+    } finally {
+      setRequestingApproval(false);
     }
   };
 
@@ -329,10 +456,12 @@ export default function Dashboard() {
       // Backend will record full signature details (signer_name, signer_role, signed_at, is_digital)
       await invoiceApi.approve(invoiceId, user.name);
       showToast('Invoice approved successfully', 'success');
+      await refresh();
       setSelectedInvoice(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to approve invoice:', error);
-      showToast('Failed to approve invoice', 'error');
+      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to approve invoice';
+      showToast(msg, 'error');
     }
   };
 
@@ -349,24 +478,42 @@ export default function Dashboard() {
       incoterm: invoice.incoterm || '',
       brand: invoice.brand || '',
       brand_code: invoice.brand_code || '',
+      brand_tier: invoice.brand_tier || '',
       mpo_number: invoice.mpo_number || '',
       customer_po_number: invoice.customer_po_number || '',
       season: invoice.season || '',
+      order_type: invoice.order_type || '',
+      invoice_type: invoice.invoice_type || '',
+      category: invoice.category || '',
       bill_to_entity: invoice.bill_to_entity || '',
       vendor_name_raw: invoice.vendor_name_raw || '',
       vendor_id: invoice.vendor_id || '',
+      ship_to: invoice.ship_to || '',
+      sold_to: invoice.sold_to || '',
+      bank_name: invoice.bank_name || '',
+      swift_code: invoice.swift_code || '',
+      account_number: invoice.account_number || '',
+      subtotal: invoice.subtotal || '',
+      tax_amount: invoice.tax_amount || '',
+      discount_amount: invoice.discount_amount || '',
+      bank_charges: invoice.bank_charges || '',
+      freight_charges: invoice.freight_charges || '',
+      additional_charges: invoice.additional_charges || '',
+      payment_penalty_rate: invoice.payment_penalty_rate || '',
+      exchange_rate_to_usd: invoice.exchange_rate_to_usd || '',
+      invoice_currency_original: invoice.invoice_currency_original || '',
+      qty_shipped: invoice.qty_shipped || '',
+      priority_flag: invoice.priority_flag || false,
+      is_urgent: invoice.is_urgent || false,
+      is_handwritten: invoice.is_handwritten || false,
+      priority_pay_date: invoice.priority_pay_date ? new Date(invoice.priority_pay_date).toISOString().split('T')[0] : '',
+      date_range_start: invoice.date_range_start ? new Date(invoice.date_range_start).toISOString().split('T')[0] : '',
+      date_range_end: invoice.date_range_end ? new Date(invoice.date_range_end).toISOString().split('T')[0] : '',
     });
-    try {
-      const response = await vendorApi.getAll();
-      setVendors(response.data || []);
-    } catch (error) {
-      console.error('Failed to load vendors:', error);
-      setVendors([]);
-    }
     setShowEditModal(true);
   };
 
-  const handleEditChange = (field: string, value: string) => {
+  const handleEditChange = (field: string, value: string | boolean) => {
     setEditFormData((prev: any) => ({ ...prev, [field]: value }));
   };
 
@@ -374,12 +521,50 @@ export default function Dashboard() {
     if (!selectedInvoice) return;
     setSavingEdit(true);
     try {
+      const parseNum = (val: string) => (val === '' || val === undefined || val === null) ? undefined : parseFloat(val);
+      const parseString = (val: string) => (val === '' || val === undefined || val === null) ? undefined : val;
+
       const payload = {
-        ...editFormData,
-        total_amount: editFormData.total_amount ? parseFloat(editFormData.total_amount) : undefined,
-        vendor_id: editFormData.vendor_id || undefined,
+        vendor_name_raw: parseString(editFormData.vendor_name_raw),
+        invoice_number: parseString(editFormData.invoice_number),
+        invoice_date: parseString(editFormData.invoice_date),
+        due_date: parseString(editFormData.due_date),
+        total_amount: parseNum(editFormData.total_amount),
+        currency: parseString(editFormData.currency),
+        invoice_type: parseString(editFormData.invoice_type),
+        brand: parseString(editFormData.brand),
+        brand_tier: parseString(editFormData.brand_tier),
+        season: parseString(editFormData.season),
+        order_type: parseString(editFormData.order_type),
+        customer_po_number: parseString(editFormData.customer_po_number),
+        mpo_number: parseString(editFormData.mpo_number),
+        qty_shipped: parseNum(editFormData.qty_shipped),
+        payment_terms: parseString(editFormData.payment_terms),
+        bank_name: parseString(editFormData.bank_name),
+        swift_code: parseString(editFormData.swift_code),
+        account_number: parseString(editFormData.account_number),
+        ship_to: parseString(editFormData.ship_to),
+        sold_to: parseString(editFormData.sold_to),
+        subtotal: parseNum(editFormData.subtotal),
+        tax_amount: parseNum(editFormData.tax_amount),
+        discount_amount: parseNum(editFormData.discount_amount),
+        bank_charges: parseNum(editFormData.bank_charges),
+        freight_charges: parseNum(editFormData.freight_charges),
+        additional_charges: parseNum(editFormData.additional_charges),
+        exchange_rate_to_usd: parseNum(editFormData.exchange_rate_to_usd),
+        invoice_currency_original: parseString(editFormData.invoice_currency_original),
+        incoterm: parseString(editFormData.incoterm),
+        category: parseString(editFormData.category),
+        bill_to_entity: parseString(editFormData.bill_to_entity),
+        is_handwritten: editFormData.is_handwritten || undefined,
+        is_urgent: editFormData.is_urgent || undefined,
+        priority_flag: editFormData.priority_flag || undefined,
+        priority_pay_date: parseString(editFormData.priority_pay_date),
+        date_range_start: parseString(editFormData.date_range_start),
+        date_range_end: parseString(editFormData.date_range_end),
       };
       const response = await invoiceApi.update(selectedInvoice.id, payload);
+      await refresh();
       setSelectedInvoice(response.data);
       setShowEditModal(false);
       showToast('Invoice updated successfully', 'success');
@@ -397,6 +582,7 @@ export default function Dashboard() {
     try {
       await invoiceApi.reject(selectedInvoice.id, rejectReason);
       showToast('Invoice rejected successfully', 'success');
+      await refresh();
       setSelectedInvoice(null);
       setShowRejectModal(false);
       setRejectReason('');
@@ -413,10 +599,28 @@ export default function Dashboard() {
       setPosting(true);
       await invoiceApi.post(selectedInvoice.id);
       showToast('Invoice posted to accounting successfully', 'success');
+      await refresh();
       setSelectedInvoice(null);
     } catch (error) {
       console.error('Failed to post invoice:', error);
       showToast('Failed to post invoice', 'error');
+    } finally {
+      setPosting(false);
+    }
+  };
+
+  const handleReleaseHold = async () => {
+    if (!selectedInvoice) return;
+
+    try {
+      setPosting(true);
+      await invoiceApi.releaseHold(selectedInvoice.id);
+      showToast('Invoice released from hold', 'success');
+      await refresh();
+      setSelectedInvoice(null);
+    } catch (error) {
+      console.error('Failed to release invoice from hold:', error);
+      showToast('Failed to release invoice from hold', 'error');
     } finally {
       setPosting(false);
     }
@@ -428,6 +632,7 @@ export default function Dashboard() {
     try {
       await invoiceApi.schedulePayment(selectedInvoice.id, paymentDate);
       showToast('Payment scheduled successfully', 'success');
+      await refresh();
       setSelectedInvoice(null);
       setShowSchedulePaymentModal(false);
       setPaymentDate('');
@@ -437,6 +642,144 @@ export default function Dashboard() {
     }
   };
 
+  // Payables aging — compute from real invoice data
+  const payablesAging = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const unpaidStatuses: InvoiceStatus[] = [
+      InvoiceStatus.PENDING_COORDINATOR, InvoiceStatus.PENDING_MANAGER,
+      InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER, InvoiceStatus.PENDING_MLO_PLANNING_MANAGER,
+      InvoiceStatus.PENDING_SR_MANAGER, InvoiceStatus.PENDING_POLLY,
+      InvoiceStatus.PENDING_ACCOUNTING, InvoiceStatus.APPROVED,
+      InvoiceStatus.POSTED_TO_QB, InvoiceStatus.PAYMENT_SCHEDULED,
+      InvoiceStatus.VALIDATION_PENDING, InvoiceStatus.ON_HOLD, InvoiceStatus.EXCEPTION_FLAGGED,
+    ];
+    const unpaidInvoices = allInvoices.filter(inv => unpaidStatuses.includes(inv.status as InvoiceStatus));
+
+    const buckets = [
+      { label: 'Current (not yet due)', count: 0, amount: 0, color: 'var(--accent-lime)' },
+      { label: '1\u201330 days overdue', count: 0, amount: 0, color: 'var(--accent-amber)' },
+      { label: '31\u201360 days overdue', count: 0, amount: 0, color: 'var(--accent-orange)' },
+      { label: '60+ days overdue', count: 0, amount: 0, color: 'var(--accent-red)' },
+    ];
+
+    for (const inv of unpaidInvoices) {
+      const amount = Number(inv.total_amount || 0);
+      if (!inv.due_date) {
+        buckets[0].count++;
+        buckets[0].amount += amount;
+        continue;
+      }
+      const dueDate = new Date(inv.due_date);
+      dueDate.setHours(0, 0, 0, 0);
+      const diffDays = Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
+
+      if (diffDays <= 0) {
+        buckets[0].count++;
+        buckets[0].amount += amount;
+      } else if (diffDays <= 30) {
+        buckets[1].count++;
+        buckets[1].amount += amount;
+      } else if (diffDays <= 60) {
+        buckets[2].count++;
+        buckets[2].amount += amount;
+      } else {
+        buckets[3].count++;
+        buckets[3].amount += amount;
+      }
+    }
+
+    return buckets;
+  }, [allInvoices]);
+
+  // Supplier balance — compute from real invoice data
+  const supplierBalance = useMemo(() => {
+    const receivedStatuses: InvoiceStatus[] = [
+      InvoiceStatus.RECEIVED, InvoiceStatus.OCR_PROCESSING, InvoiceStatus.VALIDATION_PENDING,
+      InvoiceStatus.EXCEPTION_FLAGGED, InvoiceStatus.ON_HOLD,
+      InvoiceStatus.PENDING_COORDINATOR, InvoiceStatus.PENDING_MANAGER,
+      InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER, InvoiceStatus.PENDING_MLO_PLANNING_MANAGER,
+      InvoiceStatus.PENDING_SR_MANAGER, InvoiceStatus.PENDING_POLLY,
+      InvoiceStatus.PENDING_ACCOUNTING, InvoiceStatus.APPROVED,
+      InvoiceStatus.POSTED_TO_QB, InvoiceStatus.PAYMENT_SCHEDULED, InvoiceStatus.PAID,
+    ];
+    const recordedStatuses: InvoiceStatus[] = receivedStatuses.filter(s => s !== InvoiceStatus.RECEIVED && s !== InvoiceStatus.OCR_PROCESSING);
+    const unpaidStatuses: InvoiceStatus[] = receivedStatuses.filter(s => s !== InvoiceStatus.PAID && s !== InvoiceStatus.REJECTED);
+
+    const vendorMap = new Map<string, { name: string; received: number; recorded: number; outstanding: number }>();
+
+    for (const inv of allInvoices) {
+      const vendorName = inv.vendor_name || inv.vendor_name_raw || inv.vendor?.name || 'Unknown Vendor';
+      const existing = vendorMap.get(vendorName) || { name: vendorName, received: 0, recorded: 0, outstanding: 0 };
+      if (receivedStatuses.includes(inv.status as InvoiceStatus)) {
+        existing.received++;
+      }
+      if (recordedStatuses.includes(inv.status as InvoiceStatus)) {
+        existing.recorded++;
+      }
+      if (unpaidStatuses.includes(inv.status as InvoiceStatus)) {
+        existing.outstanding += Number(inv.total_amount || 0);
+      }
+      vendorMap.set(vendorName, existing);
+    }
+
+    return Array.from(vendorMap.values())
+      .sort((a, b) => b.outstanding - a.outstanding)
+      .slice(0, 10);
+  }, [allInvoices]);
+
+  // Processing time per stage — compute from real stage_timestamps data
+  const processingTimePerStage = useMemo(() => {
+    const stageLabels: Record<string, { label: string; sla: number }> = {
+      PENDING_COORDINATOR: { label: 'Purchasing Coordinator', sla: 7 * 24 },
+      PENDING_MANAGER: { label: 'Purchasing Manager', sla: 7 * 24 },
+      PENDING_MLO_ACCOUNT_HOLDER: { label: 'MLO Account Holder', sla: 3 * 24 },
+      PENDING_MLO_PLANNING_MANAGER: { label: 'Planning Manager', sla: 4 * 24 },
+      PENDING_SR_MANAGER: { label: 'Sr. Manager GPO', sla: 7 * 24 },
+      PENDING_POLLY: { label: 'Ms. Polly', sla: 7 * 24 },
+      PENDING_ACCOUNTING: { label: 'Accounting', sla: 7 * 24 },
+      POSTED_TO_QB: { label: 'Posted to QB', sla: 5 * 24 },
+    };
+
+    const stageData = new Map<string, { totalHours: number; count: number; breached: number; sla: number }>();
+
+    for (const inv of allInvoices) {
+      for (const st of inv.stage_timestamps) {
+        const config = stageLabels[st.stage];
+        if (!config) continue;
+
+        const entered = new Date(st.entered_at);
+        const exited = st.exited_at ? new Date(st.exited_at) : new Date();
+        const hours = calcWorkingHoursElapsed(entered, exited);
+
+        const existing = stageData.get(st.stage) || { totalHours: 0, count: 0, breached: 0, sla: config.sla };
+        existing.totalHours += hours;
+        existing.count++;
+        if (st.is_breached) existing.breached++;
+        stageData.set(st.stage, existing);
+      }
+    }
+
+    const result = Array.from(stageData.entries()).map(([stage, data]) => ({
+      stage,
+      label: stageLabels[stage].label,
+      avg: data.count > 0 ? Math.round(data.totalHours / data.count) : 0,
+      sla: data.sla,
+      breached: data.breached,
+      total: data.count,
+    }));
+
+    return result;
+  }, [allInvoices]);
+
+  const slaCompliance = useMemo(() => {
+    if (processingTimePerStage.length === 0) return 0;
+    const totalStages = processingTimePerStage.reduce((sum, s) => sum + s.total, 0);
+    const totalBreached = processingTimePerStage.reduce((sum, s) => sum + s.breached, 0);
+    if (totalStages === 0) return 0;
+    return Math.round(((totalStages - totalBreached) / totalStages) * 100);
+  }, [processingTimePerStage]);
+
   // Role-specific KPI cards
   const getRoleSpecificKPIs = () => {
     if (!user) return [];
@@ -444,299 +787,302 @@ export default function Dashboard() {
     const role = user.role;
 
     switch (role) {
-      case 'ACCOUNTING_ASSOCIATE':
+      case 'ACCOUNTING_ASSOCIATE': {
+        const myInvs = allInvoices.filter(i => i.uploaded_by === user.email);
+        const pendingVal = allInvoices.filter(i => i.status === InvoiceStatus.VALIDATION_PENDING);
+        const validated = allInvoices.filter(i => i.status === InvoiceStatus.APPROVED);
+        const excInvs = allInvoices.filter(i => i.status === InvoiceStatus.EXCEPTION_FLAGGED);
         return [
           {
             label: 'My Invoices',
-            value: allInvoices.filter(i => i.uploaded_by === user.email).length,
+            value: myInvs.length,
             icon: FileText,
-            color: '#2563EB',
-            trend: '+12%',
-            trendUp: true,
+            accent: 'info',
+            ...calcTrend(myInvs),
           },
           {
             label: 'Pending Validation',
             value: pendingValidationCount.count,
             icon: Clock,
-            color: '#7C3AED',
-            trend: '+5%',
-            trendUp: true,
+            accent: 'default',
+            ...calcTrend(pendingVal),
           },
           {
             label: 'Validated Today',
-            value: allInvoices.filter(i => i.status === InvoiceStatus.APPROVED).length,
+            value: validated.length,
             icon: CheckCircle,
-            color: '#059669',
-            trend: '+22%',
-            trendUp: true,
+            accent: 'success',
+            ...calcTrend(validated),
           },
           {
             label: 'Exceptions',
             value: exceptionsCount.count,
             icon: AlertCircle,
-            color: '#DB2777',
-            trend: '-7%',
-            trendUp: false,
+            accent: 'danger',
+            ...calcTrend(excInvs),
           },
         ];
+      }
 
-      case 'PURCHASING_COORDINATOR':
+      case 'PURCHASING_COORDINATOR': {
+        const pendCoord = allInvoices.filter(i => i.status === 'PENDING_COORDINATOR');
+        const poFound = allInvoices.filter(i => i.po_validation?.po_found);
+        const vendorMismatch = allInvoices.filter(i => i.po_validation?.comparison?.vendor_match === false);
+        const approvedWk = allInvoices.filter(i => i.status === 'APPROVED');
         return [
           {
             label: 'Pending My Approval',
-            value: allInvoices.filter(i => i.status === 'PENDING_COORDINATOR').length,
+            value: pendCoord.length,
             icon: Clock,
-            color: '#7C3AED',
-            trend: '+5%',
-            trendUp: true,
+            accent: 'default',
+            ...calcTrend(pendCoord),
           },
           {
             label: 'PO Validation Results',
-            value: allInvoices.filter(i => i.po_validation?.po_found).length,
+            value: poFound.length,
             icon: CheckCircle,
-            color: '#059669',
-            trend: '+18%',
-            trendUp: true,
+            accent: 'success',
+            ...calcTrend(poFound),
           },
           {
             label: 'Vendor Mismatches',
-            value: allInvoices.filter(i => i.po_validation?.comparison?.vendor_match === false).length,
+            value: vendorMismatch.length,
             icon: AlertTriangle,
-            color: '#DC2626',
-            trend: '-3%',
-            trendUp: false,
+            accent: 'danger',
+            ...calcTrend(vendorMismatch),
           },
           {
             label: 'Approved This Week',
-            value: allInvoices.filter(i => i.status === 'APPROVED').length,
+            value: approvedWk.length,
             icon: CheckSquare,
-            color: '#059669',
-            trend: '+22%',
-            trendUp: true,
+            accent: 'success',
+            ...calcTrend(approvedWk),
           },
         ];
+      }
 
-      case 'PURCHASING_MANAGER':
+      case 'PURCHASING_MANAGER': {
+        const pendMgr = allInvoices.filter(i => i.status === 'PENDING_MANAGER');
+        const poSum = allInvoices.filter(i => i.po_validation?.po_found);
+        const escalated = allInvoices.filter(i => i.status === InvoiceStatus.ON_HOLD);
+        const approvedMgr = allInvoices.filter(i => i.status === 'APPROVED');
+        const approvalRate = approvedMgr.length + pendMgr.length > 0
+          ? Math.round((approvedMgr.length / (approvedMgr.length + pendMgr.length)) * 100)
+          : 0;
         return [
           {
             label: 'Pending My Approval',
-            value: allInvoices.filter(i => i.status === 'PENDING_MANAGER').length,
+            value: pendMgr.length,
             icon: Clock,
-            color: '#7C3AED',
-            trend: '+5%',
-            trendUp: true,
+            accent: 'default',
+            ...calcTrend(pendMgr),
           },
           {
             label: 'Team Performance',
-            value: '92%',
+            value: approvalRate + '%',
             icon: TrendingUp,
-            color: '#4F46E5',
-            trend: '+8%',
-            trendUp: true,
+            accent: 'default',
+            ...calcTrend(approvedMgr),
             subtitle: 'Coordinator approval rate',
           },
           {
             label: 'PO Validation Summary',
-            value: allInvoices.filter(i => i.po_validation?.po_found).length,
+            value: poSum.length,
             icon: CheckCircle,
-            color: '#059669',
-            trend: '+18%',
-            trendUp: true,
+            accent: 'success',
+            ...calcTrend(poSum),
           },
           {
             label: 'Escalated Items',
-            value: allInvoices.filter(i => i.status === InvoiceStatus.ON_HOLD).length,
+            value: escalated.length,
             icon: AlertTriangle,
-            color: '#F59E0B',
-            trend: '+2%',
-            trendUp: true,
+            accent: 'warning',
+            ...calcTrend(escalated),
           },
         ];
+      }
 
-      case 'ACCOUNTING_SUPERVISOR':
+      case 'ACCOUNTING_SUPERVISOR': {
+        const pendingAssoc = allInvoices.filter(i => i.status === 'VALIDATION_PENDING');
+        const excSup = allInvoices.filter(i => i.status === InvoiceStatus.EXCEPTION_FLAGGED);
+        const readyPost = allInvoices.filter(i => i.status === InvoiceStatus.APPROVED || i.status === InvoiceStatus.PENDING_ACCOUNTING);
         return [
           {
             label: 'All Invoices Overview',
             value: allInvoices.length,
             icon: FileText,
-            color: '#2563EB',
-            trend: '+12%',
-            trendUp: true,
+            accent: 'info',
+            ...calcTrend(allInvoices),
           },
           {
             label: 'Pending from Associates',
-            value: allInvoices.filter(i => i.status === 'VALIDATION_PENDING').length,
+            value: pendingAssoc.length,
             icon: Clock,
-            color: '#7C3AED',
-            trend: '+5%',
-            trendUp: true,
+            accent: 'default',
+            ...calcTrend(pendingAssoc),
           },
           {
             label: 'Exception Flags',
             value: exceptionsCount.count,
             icon: AlertCircle,
-            color: '#DB2777',
-            trend: '-7%',
-            trendUp: false,
+            accent: 'danger',
+            ...calcTrend(excSup),
           },
           {
             label: 'Ready for Posting',
-            value: allInvoices.filter(i => i.status === 'APPROVED').length,
+            value: readyPost.length,
             icon: CheckCircle,
-            color: '#059669',
-            trend: '+22%',
-            trendUp: true,
+            accent: 'success',
+            ...calcTrend(readyPost),
           },
         ];
+      }
 
-      case 'PLANNING_MANAGER':
+      case 'PLANNING_MANAGER': {
         const brandScope = user.brand_scope;
         const filteredByBrand = brandScope === 'TOP_10'
           ? allInvoices.filter(i => ['TNF', 'UA', 'VNS', 'ARC', 'CSC', 'HH', 'BUR', 'TM', 'FR', 'ON'].includes(i.brand_code || ''))
           : allInvoices.filter(i => !['TNF', 'UA', 'VNS', 'ARC', 'CSC', 'HH', 'BUR', 'TM', 'FR', 'ON'].includes(i.brand_code || ''));
-
+        const pendPlan = filteredByBrand.filter(i => i.status === 'PENDING_MLO_PLANNING_MANAGER');
+        const brandNotPaid = filteredByBrand.filter(i => i.status !== 'PAID');
+        const brandApproved = filteredByBrand.filter(i => i.status === 'APPROVED');
         return [
           {
             label: `${brandScope} Brand Invoices`,
             value: filteredByBrand.length,
             icon: Building2,
-            color: '#2563EB',
-            trend: '+12%',
-            trendUp: true,
+            accent: 'info',
+            ...calcTrend(filteredByBrand),
           },
           {
             label: 'Pending My Approval',
-            value: filteredByBrand.filter(i => i.status === 'PENDING_MLO_PLANNING_MANAGER').length,
+            value: pendPlan.length,
             icon: Clock,
-            color: '#7C3AED',
-            trend: '+5%',
-            trendUp: true,
+            accent: 'default',
+            ...calcTrend(pendPlan),
           },
           {
             label: 'Brand-Filtered List',
-            value: filteredByBrand.filter(i => i.status !== 'PAID').length,
+            value: brandNotPaid.length,
             icon: FileSearch,
-            color: '#4F46E5',
-            trend: '+8%',
-            trendUp: true,
+            accent: 'default',
+            ...calcTrend(brandNotPaid),
           },
           {
             label: 'Approved This Month',
-            value: filteredByBrand.filter(i => i.status === 'APPROVED').length,
+            value: brandApproved.length,
             icon: CheckCircle,
-            color: '#059669',
-            trend: '+22%',
-            trendUp: true,
+            accent: 'success',
+            ...calcTrend(brandApproved),
           },
         ];
+      }
 
-      case 'SR_MANAGER_GLOBAL_PRODUCTION':
+      case 'SR_MANAGER_GLOBAL_PRODUCTION': {
+        const prodInvs = allInvoices.filter(i => i.total_amount > 2000);
+        const pendSr = allInvoices.filter(i => i.status === 'PENDING_SR_MANAGER');
+        const tier3 = allInvoices.filter(i => (i.approval_tier || 0) >= 3);
         return [
           {
             label: 'Production Invoices $2K+',
-            value: allInvoices.filter(i => i.total_amount > 2000).length,
+            value: prodInvs.length,
             icon: Package,
-            color: '#2563EB',
-            trend: '+12%',
-            trendUp: true,
+            accent: 'info',
+            ...calcTrend(prodInvs),
           },
           {
             label: 'Pending My Approval',
-            value: allInvoices.filter(i => i.status === 'PENDING_SR_MANAGER').length,
+            value: pendSr.length,
             icon: Clock,
-            color: '#7C3AED',
-            trend: '+5%',
-            trendUp: true,
+            accent: 'default',
+            ...calcTrend(pendSr),
           },
           {
             label: 'Global Production Costs',
-            value: `$${allInvoices.filter(i => i.total_amount > 2000).reduce((sum, i) => sum + i.total_amount, 0).toLocaleString()}`,
+            value: `$${prodInvs.reduce((sum, i) => sum + i.total_amount, 0).toLocaleString()}`,
             icon: TrendingUp,
-            color: '#4F46E5',
-            trend: '+18%',
-            trendUp: true,
+            accent: 'default',
+            ...calcTrend(prodInvs),
           },
           {
             label: 'Tier 3+ Approvals',
-            value: allInvoices.filter(i => (i.approval_tier || 0) >= 3).length,
+            value: tier3.length,
             icon: Shield,
-            color: '#059669',
-            trend: '+22%',
-            trendUp: true,
+            accent: 'success',
+            ...calcTrend(tier3),
           },
         ];
+      }
 
-      case 'CFO':
+      case 'CFO': {
+        const highValue = allInvoices.filter(i => i.total_amount >= 50000);
+        const payBatches = allInvoices.filter(i => i.status === 'PAYMENT_SCHEDULED');
         return [
           {
             label: 'Total AP Amount',
             value: `$${totalAmountCount.count.toLocaleString()}`,
             icon: TrendingUp,
-            color: '#4F46E5',
-            trend: '+18%',
-            trendUp: true,
+            accent: 'default',
+            ...calcTrend(allInvoices),
           },
           {
             label: 'Cash Flow',
-            value: '$2.4M',
+            value: `$${payBatches.reduce((sum, i) => sum + i.total_amount, 0).toLocaleString()}`,
             icon: BarChart3,
-            color: '#059669',
-            trend: '+15%',
-            trendUp: true,
+            accent: 'success',
+            ...calcTrend(payBatches),
           },
           {
             label: 'High-Value Alerts',
-            value: allInvoices.filter(i => i.total_amount >= 50000).length,
+            value: highValue.length,
             icon: AlertTriangle,
-            color: '#DC2626',
-            trend: '+2%',
-            trendUp: true,
+            accent: 'danger',
+            ...calcTrend(highValue),
           },
           {
             label: 'Payment Batches',
-            value: allInvoices.filter(i => i.status === 'PAYMENT_SCHEDULED').length,
+            value: payBatches.length,
             icon: Package,
-            color: '#7C3AED',
-            trend: '+8%',
-            trendUp: true,
+            accent: 'default',
+            ...calcTrend(payBatches),
           },
         ];
+      }
 
-      case 'MS_POLLY':
+      case 'MS_POLLY': {
+        const pendPolly = allInvoices.filter(i => i.status === 'PENDING_POLLY');
+        const criticalExc = allInvoices.filter(i => i.status === InvoiceStatus.EXCEPTION_FLAGGED);
         return [
           {
             label: 'Total Invoices This Month',
             value: allInvoices.length,
             icon: FileText,
-            color: '#2563EB',
-            trend: '+12%',
-            trendUp: true,
+            accent: 'info',
+            ...calcTrend(allInvoices),
           },
           {
             label: 'Total AP Amount',
             value: `$${totalAmountCount.count.toLocaleString()}`,
             icon: TrendingUp,
-            color: '#4F46E5',
-            trend: '+18%',
-            trendUp: true,
+            accent: 'default',
+            ...calcTrend(allInvoices),
           },
           {
             label: 'Pending My Approval',
-            value: allInvoices.filter(i => i.status === 'PENDING_POLLY').length,
+            value: pendPolly.length,
             icon: Clock,
-            color: '#7C3AED',
-            trend: '+5%',
-            trendUp: true,
+            accent: 'default',
+            ...calcTrend(pendPolly),
           },
           {
             label: 'Critical Exceptions',
             value: exceptionsCount.count,
             icon: AlertCircle,
-            color: '#DC2626',
-            trend: '-7%',
-            trendUp: false,
+            accent: 'danger',
+            ...calcTrend(criticalExc),
           },
         ];
+      }
 
       case 'IT_ADMIN':
         return [
@@ -744,33 +1090,31 @@ export default function Dashboard() {
             label: 'System Health',
             value: '98.5%',
             icon: CheckCircle,
-            color: '#059669',
-            trend: '+2%',
-            trendUp: true,
+            accent: 'success',
+            trend: '—',
+            trendUp: false,
           },
           {
             label: 'NextGen Integration',
             value: 'Active',
             icon: Shield,
-            color: '#2563EB',
-            trend: 'Stable',
-            trendUp: true,
-          },
-          {
-            label: 'Total Users',
-            value: 14,
-            icon: User,
-            color: '#7C3AED',
-            trend: '+2',
-            trendUp: true,
-          },
-          {
-            label: 'Error Logs',
-            value: 3,
-            icon: AlertCircle,
-            color: '#DC2626',
-            trend: '-5',
+            accent: 'info',
+            trend: '—',
             trendUp: false,
+          },
+          {
+            label: 'Total Invoices',
+            value: allInvoices.length,
+            icon: FileText,
+            accent: 'default',
+            ...calcTrend(allInvoices),
+          },
+          {
+            label: 'Exceptions',
+            value: exceptionsCount.count,
+            icon: AlertCircle,
+            accent: 'danger',
+            ...calcTrend(allInvoices.filter(i => i.status === InvoiceStatus.EXCEPTION_FLAGGED)),
           },
         ];
 
@@ -780,384 +1124,178 @@ export default function Dashboard() {
             label: 'System Health',
             value: '98.5%',
             icon: CheckCircle,
-            color: '#059669',
-            trend: '+2%',
-            trendUp: true,
+            accent: 'success',
+            trend: '—',
+            trendUp: false,
           },
           {
-            label: 'Total Users',
-            value: 14,
-            icon: User,
-            color: '#7C3AED',
-            trend: '+2',
-            trendUp: true,
-          },
-          {
-            label: 'All Invoices',
+            label: 'Total Invoices',
             value: allInvoices.length,
             icon: FileText,
-            color: '#2563EB',
-            trend: '+12%',
-            trendUp: true,
-          },
-          {
-            label: 'System Configuration',
-            value: 'Active',
-            icon: Settings,
-            color: '#4F46E5',
-            trend: 'Stable',
-            trendUp: true,
-          },
-        ];
-
-      default:
-        return [
-          {
-            label: 'Pending Validation',
-            value: pendingValidationCount.count,
-            icon: FileText,
-            color: '#2563EB',
-            trend: '+12%',
-            trendUp: true,
-          },
-          {
-            label: 'Awaiting Approval',
-            value: awaitingApprovalCount.count,
-            icon: Clock,
-            color: '#7C3AED',
-            trend: '+5%',
-            trendUp: true,
-          },
-          {
-            label: 'Urgent Payments',
-            value: urgentPaymentsCount.count,
-            icon: AlertTriangle,
-            color: '#DC2626',
-            trend: '-3%',
-            trendUp: false,
+            accent: 'info',
+            ...calcTrend(allInvoices),
           },
           {
             label: 'Exceptions',
             value: exceptionsCount.count,
             icon: AlertCircle,
-            color: '#DB2777',
-            trend: '-7%',
+            accent: 'danger',
+            ...calcTrend(allInvoices.filter(i => i.status === InvoiceStatus.EXCEPTION_FLAGGED)),
+          },
+          {
+            label: 'System Configuration',
+            value: 'Active',
+            icon: Settings,
+            accent: 'default',
+            trend: '—',
             trendUp: false,
           },
         ];
+
+      default: {
+        const pendValDefault = allInvoices.filter(i => i.status === InvoiceStatus.VALIDATION_PENDING);
+        const awaitAppr = allInvoices.filter(i => Object.values(InvoiceStatus).some(s => s.startsWith('PENDING_') && s !== 'PENDING_ACCOUNTING' && i.status === s));
+        const urgentPay = allInvoices.filter(i => i.is_urgent && i.status !== 'PAID');
+        const excDefault = allInvoices.filter(i => i.status === InvoiceStatus.EXCEPTION_FLAGGED);
+        return [
+          {
+            label: 'Pending Validation',
+            value: pendingValidationCount.count,
+            icon: FileText,
+            accent: 'info',
+            ...calcTrend(pendValDefault),
+          },
+          {
+            label: 'Awaiting Approval',
+            value: awaitingApprovalCount.count,
+            icon: Clock,
+            accent: 'default',
+            ...calcTrend(awaitAppr),
+          },
+          {
+            label: 'Urgent Payments',
+            value: urgentPaymentsCount.count,
+            icon: AlertTriangle,
+            accent: 'danger',
+            ...calcTrend(urgentPay),
+          },
+          {
+            label: 'Exceptions',
+            value: exceptionsCount.count,
+            icon: AlertCircle,
+            accent: 'danger',
+            ...calcTrend(excDefault),
+          },
+        ];
+      }
     }
   };
 
   const kpis = getRoleSpecificKPIs();
 
   return (
-    <div className="flex h-screen relative" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%)' }}>
-      {/* Layered Background Atmosphere */}
-      <div style={{ position: 'fixed', inset: 0, zIndex: 0, overflow: 'hidden', pointerEvents: 'none' }}>
-        {/* Purple orb top-right */}
-        <div 
-          style={{ 
-            position: 'absolute', 
-            top: '-10%', 
-            right: '-5%', 
-            width: '500px', 
-            height: '500px',
-            background: 'radial-gradient(circle, rgba(139,92,246,0.25), transparent 70%)',
-            filter: 'blur(60px)', 
-            animation: 'drift1 10s ease-in-out infinite alternate'
-          }}
-        />
-        {/* Blue orb bottom-left */}
-        <div 
-          style={{ 
-            position: 'absolute', 
-            bottom: '-10%', 
-            left: '-5%', 
-            width: '600px', 
-            height: '600px',
-            background: 'radial-gradient(circle, rgba(59,130,246,0.2), transparent 70%)',
-            filter: 'blur(80px)', 
-            animation: 'drift2 13s ease-in-out infinite alternate'
-          }}
-        />
-        {/* Teal orb center */}
-        <div 
-          style={{ 
-            position: 'absolute', 
-            top: '40%', 
-            left: '35%', 
-            width: '400px', 
-            height: '400px',
-            background: 'radial-gradient(circle, rgba(20,184,166,0.12), transparent 70%)',
-            filter: 'blur(70px)', 
-            animation: 'drift3 9s ease-in-out infinite alternate'
-          }}
-        />
-      </div>
+    <div className="flex h-screen relative" style={{ background: 'var(--bg-base)' }}>
 
-      {/* Sidebar - Glassmorphism */}
-      <aside className={`${sidebarCollapsed ? 'w-20' : 'w-64'} text-white flex flex-col flex-shrink-0 transition-all duration-300 hidden md:flex z-10`} style={{ background: 'rgba(10, 14, 30, 0.75)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', borderRight: '1px solid rgba(255, 255, 255, 0.06)' }}>
+      {/* Sidebar - Floating rounded card */}
+      <aside className={`${sidebarCollapsed ? 'w-20' : 'w-64'} m-4 flex flex-col flex-shrink-0 transition-all duration-300 hidden md:flex z-10 rounded-3xl`} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.35)' }}>
         {/* Logo */}
-        <div className="p-6" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="p-5" style={{ borderBottom: '1px solid var(--border-color)' }}>
           <div className="flex items-center gap-3">
-            <div className="bg-[#2563EB] p-2 rounded-lg flex-shrink-0">
-              <LayoutDashboard className="h-6 w-6" />
+            <div className="p-2 rounded-xl flex-shrink-0" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))', boxShadow: '0 0 16px rgba(108,92,231,0.25)' }}>
+              <LayoutDashboard className="h-6 w-6" style={{ color: 'var(--text-primary)' }} strokeWidth={1.75} />
             </div>
             {!sidebarCollapsed && (
               <div>
-                <h1 className="font-bold text-lg">Madison 88</h1>
-                <p className="text-xs text-gray-400">Business Solutions</p>
+                <h1 className="font-bold text-lg" style={{ color: 'var(--text-primary)' }}>Madison 88</h1>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>AP Invoice</p>
               </div>
             )}
           </div>
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 p-4 space-y-1">
-          <Link
-            to="/"
-            className="flex items-center gap-3 px-4 py-3 rounded-lg text-white"
-            style={{ 
-              background: 'rgba(99,102,241,0.2)', 
-              borderLeft: '2px solid #6366f1',
-              boxShadow: 'inset 0 0 20px rgba(99,102,241,0.1)'
-            }}
-          >
-            <LayoutDashboard className="h-5 w-5 flex-shrink-0" />
-            {!sidebarCollapsed && <span className="font-medium">Dashboard</span>}
-          </Link>
-          
-          {/* Approvals - For approvers only (PURCHASING_COORDINATOR, PURCHASING_MANAGER, PLANNING_MANAGER, SR_MANAGER_GLOBAL_PRODUCTION, MS_POLLY, ACCOUNTING_SUPERVISOR) */}
+        <nav className="flex-1 p-3 space-y-1">
+          <SidebarItem
+            icon={LayoutDashboard}
+            label="Dashboard"
+            active
+            collapsed={sidebarCollapsed}
+          />
           {user && [
-            'PURCHASING_COORDINATOR', 
-            'PURCHASING_MANAGER', 
-            'PLANNING_MANAGER', 
-            'SR_MANAGER_GLOBAL_PRODUCTION', 
+            'PURCHASING_COORDINATOR',
+            'PURCHASING_MANAGER',
+            'PLANNING_MANAGER',
+            'SR_MANAGER_GLOBAL_PRODUCTION',
             'MS_POLLY',
             'ACCOUNTING_SUPERVISOR'
           ].includes(user.role) && (
-            <Link
-              to="/approvals"
-              onClick={(e) => {
-                if (!user) {
-                  e.preventDefault();
-                  navigate('/login');
-                }
-              }}
-              className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white"
-              style={{ 
-                borderLeft: '2px solid transparent', 
-                transition: 'all 150ms ease'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
-                e.currentTarget.style.borderLeft = '2px solid rgba(99,102,241,0.6)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'transparent';
-                e.currentTarget.style.borderLeft = '2px solid transparent';
-              }}
-            >
-              <CheckSquare className="h-5 w-5 flex-shrink-0" />
-              {!sidebarCollapsed && (
-                <div className="flex items-center justify-between flex-1">
-                  <span className="font-medium">Approvals</span>
-                  {awaitingApprovalCount.count > 0 && (
-                    <span className="bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
-                      {awaitingApprovalCount.count}
-                    </span>
-                  )}
-                </div>
-              )}
-            </Link>
+            <SidebarItem
+              icon={CheckSquare}
+              label="Approvals"
+              badge={awaitingApprovalCount.count}
+              collapsed={sidebarCollapsed}
+              onClick={() => navigate('/approvals')}
+            />
           )}
-          
-          {/* Exceptions - For operational roles only (ACCOUNTING_ASSOCIATE, ACCOUNTING_SUPERVISOR, CFO) */}
           {user && ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'CFO'].includes(user.role) && (
-            <Link
-              to="/exceptions"
-              onClick={(e) => {
-                if (!user) {
-                  e.preventDefault();
-                  navigate('/login');
-                }
-              }}
-              className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white"
-              style={{ 
-                borderLeft: '2px solid transparent', 
-                transition: 'all 150ms ease'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
-                e.currentTarget.style.borderLeft = '2px solid rgba(99,102,241,0.6)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'transparent';
-                e.currentTarget.style.borderLeft = '2px solid transparent';
-              }}
-            >
-              <AlertTriangle className="h-5 w-5 flex-shrink-0" />
-              {!sidebarCollapsed && (
-                <div className="flex items-center justify-between flex-1">
-                  <span className="font-medium">Exceptions</span>
-                  {exceptionsCount.count > 0 && (
-                    <span className="bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
-                      {exceptionsCount.count}
-                    </span>
-                  )}
-                </div>
-              )}
-            </Link>
+            <SidebarItem
+              icon={AlertTriangle}
+              label="Exceptions"
+              badge={exceptionsCount.count}
+              collapsed={sidebarCollapsed}
+              onClick={() => navigate('/exceptions')}
+            />
           )}
-          
-          {/* Vendors - For roles that need vendor info (PURCHASING_COORDINATOR, PURCHASING_MANAGER, ACCOUNTING_SUPERVISOR, CFO) */}
           {user && ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'CFO'].includes(user.role) && (
-            <Link
-              to="/vendors"
-              onClick={(e) => {
-                if (!user) {
-                  e.preventDefault();
-                  navigate('/login');
-                }
-              }}
-              className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white"
-              style={{ 
-                borderLeft: '2px solid transparent', 
-                transition: 'all 150ms ease'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
-                e.currentTarget.style.borderLeft = '2px solid rgba(99,102,241,0.6)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'transparent';
-                e.currentTarget.style.borderLeft = '2px solid transparent';
-              }}
-            >
-              <Building2 className="h-5 w-5 flex-shrink-0" />
-              {!sidebarCollapsed && <span className="font-medium">Vendors</span>}
-            </Link>
+            <SidebarItem
+              icon={Building2}
+              label="Vendors"
+              collapsed={sidebarCollapsed}
+              onClick={() => navigate('/vendors')}
+            />
           )}
-          
-          {/* Batches - For financial roles only (CFO, ACCOUNTING_SUPERVISOR) */}
           {user && ['CFO', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
-            <Link
-              to="/payment-batches"
-              onClick={(e) => {
-                if (!user) {
-                  e.preventDefault();
-                  navigate('/login');
-                }
-              }}
-              className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white"
-              style={{ 
-                borderLeft: '2px solid transparent', 
-                transition: 'all 150ms ease'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
-                e.currentTarget.style.borderLeft = '2px solid rgba(99,102,241,0.6)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'transparent';
-                e.currentTarget.style.borderLeft = '2px solid transparent';
-              }}
-            >
-              <Package className="h-5 w-5 flex-shrink-0" />
-              {!sidebarCollapsed && <span className="font-medium">Batches</span>}
-            </Link>
+            <SidebarItem
+              icon={Package}
+              label="Batches"
+              collapsed={sidebarCollapsed}
+              onClick={() => navigate('/payment-batches')}
+            />
           )}
-          
-          {/* Reports - For financial and management roles (CFO, PURCHASING_MANAGER, ACCOUNTING_SUPERVISOR) */}
           {user && ['CFO', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
-            <Link
-              to="/reports"
-              onClick={(e) => {
-                if (!user) {
-                  e.preventDefault();
-                  navigate('/login');
-                }
-              }}
-              className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white"
-              style={{ 
-                borderLeft: '2px solid transparent', 
-                transition: 'all 150ms ease'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
-                e.currentTarget.style.borderLeft = '2px solid rgba(99,102,241,0.6)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'transparent';
-                e.currentTarget.style.borderLeft = '2px solid transparent';
-              }}
-            >
-              <BarChart3 className="h-5 w-5 flex-shrink-0" />
-              {!sidebarCollapsed && <span className="font-medium">Reports</span>}
-            </Link>
+            <SidebarItem
+              icon={BarChart3}
+              label="Reports"
+              collapsed={sidebarCollapsed}
+              onClick={() => navigate('/reports')}
+            />
           )}
-          
-          {/* Review - For accounting roles only (ACCOUNTING_ASSOCIATE, ACCOUNTING_SUPERVISOR) */}
           {user && ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
-            <Link
-              to="/accounting-review"
-              onClick={(e) => {
-                if (!user) {
-                  e.preventDefault();
-                  navigate('/login');
-                }
-              }}
-              className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white"
-              style={{ 
-                borderLeft: '2px solid transparent', 
-                transition: 'all 150ms ease'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
-                e.currentTarget.style.borderLeft = '2px solid rgba(99,102,241,0.6)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'transparent';
-                e.currentTarget.style.borderLeft = '2px solid transparent';
-              }}
-            >
-              <FileSearch className="h-5 w-5 flex-shrink-0" />
-              {!sidebarCollapsed && <span className="font-medium">Review</span>}
-            </Link>
+            <SidebarItem
+              icon={FileSearch}
+              label="Review"
+              collapsed={sidebarCollapsed}
+              onClick={() => navigate('/accounting-review')}
+            />
           )}
-          
-          {/* System Configuration - Only for IT_ADMIN and SUPERADMIN */}
           {user && (user.role === 'IT_ADMIN' || user.role === 'SUPERADMIN') && (
-            <Link
-              to="/settings"
-              className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white"
-              style={{ 
-                borderLeft: '2px solid transparent', 
-                transition: 'all 150ms ease'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
-                e.currentTarget.style.borderLeft = '2px solid rgba(99,102,241,0.6)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'transparent';
-                e.currentTarget.style.borderLeft = '2px solid transparent';
-              }}
-            >
-              <Settings className="h-5 w-5 flex-shrink-0" />
-              {!sidebarCollapsed && <span className="font-medium">System Configuration</span>}
-            </Link>
+            <SidebarItem
+              icon={Settings}
+              label="System Configuration"
+              collapsed={sidebarCollapsed}
+              onClick={() => navigate('/settings')}
+            />
           )}
         </nav>
 
         {/* Collapse Toggle */}
-        <div className="p-4" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="p-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
           <button
             onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
             className="flex items-center justify-center w-full p-2 rounded-lg transition-all duration-200"
             style={{ transition: 'all 200ms ease' }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
+              e.currentTarget.style.background = 'var(--bg-card-hover)';
               const svg = e.currentTarget.querySelector('svg');
               if (svg) svg.style.transform = sidebarCollapsed ? 'rotate(0deg)' : 'rotate(180deg)';
             }}
@@ -1178,34 +1316,132 @@ export default function Dashboard() {
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden z-10">
-        {/* Top Header - Glassmorphism */}
-        <header style={{ background: 'rgba(10, 14, 30, 0.6)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }} className="px-6 py-4">
+        {/* Top Header */}
+        <header className="px-6 py-4">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-2xl font-bold text-white">
+              <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
                 {user ? `Welcome, ${user.name.split(' ')[0]}` : 'Dashboard'}
               </h1>
               {user && (
-                <span className="inline-block mt-1 px-3 py-1 text-xs font-medium rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                <span className="inline-block mt-1 px-3 py-1 text-xs font-medium rounded-full" style={{ background: 'var(--bg-card-hover)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>
                   {user.role.replace(/_/g, ' ')}
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
+              {/* Notification Bell */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowNotifications(!showNotifications)}
+                  className="relative p-2.5 rounded-xl transition-colors" style={{ color: 'var(--text-muted)' }}
+                  title="Notifications"
+                >
+                  <Bell className="h-5 w-5" strokeWidth={1.75} />
+                  {unreadCount > 0 && (
+                    <span className="absolute top-1 right-1 min-w-4 h-4 px-1 rounded-full text-[10px] font-bold flex items-center justify-center" style={{ background: 'var(--accent-red)', color: 'white' }}>
+                      {unreadCount > 99 ? '99+' : unreadCount}
+                    </span>
+                  )}
+                </button>
+                {showNotifications && (
+                  <div className="absolute right-0 top-full mt-2 w-96 rounded-2xl z-50 overflow-hidden" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+                    <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Notifications</h3>
+                        {unreadCount > 0 && (
+                          <span className="px-2 py-0.5 text-[10px] font-bold rounded-full" style={{ background: 'var(--accent-red)', color: 'white' }}>{unreadCount} new</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {unreadCount > 0 && (
+                          <button onClick={handleMarkAllRead} className="text-xs font-medium transition-colors" style={{ color: 'var(--accent-blue)' }}
+                            onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.7'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}>
+                            Mark all read
+                          </button>
+                        )}
+                        <button onClick={() => setShowNotifications(false)} className="text-sm" style={{ color: 'var(--text-muted)' }}>Close</button>
+                      </div>
+                    </div>
+                    <div className="max-h-96 overflow-y-auto" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                      {notifications.length > 0 ? (
+                        notifications.map((n) => {
+                          const iconMap: Record<string, any> = {
+                            success: CheckCircle,
+                            warning: AlertTriangle,
+                            error: XCircle,
+                            info: Bell,
+                          };
+                          const colorMap: Record<string, string> = {
+                            success: 'var(--accent-lime)',
+                            warning: 'var(--accent-amber)',
+                            error: 'var(--accent-red)',
+                            info: 'var(--accent-blue)',
+                          };
+                          const Icon = iconMap[n.type] || Bell;
+                          const color = colorMap[n.type] || 'var(--accent-blue)';
+                          const timeAgo = (() => {
+                            const diff = Date.now() - new Date(n.created_at).getTime();
+                            const mins = Math.floor(diff / 60000);
+                            if (mins < 1) return 'just now';
+                            if (mins < 60) return `${mins}m ago`;
+                            const hrs = Math.floor(mins / 60);
+                            if (hrs < 24) return `${hrs}h ago`;
+                            const days = Math.floor(hrs / 24);
+                            return `${days}d ago`;
+                          })();
+                          return (
+                            <div key={n.id} className="p-4 cursor-pointer transition-colors" style={{ borderBottom: '1px solid var(--border-subtle)', background: n.is_read ? 'transparent' : 'color-mix(in srgb, var(--accent-blue) 4%, transparent)' }}
+                              onClick={() => { if (!n.is_read) handleMarkRead(n.id); }}
+                              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.background = n.is_read ? 'transparent' : 'color-mix(in srgb, var(--accent-blue) 4%, transparent)'; }}>
+                              <div className="flex items-start gap-3">
+                                <div className="p-2 rounded-xl flex-shrink-0" style={{ background: `color-mix(in srgb, ${color} 10%, transparent)`, border: `1px solid color-mix(in srgb, ${color} 20%, transparent)` }}>
+                                  <Icon className="h-4 w-4" style={{ color }} strokeWidth={1.75} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{n.title}</p>
+                                    {!n.is_read && <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: 'var(--accent-blue)' }} />}
+                                  </div>
+                                  <p className="text-xs mt-0.5 line-clamp-2" style={{ color: 'var(--text-muted)' }}>{n.message}</p>
+                                  <div className="flex items-center gap-2 mt-1.5">
+                                    <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{timeAgo}</span>
+                                    {n.invoice_number && (
+                                      <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'var(--bg-card-hover)', color: 'var(--text-muted)' }}>{n.invoice_number}</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <div className="p-8 text-center">
+                          <Bell className="h-8 w-8 mx-auto mb-2 opacity-30" style={{ color: 'var(--text-muted)' }} />
+                          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No notifications yet</p>
+                          <p className="text-xs mt-1" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>Stage transitions and updates will appear here</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
               {/* Theme Toggle */}
               <ThemeToggle />
               {/* User Info */}
               {user && (
-                <div className="flex items-center gap-3 px-4 py-2 bg-white/5 border border-white/10 rounded-lg">
+                <div className="flex items-center gap-3 px-3 py-2 rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
                   <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center">
-                      <span className="text-white text-sm font-medium">
+                    <div className="p-2 rounded-xl flex-shrink-0" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}>
+                      <span className="text-sm font-semibold" style={{ color: 'var(--text-inverse)' }}>
                         {user.name.split(' ').map(n => n[0]).join('')}
                       </span>
                     </div>
                     <div className="text-left">
-                      <p className="text-sm font-medium text-white">{user.name}</p>
-                      <p className="text-xs text-slate-400">{user.title || user.role.replace(/_/g, ' ')}</p>
+                      <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{user.name}</p>
+                      <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{user.title || user.role.replace(/_/g, ' ')}</p>
                     </div>
                   </div>
                   <button
@@ -1213,162 +1449,152 @@ export default function Dashboard() {
                       logout();
                       navigate('/login');
                     }}
-                    className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+                    className="p-2 rounded-xl transition-colors"
+                    style={{ color: 'var(--text-muted)' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent'; }}
                     title="Logout"
                   >
-                    <LogOut className="h-4 w-4" />
+                    <LogOut className="h-4 w-4" strokeWidth={1.75} />
                   </button>
                 </div>
               )}
-              <button className="p-2 text-slate-300 hover:text-white hover:bg-white/10 rounded-lg transition-colors">
-                <Settings className="h-5 w-5" />
-              </button>
-              <div className="w-8 h-8 bg-[#6366f1] rounded-full flex items-center justify-center">
-                <User className="h-5 w-5 text-white" />
-              </div>
             </div>
           </div>
         </header>
 
         {/* Main Content Area */}
         <main className="flex-1 overflow-auto p-6 pb-24 md:pb-6">
-          {/* KPI Cards - Glassmorphism */}
+          {/* Primary Action Bar */}
+          <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Dashboard</h2>
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Manage invoices, approvals, and validations</p>
+            </div>
+            <div className="flex items-center gap-3">
+              {user && (user.role === 'PURCHASING_COORDINATOR' || user.role === 'IT_ADMIN') && (
+                <button
+                  onClick={() => setShowUploadModal(true)}
+                  className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition-all"
+                  style={{ background: 'var(--accent-lime)', color: 'var(--text-inverse)', boxShadow: '0 0 16px var(--accent-lime-glow)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--accent-lime-hover)'; e.currentTarget.style.boxShadow = '0 0 24px var(--accent-lime-glow)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--accent-lime)'; e.currentTarget.style.boxShadow = '0 0 16px var(--accent-lime-glow)'; }}
+                >
+                  <FileText className="h-4 w-4" strokeWidth={1.75} />
+                  Upload Invoice
+                </button>
+              )}
+              {user && hasPermission(user.role, 'canApprove') && (
+                <button
+                  onClick={() => navigate('/approvals')}
+                  className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-all"
+                  style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-card-hover)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--bg-card)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+                >
+                  <CheckCircle className="h-4 w-4" strokeWidth={1.75} />
+                  Review Approvals
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* KPI Cards */}
           {loading ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
               {[...Array(8)].map((_, i) => (
                 <div
                   key={i}
-                  className="bg-white/5 backdrop-blur-16 saturate-180 border border-white/10 rounded-16 shadow-lg"
-                  style={{ 
-                    borderRadius: '16px',
-                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)'
-                  }}
+                  className="rounded-2xl"
+                  style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}
                 >
                   <div className="p-5">
-                    <div className="w-32 h-3 bg-white/5 rounded animate-shimmer mb-4" style={{ animationDelay: `${i * 50}ms` }} />
-                    <div className="w-16 h-8 bg-white/5 rounded animate-shimmer mb-4" style={{ animationDelay: `${i * 50 + 100}ms` }} />
-                    <div className="w-24 h-3 bg-white/5 rounded animate-shimmer mb-4" style={{ animationDelay: `${i * 50 + 200}ms` }} />
-                    <div className="w-full h-1 bg-white/5 rounded animate-shimmer" style={{ animationDelay: `${i * 50 + 300}ms` }} />
+                    <div className="w-32 h-3 rounded animate-shimmer mb-4" style={{ animationDelay: `${i * 50}ms`, background: 'var(--bg-card-hover)' }} />
+                    <div className="w-16 h-8 rounded animate-shimmer mb-4" style={{ animationDelay: `${i * 50 + 100}ms`, background: 'var(--bg-card-hover)' }} />
+                    <div className="w-24 h-3 rounded animate-shimmer mb-4" style={{ animationDelay: `${i * 50 + 200}ms`, background: 'var(--bg-card-hover)' }} />
+                    <div className="w-full h-1 rounded animate-shimmer" style={{ animationDelay: `${i * 50 + 300}ms`, background: 'var(--bg-card-hover)' }} />
                   </div>
                 </div>
               ))}
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-              {kpis.map((kpi, index) => (
-                <div
-                  key={kpi.label}
-                  className="hover:shadow-xl transition-all duration-200 hover:-translate-y-1 card-shimmer relative overflow-hidden"
-                  style={{ 
-                    background: 'rgba(255, 255, 255, 0.05)',
-                    backdropFilter: 'blur(20px) saturate(180%)',
-                    WebkitBackdropFilter: 'blur(20px) saturate(180%)',
-                    border: '1px solid rgba(255, 255, 255, 0.08)',
-                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.1), inset 0 -1px 0 rgba(0, 0, 0, 0.2)',
-                    borderRadius: '16px',
-                    animationDelay: `${index * 60}ms`,
-                    opacity: 0,
-                    animation: `fadeInUp 0.5s ease-out ${index * 60}ms forwards`
-                  }}
-                >
-                  <div className="p-5">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <p className="text-sm font-medium text-slate-300 mb-1">{kpi.label}</p>
-                        <p className="text-2xl font-bold text-white">{kpi.value}</p>
-                        {'subtitle' in kpi && kpi.subtitle && (
-                          <p className="text-xs text-slate-400 mt-1">{kpi.subtitle}</p>
-                        )}
-                        <div className="flex items-center gap-1 mt-2">
-                          {kpi.trend && (
-                            <>
-                              <span className={`text-xs font-medium ${kpi.trendUp ? 'text-green-400' : 'text-red-400'}`}>
-                                {kpi.trendUp ? '↑' : '↓'} {kpi.trend}
-                              </span>
-                              <span className="text-xs text-slate-400">vs last week</span>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                      <div className="ml-4 p-2 rounded-lg bg-white/8" style={{ backgroundColor: 'rgba(255,255,255,0.08)' }}>
-                        <kpi.icon className="h-5 w-5" style={{ color: kpi.color }} />
-                      </div>
-                    </div>
-                    <div className="mt-3 h-1 rounded-full relative" style={{ backgroundColor: `${kpi.color}20` }}>
-                      <div
-                        className="h-1 rounded-full transition-all duration-800 ease-out relative"
-                        style={{ 
-                          width: progressAnimated ? `${Math.random() * 60 + 40}%` : '0%',
-                          backgroundColor: kpi.color,
-                          boxShadow: '2px 0 8px currentColor'
-                        }}
-                      >
-                        {/* Glow tip */}
-                        {progressAnimated && (
-                          <div
-                            style={{
-                              width: '6px',
-                              height: '6px',
-                              borderRadius: '50%',
-                              background: kpi.color,
-                              boxShadow: `0 0 8px ${kpi.color}, 0 0 16px ${kpi.color}`,
-                              position: 'absolute',
-                              right: 0,
-                              top: '50%',
-                              transform: 'translateY(-50%)'
-                            }}
-                          />
-                        )}
-                      </div>
-                    </div>
+              {kpis.map((kpi, idx) => {
+                const accent: any = kpi.accent || 'default';
+                return (
+                  <div key={kpi.label} className="animate-fade-in-up" style={{ animationDelay: `${idx * 50}ms` }}>
+                    <StatCard
+                      title={kpi.label}
+                      value={kpi.value}
+                      icon={kpi.icon}
+                      accent={accent}
+                      trend={kpi.trend ? { value: kpi.trend, direction: kpi.trendUp ? 'up' : 'down' } : undefined}
+                    />
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
-          {/* DSRS v7.3 PO Audit Summary */}
-          <div
-            className="mb-6 p-5 rounded-2xl"
-            style={{
-              background: 'rgba(255, 255, 255, 0.05)',
-              backdropFilter: 'blur(20px) saturate(180%)',
-              WebkitBackdropFilter: 'blur(20px) saturate(180%)',
-              border: '1px solid rgba(255, 255, 255, 0.08)',
-              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.1)',
-            }}
-          >
+          {/* PO Validation Audit — unified horizontal scorecard */}
+          <div className="mb-6 rounded-2xl p-5" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
-                <Search className="h-4 w-4 text-slate-400" />
-                <h3 className="text-sm font-semibold text-slate-200">PO Validation Audit</h3>
+                <div className="p-1.5 rounded-lg" style={{ background: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-purple) 20%, transparent)' }}>
+                  <FileSearch className="h-4 w-4" style={{ color: 'var(--accent-purple)' }} strokeWidth={1.75} />
+                </div>
+                <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>PO Validation Audit</h3>
               </div>
               {poAuditLoading && (
-                <span className="text-xs text-slate-500">Loading...</span>
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Loading...</span>
               )}
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
-              {[
-                { label: 'Matched', value: poAuditSummary.matched, color: 'text-emerald-400', bg: 'bg-emerald-500/20' },
-                { label: 'Warnings', value: poAuditSummary.warnings, color: 'text-amber-400', bg: 'bg-amber-500/20' },
-                { label: 'Mismatches', value: poAuditSummary.mismatches, color: 'text-red-400', bg: 'bg-red-500/20' },
-                { label: 'Pending', value: poAuditSummary.pending, color: 'text-blue-400', bg: 'bg-blue-500/20' },
-                { label: 'Not Found', value: poAuditSummary.not_found, color: 'text-orange-400', bg: 'bg-orange-500/20' },
-                { label: 'Skipped', value: poAuditSummary.skipped, color: 'text-slate-400', bg: 'bg-slate-500/20' },
-                { label: 'Error', value: poAuditSummary.error, color: 'text-red-400', bg: 'bg-red-500/20' },
-              ].map((item) => (
-                <div
-                  key={item.label}
-                  className="flex flex-col items-center justify-center p-3 rounded-xl"
-                  style={{ background: 'rgba(255, 255, 255, 0.03)' }}
-                >
-                  <span className={`text-lg font-bold ${item.color}`}>{item.value}</span>
-                  <span className="text-xs text-slate-400 mt-1">{item.label}</span>
-                </div>
-              ))}
+            <div className="flex flex-wrap items-stretch rounded-xl overflow-hidden" style={{ border: '1px solid var(--border-subtle)', background: 'color-mix(in srgb, var(--bg-elevated) 60%, transparent)' }}>
+              <AuditTile
+                label="Matched"
+                value={poAuditSummary.matched}
+                icon={CheckCircle}
+                status="success"
+              />
+              <AuditTile
+                label="Warnings"
+                value={poAuditSummary.warnings}
+                icon={AlertTriangle}
+                status="warning"
+              />
+              <AuditTile
+                label="Mismatches"
+                value={poAuditSummary.mismatches}
+                icon={XCircle}
+                status="danger"
+              />
+              <AuditTile
+                label="Pending"
+                value={poAuditSummary.pending}
+                icon={Clock}
+                status="info"
+              />
+              <AuditTile
+                label="Not Found"
+                value={poAuditSummary.not_found}
+                icon={Search}
+                status="warning"
+              />
+              <AuditTile
+                label="Skipped"
+                value={poAuditSummary.skipped}
+                icon={Shield}
+                status="neutral"
+              />
+              <AuditTile
+                label="Error"
+                value={poAuditSummary.error}
+                icon={AlertCircle}
+                status="danger"
+              />
             </div>
-            <p className="text-xs text-slate-500 mt-3">
+            <p className="text-xs mt-4" style={{ color: 'var(--text-muted)' }}>
               {poAuditSummary.total} invoice(s) audited against NextGen PO data. Audit is async and informational only.
             </p>
           </div>
@@ -1378,222 +1604,43 @@ export default function Dashboard() {
             <BottleneckView />
           )}
 
-          {/* Action Buttons - Glassmorphism - Role-specific */}
-          <div className="flex items-center gap-4 mb-6">
-            {user && (
-              <>
-                {/* Upload Invoice - Only for PURCHASING_COORDINATOR and IT_ADMIN */}
-                {(user.role === 'PURCHASING_COORDINATOR' || user.role === 'IT_ADMIN') && (
-                  <button
-                    onClick={() => {
-                      console.log('Upload button clicked, showUploadModal:', showUploadModal);
-                      setShowUploadModal(true);
-                    }}
-                    className="px-4 py-2 text-white rounded-lg font-medium transition-all duration-200"
-                    style={{
-                      background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-                      boxShadow: '0 0 20px rgba(99,102,241,0.45), 0 4px 15px rgba(0,0,0,0.3)'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.boxShadow = '0 0 35px rgba(99,102,241,0.65), 0 4px 20px rgba(0,0,0,0.4)';
-                      e.currentTarget.style.transform = 'translateY(-1px)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.boxShadow = '0 0 20px rgba(99,102,241,0.45), 0 4px 15px rgba(0,0,0,0.3)';
-                      e.currentTarget.style.transform = 'translateY(0)';
-                    }}
-                  >
-                    Upload Invoice
-                  </button>
-                )}
-
-                {/* Approve/Reject - For approvers */}
-                {(user.role === 'PURCHASING_COORDINATOR' ||
-                  user.role === 'PURCHASING_MANAGER' ||
-                  user.role === 'PLANNING_MANAGER' ||
-                  user.role === 'SR_MANAGER_GLOBAL_PRODUCTION' ||
-                  user.role === 'MS_POLLY' ||
-                  user.role === 'ACCOUNTING_SUPERVISOR' ||
-                  user.role === 'CFO') && (
-                  <>
-                    <button
-                      onClick={() => navigate('/approvals')}
-                      className="px-4 py-2 text-white rounded-lg font-medium transition-all duration-200"
-                      style={{
-                        background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
-                        boxShadow: '0 0 20px rgba(5,150,105,0.45), 0 4px 15px rgba(0,0,0,0.3)'
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.boxShadow = '0 0 35px rgba(5,150,105,0.65), 0 4px 20px rgba(0,0,0,0.4)';
-                        e.currentTarget.style.transform = 'translateY(-1px)';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.boxShadow = '0 0 20px rgba(5,150,105,0.45), 0 4px 15px rgba(0,0,0,0.3)';
-                        e.currentTarget.style.transform = 'translateY(0)';
-                      }}
-                    >
-                      Review Approvals
-                    </button>
-                  </>
-                )}
-
-                {/* Route to CFO - Only for ACCOUNTING_SUPERVISOR */}
-                {user.role === 'ACCOUNTING_SUPERVISOR' && (
-                  <button
-                    onClick={() => navigate('/approvals')}
-                    className="px-4 py-2 text-white rounded-lg font-medium transition-all duration-200"
-                    style={{
-                      background: 'linear-gradient(135deg, #f59e0b 0%, #fbbf24 100%)',
-                      boxShadow: '0 0 20px rgba(245,158,11,0.45), 0 4px 15px rgba(0,0,0,0.3)'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.boxShadow = '0 0 35px rgba(245,158,11,0.65), 0 4px 20px rgba(0,0,0,0.4)';
-                      e.currentTarget.style.transform = 'translateY(-1px)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.boxShadow = '0 0 20px rgba(245,158,11,0.45), 0 4px 15px rgba(0,0,0,0.3)';
-                      e.currentTarget.style.transform = 'translateY(0)';
-                    }}
-                  >
-                    Route to CFO
-                  </button>
-                )}
-
-                {/* Payment Batch Approval - Only for CFO */}
-                {user.role === 'CFO' && (
-                  <button
-                    onClick={() => navigate('/payment-batches')}
-                    className="px-4 py-2 text-white rounded-lg font-medium transition-all duration-200"
-                    style={{
-                      background: 'linear-gradient(135deg, #7c3aed 0%, #8b5cf6 100%)',
-                      boxShadow: '0 0 20px rgba(124,58,237,0.45), 0 4px 15px rgba(0,0,0,0.3)'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.boxShadow = '0 0 35px rgba(124,58,237,0.65), 0 4px 20px rgba(0,0,0,0.4)';
-                      e.currentTarget.style.transform = 'translateY(-1px)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.boxShadow = '0 0 20px rgba(124,58,237,0.45), 0 4px 15px rgba(0,0,0,0.3)';
-                      e.currentTarget.style.transform = 'translateY(0)';
-                    }}
-                  >
-                    Batch Approve Payments
-                  </button>
-                )}
-
-                {/* System Configuration - Only for IT_ADMIN and SUPERADMIN */}
-                {(user.role === 'IT_ADMIN' || user.role === 'SUPERADMIN') && (
-                  <button
-                    onClick={() => navigate('/settings')}
-                    className="px-4 py-2 text-white rounded-lg font-medium transition-all duration-200"
-                    style={{
-                      background: 'linear-gradient(135deg, #4f46e5 0%, #6366f1 100%)',
-                      boxShadow: '0 0 20px rgba(79,70,229,0.45), 0 4px 15px rgba(0,0,0,0.3)'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.boxShadow = '0 0 35px rgba(79,70,229,0.65), 0 4px 20px rgba(0,0,0,0.4)';
-                      e.currentTarget.style.transform = 'translateY(-1px)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.boxShadow = '0 0 20px rgba(79,70,229,0.45), 0 4px 15px rgba(0,0,0,0.3)';
-                      e.currentTarget.style.transform = 'translateY(0)';
-                    }}
-                  >
-                    System Configuration
-                  </button>
-                )}
-              </>
+          {/* Secondary Role-Specific Actions */}
+          <div className="mb-6 flex flex-wrap items-center gap-3">
+            {user && user.role === 'ACCOUNTING_SUPERVISOR' && (
+              <button
+                onClick={() => navigate('/approvals')}
+                className="inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors"
+                style={{ border: '1px solid color-mix(in srgb, var(--accent-amber) 30%, transparent)', background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-amber) 20%, transparent)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-amber) 10%, transparent)'; }}
+              >
+                Route to CFO
+              </button>
+            )}
+            {user && user.role === 'CFO' && (
+              <button
+                onClick={() => navigate('/payment-batches')}
+                className="inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors"
+                style={{ border: '1px solid color-mix(in srgb, var(--accent-purple) 30%, transparent)', background: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)', color: 'var(--accent-purple)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-purple) 20%, transparent)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-purple) 10%, transparent)'; }}
+              >
+                Batch Approve Payments
+              </button>
+            )}
+            {user && (user.role === 'IT_ADMIN' || user.role === 'SUPERADMIN') && (
+              <button
+                onClick={() => navigate('/settings')}
+                className="inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors"
+                style={{ border: '1px solid var(--border-color)', background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-card-hover)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--bg-elevated)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+              >
+                <Settings className="h-3.5 w-3.5" />
+                System Configuration
+              </button>
             )}
           </div>
-
-          {/* Notifications */}
-          <div className="relative">
-            <button
-                onClick={() => {
-                  if (!user) {
-                    navigate('/login');
-                  } else {
-                    setShowNotifications(!showNotifications);
-                  }
-                }}
-                className="relative px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
-              >
-                <div className="flex items-center gap-2">
-                  <Bell className="h-5 w-5" />
-                  <span>Notifications</span>
-                  <span className="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full" />
-                </div>
-              </button>
-              {showNotifications && (
-                <div 
-                  className="absolute right-0 z-50"
-                  style={{ 
-                    top: 'calc(100% + 8px)',
-                    width: '320px',
-                    background: 'rgba(15, 23, 42, 0.85)',
-                    backdropFilter: 'blur(24px)',
-                    WebkitBackdropFilter: 'blur(24px)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: '16px',
-                    boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
-                    transform: 'scale(0.95) translateY(-8px)',
-                    opacity: 0,
-                    animation: 'notificationOpen 200ms ease-out forwards',
-                    transformOrigin: 'top right'
-                  }}
-                >
-                  <style>{`
-                    @keyframes notificationOpen {
-                      to {
-                        transform: scale(1) translateY(0);
-                        opacity: 1;
-                      }
-                    }
-                  `}</style>
-                  <div className="p-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-semibold text-white">Notifications</h3>
-                      <button className="text-xs text-[#6366f1] hover:text-[#818cf8]">Mark all read</button>
-                    </div>
-                  </div>
-                  <div className="p-2">
-                    <div className="p-3 hover:bg-white/10 rounded-lg cursor-pointer transition-colors" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                      <div className="flex items-start gap-3">
-                        <div className="w-2 h-2 rounded-full mt-2 flex-shrink-0" style={{ background: '#22c55e' }} />
-                        <div className="flex-1">
-                          <p className="text-sm text-white">Invoice #1041 approved</p>
-                          <p className="text-xs text-slate-400 mt-1">Approved by John Doe</p>
-                        </div>
-                        <span className="text-xs text-slate-500">15m</span>
-                      </div>
-                    </div>
-                    <div className="p-3 hover:bg-white/10 rounded-lg cursor-pointer transition-colors" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                      <div className="flex items-start gap-3">
-                        <div className="w-2 h-2 rounded-full mt-2 flex-shrink-0" style={{ background: '#ef4444' }} />
-                        <div className="flex-1">
-                          <p className="text-sm text-white">Invoice #1042 flagged as exception</p>
-                          <p className="text-xs text-slate-400 mt-1">Missing vendor information</p>
-                        </div>
-                        <span className="text-xs text-slate-500">2m</span>
-                      </div>
-                    </div>
-                    <div className="p-3 hover:bg-white/10 rounded-lg cursor-pointer transition-colors">
-                      <div className="flex items-start gap-3">
-                        <div className="w-2 h-2 rounded-full mt-2 flex-shrink-0" style={{ background: '#f59e0b' }} />
-                        <div className="flex-1">
-                          <p className="text-sm text-white">Invoice #1043 pending approval</p>
-                          <p className="text-xs text-slate-400 mt-1">Awaiting manager review</p>
-                        </div>
-                        <span className="text-xs text-slate-500">1h</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="p-3 text-center" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                    <button className="text-sm text-[#6366f1] hover:text-[#818cf8]">View all notifications →</button>
-                  </div>
-                </div>
-              )}
-            </div>
 
           {/* My Tasks Widget */}
           {user && user.role !== 'MS_POLLY' && user.role !== 'IT_ADMIN' && user.role !== 'SUPERADMIN' && (
@@ -1604,32 +1651,33 @@ export default function Dashboard() {
             />
           )}
 
-          {/* Filters - Glassmorphism - Role-specific visibility */}
+          {/* Filters — pill selectors */}
           {user && user.role !== 'MS_POLLY' && user.role !== 'IT_ADMIN' && user.role !== 'SUPERADMIN' && (
-            <div className="p-4 mb-6" style={{ background: 'rgba(255, 255, 255, 0.04)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', border: '1px solid rgba(255, 255, 255, 0.07)', borderRadius: '16px' }}>
+            <div className="p-4 mb-6 rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
               <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold text-white">Filter Invoices</h3>
+                <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Filter Invoices</h3>
                 <StatusGuide />
               </div>
-              <div className="flex flex-col md:flex-row items-start md:items-center gap-4">
+              <div className="flex flex-col md:flex-row items-start md:items-center gap-3">
                 <div className="relative w-full md:flex-1">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4" style={{ color: 'var(--text-muted)' }} />
                   <input
                     type="text"
                     placeholder="Search invoice number, vendor, or brand..."
                     value={filters.search || ''}
                     onChange={(e) => setFilters({ ...filters, search: e.target.value || undefined })}
-                    className="w-full pl-10 pr-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent text-white placeholder-slate-400"
+                    className="w-full h-9 pl-9 pr-4 rounded-full focus:outline-none text-sm transition-all"
+                    style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
                   />
                 </div>
                 <select
                   value={filters.status || ''}
                   onChange={(e) => setFilters({ ...filters, status: e.target.value as InvoiceStatus | undefined })}
-                  className="w-full md:w-auto px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent text-white"
+                  className="h-9 w-full md:w-auto px-4 rounded-full focus:outline-none text-sm appearance-none cursor-pointer transition-all" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
                 >
-                  <option value="" className="bg-[#0f172a]">All Statuses</option>
+                  <option value="" style={{ background: 'var(--input-bg)' }}>All Statuses</option>
                   {Object.values(InvoiceStatus).map((status) => (
-                    <option key={status} value={status} className="bg-[#0f172a]">
+                    <option key={status} value={status} style={{ background: 'var(--input-bg)' }}>
                       {status.replace(/_/g, ' ')}
                     </option>
                   ))}
@@ -1637,11 +1685,11 @@ export default function Dashboard() {
                 <select
                   value={filters.category || ''}
                   onChange={(e) => setFilters({ ...filters, category: e.target.value as InvoiceCategory | undefined })}
-                  className="w-full md:w-auto px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent text-white"
+                  className="h-9 w-full md:w-auto px-4 rounded-full focus:outline-none text-sm appearance-none cursor-pointer transition-all" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
                 >
-                  <option value="" className="bg-[#0f172a]">All Categories</option>
+                  <option value="" style={{ background: 'var(--input-bg)' }}>All Categories</option>
                   {Object.values(InvoiceCategory).map((category) => (
-                    <option key={category} value={category} className="bg-[#0f172a]">
+                    <option key={category} value={category} style={{ background: 'var(--input-bg)' }}>
                       {category.replace(/_/g, ' ')}
                     </option>
                   ))}
@@ -1649,104 +1697,124 @@ export default function Dashboard() {
                 <select
                   value={filters.type || ''}
                   onChange={(e) => setFilters({ ...filters, type: e.target.value as InvoiceType | undefined })}
-                  className="w-full md:w-auto px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent text-white"
+                  className="h-9 w-full md:w-auto px-4 rounded-full focus:outline-none text-sm appearance-none cursor-pointer transition-all" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
                 >
-                  <option value="" className="bg-[#0f172a]">All Types</option>
+                  <option value="" style={{ background: 'var(--input-bg)' }}>All Types</option>
                   {Object.values(InvoiceType).map((type) => (
-                    <option key={type} value={type} className="bg-[#0f172a]">{type}</option>
+                    <option key={type} value={type} style={{ background: 'var(--input-bg)' }}>{type}</option>
                   ))}
                 </select>
                 <select
                   value={filters.brand || ''}
                   onChange={(e) => setFilters({ ...filters, brand: e.target.value || undefined })}
-                  className="w-full md:w-auto px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent text-white"
+                  className="h-9 w-full md:w-auto px-4 rounded-full focus:outline-none text-sm appearance-none cursor-pointer transition-all" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
                 >
-                  <option value="" className="bg-[#0f172a]">All Brands</option>
-                  <option value="Columbia Sportswear" className="bg-[#0f172a]">Columbia Sportswear</option>
-                  <option value="The North Face" className="bg-[#0f172a]">The North Face</option>
-                  <option value="Vans" className="bg-[#0f172a]">Vans</option>
-                  <option value="Arc'teryx" className="bg-[#0f172a]">Arc'teryx</option>
-                  <option value="Under Armour" className="bg-[#0f172a]">Under Armour</option>
-                  <option value="Helly Hansen" className="bg-[#0f172a]">Helly Hansen</option>
-                  <option value="Burton" className="bg-[#0f172a]">Burton</option>
-                  <option value="Travis Mathew" className="bg-[#0f172a]">Travis Mathew</option>
-                  <option value="Fjallraven" className="bg-[#0f172a]">Fjallraven</option>
-                  <option value="On Running" className="bg-[#0f172a]">On Running</option>
-                  <option value="Prana" className="bg-[#0f172a]">Prana</option>
-                  <option value="Other" className="bg-[#0f172a]">Other brands</option>
+                  <option value="" style={{ background: 'var(--input-bg)' }}>All Brands</option>
+                  <option value="Columbia Sportswear" style={{ background: 'var(--input-bg)' }}>Columbia Sportswear</option>
+                  <option value="The North Face" style={{ background: 'var(--input-bg)' }}>The North Face</option>
+                  <option value="Vans" style={{ background: 'var(--input-bg)' }}>Vans</option>
+                  <option value="Arc'teryx" style={{ background: 'var(--input-bg)' }}>Arc'teryx</option>
+                  <option value="Under Armour" style={{ background: 'var(--input-bg)' }}>Under Armour</option>
+                  <option value="Helly Hansen" style={{ background: 'var(--input-bg)' }}>Helly Hansen</option>
+                  <option value="Burton" style={{ background: 'var(--input-bg)' }}>Burton</option>
+                  <option value="Travis Mathew" style={{ background: 'var(--input-bg)' }}>Travis Mathew</option>
+                  <option value="Fjallraven" style={{ background: 'var(--input-bg)' }}>Fjallraven</option>
+                  <option value="On Running" style={{ background: 'var(--input-bg)' }}>On Running</option>
+                  <option value="Prana" style={{ background: 'var(--input-bg)' }}>Prana</option>
+                  <option value="Other" style={{ background: 'var(--input-bg)' }}>Other brands</option>
                 </select>
                 <select
                   value={filters.brand_code || ''}
                   onChange={(e) => setFilters({ ...filters, brand_code: e.target.value as string | undefined })}
-                  className="w-full md:w-auto px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent text-white"
+                  className="h-9 w-full md:w-auto px-4 rounded-full focus:outline-none text-sm appearance-none cursor-pointer transition-all" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
                 >
-                  <option value="" className="bg-[#0f172a]">All Brand Codes</option>
-                  <option value="CSC" className="bg-[#0f172a]">CSC</option>
-                  <option value="TNF" className="bg-[#0f172a]">TNF</option>
-                  <option value="VNS" className="bg-[#0f172a]">VNS</option>
-                  <option value="ARC" className="bg-[#0f172a]">ARC</option>
-                  <option value="UA" className="bg-[#0f172a]">UA</option>
-                  <option value="HH" className="bg-[#0f172a]">HH</option>
-                  <option value="BUR" className="bg-[#0f172a]">BUR</option>
-                  <option value="TM" className="bg-[#0f172a]">TM</option>
-                  <option value="FR" className="bg-[#0f172a]">FR</option>
-                  <option value="ON" className="bg-[#0f172a]">ON</option>
+                  <option value="" style={{ background: 'var(--input-bg)' }}>All Brand Codes</option>
+                  <option value="CSC" style={{ background: 'var(--input-bg)' }}>CSC</option>
+                  <option value="TNF" style={{ background: 'var(--input-bg)' }}>TNF</option>
+                  <option value="VNS" style={{ background: 'var(--input-bg)' }}>VNS</option>
+                  <option value="ARC" style={{ background: 'var(--input-bg)' }}>ARC</option>
+                  <option value="UA" style={{ background: 'var(--input-bg)' }}>UA</option>
+                  <option value="HH" style={{ background: 'var(--input-bg)' }}>HH</option>
+                  <option value="BUR" style={{ background: 'var(--input-bg)' }}>BUR</option>
+                  <option value="TM" style={{ background: 'var(--input-bg)' }}>TM</option>
+                  <option value="FR" style={{ background: 'var(--input-bg)' }}>FR</option>
+                  <option value="ON" style={{ background: 'var(--input-bg)' }}>ON</option>
                 </select>
                 <div className="flex items-center gap-2 w-full md:w-auto">
                   <input
                     type="date"
                     value={filters.dateFrom || ''}
                     onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value || undefined })}
-                    className="px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-[#6366f1]"
+                    className="h-9 px-3 rounded-full text-sm focus:outline-none"
+                    style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
                     placeholder="From"
                   />
-                  <span className="text-slate-500">-</span>
+                  <span style={{ color: 'var(--text-subtle)' }}>-</span>
                   <input
                     type="date"
                     value={filters.dateTo || ''}
                     onChange={(e) => setFilters({ ...filters, dateTo: e.target.value || undefined })}
-                    className="px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-[#6366f1]"
+                    className="h-9 px-3 rounded-full text-sm focus:outline-none"
+                    style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
                     placeholder="To"
                   />
                 </div>
                 <button
                   onClick={() => setFilters({ status: undefined, category: undefined, type: undefined, brand: undefined, brand_code: undefined, search: undefined, dateFrom: undefined, dateTo: undefined })}
-                  className="w-full md:w-auto px-4 py-2 border border-white/10 text-slate-300 rounded-lg hover:bg-white/10 transition-colors font-medium"
+                  disabled={activeFilterCount === 0}
+                  className="h-9 w-full md:w-auto px-4 rounded-full transition-colors text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={activeFilterCount > 0
+                    ? { color: 'var(--accent-violet)', background: 'color-mix(in srgb, var(--accent-violet) 10%, transparent)' }
+                    : { color: 'var(--text-secondary)' }}
+                  onMouseEnter={(e) => { if (activeFilterCount > 0) { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-violet) 18%, transparent)'; } }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = activeFilterCount > 0 ? 'color-mix(in srgb, var(--accent-violet) 10%, transparent)' : 'transparent'; }}
                 >
-                  Clear
+                  Clear{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
                 </button>
               </div>
             </div>
           )}
 
-          {/* Invoice Table - Glassmorphism */}
-          <div style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }}>
-            <div className="px-6 py-4 border-b border-white/10">
-              <h2 className="text-lg font-semibold text-white">Invoices</h2>
+          {/* Invoice Table */}
+          <div className="rounded-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.25)]" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+            <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
+              <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Invoices</h2>
+              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{displayedInvoices.length} records</span>
             </div>
-            <InvoiceTable invoices={displayedInvoices} onInvoiceClick={setSelectedInvoice} loading={loading} />
+            <InvoiceTable
+              invoices={displayedInvoices}
+              onInvoiceClick={setSelectedInvoice}
+              loading={loading}
+              emptyHint={activeFilterCount > 0 ? 'filters' : 'default'}
+            />
             
             {/* Pagination */}
             {sortedInvoices.length > 0 && (
-              <div className="flex items-center justify-between py-4 px-6">
-                <div className="text-sm text-slate-400">
+              <div className="flex items-center justify-between py-4 px-6" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
                   Showing {startIndex + 1}-{Math.min(endIndex, sortedInvoices.length)} of {sortedInvoices.length} invoices
                 </div>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                    disabled={currentPage === 1}
-                    className="px-4 py-2 bg-white/5 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors text-sm font-medium border border-white/10"
+                    disabled={safePage <= 1}
+                    className="px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl transition-colors text-sm font-medium"
+                    style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}
+                    onMouseEnter={(e) => { if (!e.currentTarget.disabled) { e.currentTarget.style.background = 'var(--bg-card-hover)'; e.currentTarget.style.color = 'var(--text-primary)'; } }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--bg-elevated)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
                   >
                     Previous
                   </button>
-                  <span className="text-sm text-slate-400">
-                    Page {currentPage} of {totalPages}
+                  <span className="text-sm px-2" style={{ color: 'var(--text-muted)' }}>
+                    Page {safePage} of {totalPages}
                   </span>
                   <button
                     onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                    disabled={currentPage === totalPages}
-                    className="px-4 py-2 bg-white/5 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors text-sm font-medium border border-white/10"
+                    disabled={safePage >= totalPages}
+                    className="px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl transition-colors text-sm font-medium"
+                    style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}
+                    onMouseEnter={(e) => { if (!e.currentTarget.disabled) { e.currentTarget.style.background = 'var(--bg-card-hover)'; e.currentTarget.style.color = 'var(--text-primary)'; } }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--bg-elevated)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
                   >
                     Next
                   </button>
@@ -1757,96 +1825,119 @@ export default function Dashboard() {
 
           {/* Supplier Balance Analysis - Only for CFO and ACCOUNTING_SUPERVISOR */}
           {user && (user.role === 'CFO' || user.role === 'ACCOUNTING_SUPERVISOR') && (
-            <div className="mt-6" style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }}>
-              <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
+            <div className="mt-6 rounded-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.25)]" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+              <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
                 <div>
-                  <h2 className="text-lg font-semibold text-white">Supplier balance</h2>
-                  <p className="text-sm text-slate-400">Received vs recorded — real-time gap analysis</p>
+                  <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Supplier balance</h2>
+                  <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Received vs recorded — real-time gap analysis</p>
                 </div>
-                <Link to="/vendors" className="text-sm text-[#6366f1] hover:text-[#818cf8]">View all vendors →</Link>
+                <Link to="/vendors" className="text-sm" style={{ color: 'var(--accent-purple)' }} onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-lime)'; }} onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--accent-purple)'; }}>View all vendors →</Link>
               </div>
               <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-white/5">
-                  <thead style={{ background: 'rgba(255,255,255,0.05)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                {loading ? (
+                  <div className="p-6 space-y-4">
+                    {[...Array(4)].map((_, i) => (
+                      <div key={i} className="flex items-center gap-4">
+                        <Skeleton className="h-4 flex-1" />
+                        <Skeleton className="h-4 w-12" />
+                        <Skeleton className="h-4 w-12" />
+                        <Skeleton className="h-4 w-12" />
+                        <Skeleton className="h-4 w-24" />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                <table className="min-w-full animate-fade-in">
+                  <thead style={{ background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border-subtle)' }}>
                     <tr>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
+                      <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
                         Vendor Name
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
+                      <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
                         Invoices Received
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
+                      <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
                         Invoices Recorded
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
+                      <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
                         Gap
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
+                      <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
                         Total Outstanding (USD)
                       </th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {[
-                      { name: 'Avery Dennison Paxar (China) Ltd', received: 12, recorded: 12, outstanding: 1956.17 },
-                      { name: 'UPW Limited', received: 8, recorded: 7, outstanding: 174.87 },
-                      { name: 'Avery Dennison Hong Kong B.V.', received: 15, recorded: 15, outstanding: 37.94 },
-                      { name: 'Amass International Limited', received: 5, recorded: 5, outstanding: 422.25 },
-                    ].map((vendor, i) => {
+                  <tbody>
+                    {supplierBalance.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="px-6 py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>No vendor data available</td>
+                      </tr>
+                    ) : supplierBalance.map((vendor, i) => {
                       const gap = vendor.received - vendor.recorded;
                       return (
-                        <tr key={i} className="hover:bg-white/5 transition-colors">
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-200">{vendor.name}</td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-white">{vendor.received}</td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-white">{vendor.recorded}</td>
+                        <tr key={i} className="transition-colors"
+                          style={{ borderTop: i > 0 ? '1px solid var(--border-subtle)' : 'none' }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                        >
+                          <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--text-secondary)' }}>{vendor.name}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-primary)' }}>{vendor.received}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-primary)' }}>{vendor.recorded}</td>
                           <td className="px-6 py-4 whitespace-nowrap">
                             {gap > 0 ? (
                               <div className="flex items-center gap-2">
-                                <AlertCircle className="h-4 w-4 text-red-500" />
-                                <span className="text-sm font-semibold text-red-400">{gap}</span>
+                                <AlertCircle className="h-4 w-4" style={{ color: 'var(--accent-red)' }} strokeWidth={1.75} />
+                                <span className="text-sm font-semibold" style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--accent-red)' }}>{gap}</span>
                               </div>
                             ) : (
                               <div className="flex items-center gap-2">
-                                <CheckCircle className="h-4 w-4 text-green-500" />
-                                <span className="text-sm text-green-400">0</span>
+                                <CheckCircle className="h-4 w-4" style={{ color: 'var(--accent-lime)' }} strokeWidth={1.75} />
+                                <span className="text-sm" style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--accent-lime)' }}>0</span>
                               </div>
                             )}
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-white font-medium">${vendor.outstanding.toLocaleString()}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold" style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-primary)' }}>${vendor.outstanding.toLocaleString()}</td>
                         </tr>
                       );
                     })}
                   </tbody>
                 </table>
+                )}
               </div>
             </div>
           )}
 
           {/* Payables Aging - Only for CFO and ACCOUNTING_SUPERVISOR */}
           {user && (user.role === 'CFO' || user.role === 'ACCOUNTING_SUPERVISOR') && (
-            <div className="mt-6" style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }}>
-              <div className="px-6 py-4 border-b border-white/10">
-                <h2 className="text-lg font-semibold text-white">Payables aging</h2>
-                <p className="text-sm text-slate-400">Outstanding invoices by age bucket</p>
+            <div className="mt-6 rounded-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.25)]" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+              <div className="px-6 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
+                <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Payables aging</h2>
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Outstanding invoices by age bucket</p>
               </div>
               <div className="p-6">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {[
-                    { label: 'Current (not yet due)', count: 5, amount: 3190.29, color: '#059669' },
-                    { label: '1–30 days overdue', count: 2, amount: 752.07, color: '#F59E0B' },
-                    { label: '31–60 days overdue', count: 0, amount: 0, color: '#F97316' },
-                    { label: '60+ days overdue', count: 0, amount: 0, color: '#DC2626' },
-                  ].map((bucket, i) => (
+                  {loading ? (
+                    [...Array(4)].map((_, i) => (
+                      <div key={i} className="p-4 rounded-xl" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
+                        <Skeleton className="h-3 w-28 mb-3" />
+                        <Skeleton className="h-7 w-12 mb-2" />
+                        <Skeleton className="h-4 w-20" />
+                      </div>
+                    ))
+                  ) : payablesAging.map((bucket, i) => (
                     <div
                       key={i}
-                      className="p-4 rounded-lg"
-                      style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
+                      className="p-4 rounded-xl animate-fade-in-up"
+                      style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', animationDelay: `${i * 60}ms` }}
                     >
-                      <p className="text-xs font-medium text-slate-400 mb-2">{bucket.label}</p>
-                      <p className="text-2xl font-bold text-white mb-1">{bucket.count}</p>
-                      <p className="text-sm text-slate-300">${bucket.amount.toLocaleString()}</p>
+                      <p className="text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>{bucket.label}</p>
+                      <p className="text-2xl font-bold mb-1" style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-primary)' }}>{bucket.count}</p>
+                      <p className="text-sm" style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-secondary)' }}>${bucket.amount.toLocaleString()}</p>
                       <button
-                        className="mt-3 text-xs text-[#6366f1] hover:text-[#818cf8]"
+                        className="mt-3 text-xs"
+                        style={{ color: 'var(--accent-purple)' }}
+                        onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-lime)'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--accent-purple)'; }}
                         onClick={() => setFilters({ ...filters, status: undefined })}
                       >
                         View →
@@ -1860,163 +1951,182 @@ export default function Dashboard() {
 
           {/* Processing Time per Stage - Only for ACCOUNTING_SUPERVISOR and PURCHASING_MANAGER */}
           {user && (user.role === 'ACCOUNTING_SUPERVISOR' || user.role === 'PURCHASING_MANAGER') && (
-            <div className="mt-6" style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }}>
-              <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
+            <div className="mt-6 rounded-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.25)]" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+              <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
                 <div>
-                  <h2 className="text-lg font-semibold text-white">Processing time per stage</h2>
-                  <p className="text-sm text-slate-400">Average hours at each approval stage vs SLA target</p>
+                  <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Processing time per stage</h2>
+                  <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Average hours at each approval stage vs SLA target</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-sm text-slate-400">SLA compliance</p>
-                <p className="text-lg font-bold text-green-400">87%</p>
+                  <p className="text-sm" style={{ color: 'var(--text-muted)' }}>SLA compliance</p>
+                  <p className="text-lg font-bold" style={{ color: slaCompliance >= 80 ? 'var(--accent-lime)' : slaCompliance >= 60 ? 'var(--accent-amber)' : 'var(--accent-red)' }}>{slaCompliance}%</p>
+                </div>
               </div>
-            </div>
-            <div className="p-6">
-              <div className="space-y-4">
-                {[
-                  { stage: 'Purchasing Coordinator', avg: 24, sla: 168 },
-                  { stage: 'Purchasing Manager', avg: 48, sla: 168 },
-                  { stage: 'Planning Manager', avg: 72, sla: 96 },
-                  { stage: 'Lindsey Schindler', avg: 36, sla: 72 },
-                  { stage: 'Accounting', avg: 96, sla: 168 },
-                ].map((item, i) => {
-                  const percentage = (item.avg / item.sla) * 100;
-                  const status = percentage < 80 ? '✓' : percentage < 100 ? '⚠' : '✗';
-                  const barColor = percentage < 80 ? '#059669' : percentage < 100 ? '#F59E0B' : '#DC2626';
-                  return (
-                    <div key={i}>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm text-slate-200">{item.stage}</span>
-                        <div className="flex items-center gap-4">
-                          <span className="text-sm text-slate-400">{item.avg}h / {item.sla}h SLA</span>
-                          <span className="text-lg font-bold" style={{ color: barColor }}>{status}</span>
+              <div className="p-6">
+                <div className="space-y-4">
+                  {loading ? (
+                    [...Array(5)].map((_, i) => <SkeletonBar key={i} />)
+                  ) : processingTimePerStage.length === 0 ? (
+                    <p className="text-sm text-center py-4" style={{ color: 'var(--text-muted)' }}>No stage data available yet</p>
+                  ) : processingTimePerStage.map((item, i) => {
+                    const percentage = item.sla > 0 ? (item.avg / item.sla) * 100 : 0;
+                    const status = percentage < 80 ? '✓' : percentage < 100 ? '⚠' : '✗';
+                    const barColor = percentage < 80 ? 'var(--accent-lime)' : percentage < 100 ? 'var(--accent-amber)' : 'var(--accent-red)';
+                    return (
+                      <div key={i} className="animate-fade-in-up" style={{ animationDelay: `${i * 80}ms` }}>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>{item.label}</span>
+                          <div className="flex items-center gap-4">
+                            <span className="text-sm" style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-muted)' }}>{item.avg}h / {item.sla}h SLA</span>
+                            <span className="text-lg font-bold" style={{ color: barColor }}>{status}</span>
+                          </div>
+                        </div>
+                        <div className="h-2 rounded-full overflow-hidden" style={{ background: 'var(--border-subtle)' }}>
+                          <div
+                            className="h-full rounded-full transition-all duration-500"
+                            style={{ width: `${Math.min(percentage, 100)}%`, backgroundColor: barColor }}
+                          />
                         </div>
                       </div>
-                      <div className="h-2 rounded-full bg-white/10 overflow-hidden">
-                        <div
-                          className="h-full rounded-full transition-all duration-500"
-                          style={{ width: `${Math.min(percentage, 100)}%`, backgroundColor: barColor }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
             </div>
-          </div>
           )}
         </main>
       </div>
 
-      {/* Mobile Bottom Tab Bar - Glassmorphism */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 bg-[#0f172a]/80 backdrop-blur-20 border-t border-white/10 z-50">
+      {/* Mobile Bottom Tab Bar */}
+      <div className="md:hidden fixed bottom-0 left-0 right-0 backdrop-blur-xl border-t z-50" style={{ background: 'var(--bg-card)', borderTop: '1px solid var(--border-color)' }}>
         <div className="flex items-center justify-around py-2">
           <Link
             to="/"
-            className="flex flex-col items-center px-4 py-2 text-[#6366f1]"
+            className="flex flex-col items-center px-4 py-2"
+            style={{ color: 'var(--accent-purple)' }}
           >
-            <LayoutDashboard className="h-5 w-5" />
+            <LayoutDashboard className="h-5 w-5" strokeWidth={1.75} />
             <span className="text-xs mt-1">Dashboard</span>
           </Link>
           <Link
             to="/approvals"
-            className="flex flex-col items-center px-4 py-2 text-slate-400 hover:text-white"
+            className="flex flex-col items-center px-4 py-2"
+            style={{ color: 'var(--text-muted)' }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
           >
-            <CheckSquare className="h-5 w-5" />
+            <CheckSquare className="h-5 w-5" strokeWidth={1.75} />
             <span className="text-xs mt-1">Approvals</span>
           </Link>
           <Link
             to="/exceptions"
-            className="flex flex-col items-center px-4 py-2 text-slate-400 hover:text-white"
+            className="flex flex-col items-center px-4 py-2"
+            style={{ color: 'var(--text-muted)' }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
           >
-            <AlertTriangle className="h-5 w-5" />
+            <AlertTriangle className="h-5 w-5" strokeWidth={1.75} />
             <span className="text-xs mt-1">Exceptions</span>
           </Link>
           <Link
             to="/vendors"
-            className="flex flex-col items-center px-4 py-2 text-slate-400 hover:text-white"
+            className="flex flex-col items-center px-4 py-2"
+            style={{ color: 'var(--text-muted)' }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
           >
-            <Building2 className="h-5 w-5" />
+            <Building2 className="h-5 w-5" strokeWidth={1.75} />
             <span className="text-xs mt-1">Vendors</span>
           </Link>
-          <button className="flex flex-col items-center px-4 py-2 text-slate-400 hover:text-white">
-            <Package className="h-5 w-5" />
+          <button className="flex flex-col items-center px-4 py-2" style={{ color: 'var(--text-muted)' }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}>
+            <Package className="h-5 w-5" strokeWidth={1.75} />
             <span className="text-xs mt-1">More</span>
           </button>
         </div>
       </div>
 
-      {/* Invoice Detail Panel - Glassmorphism */}
+      {/* Invoice Detail Panel */}
       {selectedInvoice && (
-        <div className="fixed right-0 top-0 h-full w-96 bg-[#0f172a]/85 backdrop-blur-20 border-l border-white/10 overflow-y-auto z-50 shadow-2xl" style={{ boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+        <div className="fixed right-0 top-0 h-full w-96 overflow-y-auto z-50" style={{ background: 'var(--bg-card)', borderLeft: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
           <div className="p-6">
             <div className="flex items-center justify-between mb-6">
-              <h3 className="text-lg font-semibold text-white">Invoice Details</h3>
+              <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Invoice Details</h3>
               <button
                 onClick={() => setSelectedInvoice(null)}
-                className="text-slate-400 hover:text-white"
+                className="transition-colors"
+                style={{ color: 'var(--text-muted)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
               >
                 ×
               </button>
             </div>
             <div className="space-y-4">
               <div>
-                <p className="text-sm text-slate-400">Invoice Number</p>
-                <p className="text-sm font-medium text-white">{selectedInvoice.invoice_number}</p>
+                <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Invoice Number</p>
+                <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.invoice_number}</p>
               </div>
               <div>
-                <p className="text-sm text-slate-400">Vendor</p>
-                <p className="text-sm font-medium text-white">{selectedInvoice.vendor?.name}</p>
+                <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Vendor</p>
+                <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.vendor?.name}</p>
               </div>
               <div>
-                <p className="text-sm text-slate-400">Amount</p>
-                <p className="text-sm font-medium text-white">
+                <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Amount</p>
+                <p className="text-sm font-semibold" style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-primary)' }}>
                   {selectedInvoice.currency} {Number(selectedInvoice.total_amount).toFixed(2)}
                 </p>
               </div>
               <div>
-                <p className="text-sm text-slate-400">Status</p>
-                <p className="text-sm font-medium text-white">{selectedInvoice.status}</p>
+                <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Status</p>
+                <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.status}</p>
               </div>
               {(selectedInvoice as any).ocr_confidence_score !== undefined && (selectedInvoice as any).ocr_confidence_score !== null && (
                 <div>
-                  <p className="text-sm text-slate-400">OCR Confidence</p>
+                  <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>OCR Confidence</p>
                   <div className="flex items-center gap-2 mt-1">
-                    <div className="flex-1 h-2 bg-white/10 rounded-full overflow-hidden">
+                    <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'var(--border-subtle)' }}>
                       <div
                         className={cn(
                           'h-full rounded-full',
-                          Number((selectedInvoice as any).ocr_confidence_score) >= 0.9 ? 'bg-green-500' : 'bg-amber-500'
+                          Number((selectedInvoice as any).ocr_confidence_score) >= 0.9 ? '' : ''
                         )}
-                        style={{ width: `${Math.round(Number((selectedInvoice as any).ocr_confidence_score) * 100)}%` }}
+                        style={{ width: `${Math.round(Number((selectedInvoice as any).ocr_confidence_score) * 100)}%`, backgroundColor: Number((selectedInvoice as any).ocr_confidence_score) >= 0.9 ? 'var(--accent-lime)' : 'var(--accent-amber)' }}
                       />
                     </div>
-                    <span className="text-xs text-white">
+                    <span className="text-xs" style={{ color: 'var(--text-primary)' }}>
                       {Math.round(Number((selectedInvoice as any).ocr_confidence_score) * 100)}%
                     </span>
                   </div>
                 </div>
               )}
               <div>
-                <p className="text-sm text-slate-400">Payment Terms</p>
-                <p className="text-sm font-medium text-white">{selectedInvoice.payment_terms}</p>
+                <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Payment Terms</p>
+                <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.payment_terms}</p>
               </div>
               {selectedInvoice.incoterm && (
                 <div>
-                  <p className="text-sm text-slate-400">Incoterm</p>
-                  <p className="text-sm font-medium text-white">{selectedInvoice.incoterm}</p>
+                  <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Incoterm</p>
+                  <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.incoterm}</p>
                 </div>
               )}
               <div>
-                <p className="text-sm text-slate-400">Bill To</p>
-                <p className="text-sm font-medium text-white">{selectedInvoice.bill_to_entity}</p>
+                <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Bill To</p>
+                <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.bill_to_entity}</p>
               </div>
               
               {/* Batch Threshold Indicator */}
               {selectedInvoice.status === (InvoiceStatus.ON_HOLD as any) && (
-                <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
-                  <p className="text-xs text-amber-400 font-medium">On Hold — Batch Threshold</p>
-                  <p className="text-xs text-slate-400 mt-1">
+                <div
+                  className="p-3 rounded-xl"
+                  style={{
+                    background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)',
+                    border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)',
+                  }}
+                >
+                  <p className="text-xs font-medium" style={{ color: 'var(--accent-amber)' }}>On Hold — Batch Threshold</p>
+                  <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>
                     Held until vendor cumulative reaches $100. Another invoice for this vendor will release this batch.
                   </p>
                 </div>
@@ -2026,25 +2136,29 @@ export default function Dashboard() {
               {user && hasPermission(user.role, 'canEditInvoice') && (
                 <button
                   onClick={handleOpenEdit}
-                  className="w-full flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                  className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
+                  style={{ background: 'var(--accent-purple)', color: 'var(--text-inverse)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--accent-purple-hover)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--accent-purple)'; }}
                 >
-                  <Edit className="h-4 w-4 mr-2" />
+                  <Edit className="h-4 w-4 mr-2" strokeWidth={1.75} />
                   Edit Invoice
                 </button>
               )}
 
               {/* Validation Button */}
-              {(selectedInvoice.status === (InvoiceStatus.VALIDATION_PENDING as any) ||
+              {(selectedInvoice.status === (InvoiceStatus.RECEIVED as any) ||
+                selectedInvoice.status === (InvoiceStatus.VALIDATION_PENDING as any) ||
                 selectedInvoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any) ||
                 selectedInvoice.status === (InvoiceStatus.ON_HOLD as any)) && (
                 <button
                   onClick={handleValidate}
                   disabled={validating}
-                  className="w-full flex items-center justify-center px-4 py-2 bg-gradient-to-r from-[#6366f1] to-[#8b5cf6] text-white rounded-lg hover:scale-102 transition-all duration-200 disabled:bg-slate-600 disabled:cursor-not-allowed"
-                  style={{ boxShadow: '0 0 20px rgba(99,102,241,0.4)' }}
+                  className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
+                  style={validating ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--accent-purple)', color: 'var(--text-inverse)', boxShadow: '0 0 16px color-mix(in srgb, var(--accent-purple) 25%, transparent)' }}
                 >
-                  <Shield className="h-4 w-4 mr-2" />
-                  {validating ? 'Validating...' : (selectedInvoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any) || selectedInvoice.status === (InvoiceStatus.ON_HOLD as any) ? 'Re-Validate' : 'Run Validation')}
+                  <Shield className="h-4 w-4 mr-2" strokeWidth={1.75} />
+                  {validating ? 'Validating...' : (selectedInvoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any) || selectedInvoice.status === (InvoiceStatus.ON_HOLD as any) ? 'Re-Validate' : selectedInvoice.status === (InvoiceStatus.RECEIVED as any) ? 'Process & Validate' : 'Run Validation')}
                 </button>
               )}
 
@@ -2052,31 +2166,70 @@ export default function Dashboard() {
               {selectedInvoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any) && user && hasPermission(user.role, 'canEditInvoice') && (
                 <button
                   onClick={() => navigate('/exceptions')}
-                  className="w-full flex items-center justify-center px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors"
+                  className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl hover:opacity-80 transition-all font-medium text-sm"
+                  style={{
+                    background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)',
+                    color: 'var(--accent-amber)',
+                    border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)',
+                  }}
                 >
-                  <AlertTriangle className="h-4 w-4 mr-2" />
+                  <AlertTriangle className="h-4 w-4 mr-2" strokeWidth={1.75} />
                   Resolve Exceptions
                 </button>
               )}
 
-              {/* Approval Actions */}
-              {selectedInvoice.status && user && canUserApproveStatus(user.role, String(selectedInvoice.status)) && (
+              {/* Request Approval Button — for invoices in VALIDATION_PENDING that need manual approval trigger */}
+              {selectedInvoice.status === (InvoiceStatus.VALIDATION_PENDING as any) && user && hasPermission(user.role, 'canEditInvoice') && (
+                <button
+                  onClick={handleRequestApproval}
+                  disabled={requestingApproval}
+                  className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
+                  style={requestingApproval ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--accent-violet)', color: 'var(--text-inverse)', boxShadow: '0 0 16px color-mix(in srgb, var(--accent-violet) 25%, transparent)' }}
+                >
+                  <Send className="h-4 w-4 mr-2" strokeWidth={1.75} />
+                  {requestingApproval ? 'Requesting...' : 'Request Approval'}
+                </button>
+              )}
+
+              {/* Approval Actions — only for invoices already in a pending approval stage */}
+              {selectedInvoice.status && user && canUserApproveStatus(user.role, String(selectedInvoice.status)) &&
+                String(selectedInvoice.status).startsWith('PENDING_') &&
+                (!selectedInvoice.current_stage ||
+                  selectedInvoice.current_stage === user.role ||
+                  (selectedInvoice.current_stage === 'COORDINATOR' && user.role === 'PURCHASING_COORDINATOR') ||
+                  (selectedInvoice.current_stage === 'MLO_PLANNING_MANAGER' && user.role === 'PLANNING_MANAGER') ||
+                  (selectedInvoice.current_stage === 'ACCOUNTING_REVIEWER' && (user.role === 'ACCOUNTING_ASSOCIATE' || user.role === 'ACCOUNTING_SUPERVISOR' || user.role === 'CFO'))
+                ) && (
                 <div className="space-y-2">
                   {hasPermission(user.role, 'canApprove') && (
                     <button
                       onClick={() => handleApprove(selectedInvoice.id)}
-                      className="w-full flex items-center justify-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                      className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-semibold text-sm"
+                      style={{
+                        background: 'var(--accent-lime)',
+                        color: 'var(--text-inverse)',
+                        boxShadow: '0 0 16px color-mix(in srgb, var(--accent-lime) 25%, transparent)',
+                      }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--accent-lime-hover)'; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--accent-lime)'; }}
                     >
-                      <CheckCircle className="h-4 w-4 mr-2" />
+                      <CheckCircle className="h-4 w-4 mr-2" strokeWidth={1.75} />
                       Approve
                     </button>
                   )}
                   {hasPermission(user.role, 'canReject') && (
                     <button
                       onClick={() => setShowRejectModal(true)}
-                      className="w-full flex items-center justify-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                      className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
+                      style={{
+                        background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)',
+                        color: 'var(--accent-red)',
+                        border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)',
+                      }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'color-mix(in srgb, var(--accent-red) 20%, transparent)'; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'color-mix(in srgb, var(--accent-red) 10%, transparent)'; }}
                     >
-                      <XCircle className="h-4 w-4 mr-2" />
+                      <XCircle className="h-4 w-4 mr-2" strokeWidth={1.75} />
                       Reject
                     </button>
                   )}
@@ -2084,15 +2237,28 @@ export default function Dashboard() {
               )}
 
               {/* Posting Actions */}
-              {selectedInvoice.status === InvoiceStatus.APPROVED && user && hasPermission(user.role, 'canPost') && (
+              {(selectedInvoice.status === InvoiceStatus.APPROVED || selectedInvoice.status === InvoiceStatus.PENDING_ACCOUNTING) && user && hasPermission(user.role, 'canPost') && (
                 <button
                   onClick={handlePost}
                   disabled={posting}
-                  className="w-full flex items-center justify-center px-4 py-2 bg-gradient-to-r from-[#6366f1] to-[#8b5cf6] text-white rounded-lg hover:scale-102 transition-all duration-200 disabled:bg-slate-600 disabled:cursor-not-allowed"
-                  style={{ boxShadow: '0 0 20px rgba(99,102,241,0.4)' }}
+                  className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
+                  style={posting ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--accent-purple)', color: 'var(--text-inverse)', boxShadow: '0 0 16px color-mix(in srgb, var(--accent-purple) 25%, transparent)' }}
                 >
-                  <Send className="h-4 w-4 mr-2" />
+                  <Send className="h-4 w-4 mr-2" strokeWidth={1.75} />
                   {posting ? 'Posting...' : 'Post to Accounting'}
+                </button>
+              )}
+
+              {/* Release Hold — for invoices held at pre-post check (have signatures, held during posting) */}
+              {selectedInvoice.status === (InvoiceStatus.ON_HOLD as any) && user && hasPermission(user.role, 'canPost') && selectedInvoice.signatures && selectedInvoice.signatures.some(s => s.signed_at) && (
+                <button
+                  onClick={handleReleaseHold}
+                  disabled={posting}
+                  className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
+                  style={posting ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--accent-amber)', color: 'var(--text-inverse)' }}
+                >
+                  <Unlock className="h-4 w-4 mr-2" strokeWidth={1.75} />
+                  {posting ? 'Releasing...' : 'Release from Hold'}
                 </button>
               )}
 
@@ -2100,9 +2266,12 @@ export default function Dashboard() {
               {selectedInvoice.status === (InvoiceStatus.POSTED_TO_QB as any) && user && hasPermission(user.role, 'canSchedulePayment') && (
                 <button
                   onClick={() => setShowSchedulePaymentModal(true)}
-                  className="w-full flex items-center justify-center px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+                  className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
+                  style={{ background: 'var(--accent-purple)', color: 'var(--text-inverse)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--accent-purple-hover)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--accent-purple)'; }}
                 >
-                  <Clock className="h-4 w-4 mr-2" />
+                  <Clock className="h-4 w-4 mr-2" strokeWidth={1.75} />
                   Schedule Payment
                 </button>
               )}
@@ -2112,12 +2281,12 @@ export default function Dashboard() {
 
               {/* Validation Results - Detailed 17-Rule Display */}
               {validationResult && (
-                <div className={`mt-4 p-4 rounded-lg ${validationResult.passed ? 'bg-green-500/10' : 'bg-red-500/10'} border ${validationResult.passed ? 'border-green-500/20' : 'border-red-500/20'}`}>
+                <div className={`mt-4 p-4 rounded-lg border`} style={{ background: validationResult.passed ? 'color-mix(in srgb, var(--accent-lime) 10%, transparent)' : 'color-mix(in srgb, var(--accent-red) 10%, transparent)', border: `1px solid ${validationResult.passed ? 'color-mix(in srgb, var(--accent-lime) 20%, transparent)' : 'color-mix(in srgb, var(--accent-red) 20%, transparent)'}` }}>
                   <div className="flex items-center justify-between mb-3">
-                    <p className={`text-sm font-semibold ${validationResult.passed ? 'text-green-400' : 'text-red-400'}`}>
+                    <p className="text-sm font-semibold" style={{ color: validationResult.passed ? 'var(--accent-lime)' : 'var(--accent-red)' }}>
                       {validationResult.passed ? '✓ Validation Passed' : '✗ Validation Failed'}
                     </p>
-                    <span className="text-xs text-slate-400">
+                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
                       {validationResult.results.filter((r: any) => r.passed).length}/{validationResult.results.length} rules passed
                     </span>
                   </div>
@@ -2126,12 +2295,12 @@ export default function Dashboard() {
                   <div className="space-y-3">
                     {/* Vendor Rules */}
                     <div>
-                      <p className="text-xs font-medium text-slate-400 mb-1">Vendor</p>
+                      <p className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Vendor</p>
                       <div className="space-y-1">
                         {validationResult.results.slice(0, 1).map((result: any, idx: number) => (
                           <div key={idx} className="flex items-start text-xs">
-                            <span className={`mr-2 ${result.passed ? 'text-green-400' : 'text-red-400'}`}>{result.passed ? '✓' : '✗'}</span>
-                            <span className={result.passed ? 'text-green-300' : 'text-red-300'}>{result.message}</span>
+                            <span className="mr-2" style={{ color: result.passed ? 'var(--accent-lime)' : 'var(--accent-red)' }}>{result.passed ? '✓' : '✗'}</span>
+                            <span style={{ color: result.passed ? 'var(--accent-lime)' : 'var(--accent-red)' }}>{result.message}</span>
                           </div>
                         ))}
                       </div>
@@ -2139,12 +2308,12 @@ export default function Dashboard() {
 
                     {/* Invoice Data Rules */}
                     <div>
-                      <p className="text-xs font-medium text-slate-400 mb-1">Invoice Data</p>
+                      <p className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Invoice Data</p>
                       <div className="space-y-1">
                         {validationResult.results.slice(1, 8).map((result: any, idx: number) => (
                           <div key={idx} className="flex items-start text-xs">
-                            <span className={`mr-2 ${result.passed ? 'text-green-400' : 'text-red-400'}`}>{result.passed ? '✓' : '✗'}</span>
-                            <span className={result.passed ? 'text-green-300' : 'text-red-300'}>{result.message}</span>
+                            <span className="mr-2" style={{ color: result.passed ? 'var(--accent-lime)' : 'var(--accent-red)' }}>{result.passed ? '✓' : '✗'}</span>
+                            <span style={{ color: result.passed ? 'var(--accent-lime)' : 'var(--accent-red)' }}>{result.message}</span>
                           </div>
                         ))}
                       </div>
@@ -2152,12 +2321,12 @@ export default function Dashboard() {
 
                     {/* Bank Details */}
                     <div>
-                      <p className="text-xs font-medium text-slate-400 mb-1">Bank Details</p>
+                      <p className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Bank Details</p>
                       <div className="space-y-1">
                         {validationResult.results.slice(8, 9).map((result: any, idx: number) => (
                           <div key={idx} className="flex items-start text-xs">
-                            <span className={`mr-2 ${result.passed ? 'text-green-400' : 'text-red-400'}`}>{result.passed ? '✓' : '✗'}</span>
-                            <span className={result.passed ? 'text-green-300' : 'text-red-300'}>{result.message}</span>
+                            <span className="mr-2" style={{ color: result.passed ? 'var(--accent-lime)' : 'var(--accent-red)' }}>{result.passed ? '✓' : '✗'}</span>
+                            <span style={{ color: result.passed ? 'var(--accent-lime)' : 'var(--accent-red)' }}>{result.message}</span>
                           </div>
                         ))}
                       </div>
@@ -2165,43 +2334,43 @@ export default function Dashboard() {
 
                     {/* Signatures */}
                     <div>
-                      <p className="text-xs font-medium text-slate-400 mb-1">Signatures</p>
+                      <p className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Signatures</p>
                       <div className="space-y-1">
                         {validationResult.results.slice(9, 10).map((result: any, idx: number) => (
                           <div key={idx} className="flex items-start text-xs">
-                            <span className={`mr-2 ${result.passed ? 'text-green-400' : 'text-red-400'}`}>{result.passed ? '✓' : '✗'}</span>
-                            <span className={result.passed ? 'text-green-300' : 'text-red-300'}>{result.message}</span>
+                            <span className="mr-2" style={{ color: result.passed ? 'var(--accent-lime)' : 'var(--accent-red)' }}>{result.passed ? '✓' : '✗'}</span>
+                            <span style={{ color: result.passed ? 'var(--accent-lime)' : 'var(--accent-red)' }}>{result.message}</span>
                           </div>
                         ))}
                       </div>
                     </div>
 
                     {/* NextGen PO Cross-Check - Highlighted */}
-                    <div className={`p-2 rounded ${validationResult.results[16]?.passed ? 'bg-green-500/10' : 'bg-red-500/10'} border ${validationResult.results[16]?.passed ? 'border-green-500/20' : 'border-red-500/20'}`}>
-                      <p className="text-xs font-medium text-slate-400 mb-1 flex items-center">
+                    <div className={`p-2 rounded border`} style={{ background: validationResult.results[16]?.passed ? 'color-mix(in srgb, var(--accent-lime) 10%, transparent)' : 'color-mix(in srgb, var(--accent-red) 10%, transparent)', border: `1px solid ${validationResult.results[16]?.passed ? 'color-mix(in srgb, var(--accent-lime) 20%, transparent)' : 'color-mix(in srgb, var(--accent-red) 20%, transparent)'}` }}>
+                      <p className="text-xs font-medium mb-1 flex items-center" style={{ color: 'var(--text-muted)' }}>
                         <span className="mr-1">🔗</span> NextGen PO Cross-Check
                       </p>
                       <div className="space-y-1">
                         {validationResult.results.slice(16, 17).map((result: any, idx: number) => (
                           <div key={idx} className="flex items-start text-xs">
-                            <span className={`mr-2 ${result.passed ? 'text-green-400' : 'text-red-400'}`}>{result.passed ? '✓' : '✗'}</span>
-                            <span className={result.passed ? 'text-green-300' : 'text-red-300'}>{result.message}</span>
+                            <span className="mr-2" style={{ color: result.passed ? 'var(--accent-lime)' : 'var(--accent-red)' }}>{result.passed ? '✓' : '✗'}</span>
+                            <span style={{ color: result.passed ? 'var(--accent-lime)' : 'var(--accent-red)' }}>{result.message}</span>
                           </div>
                         ))}
                         {validationResult.results[16]?.detail && (
-                          <p className="text-xs text-slate-400 mt-1 pl-4">{validationResult.results[16].detail}</p>
+                          <p className="text-xs mt-1 pl-4" style={{ color: 'var(--text-muted)' }}>{validationResult.results[16].detail}</p>
                         )}
                       </div>
                     </div>
 
                     {/* Compliance Rules */}
                     <div>
-                      <p className="text-xs font-medium text-slate-400 mb-1">Compliance</p>
+                      <p className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Compliance</p>
                       <div className="space-y-1">
                         {validationResult.results.slice(10, 16).map((result: any, idx: number) => (
                           <div key={idx} className="flex items-start text-xs">
-                            <span className={`mr-2 ${result.passed ? 'text-green-400' : 'text-red-400'}`}>{result.passed ? '✓' : '✗'}</span>
-                            <span className={result.passed ? 'text-green-300' : 'text-red-300'}>{result.message}</span>
+                            <span className="mr-2" style={{ color: result.passed ? 'var(--accent-lime)' : 'var(--accent-red)' }}>{result.passed ? '✓' : '✗'}</span>
+                            <span style={{ color: result.passed ? 'var(--accent-lime)' : 'var(--accent-red)' }}>{result.message}</span>
                           </div>
                         ))}
                       </div>
@@ -2211,10 +2380,10 @@ export default function Dashboard() {
               )}
 
               {selectedInvoice.exceptions && selectedInvoice.exceptions.length > 0 && (
-                <div className="mt-4 p-4 bg-red-500/10 rounded-lg border border-red-500/20">
-                  <p className="text-sm font-semibold text-red-400 mb-2">Exceptions</p>
+                <div className="mt-4 p-4 rounded-lg" style={{ background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}>
+                  <p className="text-sm font-semibold mb-2" style={{ color: 'var(--accent-red)' }}>Exceptions</p>
                   {selectedInvoice.exceptions.map((exc) => (
-                    <p key={exc.id} className="text-xs text-red-300">
+                    <p key={exc.id} className="text-xs" style={{ color: 'var(--accent-red)' }}>
                       {exc.reason}: {exc.detail}
                     </p>
                   ))}
@@ -2225,19 +2394,20 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Reject Modal - Glassmorphism */}
+      {/* Reject Modal */}
       {showRejectModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-[#0f172a]/85 backdrop-blur-20 rounded-16 border border-white/10 shadow-2xl max-w-md w-full mx-4" style={{ borderRadius: '16px', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+        <div className="fixed inset-0 flex items-center justify-center z-50" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
+          <div className="max-w-md w-full mx-4 rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div className="p-6">
-              <h3 className="text-lg font-semibold text-white mb-4">
+              <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
                 Reject Invoice
               </h3>
               <textarea
                 value={rejectReason}
                 onChange={(e) => setRejectReason(e.target.value)}
                 placeholder="Please provide a reason for rejection..."
-                className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent text-white placeholder-slate-400"
+                className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
                 rows={4}
               />
               <div className="mt-4 flex justify-end space-x-3">
@@ -2246,14 +2416,18 @@ export default function Dashboard() {
                     setShowRejectModal(false);
                     setRejectReason('');
                   }}
-                  className="px-4 py-2 text-slate-300 hover:text-white"
+                  className="px-4 py-2 transition-colors text-sm"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleReject}
                   disabled={!rejectReason.trim()}
-                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:bg-slate-600 disabled:cursor-not-allowed"
+                  className="px-4 py-2 rounded-xl transition-colors text-sm font-medium"
+                  style={!rejectReason.trim() ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--accent-red)', color: 'var(--text-inverse)' }}
                 >
                   Confirm Rejection
                 </button>
@@ -2263,23 +2437,24 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Schedule Payment Modal - Glassmorphism */}
+      {/* Schedule Payment Modal */}
       {showSchedulePaymentModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-[#0f172a]/85 backdrop-blur-20 rounded-16 border border-white/10 shadow-2xl max-w-md w-full mx-4" style={{ borderRadius: '16px', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+        <div className="fixed inset-0 flex items-center justify-center z-50" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
+          <div className="max-w-md w-full mx-4 rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div className="p-6">
-              <h3 className="text-lg font-semibold text-white mb-4">
+              <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
                 Schedule Payment
               </h3>
               <div className="mb-4">
-                <label className="block text-sm font-medium text-slate-300 mb-2">
+                <label className="block text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>
                   Payment Date
                 </label>
                 <input
                   type="date"
                   value={paymentDate}
                   onChange={(e) => setPaymentDate(e.target.value)}
-                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-white"
+                  className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                  style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
                 />
               </div>
               <div className="mt-4 flex justify-end space-x-3">
@@ -2288,14 +2463,18 @@ export default function Dashboard() {
                     setShowSchedulePaymentModal(false);
                     setPaymentDate('');
                   }}
-                  className="px-4 py-2 text-slate-300 hover:text-white"
+                  className="px-4 py-2 transition-colors text-sm"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleSchedulePayment}
                   disabled={!paymentDate}
-                  className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:bg-slate-600 disabled:cursor-not-allowed"
+                  className="px-4 py-2 rounded-xl transition-colors text-sm font-medium"
+                  style={!paymentDate ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--accent-purple)', color: 'var(--text-inverse)' }}
                 >
                   Schedule Payment
                 </button>
@@ -2305,77 +2484,99 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Edit Invoice Modal - Glassmorphism */}
+      {/* Edit Invoice Modal */}
       {showEditModal && selectedInvoice && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-[#0f172a]/85 backdrop-blur-20 rounded-16 border border-white/10 shadow-2xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto" style={{ borderRadius: '16px', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+        <div className="fixed inset-0 flex items-center justify-center z-50" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
+          <div className="max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div className="p-6">
-              <h3 className="text-lg font-semibold text-white mb-4">
+              <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
                 Edit Invoice
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {[
+                  { label: 'Vendor Name', field: 'vendor_name_raw', type: 'text' },
                   { label: 'Invoice Number', field: 'invoice_number', type: 'text' },
                   { label: 'Invoice Date', field: 'invoice_date', type: 'date' },
                   { label: 'Due Date', field: 'due_date', type: 'date' },
-                  { label: 'Total Amount', field: 'total_amount', type: 'number' },
+                  { label: 'Amount', field: 'total_amount', type: 'number' },
                   { label: 'Currency', field: 'currency', type: 'text' },
-                  { label: 'Payment Terms', field: 'payment_terms', type: 'text' },
-                  { label: 'Incoterm', field: 'incoterm', type: 'text' },
+                  { label: 'Document Type', field: 'invoice_type', type: 'text' },
                   { label: 'Brand', field: 'brand', type: 'text' },
-                  { label: 'Brand Code', field: 'brand_code', type: 'text' },
-                  { label: 'MPO Number', field: 'mpo_number', type: 'text' },
-                  { label: 'Customer PO Number', field: 'customer_po_number', type: 'text' },
+                  { label: 'Brand Tier', field: 'brand_tier', type: 'text' },
                   { label: 'Season', field: 'season', type: 'text' },
+                  { label: 'Order Type', field: 'order_type', type: 'text' },
+                  { label: 'PO Number', field: 'customer_po_number', type: 'text' },
+                  { label: 'MPO Number', field: 'mpo_number', type: 'text' },
+                  { label: 'QTY SHIPPED', field: 'qty_shipped', type: 'number' },
+                  { label: 'Payment Terms', field: 'payment_terms', type: 'text' },
+                  { label: 'Bank Name', field: 'bank_name', type: 'text' },
+                  { label: 'SWIFT Code', field: 'swift_code', type: 'text' },
+                  { label: 'Account Number', field: 'account_number', type: 'text' },
+                  { label: 'Ship To', field: 'ship_to', type: 'text' },
+                  { label: 'Sold To', field: 'sold_to', type: 'text' },
+                  { label: 'Subtotal', field: 'subtotal', type: 'number' },
+                  { label: 'Tax Amount', field: 'tax_amount', type: 'number' },
+                  { label: 'Discount', field: 'discount_amount', type: 'number' },
+                  { label: 'Bank Charges', field: 'bank_charges', type: 'number' },
+                  { label: 'Freight Charges', field: 'freight_charges', type: 'number' },
+                  { label: 'Additional Charges', field: 'additional_charges', type: 'number' },
+                  { label: 'Exchange Rate', field: 'exchange_rate_to_usd', type: 'number' },
+                  { label: 'Original Currency', field: 'invoice_currency_original', type: 'text' },
+                  { label: 'Incoterm', field: 'incoterm', type: 'text' },
+                  { label: 'Category', field: 'category', type: 'text' },
                   { label: 'Bill To Entity', field: 'bill_to_entity', type: 'text' },
-                  { label: 'Vendor Name Raw', field: 'vendor_name_raw', type: 'text' },
+                  { label: 'Date Range Start', field: 'date_range_start', type: 'date' },
+                  { label: 'Date Range End', field: 'date_range_end', type: 'date' },
+                  { label: 'Priority Pay Date', field: 'priority_pay_date', type: 'date' },
                 ].map(({ label, field, type }) => (
                   <div key={field}>
-                    <label className="block text-sm font-medium text-slate-300 mb-1">
+                    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
                       {label}
                     </label>
                     <input
                       type={type}
                       value={editFormData[field] || ''}
                       onChange={(e) => handleEditChange(field, e.target.value)}
-                      className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white"
+                      className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                      style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
                     />
                   </div>
                 ))}
 
-                {/* Vendor Assignment Dropdown */}
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-slate-300 mb-1">
-                    Assigned Vendor
-                  </label>
-                  <select
-                    value={editFormData.vendor_id || ''}
-                    onChange={(e) => handleEditChange('vendor_id', e.target.value)}
-                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white"
-                  >
-                    <option value="" className="bg-[#0f172a]">No vendor assigned</option>
-                    {vendors.map((vendor) => (
-                      <option key={vendor.id} value={vendor.id} className="bg-[#0f172a]">
-                        {vendor.name} {vendor.swift_code ? `(SWIFT: ${vendor.swift_code})` : '(No bank info)'}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-xs text-slate-400 mt-1">
-                    Select a vendor with bank info to pass bank validation.
-                  </p>
+                <div className="col-span-full flex flex-wrap gap-4 mt-2">
+                  {[
+                    { label: 'Handwritten', field: 'is_handwritten' },
+                    { label: 'Urgent', field: 'is_urgent' },
+                    { label: 'Priority Flag', field: 'priority_flag' },
+                  ].map(({ label, field }) => (
+                    <label key={field} className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
+                      <input
+                        type="checkbox"
+                        checked={editFormData[field] || false}
+                        onChange={(e) => handleEditChange(field, e.target.checked)}
+                        className="rounded"
+                      />
+                      {label}
+                    </label>
+                  ))}
                 </div>
+
               </div>
               <div className="mt-6 flex justify-end space-x-3">
                 <button
                   onClick={() => setShowEditModal(false)}
-                  className="px-4 py-2 text-slate-300 hover:text-white"
+                  className="px-4 py-2 transition-colors text-sm"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleSaveEdit}
                   disabled={savingEdit}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:bg-slate-600 disabled:cursor-not-allowed"
+                  className="px-4 py-2 rounded-xl transition-colors text-sm font-medium"
+                  style={savingEdit ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--accent-purple)', color: 'var(--text-inverse)' }}
                 >
                   {savingEdit ? 'Saving...' : 'Save Changes'}
                 </button>
@@ -2385,14 +2586,16 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Glass Toast Notifications */}
+      {/* Toast Notifications */}
       <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
         {toasts.map((toast) => (
           <div 
             key={toast.id}
-            className="bg-white/8 backdrop-blur-16 border border-white/10 rounded-lg shadow-2xl"
+            className="rounded-xl border shadow-2xl"
             style={{ 
-              borderLeft: toast.type === 'success' ? '3px solid #22c55e' : toast.type === 'error' ? '3px solid #ef4444' : toast.type === 'warning' ? '3px solid #f59e0b' : '3px solid #6366f1',
+              background: 'var(--bg-card)',
+              borderLeft: toast.type === 'success' ? '3px solid var(--accent-lime)' : toast.type === 'error' ? '3px solid var(--accent-red)' : toast.type === 'warning' ? '3px solid var(--accent-amber)' : '3px solid var(--accent-purple)',
+              borderColor: 'var(--border-color)',
               boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
               padding: '12px 16px',
               minWidth: '280px',
@@ -2412,15 +2615,15 @@ export default function Dashboard() {
             `}</style>
             <div className="flex items-center gap-3">
               {toast.type === 'success' ? (
-                <CheckCircle className="h-5 w-5 text-green-400" />
+                <CheckCircle className="h-5 w-5" style={{ color: 'var(--accent-lime)' }} strokeWidth={1.75} />
               ) : toast.type === 'error' ? (
-                <XCircle className="h-5 w-5 text-red-400" />
+                <XCircle className="h-5 w-5" style={{ color: 'var(--accent-red)' }} strokeWidth={1.75} />
               ) : toast.type === 'warning' ? (
-                <AlertTriangle className="h-5 w-5 text-amber-400" />
+                <AlertTriangle className="h-5 w-5" style={{ color: 'var(--accent-amber)' }} strokeWidth={1.75} />
               ) : (
-                <Bell className="h-5 w-5 text-indigo-400" />
+                <Bell className="h-5 w-5" style={{ color: 'var(--accent-purple)' }} strokeWidth={1.75} />
               )}
-              <span className="text-sm text-white">{toast.message}</span>
+              <span className="text-sm" style={{ color: 'var(--text-primary)' }}>{toast.message}</span>
             </div>
           </div>
         ))}

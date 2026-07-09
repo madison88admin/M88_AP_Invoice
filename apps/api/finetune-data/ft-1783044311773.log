@@ -1,0 +1,2 @@
+Missing Python dependency: No module named 'datasets'
+Install with: pip install transformers datasets peft trl accelerate bitsandbytes

@@ -1,0 +1,1 @@
+{"instruction":"Extract invoice data from the provided text and return valid JSON only.","input":"INVOICE Test Vendor 1000","output":"{\"vendor_name\":\"Corrected Vendor\",\"total_amount\":1234.56}"}

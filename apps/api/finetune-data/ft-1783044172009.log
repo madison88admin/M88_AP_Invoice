@@ -1,0 +1,4 @@
+  File "C:\Users\JC\OneDrive - Madison88\AP Invoice\apps\api\src\python\ollama_finetune.py", line 148
+    SYSTEM """You are an invoice data extraction assistant for Madison 88. Return valid JSON only."""
+              ^^^
+SyntaxError: invalid syntax

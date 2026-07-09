@@ -10,39 +10,110 @@
   }
 }
 
-/* Theme CSS Variables */
+/* Theme CSS Variables - Premium Dark Fintech */
 :root.dark {
-  --bg-base: #0f0e1a;
-  --bg-card: #1a1730;
-  --bg-card-hover: #211e3a;
+  --bg-base: #0D0D0F;
+  --bg-elevated: #151518;
+  --bg-card: #1C1D22;
+  --bg-card-hover: #232429;
   --border-color: rgba(255,255,255,0.08);
-  --text-primary: #e2e8f0;
-  --text-muted: #94a3b8;
-  --text-subtle: #64748b;
-  --input-bg: #12102a;
+  --border-subtle: rgba(255,255,255,0.05);
+  --text-primary: #f8f8f8;
+  --text-secondary: #9CA3AF;
+  --text-muted: #6B7280;
+  --text-subtle: #4B5563;
+  --input-bg: #16171B;
   --input-border: rgba(255,255,255,0.10);
-  --input-placeholder: #475569;
-  --accent-purple: #7c3aed;
-  --accent-purple-hover: #6d28d9;
-  --logo-bg: #4f46e5;
-  --metric-card-bg: #1e1b4b;
+  --input-placeholder: #6B7280;
+  --accent-purple: #6C5CE7;
+  --accent-purple-hover: #5848d5;
+  --accent-violet: #8B5CF6;
+  --accent-lime: #C6FF3D;
+  --accent-lime-hover: #b8f030;
+  --accent-lime-glow: rgba(198, 255, 61, 0.25);
+  --accent-green: #22C55E;
+  --accent-red: #EF4444;
+  --accent-amber: #F59E0B;
+  --accent-blue: #3B82F6;
+  --logo-bg: #6C5CE7;
+  --metric-card-bg: #1C1D22;
 }
 
 :root.light {
+  /* Surfaces */
   --bg-base: #f1f5f9;
+  --bg-elevated: #ffffff;
   --bg-card: #ffffff;
   --bg-card-hover: #f8fafc;
-  --border-color: rgba(0,0,0,0.08);
+
+  /* Borders */
+  --border-color: rgba(0, 0, 0, 0.08);
+  --border-subtle: rgba(0, 0, 0, 0.05);
+
+  /* Typography */
   --text-primary: #0f172a;
-  --text-muted: #475569;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
   --text-subtle: #94a3b8;
+
+  /* Inputs */
   --input-bg: #f8fafc;
-  --input-border: rgba(0,0,0,0.12);
+  --input-border: rgba(0, 0, 0, 0.12);
   --input-placeholder: #94a3b8;
-  --accent-purple: #6d28d9;
-  --accent-purple-hover: #5b21b6;
-  --logo-bg: #4f46e5;
+
+  /* Brand accents — unchanged between themes */
+  --accent-purple: #6C5CE7;
+  --accent-purple-hover: #5848d5;
+  --accent-violet: #8B5CF6;
+  --logo-bg: #6C5CE7;
+
+  /* Lime (primary CTA) — slightly muted for white backgrounds */
+  --accent-lime: #a3e635;
+  --accent-lime-hover: #92d62f;
+  --accent-lime-glow: rgba(163, 230, 53, 0.25);
+
+  /* Status colors — darker for legibility on white */
+  --accent-green: #16a34a;
+  --accent-red: #dc2626;
+  --accent-amber: #d97706;
+  --accent-blue: #2563eb;
+
+  /* Metric card background — light lavender tint */
   --metric-card-bg: #ede9fe;
+}
+
+/* Custom accent utilities */
+@layer utilities {
+  .text-lime {
+    color: var(--accent-lime);
+  }
+  .bg-lime {
+    background-color: var(--accent-lime);
+  }
+  .border-lime {
+    border-color: var(--accent-lime);
+  }
+  .shadow-lime {
+    box-shadow: 0 0 20px var(--accent-lime-glow);
+  }
+  .bg-card {
+    background-color: var(--bg-card);
+  }
+  .bg-elevated {
+    background-color: var(--bg-elevated);
+  }
+  .text-primary-custom {
+    color: var(--text-primary);
+  }
+  .text-secondary-custom {
+    color: var(--text-secondary);
+  }
+  .text-muted-custom {
+    color: var(--text-muted);
+  }
+  .border-subtle {
+    border-color: var(--border-subtle);
+  }
 }
 
 /* Theme Toggle Button */
@@ -66,23 +137,36 @@
 
 /* Custom Scrollbar Styling */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
+/* Scrollbar — dark theme */
+:root.dark ::-webkit-scrollbar-track,
 ::-webkit-scrollbar-track {
   background: rgba(15, 23, 42, 0.3);
   border-radius: 4px;
 }
 
-::-webkit-scrollbar-thumb {
+:root.dark ::-webkit-scrollbar-thumb {
   background: rgba(99, 102, 241, 0.4);
   border-radius: 4px;
-  transition: background 0.2s ease;
+}
+:root.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(99, 102, 241, 0.6);
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(99, 102, 241, 0.6);
+/* Scrollbar — light theme */
+:root.light ::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 4px;
+}
+:root.light ::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.35);
+  border-radius: 4px;
+}
+:root.light ::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.55);
 }
 
 /* Drift Animations for Background Orbs */
@@ -144,4 +228,71 @@
 
 .animate-shimmer {
   animation: shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(30px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes staggerIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.4s ease-out forwards;
+}
+
+.animate-slide-in-right {
+  animation: slideInRight 0.3s ease-out forwards;
+}
+
+.animate-scale-in {
+  animation: scaleIn 0.25s ease-out forwards;
+}
+
+.animate-stagger {
+  animation: staggerIn 0.35s ease-out forwards;
+  opacity: 0;
+}
+
+.animate-shimmer-bg {
+  background: linear-gradient(
+    90deg,
+    var(--bg-card-hover) 0%,
+    var(--bg-elevated) 50%,
+    var(--bg-card-hover) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* Smooth transition for data updates */
+.data-transition {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+/* Refresh indicator pulse */
+@keyframes refreshPulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+.animate-refresh-pulse {
+  animation: refreshPulse 1s ease-in-out infinite;
 }

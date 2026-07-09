@@ -43,7 +43,7 @@ export const ROLE_PERMISSIONS = {
     canViewReports: false,
     canViewFinancialReports: false,
     canManageUsers: false,
-    canEditInvoice: false,
+    canEditInvoice: true,
     canDeleteInvoice: false,
     canViewSystemHealth: false,
     canViewErrorLogs: false,
@@ -215,12 +215,12 @@ export const ROLE_PERMISSIONS = {
     canReject: false,
     canPost: false,
     canSchedulePayment: false,
-    canUpload: false,
+    canUpload: true,
     canViewAllInvoices: true,
     canViewReports: true,
-    canViewFinancialReports: false,
+    canViewFinancialReports: true,
     canManageUsers: true,
-    canEditInvoice: false,
+    canEditInvoice: true,
     canDeleteInvoice: false,
     canViewSystemHealth: true,
     canViewErrorLogs: true,
@@ -232,10 +232,10 @@ export const ROLE_PERMISSIONS = {
 // Role-based invoice stage access
 export const ROLE_STAGE_ACCESS: Record<string, string[]> = {
   SUPERADMIN: [], // Superadmin can access all stages
-  ACCOUNTING_ASSOCIATE: ['VALIDATION_PENDING', 'APPROVED', 'POSTED_TO_QB', 'PENDING_ACCOUNTING'],
-  ACCOUNTING_SUPERVISOR: ['VALIDATION_PENDING', 'PENDING_ACCOUNTING', 'APPROVED', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED'],
+  ACCOUNTING_ASSOCIATE: ['VALIDATION_PENDING', 'APPROVED', 'POSTED_TO_QB', 'PENDING_ACCOUNTING', 'ON_HOLD'],
+  ACCOUNTING_SUPERVISOR: ['VALIDATION_PENDING', 'PENDING_ACCOUNTING', 'APPROVED', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'ON_HOLD'],
   PURCHASING_COORDINATOR: ['VALIDATION_PENDING', 'EXCEPTION_FLAGGED', 'PENDING_COORDINATOR', 'ON_HOLD'],
-  PURCHASING_MANAGER: ['PENDING_COORDINATOR', 'PENDING_MANAGER'],
+  PURCHASING_MANAGER: ['PENDING_MANAGER'],
   MLO_ACCOUNT_HOLDER: ['PENDING_MLO_ACCOUNT_HOLDER', 'PENDING_MLO_PLANNING_MANAGER'],
   PLANNING_MANAGER: ['PENDING_MLO_PLANNING_MANAGER'],
   SR_MANAGER_GLOBAL_PRODUCTION: ['PENDING_SR_MANAGER'],
@@ -243,7 +243,7 @@ export const ROLE_STAGE_ACCESS: Record<string, string[]> = {
   CFO: ['POSTED_TO_QB', 'PAYMENT_SCHEDULED'],
   PRESIDENT: ['POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID'],
   ADMIN: [], // Admin can access all stages
-  IT_ADMIN: [], // IT Admin can view all stages but not approve
+  IT_ADMIN: [], // System maintenance only; cannot approve/reject/hold
 };
 
 // Check if a role has a specific permission

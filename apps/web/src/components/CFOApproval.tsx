@@ -94,66 +94,22 @@ export default function CFOApproval() {
   };
 
   return (
-    <div className="min-h-screen relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%)' }}>
-      {/* Layered Background Atmosphere */}
-      <div style={{ position: 'fixed', inset: 0, zIndex: 0, overflow: 'hidden', pointerEvents: 'none' }}>
-        {/* Purple orb top-right */}
-        <div 
-          style={{ 
-            position: 'absolute', 
-            top: '-10%', 
-            right: '-5%', 
-            width: '500px', 
-            height: '500px',
-            background: 'radial-gradient(circle, rgba(139,92,246,0.25), transparent 70%)',
-            filter: 'blur(60px)', 
-            animation: 'drift1 10s ease-in-out infinite alternate'
-          }}
-        />
-        {/* Blue orb bottom-left */}
-        <div 
-          style={{ 
-            position: 'absolute', 
-            bottom: '-10%', 
-            left: '-5%', 
-            width: '600px', 
-            height: '600px',
-            background: 'radial-gradient(circle, rgba(59,130,246,0.2), transparent 70%)',
-            filter: 'blur(80px)', 
-            animation: 'drift2 13s ease-in-out infinite alternate'
-          }}
-        />
-        {/* Teal orb center */}
-        <div 
-          style={{ 
-            position: 'absolute', 
-            top: '40%', 
-            left: '35%', 
-            width: '400px', 
-            height: '400px',
-            background: 'radial-gradient(circle, rgba(20,184,166,0.12), transparent 70%)',
-            filter: 'blur(70px)', 
-            animation: 'drift3 9s ease-in-out infinite alternate'
-          }}
-        />
-      </div>
-
+    <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
       <div className="relative z-10">
-        <header style={{ background: 'rgba(10, 14, 30, 0.6)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }} className="px-6 py-4 sticky top-0">
+        <header className="px-6 py-4 border-b" style={{ borderColor: 'var(--border-color)' }}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)', boxShadow: '0 8px 32px rgba(139, 92, 246, 0.3)' }}>
-                <DollarSign className="h-6 w-6 text-white" />
+              <div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))', boxShadow: '0 0 16px rgba(108,92,231,0.25)' }}>
+                <DollarSign className="h-5 w-5 text-white" strokeWidth={1.75} />
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-white">CFO Approval</h1>
-                <p className="text-xs text-slate-400">Review and approve payment batches</p>
+                <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>CFO Approval</h1>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Review and approve payment batches</p>
               </div>
             </div>
-            <Link
-              to="/"
-              className="group flex items-center px-4 py-2.5 text-white rounded-xl transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5"
-              style={{ background: 'linear-gradient(135deg, #64748b 0%, #475569 100%)' }}
+            <Link to="/" className="flex items-center px-4 py-2.5 rounded-xl transition-all text-sm font-medium" style={{ color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; e.currentTarget.style.background = ''; }}
             >
               Back to Dashboard
             </Link>
@@ -162,24 +118,26 @@ export default function CFOApproval() {
 
         <main className="px-6 py-8">
           {/* Filters */}
-          <div style={{ background: 'rgba(255, 255, 255, 0.04)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', border: '1px solid rgba(255, 255, 255, 0.07)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }} className="p-6 mb-6">
+          <div className="p-6 mb-6 rounded-2xl" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
             <div className="flex items-center gap-4">
               <div className="flex-1">
                 <div className="relative">
-                  <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-slate-400 h-5 w-5" />
+                  <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 h-5 w-5" style={{ color: 'var(--text-muted)' }} strokeWidth={1.75} />
                   <input
                     type="text"
                     placeholder="Search batches..."
                     value={filters.search}
                     onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-                    className="pl-12 pr-4 py-3 w-full bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all text-white placeholder-slate-400"
+                    className="pl-12 pr-4 py-3 w-full rounded-xl focus:outline-none transition-all text-sm"
+                    style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
                   />
                 </div>
               </div>
               <select
                 value={filters.status}
                 onChange={(e) => setFilters({ ...filters, status: e.target.value })}
-                className="px-4 py-3 bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all text-white"
+                className="px-4 py-3 rounded-xl focus:outline-none transition-all text-sm"
+                style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
               >
                 <option value="DRAFT">Draft</option>
                 <option value="PENDING_CFO">Pending CFO</option>
@@ -188,102 +146,85 @@ export default function CFOApproval() {
                 <option value="CANCELLED">Cancelled</option>
                 <option value="">All Statuses</option>
               </select>
-              <button className="flex items-center px-4 py-3 text-white rounded-xl transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5" style={{ background: 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)' }}>
-                <Filter className="h-5 w-5 mr-2" />
+              <button className="flex items-center px-4 py-3 text-white rounded-xl transition-all text-sm font-medium" style={{ background: 'var(--accent-purple)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--accent-purple-hover)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--accent-purple)'; }}
+              >
+                <Filter className="h-5 w-5 mr-2" strokeWidth={1.75} />
                 More Filters
               </button>
             </div>
           </div>
 
           {/* Payment Batches Table */}
-          <div style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }} className="overflow-hidden">
-            <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
-              <h2 className="text-lg font-semibold text-white">
-                Payment Batches ({filteredBatches.length})
-              </h2>
-              <button className="flex items-center px-4 py-2.5 text-white rounded-xl transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5" style={{ background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)' }}>
-                <Download className="h-5 w-5 mr-2" />
+          <div className="overflow-hidden rounded-2xl" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
+            <div className="px-6 py-4 flex items-center justify-between border-b" style={{ borderColor: 'var(--border-color)' }}>
+              <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Payment Batches ({filteredBatches.length})</h2>
+              <button className="flex items-center px-4 py-2.5 rounded-xl transition-all text-sm font-semibold" style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--accent-lime-hover)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--accent-lime)'; }}
+              >
+                <Download className="h-5 w-5 mr-2" strokeWidth={1.75} />
                 Export
               </button>
             </div>
 
             {loading ? (
-              <div className="p-6 text-center text-slate-400">Loading payment batches...</div>
+              <div className="p-6 text-center" style={{ color: 'var(--text-muted)' }}>Loading payment batches...</div>
             ) : (
-              <table className="min-w-full divide-y divide-white/5">
-                <thead style={{ background: 'rgba(255,255,255,0.05)' }}>
+              <table className="min-w-full divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
+                <thead style={{ background: 'var(--bg-elevated)' }}>
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                      Batch Number
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                      Payment Count
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                      Total Amount
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                      Status
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                      Created Date
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                      Actions
-                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Batch Number</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Payment Count</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Total Amount</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Status</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Created Date</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/5">
+                <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
                   {filteredBatches.map((batch) => (
-                    <tr key={batch.id} className="hover:bg-white/5 transition-colors">
+                    <tr key={batch.id} className="transition-colors" onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-card-hover)'; }} onMouseLeave={(e) => { e.currentTarget.style.background = ''; }}>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center">
-                          <FileText className="h-5 w-5 text-slate-400 mr-2" />
-                          <span className="text-sm font-medium text-white">{batch.batch_number}</span>
+                          <FileText className="h-5 w-5 mr-2" style={{ color: 'var(--text-muted)' }} strokeWidth={1.75} />
+                          <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{batch.batch_number}</span>
                         </div>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-white">
-                        {batch.payment_count}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-white">
-                        ${batch.total_amount.toLocaleString()}
-                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--text-secondary)' }}>{batch.payment_count}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>${batch.total_amount.toLocaleString()}</td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                          batch.status === 'DRAFT'
-                            ? 'bg-yellow-500/20 text-yellow-300'
-                            : batch.status === 'PENDING_CFO'
-                            ? 'bg-blue-500/20 text-blue-300'
-                            : batch.status === 'PROCESSED'
-                            ? 'bg-green-500/20 text-green-300'
-                            : 'bg-red-500/20 text-red-300'
-                        }`}>
+                        <span className="px-2 py-1 text-xs font-medium rounded-full border" style={
+                          batch.status === 'DRAFT' ? { background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)', borderColor: 'color-mix(in srgb, var(--accent-amber) 20%, transparent)' } :
+                          batch.status === 'PENDING_CFO' ? { background: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)', color: 'var(--accent-purple)', borderColor: 'color-mix(in srgb, var(--accent-purple) 20%, transparent)' } :
+                          batch.status === 'PROCESSED' ? { background: 'color-mix(in srgb, var(--accent-green) 10%, transparent)', color: 'var(--accent-green)', borderColor: 'color-mix(in srgb, var(--accent-green) 20%, transparent)' } :
+                          { background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', color: 'var(--accent-red)', borderColor: 'color-mix(in srgb, var(--accent-red) 20%, transparent)' }
+                        }>
                           {batch.status === 'DRAFT' ? 'Draft' : batch.status === 'PENDING_CFO' ? 'Pending CFO' : batch.status === 'APPROVED' ? 'Approved' : batch.status === 'PROCESSED' ? 'Processed' : batch.status === 'CANCELLED' ? 'Cancelled' : batch.status}
                         </span>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-white">
-                        {new Date(batch.created_at).toLocaleDateString()}
-                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--text-secondary)' }}>{new Date(batch.created_at).toLocaleDateString()}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                        <button
-                          onClick={() => setSelectedBatch(batch)}
-                          className="text-blue-400 hover:text-blue-300 mr-3 transition-colors"
+                        <button onClick={() => setSelectedBatch(batch)} className="mr-3 transition-colors" style={{ color: 'var(--accent-purple)' }}
+                          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-violet)'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--accent-purple)'; }}
                         >
-                          <Eye className="h-5 w-5" />
+                          <Eye className="h-5 w-5" strokeWidth={1.75} />
                         </button>
                         {batch.status === 'DRAFT' && (
                           <>
-                            <button
-                              onClick={() => handleApprove(batch.id)}
-                              className="text-green-400 hover:text-green-300 mr-3 transition-colors"
+                            <button onClick={() => handleApprove(batch.id)} className="mr-3 transition-colors" style={{ color: 'var(--accent-green)' }}
+                              onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.8'; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
                             >
-                              <CheckCircle className="h-5 w-5" />
+                              <CheckCircle className="h-5 w-5" strokeWidth={1.75} />
                             </button>
-                            <button
-                              onClick={() => handleReject(batch.id, 'Rejected by CFO')}
-                              className="text-red-400 hover:text-red-300 transition-colors"
+                            <button onClick={() => handleReject(batch.id, 'Rejected by CFO')} className="transition-colors" style={{ color: 'var(--accent-red)' }}
+                              onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.8'; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
                             >
-                              <XCircle className="h-5 w-5" />
+                              <XCircle className="h-5 w-5" strokeWidth={1.75} />
                             </button>
                           </>
                         )}
@@ -295,68 +236,66 @@ export default function CFOApproval() {
             )}
 
             {!loading && filteredBatches.length === 0 && (
-              <div className="p-6 text-center text-slate-400">No payment batches found</div>
+              <div className="p-6 text-center" style={{ color: 'var(--text-muted)' }}>No payment batches found</div>
             )}
           </div>
 
           {/* Batch Detail Panel */}
           {selectedBatch && (
-            <div className="mt-6" style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }}>
+            <div className="mt-6 rounded-2xl" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
               <div className="p-6">
                 <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-lg font-semibold text-white">Batch Details</h2>
-                  <button
-                    onClick={() => setSelectedBatch(null)}
-                    className="text-slate-400 hover:text-white transition-colors"
+                  <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Batch Details</h2>
+                  <button onClick={() => setSelectedBatch(null)} className="transition-colors" style={{ color: 'var(--text-muted)' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
                   >
-                    <XCircle className="h-6 w-6" />
+                    <XCircle className="h-6 w-6" strokeWidth={1.75} />
                   </button>
                 </div>
 
                 <div className="grid grid-cols-2 gap-6 mb-6">
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-1">Batch Number</label>
-                    <p className="text-sm text-white font-medium">{selectedBatch.batch_number}</p>
+                    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Batch Number</label>
+                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedBatch.batch_number}</p>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-1">Status</label>
-                    <p className="text-sm text-white font-medium">{selectedBatch.status}</p>
+                    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Status</label>
+                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedBatch.status}</p>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-1">Payment Count</label>
-                    <p className="text-sm text-white font-medium">{selectedBatch.payment_count}</p>
+                    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Payment Count</label>
+                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedBatch.payment_count}</p>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-1">Total Amount</label>
-                    <p className="text-sm text-white font-medium">${selectedBatch.total_amount.toLocaleString()}</p>
+                    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Total Amount</label>
+                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>${selectedBatch.total_amount.toLocaleString()}</p>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-1">Created Date</label>
-                    <p className="text-sm text-white font-medium">{new Date(selectedBatch.created_at).toLocaleString()}</p>
+                    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Created Date</label>
+                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{new Date(selectedBatch.created_at).toLocaleString()}</p>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-1">Processed Date</label>
-                    <p className="text-sm text-white font-medium">
-                      {selectedBatch.processed_at ? new Date(selectedBatch.processed_at).toLocaleString() : 'N/A'}
-                    </p>
+                    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Processed Date</label>
+                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedBatch.processed_at ? new Date(selectedBatch.processed_at).toLocaleString() : 'N/A'}</p>
                   </div>
                 </div>
 
-                <div className="mt-6 pt-6" style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}>
-                  <h3 className="text-md font-medium text-white mb-3">Payments in Batch</h3>
+                <div className="mt-6 pt-6 border-t" style={{ borderColor: 'var(--border-color)' }}>
+                  <h3 className="text-md font-medium mb-3" style={{ color: 'var(--text-primary)' }}>Payments in Batch</h3>
                   <div className="space-y-2">
                     {selectedBatch.payments.map((payment) => (
-                      <div key={payment.id} className="flex items-center justify-between p-3 rounded-lg" style={{ background: 'rgba(255, 255, 255, 0.02)' }}>
+                      <div key={payment.id} className="flex items-center justify-between p-3 rounded-xl" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}>
                         <div className="flex items-center gap-3">
-                          <FileText className="h-4 w-4 text-slate-400" />
+                          <FileText className="h-4 w-4" style={{ color: 'var(--text-muted)' }} strokeWidth={1.75} />
                           <div>
-                            <p className="text-sm text-white font-medium">{payment.invoice.invoice_number}</p>
-                            <p className="text-xs text-slate-400">{payment.invoice.vendor.name}</p>
+                            <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{payment.invoice.invoice_number}</p>
+                            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{payment.invoice.vendor.name}</p>
                           </div>
                         </div>
                         <div className="text-right">
-                          <p className="text-sm text-white font-medium">${payment.amount.toLocaleString()}</p>
-                          <p className="text-xs text-slate-400">{new Date(payment.payment_date).toLocaleDateString()}</p>
+                          <p className="text-sm font-medium" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>${payment.amount.toLocaleString()}</p>
+                          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{new Date(payment.payment_date).toLocaleDateString()}</p>
                         </div>
                       </div>
                     ))}
@@ -364,21 +303,19 @@ export default function CFOApproval() {
                 </div>
 
                 {selectedBatch.status === 'DRAFT' && (
-                  <div className="mt-6 pt-6 flex gap-3" style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}>
-                    <button
-                      onClick={() => handleApprove(selectedBatch.id)}
-                      className="flex-1 flex items-center justify-center px-4 py-3 text-white rounded-xl transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5"
-                      style={{ background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)' }}
+                  <div className="mt-6 pt-6 flex gap-3 border-t" style={{ borderColor: 'var(--border-color)' }}>
+                    <button onClick={() => handleApprove(selectedBatch.id)} className="flex-1 flex items-center justify-center px-4 py-3 rounded-xl transition-all font-semibold text-sm" style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)', boxShadow: '0 0 16px rgba(198,255,61,0.15)' }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--accent-lime-hover)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--accent-lime)'; }}
                     >
-                      <CheckCircle className="h-5 w-5 mr-2" />
+                      <CheckCircle className="h-5 w-5 mr-2" strokeWidth={1.75} />
                       Approve Batch
                     </button>
-                    <button
-                      onClick={() => handleReject(selectedBatch.id, 'Rejected by CFO')}
-                      className="flex-1 flex items-center justify-center px-4 py-3 text-white rounded-xl transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5"
-                      style={{ background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)' }}
+                    <button onClick={() => handleReject(selectedBatch.id, 'Rejected by CFO')} className="flex-1 flex items-center justify-center px-4 py-3 rounded-xl transition-all font-medium text-sm" style={{ background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', color: 'var(--accent-red)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-red) 20%, transparent)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-red) 10%, transparent)'; }}
                     >
-                      <XCircle className="h-5 w-5 mr-2" />
+                      <XCircle className="h-5 w-5 mr-2" strokeWidth={1.75} />
                       Reject Batch
                     </button>
                   </div>

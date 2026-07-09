@@ -7,14 +7,15 @@
 | **Vendor / Supplier** | Sends invoices via email or portal |
 | **Accounting Associate** | Uploads invoices, reviews OCR, posts invoices, selects invoices for payment batch |
 | **Accounting Supervisor** | Reviews exceptions, creates payment batches, submits payment batches for CFO approval |
-| **Purchasing Coordinator** | First approval for all invoices |
-| **Purchasing Manager** | Approval for Tier 1 invoices ($0.1-$4,999) and all higher tiers |
+| **Purchasing Coordinator** | First approval for all invoices; shares approval responsibility with Purchasing Manager |
+| **Purchasing Manager** | Approves all invoices; shares 7-day SLA with Purchasing Coordinator |
 | **MLO Account Holder** | Approval for Tier 2+ invoices ($5,000+) — brand-specific: Edwin / Glecie |
 | **MLO Planning Manager** | Approval for Tier 2+ invoices |
 | **Sr. Manager Global Production** | Approval for Tier 2+ invoices |
 | **Ms. Polly** | Approval for Tier 3 invoices ($100,000+) |
 | **CFO** | Approves payment batches before execution |
 | **President** | Optional top-level approval |
+| **Administrator** | System configuration, views all invoices/vendors, manages users, generates reports |
 | **IT Admin** | System configuration, health monitoring |
 
 ---
@@ -126,21 +127,26 @@ Route to responsible role for resolution
 
 ### 5.1 Tier Determination
 ```
-Amount $0.1 – $4,999   → Tier 1
-$5,000 – $99,999       → Tier 2
-≥ $100,000             → Tier 3
+Amount ≤ $2,000              → Planning Tier (Coordinator & Manager)
+$2,001 – $99,999            → Tier 2
+≥ $100,000                  → Tier 3
 ```
+
+> **Note:** Purchasing Coordinator and Purchasing Manager shall both approve all invoices in the Planning tier and share a combined SLA of **7 calendar days**. The SLA applies to the Planning function as a whole and is not 7 days per approver.
 
 ### 5.2 Approval Route
 ```
-Tier 1: Coordinator → Purchasing Manager
+Planning Tier (≤ $2,000): 
+  Coordinator → Purchasing Manager (combined 7-day SLA)
 
-Tier 2: Coordinator → Purchasing Manager
+Tier 2 ($2,001–$99,999): 
+  Coordinator → Purchasing Manager (combined 7-day SLA)
                 → MLO Account Holder (brand-specific: Edwin / Glecie)
                 → MLO Planning Manager
                 → Sr. Manager Global Production
 
-Tier 3: Coordinator → Purchasing Manager
+Tier 3 (≥ $100,000): 
+  Coordinator → Purchasing Manager (combined 7-day SLA)
                 → MLO Account Holder (brand-specific: Edwin / Glecie)
                 → MLO Planning Manager
                 → Sr. Manager Global Production
@@ -190,19 +196,27 @@ Schedule for payment
 ```
 Accounting Associate selects invoices to pay
         ↓
+Accounting Associate reviews batch details
+        ↓
 Accounting Supervisor creates payment batch → DRAFT
         ↓
-Review batch details (total, bank, due dates)
+Accounting Supervisor reviews batch (total, bank, due dates)
         ↓
-Submit for CFO approval → PENDING_CFO
+Accounting Supervisor submits for CFO approval → PENDING_CFO
         ↓
 CFO reviews batch
         ↓
 CFO approves → PROCESSED
         ↓
-Execute payments (EFT / wire / check)
+System generates payment export file (CSV format compatible with CitiBusiness)
         ↓
-Invoices marked as PAID
+Accounting Associate downloads export file
+        ↓
+Accounting Associate uploads file to CitiBusiness for payment processing
+        ↓
+CitiBusiness executes EFT/wire/check payments
+        ↓
+After successful payment confirmation, invoices marked as PAID in system
         ↓
 Send remittance advice / update NextGen
 ```
@@ -217,6 +231,108 @@ Return to Accounting Supervisor with reason
         ↓
 Supervisor fixes and resubmits
 ```
+
+---
+
+## 6.4 Vendor Cumulative Threshold Check
+
+**Purpose:** Monitor vendor spending to prevent overpayment and catch unusual patterns by blocking invoices that exceed cumulative spend thresholds.
+
+```
+Invoice Uploaded
+        ↓
+OCR extraction and vendor matching complete
+        ↓
+Vendor cumulative threshold validation (for current month/period)
+        ↓
+If cumulative amount EXCEEDS threshold:
+  - Display warning banner
+  - Show historical spending trend
+  - Mark invoice for review
+  - BLOCK invoice from proceeding to approval
+  - Create VENDOR_THRESHOLD_EXCEEDED exception
+        ↓
+Exception routing to Purchasing Coordinator
+        ↓
+Coordinator reviews and takes action:
+  - Approve exception (override block)
+  - Request revised invoice
+  - Reject invoice
+        ↓
+If threshold NOT exceeded:
+  - Approval process continues normally
+```
+
+> **Note:** The cumulative vendor threshold validation will occur immediately after invoice upload and validation. If the threshold is exceeded, invoice approval is **BLOCKED** until the Purchasing Coordinator reviews and approves the exception. The block prevents accidental overpayment and ensures vendor spending governance.
+
+---
+
+## 6.5 Invoice Reprocessing Workflow
+
+**Purpose:** Allow correction and reprocessing of invoices when payment issues occur.
+
+If payment cannot proceed due to:
+- Bank information changes
+- Returned payment
+- Incorrect banking details
+
+The system shall allow:
+```
+Cancel Payment
+        ↓
+Update Bank Details (Accounting Associate)
+        ↓
+Re-validate invoice
+        ↓
+Regenerate Payment Batch
+        ↓
+Resubmit to CFO Approval
+        ↓
+Reprocess Payment
+        ↓
+Maintain Audit Trail (all changes logged)
+```
+
+---
+
+## 6.6 Account Holder Visibility & Multi-Vendor Processing
+
+**Purpose:** Ensure Account Holders see only their assigned invoices while Admins have full visibility.
+
+### Multiple Account Holder Handling
+- Invoice ownership is based on the assigned **Account Holder**
+- Multiple Account Holders may process invoices from the same vendor **simultaneously**
+- Each Account Holder only sees invoices assigned to them
+- **Admin users** may view all invoices
+- Brand-specific Account Holders (Edwin for TOP_10 brands, Glecie for OTHER brands) can only see their respective brand invoices
+
+---
+
+## 6.7 Forecast Visibility for Pending Invoices
+
+**Purpose:** Ensure Finance can accurately forecast AP spend regardless of approval status, while maintaining GL posting and payment restrictions.
+
+### Visibility Rules
+
+**Pending invoices (any status) ARE visible in:**
+- Forecasting reports (cash flow projections)
+- Aged AP reports (aging bucket analysis)
+- Vendor balance reports (vendor payables tracking)
+- Department/category spend reports
+- Dashboard widgets (total AP liability)
+
+**Pending invoices ARE NOT visible in:**
+- GL (accounting records)
+- Payment batches
+- Remittance advice
+
+**Restriction Logic:**
+- Status RECEIVED, PENDING_APPROVAL, EXCEPTION_FLAGGED → Visible in forecasts
+- Status POSTED, PAID, REJECTED → Visible in forecasts
+- **Only restriction:** Cannot move to POSTED or PAID until approval complete
+
+### Impact
+Finance gets real-time visibility into committed AP spend for accurate forecasting, while operational controls remain in place (invoices must be approved before posting/payment).
 
 ---
 
@@ -332,7 +448,28 @@ Admin can configure:
 
 ---
 
-## 12. End-to-End Happy Path
+## 12. Administrator Role & Permissions
+
+### Administrator Capabilities
+Administrators have unrestricted system access and can:
+- **View** all invoices (all statuses, all vendors, all Account Holders)
+- **View** all vendors and vendor master data
+- **View** all dashboards and reports
+- **View** every Account Holder queue and approval chain
+- **Reassign** invoices between Account Holders
+- **Manage** users (create, edit, suspend, reassign roles)
+- **View** complete approval history and audit trail for all invoices
+- **Generate** reports across all data
+- **Configure** system settings (SLA limits, email templates, API keys)
+
+### Administrator vs. Standard Roles
+- **Standard Approvers** see only invoices assigned to their Account Holder or brand
+- **Administrators** bypass all Account Holder/brand restrictions
+- Administrator access is logged for audit compliance
+
+---
+
+## 13. End-to-End Happy Path
 
 ```
 Vendor sends invoice PDF via email
@@ -367,7 +504,9 @@ Accounting Supervisor creates payment batch
         ↓
 CFO approves payment batch
         ↓
-Payments executed
+System generates payment export file
+        ↓
+Accounting Associate uploads to CitiBusiness
         ↓
 Invoices marked as PAID
         ↓
@@ -376,17 +515,19 @@ Remittance advice sent to vendor
 
 ---
 
-## 13. Key API Endpoints by Flow
+## 14. Key API Endpoints by Flow
 
 | Flow | Endpoint |
 |---|---|
 | Upload invoice | `POST /api/invoices/upload` |
 | Test OCR | `POST /api/invoices/test-consensus` |
 | Validate invoice | `POST /api/invoices/:id/validate` |
+| Check vendor threshold | `GET /api/invoices/:id/vendor-threshold` |
 | Approve invoice | `POST /api/invoices/:id/approve` |
 | Reject invoice | `POST /api/invoices/:id/reject` |
 | Post invoice | `POST /api/invoices/:id/post` |
 | Schedule payment | `POST /api/invoices/:id/schedule-payment` |
+| Reprocess payment | `POST /api/invoices/:id/reprocess-payment` |
 | Create payment batch | `POST /api/payment-batches` |
 | Submit batch for CFO | `POST /api/payment-batches/:id/submit` |
 | CFO approve batch | `POST /api/payment-batches/:id/approve` |

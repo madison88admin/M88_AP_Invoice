@@ -1,5 +1,6 @@
 ﻿import { useQuery } from '@tanstack/react-query';
 import { invoiceApi } from '../lib/api';
+import { calcWorkingHoursElapsed } from '@ap-invoice/shared';
 
 interface DashboardStats {
   pendingValidation: number;
@@ -47,9 +48,14 @@ export function useDashboardStats() {
         return dueDate <= threeDaysFromNow && i.status !== 'PAID';
       }).length;
       const handwrittenDocs = invoices.filter((i: any) => i.is_handwritten).length;
-      const slaAtRisk = invoices.filter((i: any) =>
-        ['VALIDATION_PENDING', 'PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_MLO_ACCOUNT_HOLDER', 'PENDING_MLO_PLANNING_MANAGER', 'PENDING_SR_MANAGER', 'PENDING_POLLY'].includes(i.status)
-      ).length;
+      const slaAtRisk = invoices.filter((i: any) => {
+        const currentStage = (i.stage_timestamps || []).find((st: any) => !st.exited_at);
+        if (!currentStage) return false;
+        const enteredAt = new Date(currentStage.entered_at);
+        const elapsedHours = calcWorkingHoursElapsed(enteredAt, now);
+        const remainingHours = (currentStage.sla_hours || 0) - elapsedHours;
+        return remainingHours <= 48 && remainingHours > 0;
+      }).length;
       const paidThisWeek = invoices.filter((i: any) => {
         if (!i.paid_at && !i.updated_at) return false;
         const paidAt = new Date(i.paid_at || i.updated_at);

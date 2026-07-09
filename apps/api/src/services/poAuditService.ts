@@ -214,10 +214,20 @@ export class POAuditService {
   }
 
   // Schedule audit after delay (called after upload)
-  scheduleAudit(auditId: string, invoiceData: POAuditInput, delayMs = 2000): void {
+  // Retries with exponential backoff when PO is not found, so the system keeps checking
+  // until the PO/MPO appears in NextGen or the invoice is processed.
+  scheduleAudit(auditId: string, invoiceData: POAuditInput, delayMs = 5000, attempt = 1, maxAttempts = 10): void {
     this.initAudit(auditId);
     setTimeout(() => {
       this.runAudit(auditId, invoiceData)
+        .then(() => {
+          const result = auditStore.get(auditId);
+          if (result?.status === 'NOT_FOUND' && attempt < maxAttempts) {
+            const nextDelay = Math.min(delayMs * 2, 600000); // cap at 10 minutes
+            console.log(`[POAuditService] PO not found for ${auditId}, retrying in ${nextDelay / 1000}s (attempt ${attempt}/${maxAttempts})`);
+            this.scheduleAudit(auditId, invoiceData, nextDelay, attempt + 1, maxAttempts);
+          }
+        })
         .catch(err => console.error(`[POAuditService] Scheduled audit failed for ${auditId}:`, err));
     }, delayMs);
   }

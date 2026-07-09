@@ -113,7 +113,7 @@ async function prePostCheck(invoice: any): Promise<PrePostResult> {
 
 // ─── POST INVOICE ───────────────────────────────────────────────────────────
 
-export async function postInvoice(invoiceId: string, userId: string) {
+export async function postInvoice(invoiceId: string, userId: string, bypassVarianceCheck: boolean = false) {
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
     include: {
@@ -141,12 +141,43 @@ export async function postInvoice(invoiceId: string, userId: string) {
   const unresolvedExceptions = invoice.exceptions.filter(
     (exc: any) => exc.status === 'PENDING'
   );
+  
+  // Auto-resolve batch threshold exceptions when posting
+  // The invoice amount itself pushes the vendor over the threshold
+  const batchThresholdExceptions = unresolvedExceptions.filter(
+    (exc: any) => exc.reason === ExceptionReason.BATCH_THRESHOLD_NOT_MET as any
+  );
+  if (batchThresholdExceptions.length > 0) {
+    await prisma.exception.updateMany({
+      where: {
+        id: { in: batchThresholdExceptions.map((e: any) => e.id) },
+      },
+      data: {
+        status: 'RESOLVED' as any,
+        resolved_at: new Date(),
+        resolved_by: userId,
+        resolution_notes: 'Auto-resolved: invoice posted to accounting. Vendor cumulative threshold met by this invoice.',
+      },
+    });
+    // Remove from unresolved list
+    unresolvedExceptions.splice(0, unresolvedExceptions.length, ...unresolvedExceptions.filter(
+      (exc: any) => exc.reason !== ExceptionReason.BATCH_THRESHOLD_NOT_MET as any
+    ));
+  }
+  
   if (unresolvedExceptions.length > 0) {
     throw new AppError('Invoice has unresolved exceptions and cannot be posted', 400);
   }
 
   // Pre-post sanity check (deterministic, no AI)
   const check = await prePostCheck(invoice);
+
+  // Filter out variance blocks if bypass is enabled
+  if (bypassVarianceCheck) {
+    check.flags = check.flags.filter(f => f.type !== 'AMOUNT_VARIANCE');
+    // Recalculate ready after filtering
+    check.ready = !check.flags.some((f) => f.severity === 'block');
+  }
 
   if (!check.ready) {
     // Create exceptions for blocking flags and route to accounting review
@@ -156,13 +187,29 @@ export async function postInvoice(invoiceId: string, userId: string) {
         : flag.type === 'PO_NOT_FOUND'
         ? ExceptionReason.PO_NOT_FOUND
         : ExceptionReason.AMOUNT_MISMATCH;
-      await prisma.exception.create({
-        data: {
+      
+      // Check if an exception with the same reason and similar detail already exists
+      const existingException = await prisma.exception.findFirst({
+        where: {
           invoice_id: invoiceId,
           reason: flagReason as any,
-          detail: `[PRE-POST ${flag.severity.toUpperCase()}] ${flag.detail}`,
+          status: 'PENDING' as any,
+          detail: {
+            contains: `[PRE-POST ${flag.severity.toUpperCase()}]`,
+          },
         },
       });
+      
+      // Only create exception if it doesn't already exist
+      if (!existingException) {
+        await prisma.exception.create({
+          data: {
+            invoice_id: invoiceId,
+            reason: flagReason as any,
+            detail: `[PRE-POST ${flag.severity.toUpperCase()}] ${flag.detail}`,
+          },
+        });
+      }
     }
 
     await prisma.invoice.update({

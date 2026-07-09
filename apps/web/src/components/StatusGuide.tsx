@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { InvoiceStatus } from '@ap-invoice/shared';
 import { HelpCircle, X, ChevronRight } from 'lucide-react';
 
@@ -29,19 +30,25 @@ export default function StatusGuide() {
     <div className="relative">
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 text-xs text-slate-400 hover:text-white transition-colors"
+        className="flex items-center gap-2 text-xs transition-colors"
+        style={{ color: 'var(--text-muted)' }}
+        onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
       >
-        <HelpCircle className="h-4 w-4" />
+        <HelpCircle className="h-4 w-4" strokeWidth={1.75} />
         Status Guide
       </button>
 
-      {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setOpen(false)}>
-          <div className="bg-[#0f172a] border border-white/10 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="p-5 border-b border-white/10 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-white">Invoice Status Guide</h3>
-              <button onClick={() => setOpen(false)} className="text-slate-400 hover:text-white">
-                <X className="h-5 w-5" />
+      {open && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: 'rgba(0,0,0,0.5)' }} onClick={() => setOpen(false)}>
+          <div className="rounded-2xl max-w-2xl w-full max-h-[80vh] overflow-y-auto" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }} onClick={(e) => e.stopPropagation()}>
+            <div className="p-5 border-b flex items-center justify-between" style={{ borderColor: 'var(--border-color)' }}>
+              <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Invoice Status Guide</h3>
+              <button onClick={() => setOpen(false)} style={{ color: 'var(--text-muted)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
+              >
+                <X className="h-5 w-5" strokeWidth={1.75} />
               </button>
             </div>
             <div className="p-5 space-y-3">
@@ -49,15 +56,15 @@ export default function StatusGuide() {
                 const guide = statusGuide[status];
                 if (!guide) return null;
                 return (
-                  <div key={status} className="p-3 bg-white/5 border border-white/10 rounded-lg">
+                  <div key={status} className="p-3 rounded-xl" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}>
                     <div className="flex items-center gap-2">
                       <span className={`w-3 h-3 rounded-full ${guide.color}`} />
-                      <span className="text-sm font-medium text-white">{guide.label}</span>
-                      <span className="text-xs text-slate-500 ml-auto">{status}</span>
+                      <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{guide.label}</span>
+                      <span className="text-xs ml-auto" style={{ color: 'var(--text-muted)' }}>{status}</span>
                     </div>
-                    <p className="text-xs text-slate-400 mt-2">{guide.description}</p>
-                    <p className="text-xs text-[#6366f1] mt-1 flex items-center gap-1">
-                      <ChevronRight className="h-3 w-3" />
+                    <p className="text-xs mt-2" style={{ color: 'var(--text-secondary)' }}>{guide.description}</p>
+                    <p className="text-xs mt-1 flex items-center gap-1" style={{ color: 'var(--accent-purple)' }}>
+                      <ChevronRight className="h-3 w-3" strokeWidth={1.75} />
                       {guide.nextSteps}
                     </p>
                   </div>
@@ -65,7 +72,8 @@ export default function StatusGuide() {
               })}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

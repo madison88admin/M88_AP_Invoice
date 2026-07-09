@@ -23,6 +23,7 @@ export interface MockInvoice {
   order_type?: string;
   po_number?: string;
   mpo_number?: string;
+  qty_shipped?: number;
   status: InvoiceStatus;
   current_stage?: string;
   bank_name?: string;
@@ -47,12 +48,61 @@ export interface MockInvoice {
   priority_flag?: boolean;
   is_urgent?: boolean;
   ocr_confidence_score?: number;
+  ocr_raw_data?: {
+    extraction?: any;
+    bank_info?: {
+      bank_name?: string;
+      swift_code?: string;
+      account_number?: string;
+    };
+    signatures?: any[];
+  };
   approval_tier?: number;
+  vendor_name_raw?: string;
+  ship_to?: string;
+  sold_to?: string;
+  subtotal?: number;
+  tax_amount?: number;
+  discount_amount?: number;
+  bank_charges?: number;
+  freight_charges?: number;
+  additional_charges?: number;
+  exchange_rate_to_usd?: number;
+  invoice_currency_original?: string;
+  date_range_start?: string;
+  date_range_end?: string;
+  priority_pay_date?: string;
+  is_handwritten?: boolean;
   po_validation?: {
     po_found: boolean;
+    is_match?: boolean;
+    mode?: 'AST_ISOLATED' | 'LIVE' | string;
+    skipped?: boolean;
+    message?: string;
     comparison?: {
-      vendor_match: boolean;
-      amount_match: boolean;
+      vendor_match?: boolean;
+      amount_match?: boolean;
+      brand_match?: boolean;
+      season_match?: boolean;
+      order_type_match?: boolean;
+      currency_match?: boolean;
+      amount_variance_percent?: number;
+      differences?: string[];
+    };
+    validation_result?: {
+      status: 'AUTO_APPROVED' | 'REVIEW_REQUIRED' | 'REJECTED' | string;
+      confidence?: number;
+      summary?: string;
+      checks?: {
+        vendor_match?: boolean;
+        amount_match?: boolean;
+        brand_match?: boolean;
+        season_match?: boolean;
+        order_type_match?: boolean;
+        currency_match?: boolean;
+        amount_variance_percent?: number;
+      };
+      issues?: string[];
     };
   };
 }

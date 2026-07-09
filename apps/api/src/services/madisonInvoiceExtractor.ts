@@ -75,6 +75,8 @@ export function detectVendor(text: string): VendorDetection {
     { vendor: 'LI_FUNG', patterns: [/LI\s*&\s*FUNG/i, /LIFUNG/i], confidence: 0.99 },
     { vendor: 'CRYSTAL', patterns: [/CRYSTAL\s*GROUP/i, /CRYSTAL\s*INTERNATIONAL/i], confidence: 0.95 },
     { vendor: 'MAS', patterns: [/MAS\s*HOLDINGS/i, /MAS\s*BRANDS/i], confidence: 0.95 },
+    { vendor: 'CHARMING', patterns: [/CHARMING\s*PRINT/i, /CHARMING\s*PRINTING/i, /雅昌/i, /雅昌印刷/i], confidence: 0.95 },
+    { vendor: 'BOHING', patterns: [/BO\s*HING/i, /宝兴/i, /寶興/i], confidence: 0.95 },
   ];
   
   // Identify the buyer section (BILL TO / SHIP TO) so we don't match the buyer as the vendor.
@@ -382,9 +384,27 @@ export function extractVendorName(text: string): string | null {
 
 /**
  * Extract invoice number from various label patterns
+ * Tries vendor-specific patterns first, then generic labels, then fallbacks.
  */
-export function extractInvoiceNumber(text: string): string | null {
-  const labels = ['Invoice Number', 'Invoice No', 'Invoice No.', 'INVOICE NO:', 'INVOICE NO ：', 'INVOICE NO：', 'I/V NO.', 'I/V NO', 'PI No.', 'PI#', 'P/I NO', 'SI No', 'Order #', 'D/N No.', 'Bill No', 'Bill Number', 'Ref', 'Reference', 'G & F NO', 'G&F NO', 'S/C NO', 'SC-'];
+export function extractInvoiceNumber(text: string, vendor: string = 'UNKNOWN'): string | null {
+  // Try vendor-specific patterns first (skip for UNKNOWN — generic labels handle it)
+  if (vendor !== 'UNKNOWN') {
+    const vendorRule = VendorRules[vendor] || VendorRules.UNKNOWN;
+    if (vendorRule && vendorRule.invoiceNumberPatterns) {
+      for (const pattern of vendorRule.invoiceNumberPatterns) {
+        const match = text.match(pattern);
+        if (match && match[1]) {
+          const value = match[1].replace(/[*#]/g, '').replace(/\s*([\-\\/])\s*/g, '$1').trim();
+          if (!/^MPO\d+$/i.test(value) && /\d/.test(value) && !isGenericLabel(value)) {
+            console.log('[extractInvoiceNumber] Found via vendor pattern:', value, 'vendor:', vendor);
+            return value;
+          }
+        }
+      }
+    }
+  }
+
+  const labels = ['Invoice Number', 'Invoice No', 'Invoice No.', 'INVOICE NO:', 'INVOICE NO ：', 'INVOICE NO：', 'I/V NO.', 'I/V NO', 'PI No.', 'PI#', 'P/I NO', 'SI No', 'Order #', 'D/N No.', 'Bill No', 'Bill Number', 'Ref', 'Reference', 'G & F NO', 'G&F NO', 'S/C NO', 'SC-', '发票号码', '发票编号', '发票号', '票據號碼', '票據編號'];
 
   for (const label of labels) {
     // Handle both regular colon and full-width colon
@@ -1016,8 +1036,31 @@ export function extractAmount(text: string): {
 /**
  * Detect if document is likely handwritten
  * Uses heuristics since OCR confidence scores are not available from pdf-parse/pdf2json
+ * Enhanced with: (1) low text volume check, (2) low confidence field count check
  */
-function detectHandwritten(text: string): boolean {
+function detectHandwritten(text: string, extractionTrace?: ExtractionTrace): boolean {
+  // Signal 0: Low text volume — pdf2json returns minimal/garbled text for handwritten scans
+  if (text.length < 200) {
+    console.log('[detectHandwritten] Text volume too low (' + text.length + ' chars) — likely handwritten/scanned document');
+    return true;
+  }
+
+  // Signal 0b: Low confidence fields — if 3+ major fields have confidence < 0.60, likely handwritten
+  if (extractionTrace) {
+    const majorFields: Array<{ name: string; confidence: number }> = [
+      { name: 'vendor_name', confidence: extractionTrace.vendor_name?.confidence ?? 0 },
+      { name: 'invoice_number', confidence: extractionTrace.invoice_number?.confidence ?? 0 },
+      { name: 'invoice_date', confidence: extractionTrace.invoice_date?.confidence ?? 0 },
+      { name: 'amount', confidence: extractionTrace.amount?.confidence ?? 0 },
+      { name: 'payment_terms', confidence: extractionTrace.payment_terms?.confidence ?? 0 },
+    ];
+    const lowConfidenceCount = majorFields.filter(f => f.confidence < 0.60).length;
+    if (lowConfidenceCount >= 3) {
+      console.log('[detectHandwritten] ' + lowConfidenceCount + ' major fields below 0.60 confidence — likely handwritten:', majorFields.map(f => f.name + '=' + f.confidence));
+      return true;
+    }
+  }
+
   // Fast path: if document contains standard printed invoice markers, it is not handwritten.
   const printedInvoiceMarkers = [
     /INVOICE\s*(NO|NUMBER|DATE|DUE|#)/i,
@@ -1211,28 +1254,64 @@ function extractTaxDiscountSubtotal(text: string): { subtotal: number | null; ta
 
 /**
  * Extract digital signatures from common invoice signature blocks.
- * Looks for "Digitally signed by", "Signed by:", and "Name/Date/Time" blocks.
+ * Handles three formats:
+ * 1. "Digitally signed by Name Date Time Offset" / "Signed by: Name Date Time Offset"
+ * 2. "Name: X Date: Y Time: Z TimeZone: W" label format
+ * 3. "Name / YYYY.MM.DD / HH:MM:SS +HH:MM'" slash-separated format (Madison standard)
+ * Also detects "Computer generated invoice, no signature required" text.
  */
 function extractSignatures(text: string): ExtractedSignature[] {
   const signatures: ExtractedSignature[] = [];
 
-  // Pattern: "Digitally signed by Name Date Time Offset" or "Signed by: Name Date Time Offset"
+  // Check for "Computer generated invoice, no signature required" exemption
+  const computerGeneratedPattern = /computer[\s-]*generated.*no\s*signature\s*(required|needed)/i;
+  if (computerGeneratedPattern.test(text)) {
+    console.log('[extractSignatures] Found "Computer generated invoice, no signature required" text');
+    signatures.push({
+      signatory_name: 'Computer-generated, no signature required',
+      signed_at: undefined,
+      signatory_role: SignatoryRole.COORDINATOR, // placeholder role
+      signature_type: SignatureType.COMPUTER_GENERATED,
+      ocr_detected: true,
+    });
+    return signatures;
+  }
+
+  const tryParseDate = (dateStr: string, timeStr?: string, offset?: string): Date | undefined => {
+    // Normalize date: convert YYYY.MM.DD or YYYY/MM/DD to YYYY-MM-DD
+    let normalized = dateStr.replace(/\//g, '-').replace(/\./g, '-');
+    // Handle YYYY-MM-DD format
+    const dateParts = normalized.split('-');
+    if (dateParts.length === 3) {
+      const [y, m, d] = dateParts;
+      if (y.length === 4) {
+        normalized = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+      } else {
+        // DD-MM-YYYY or MM-DD-YYYY format
+        normalized = `${dateParts[2]}-${dateParts[0].padStart(2, '0')}-${dateParts[1].padStart(2, '0')}`;
+      }
+    }
+    const timePart = timeStr ? `T${timeStr}` : 'T00:00:00';
+    // Normalize offset: strip trailing apostrophe, ensure +HH:MM format
+    let offsetPart = 'Z';
+    if (offset) {
+      let cleanOffset = offset.replace(/'/g, '').trim();
+      // Match +HH:MM or +HHMM
+      const offsetMatch = cleanOffset.match(/^([+-])(\d{2}):?(\d{2})$/);
+      if (offsetMatch) {
+        offsetPart = `${offsetMatch[1]}${offsetMatch[2]}:${offsetMatch[3]}`;
+      }
+    }
+    const iso = `${normalized}${timePart}${offsetPart}`;
+    const date = new Date(iso);
+    return isNaN(date.getTime()) ? undefined : date;
+  };
+
+  // Pattern 1: "Digitally signed by Name Date Time Offset" or "Signed by: Name Date Time Offset"
   const signedByPatterns = [
     /(?:Digitally signed by|Signed by)[:\s]+([A-Za-z][A-Za-z\s\.]+?)\s+(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}|\d{4}[-/.]\d{1,2}[-/.]\d{1,2})\s+(\d{1,2}:\d{2}(?::\d{2})?)\s*([+-]\d{2}:?\d{2}|[A-Z]{2,4})/gi,
     /(?:Digitally signed by|Signed by)[:\s]+([A-Za-z][A-Za-z\s\.]+?)\s+(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}|\d{4}[-/.]\d{1,2}[-/.]\d{1,2})/gi,
   ];
-
-  // Pattern: Name/Date/Time block with labels
-  const labelPattern = /Name[:\s]+([A-Za-z][A-Za-z\s\.]+?)\s+Date[:\s]+(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})\s+Time[:\s]+(\d{1,2}:\d{2}(?::\d{2})?)\s*(?:Time\s*Zone[:\s]+)?([+-]\d{2}:?\d{2}|[A-Z]{2,4})/gi;
-
-  const tryParseDate = (dateStr: string, timeStr?: string, offset?: string): Date | undefined => {
-    const normalized = dateStr.replace(/\//g, '-');
-    const timePart = timeStr ? `T${timeStr}` : 'T00:00:00';
-    const offsetPart = offset && /^[+-]\d{2}:?\d{2}$/.test(offset) ? offset.replace(/(\d{2})(\d{2})$/, '$1:$2') : 'Z';
-    const iso = `${normalized}${timePart}${offsetPart === 'Z' ? 'Z' : offsetPart}`;
-    const date = new Date(iso);
-    return isNaN(date.getTime()) ? undefined : date;
-  };
 
   for (const pattern of signedByPatterns) {
     let match: RegExpExecArray | null;
@@ -1245,10 +1324,13 @@ function extractSignatures(text: string): ExtractedSignature[] {
         signed_at: signedAt,
         signatory_role: role,
         signature_type: SignatureType.DIGITAL,
+        ocr_detected: true,
       });
     }
   }
 
+  // Pattern 2: Name/Date/Time block with labels
+  const labelPattern = /Name[:\s]+([A-Za-z][A-Za-z\s\.]+?)\s+Date[:\s]+(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})\s+Time[:\s]+(\d{1,2}:\d{2}(?::\d{2})?)\s*(?:Time\s*Zone[:\s]+)?([+-]\d{2}:?\d{2}|[A-Z]{2,4})/gi;
   let match: RegExpExecArray | null;
   while ((match = labelPattern.exec(text)) !== null) {
     const name = match[1].trim();
@@ -1259,10 +1341,46 @@ function extractSignatures(text: string): ExtractedSignature[] {
       signed_at: signedAt,
       signatory_role: role,
       signature_type: SignatureType.DIGITAL,
+      ocr_detected: true,
     });
   }
 
-  return signatures;
+  // Pattern 3: Slash-separated format: "Name / YYYY.MM.DD / HH:MM:SS +HH:MM'"
+  // This is the standard Madison digital signature format.
+  // The trailing apostrophe on the timezone offset is consistent across all real invoices.
+  const slashPattern = /([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){1,4})\s*\/\s*(\d{4}\.\d{2}\.\d{2})\s*\/\s*(\d{2}:\d{2}:\d{2})\s*([+-]\d{2}:\d{2}'?)/g;
+  while ((match = slashPattern.exec(text)) !== null) {
+    const name = match[1].trim();
+    const signedAt = tryParseDate(match[2], match[3], match[4]);
+    const role = matchSignerToRole(name);
+    if (!role) {
+      // Unknown signer — still record, but with a default role
+      console.log('[extractSignatures] Unknown signer detected:', name);
+    }
+    signatures.push({
+      signatory_name: name,
+      signed_at: signedAt,
+      signatory_role: role || SignatoryRole.COORDINATOR,
+      signature_type: SignatureType.DIGITAL,
+      ocr_detected: true,
+    });
+    console.log('[extractSignatures] Detected signature:', name, 'at', signedAt?.toISOString(), 'role:', role || 'UNKNOWN (defaulted to COORDINATOR)');
+  }
+
+  // Deduplicate by signatory_name (keep first occurrence)
+  const seen = new Set<string>();
+  const unique = signatures.filter(sig => {
+    const key = sig.signatory_name.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  if (unique.length > 0) {
+    console.log('[extractSignatures] Total signatures detected:', unique.length, unique.map(s => ({ name: s.signatory_name, role: s.signatory_role, type: s.signature_type })));
+  }
+
+  return unique;
 }
 
 /**
@@ -1361,9 +1479,11 @@ function extractSoldTo(text: string): string | null {
 
 /**
  * Extract and normalize payment terms
+ * Tries vendor-specific patterns first, then generic labels.
  */
-export function extractPaymentTerms(text: string): string | null {
+export function extractPaymentTerms(text: string, vendor: string = 'UNKNOWN'): string | null {
   // Specific T.T. remittance patterns (e.g., "T.T. REMITTANCE WITHIN 30 DAYS AFTER I/V DATE")
+  // Checked first to avoid being truncated by generic vendor patterns
   const ttRemittancePattern = /\b(T\.T\.?\s*REMITTANCE\s*(?:WITHIN\s*\d+\s*DAYS?\s*AFTER\s*I\/V\s*DATE|WITHIN\s*\d+\s*DAYS?))\b/i;
   const ttMatch = text.match(ttRemittancePattern);
   if (ttMatch) {
@@ -1372,7 +1492,27 @@ export function extractPaymentTerms(text: string): string | null {
     return value;
   }
 
-  const labels = ['Payment Terms', 'NET TERMS', 'TERMS:', 'Terms of payment', 'Credit Term', 'CREDIT TERM'];
+  // Try vendor-specific patterns next (skip for UNKNOWN — generic labels handle it better)
+  if (vendor !== 'UNKNOWN') {
+    const vendorRule = VendorRules[vendor] || VendorRules.UNKNOWN;
+    if (vendorRule && vendorRule.paymentTermPatterns) {
+      for (const pattern of vendorRule.paymentTermPatterns) {
+        const match = text.match(pattern);
+        if (match && match[1]) {
+          const value = match[1].trim().toUpperCase();
+          // Truncate at newline
+          const newlineIdx = value.indexOf('\n');
+          const cleanValue = newlineIdx !== -1 ? value.substring(0, newlineIdx).trim() : value;
+          if (cleanValue.length > 0) {
+            console.log('[extractPaymentTerms] Found via vendor pattern:', cleanValue, 'vendor:', vendor);
+            return cleanValue;
+          }
+        }
+      }
+    }
+  }
+
+  const labels = ['Payment Terms', 'NET TERMS', 'TERMS:', 'Terms of payment', 'Credit Term', 'CREDIT TERM', '付款条件', '付款方式', '信贷条款'];
   
   for (const label of labels) {
     // Updated regex to stop at newline or after reasonable length
@@ -3524,7 +3664,7 @@ export async function extractMadisonInvoiceFields(fileBuffer: Buffer): Promise<M
     console.log('[MadisonExtractor] Using vendor-specific extraction for:', detectedVendor);
     
     vendor_name = extractVendorName(normalizedText);
-    invoice_number = extractInvoiceNumber(normalizedText);
+    invoice_number = extractInvoiceNumber(normalizedText, detectedVendor);
     invoice_date = extractInvoiceDate(normalizedText, preferUS);
     
     // DSRS v7.3: In zero-leak mode, legacy amount extraction is NOT executed.
@@ -3549,7 +3689,7 @@ export async function extractMadisonInvoiceFields(fileBuffer: Buffer): Promise<M
     const mpoResult = extractMPONumber(normalizedText, detectedVendor);
     mpo_number = mpoResult.value;
     
-    payment_terms = extractPaymentTerms(normalizedText);
+    payment_terms = extractPaymentTerms(normalizedText, detectedVendor);
     incoterm = extractIncoterm(normalizedText);
 
     const bankResult = extractBankDetails(normalizedText);
@@ -3843,7 +3983,14 @@ export async function extractMadisonInvoiceFields(fileBuffer: Buffer): Promise<M
     },
     bill_to_text,
     bill_to_confirmed_madison88,
-    is_handwritten: detectHandwritten(normalizedText),
+    is_handwritten: detectHandwritten(normalizedText, {
+      vendor_name: { value: vendor_name, confidence: vendorConfidence, source_text: null, method: 'regex' as const },
+      invoice_number: { value: invoice_number, confidence: 0.8, source_text: null, method: 'regex' as const },
+      invoice_date: { value: null, confidence: 0.8, source_text: null, method: 'regex' as const },
+      amount: { value: amount, confidence: amount ? 0.8 : 0, source_text: null, method: 'ast' as const, candidates: legacyAmountResult?.amount_candidates_trace || [] },
+      mpo_number: { value: mpo_number, confidence: mpo_number ? 0.9 : 0, source_text: poData.raw, method: 'regex' as const },
+      payment_terms: { value: payment_terms, confidence: payment_terms ? 0.7 : 0, source_text: null, method: 'regex' as const },
+    }),
     document_type,
     po_reference_raw: poData.raw,
     brand,

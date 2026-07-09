@@ -25,3 +25,7 @@ if (process.env.NODE_ENV !== 'production') {
     new winston.transports.File({ filename: 'combined.log' })
   );
 }
+
+export const createChildLogger = (label: string) => {
+  return logger.child({ label });
+};

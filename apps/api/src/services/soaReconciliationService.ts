@@ -20,16 +20,27 @@ export async function getSOAReconciliationQueue(year: number, month: number): Pr
   const startDate = new Date(year, month - 1, 1);
   const endDate = new Date(year, month, 0);
 
-  // Get all posted invoices for the month
+  // Get all posted invoices for the month, plus STATEMENT-type invoices
+  // (statements need manual SOA reconciliation regardless of posting date)
   const invoices = await prisma.invoice.findMany({
     where: {
-      status: {
-        in: [InvoiceStatus.POSTED_TO_QB, InvoiceStatus.PAYMENT_SCHEDULED, InvoiceStatus.PAID],
-      },
-      invoice_date: {
-        gte: startDate,
-        lte: endDate,
-      },
+      OR: [
+        {
+          status: {
+            in: [InvoiceStatus.POSTED_TO_QB, InvoiceStatus.PAYMENT_SCHEDULED, InvoiceStatus.PAID],
+          },
+          invoice_date: {
+            gte: startDate,
+            lte: endDate,
+          },
+        },
+        {
+          invoice_type: 'STATEMENT',
+          status: {
+            in: [InvoiceStatus.POSTED_TO_QB, InvoiceStatus.PAYMENT_SCHEDULED, InvoiceStatus.PAID, InvoiceStatus.APPROVED, InvoiceStatus.PENDING_ACCOUNTING],
+          },
+        },
+      ],
     },
     include: {
       vendor: true,
@@ -43,15 +54,15 @@ export async function getSOAReconciliationQueue(year: number, month: number): Pr
   // For now, we'll simulate the reconciliation process
   const reconciliationItems = invoices.map((invoice: any) => {
     // Simulate SOA amount (in production, this would come from vendor SOA)
-    const soaAmount = invoice.amount; // Assume match for now
-    const discrepancy = Math.abs(invoice.amount - soaAmount);
+    const soaAmount = Number(invoice.total_amount); // Assume match for now
+    const discrepancy = Math.abs(Number(invoice.total_amount) - soaAmount);
     
     return {
       invoice_id: invoice.id,
       invoice_number: invoice.invoice_number,
       vendor_id: invoice.vendor_id,
       vendor_name: invoice.vendor?.name || 'Unknown',
-      invoice_amount: Number(invoice.amount),
+      invoice_amount: Number(invoice.total_amount),
       soa_amount: soaAmount,
       discrepancy,
       status: (discrepancy < 0.01 ? 'MATCHED' : 'DISCREPANCY') as 'MATCHED' | 'DISCREPANCY' | 'MISSING_IN_SOA' | 'MISSING_IN_SYSTEM',

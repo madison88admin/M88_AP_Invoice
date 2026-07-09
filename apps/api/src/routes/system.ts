@@ -1,6 +1,7 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { authorize } from '../middleware/auth';
 import { UserRole } from '@ap-invoice/shared';
+import { ollamaFineTuneService } from '../services/ollamaFineTuneService';
 
 const router = Router() as Router;
 
@@ -50,7 +51,7 @@ router.get('/status', devBypassAdmin, (req: Request, res: Response) => {
         {
           name: 'Authentication & Authorization',
           status: 'working',
-          description: 'MSAL authentication with role-based access control',
+          description: 'NextGen Forms Auth login with API JWT and role-based access control',
           roles: [
             'ADMIN',
             'ACCOUNTING_ASSOCIATE',
@@ -257,6 +258,58 @@ router.get('/status', devBypassAdmin, (req: Request, res: Response) => {
   };
 
   res.json(status);
+});
+
+/**
+ * POST /api/system/finetune/start
+ * Trigger LoRA fine-tuning using saved corrections.
+ */
+router.post('/finetune/start', devBypassAdmin, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const result = await ollamaFineTuneService.startFineTune({
+      baseModel: req.body.baseModel,
+      minCorrections: req.body.minCorrections,
+      epochs: req.body.epochs,
+      batchSize: req.body.batchSize,
+      learningRate: req.body.learningRate,
+    });
+    res.json({
+      success: true,
+      jobId: result.jobId,
+      datasetCount: result.datasetCount,
+      message: 'Fine-tuning started in background. Check status with GET /api/system/finetune/status',
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /api/system/finetune/status
+ * Get current fine-tuning status.
+ */
+router.get('/finetune/status', devBypassAdmin, (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    ...ollamaFineTuneService.getStatus(),
+  });
+});
+
+/**
+ * POST /api/system/finetune/dataset
+ * Export current corrections to training dataset.
+ */
+router.post('/finetune/dataset', devBypassAdmin, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const result = await ollamaFineTuneService.buildDataset(req.body.minCorrections);
+    res.json({
+      success: true,
+      datasetPath: result.path,
+      count: result.count,
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
 export default router;

@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Clock, AlertTriangle, FileText } from 'lucide-react';
+import { Clock, AlertTriangle, FileText, CheckCircle, Shield, LucideIcon } from 'lucide-react';
+import { calcWorkingHoursElapsed } from '@ap-invoice/shared';
 import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
+import EmptyState from './ui/EmptyState';
 
 interface BottleneckItem {
   id: string;
@@ -30,20 +32,20 @@ export default function BottleneckView() {
   const { user } = useAuth();
   const [data, setData] = useState<BottleneckData | null>(null);
   const [loading, setLoading] = useState(true);
-  
-  // Pagination state for each card
+
   const [waitingOnMePage, setWaitingOnMePage] = useState(1);
   const [atRiskPage, setAtRiskPage] = useState(1);
   const [awaitingCISIPage, setAwaitingCISIPage] = useState(1);
-  const itemsPerPage = 3;
+  const itemsPerPage = 5;
 
   useEffect(() => {
-    // Calculate bottleneck data from mock invoices
-    const waitingOnMe = getInvoicesByStage(user?.role === 'PURCHASING_COORDINATOR' ? 'PURCHASING_COORDINATOR' : 
-                                      user?.role === 'PURCHASING_MANAGER' ? 'PURCHASING_MANAGER' :
-                                      user?.role === 'PLANNING_MANAGER' ? 'PLANNING_MANAGER' :
-                                      user?.role === 'SR_MANAGER_GLOBAL_PRODUCTION' ? 'LINDSEY' :
-                                      user?.role === 'MS_POLLY' ? 'POLLY' : '').map(inv => ({
+    const waitingOnMe = getInvoicesByStage(
+      user?.role === 'PURCHASING_COORDINATOR' ? 'PURCHASING_COORDINATOR' :
+      user?.role === 'PURCHASING_MANAGER' ? 'PURCHASING_MANAGER' :
+      user?.role === 'PLANNING_MANAGER' ? 'PLANNING_MANAGER' :
+      user?.role === 'SR_MANAGER_GLOBAL_PRODUCTION' ? 'LINDSEY' :
+      user?.role === 'MS_POLLY' ? 'POLLY' : ''
+    ).map(inv => ({
       id: inv.id,
       invoice_number: inv.invoice_number,
       vendor_name: inv.vendor_name,
@@ -59,15 +61,15 @@ export default function BottleneckView() {
       if (!currentStage) return false;
       const enteredAt = new Date(currentStage.entered_at);
       const now = new Date();
-      const elapsedHours = (now.getTime() - enteredAt.getTime()) / (1000 * 60 * 60);
+      const elapsedHours = calcWorkingHoursElapsed(enteredAt, now);
       const remainingHours = currentStage.sla_hours - elapsedHours;
       return remainingHours <= 48 && remainingHours > 0;
     }).map(inv => {
-      const currentStage = inv.stage_timestamps.find(st => !st.exited_at);
-      const enteredAt = new Date(currentStage!.entered_at);
+      const currentStage = inv.stage_timestamps.find(st => !st.exited_at)!;
+      const enteredAt = new Date(currentStage.entered_at);
       const now = new Date();
-      const elapsedHours = (now.getTime() - enteredAt.getTime()) / (1000 * 60 * 60);
-      const remainingHours = currentStage!.sla_hours - elapsedHours;
+      const elapsedHours = calcWorkingHoursElapsed(enteredAt, now);
+      const remainingHours = currentStage.sla_hours - elapsedHours;
       return {
         id: inv.id,
         invoice_number: inv.invoice_number,
@@ -75,14 +77,14 @@ export default function BottleneckView() {
         amount: inv.total_amount,
         currency: inv.currency,
         status: inv.status,
-        stage: currentStage!.stage,
+        stage: currentStage.stage,
         remaining_hours: Math.round(remainingHours),
         elapsed_hours: Math.round(elapsedHours),
         risk_level: (remainingHours <= 24 ? 'CRITICAL' : 'WARNING') as 'CRITICAL' | 'WARNING',
       };
     });
 
-    const awaitingCISI = invoices.filter(inv => 
+    const awaitingCISI = invoices.filter(inv =>
       inv.invoice_type === 'PROFORMA' && inv.status === 'PAID' && inv.follow_up_tasks?.some(ft => ft.status === 'PENDING')
     ).map(inv => ({
       id: inv.id,
@@ -125,38 +127,31 @@ export default function BottleneckView() {
     return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`;
   };
 
-  // Helper function to paginate items
   const paginateItems = (items: BottleneckItem[], page: number) => {
     const startIndex = (page - 1) * itemsPerPage;
-    const endIndex = startIndex + itemsPerPage;
-    return items.slice(startIndex, endIndex);
+    return items.slice(startIndex, startIndex + itemsPerPage);
   };
 
-  // Helper function to get total pages
-  const getTotalPages = (items: BottleneckItem[]) => {
-    return Math.ceil(items.length / itemsPerPage);
-  };
+  const getTotalPages = (items: BottleneckItem[]) => Math.ceil(items.length / itemsPerPage);
 
-  // Paginated items
   const paginatedWaitingOnMe = data?.waiting_on_me ? paginateItems(data.waiting_on_me, waitingOnMePage) : [];
   const paginatedAtRisk = data?.at_risk ? paginateItems(data.at_risk, atRiskPage) : [];
   const paginatedAwaitingCISI = data?.awaiting_cisi ? paginateItems(data.awaiting_cisi, awaitingCISIPage) : [];
 
-  // Total pages
   const waitingOnMeTotalPages = data?.waiting_on_me ? getTotalPages(data.waiting_on_me) : 1;
   const atRiskTotalPages = data?.at_risk ? getTotalPages(data.at_risk) : 1;
   const awaitingCISITotalPages = data?.awaiting_cisi ? getTotalPages(data.awaiting_cisi) : 1;
 
   if (loading) {
     return (
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         {[1, 2, 3].map((i) => (
-          <div key={i} className="bg-white rounded-lg shadow-sm p-4 animate-pulse">
-            <div className="h-4 bg-gray-200 rounded w-1/3 mb-3"></div>
+          <div key={i} className="rounded-xl p-4 animate-pulse" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)' }}>
+            <div className="h-4 rounded w-1/3 mb-3" style={{ background: 'var(--bg-elevated)' }}></div>
             <div className="space-y-2">
-              <div className="h-3 bg-gray-200 rounded"></div>
-              <div className="h-3 bg-gray-200 rounded"></div>
-              <div className="h-3 bg-gray-200 rounded w-2/3"></div>
+              <div className="h-3 rounded" style={{ background: 'var(--bg-elevated)' }}></div>
+              <div className="h-3 rounded" style={{ background: 'var(--bg-elevated)' }}></div>
+              <div className="h-3 rounded w-2/3" style={{ background: 'var(--bg-elevated)' }}></div>
             </div>
           </div>
         ))}
@@ -165,14 +160,16 @@ export default function BottleneckView() {
   }
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-      {/* Waiting on Me */}
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
       <BottleneckCard
         title="Waiting on me"
-        icon={<Clock className="w-5 h-5 text-blue-600" />}
+        icon={Clock}
+        count={data?.waiting_on_me.length || 0}
+        accent="info"
+        emptyIcon={CheckCircle}
+        emptyTitle="No invoices waiting"
+        emptyDescription="Invoices requiring your approval will appear here."
         items={paginatedWaitingOnMe}
-        color="blue"
-        emptyMessage="No invoices waiting for your approval"
         renderItem={(item) => (
           <BottleneckItem
             item={item}
@@ -189,13 +186,15 @@ export default function BottleneckView() {
         }}
       />
 
-      {/* At Risk */}
       <BottleneckCard
         title="At risk"
-        icon={<AlertTriangle className="w-5 h-5 text-orange-600" />}
+        icon={AlertTriangle}
+        count={data?.at_risk.length || 0}
+        accent="warning"
+        emptyIcon={Shield}
+        emptyTitle="No invoices at risk"
+        emptyDescription="SLA risks will appear here when due dates approach."
         items={paginatedAtRisk}
-        color="orange"
-        emptyMessage="No invoices at risk of SLA breach"
         renderItem={(item) => (
           <BottleneckItem
             item={item}
@@ -212,13 +211,15 @@ export default function BottleneckView() {
         }}
       />
 
-      {/* Awaiting CI/SI */}
       <BottleneckCard
         title="Awaiting CI/SI"
-        icon={<FileText className="w-5 h-5 text-purple-600" />}
+        icon={FileText}
+        count={data?.awaiting_cisi.length || 0}
+        accent="default"
+        emptyIcon={FileText}
+        emptyTitle="No proformas awaiting CI/SI"
+        emptyDescription="Paid proforma invoices requiring CI/SI will appear here."
         items={paginatedAwaitingCISI}
-        color="purple"
-        emptyMessage="No Proforma Invoices awaiting CI/SI"
         renderItem={(item) => (
           <BottleneckItem
             item={item}
@@ -239,10 +240,13 @@ export default function BottleneckView() {
 
 interface BottleneckCardProps {
   title: string;
-  icon: React.ReactNode;
+  icon: LucideIcon;
+  count: number;
+  accent: 'info' | 'warning' | 'default';
+  emptyIcon: LucideIcon;
+  emptyTitle: string;
+  emptyDescription: string;
   items: BottleneckItem[];
-  color: 'blue' | 'orange' | 'purple';
-  emptyMessage: string;
   renderItem: (item: BottleneckItem) => React.ReactNode;
   pagination?: {
     currentPage: number;
@@ -251,50 +255,83 @@ interface BottleneckCardProps {
   };
 }
 
-function BottleneckCard({ title, icon, items, color, emptyMessage, renderItem, pagination }: BottleneckCardProps) {
-  const badgeClasses = {
-    blue: 'bg-blue-500/20 text-blue-400',
-    orange: 'bg-orange-500/20 text-orange-400',
-    purple: 'bg-purple-500/20 text-purple-400',
-  };
+const accentStyles = {
+  info: {
+    borderLeft: '4px solid var(--accent-purple)',
+    iconBg: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)',
+    iconColor: 'var(--accent-purple)',
+    badgeBg: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)',
+    badgeColor: 'var(--accent-purple)',
+  },
+  warning: {
+    borderLeft: '4px solid var(--accent-amber)',
+    iconBg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)',
+    iconColor: 'var(--accent-amber)',
+    badgeBg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)',
+    badgeColor: 'var(--accent-amber)',
+  },
+  default: {
+    borderLeft: '4px solid var(--accent-violet)',
+    iconBg: 'color-mix(in srgb, var(--accent-violet) 10%, transparent)',
+    iconColor: 'var(--accent-violet)',
+    badgeBg: 'color-mix(in srgb, var(--accent-violet) 10%, transparent)',
+    badgeColor: 'var(--accent-violet)',
+  },
+};
+
+function BottleneckCard({ title, icon: Icon, count, accent, emptyIcon, emptyTitle, emptyDescription, items, renderItem, pagination }: BottleneckCardProps) {
+  const styles = accentStyles[accent];
 
   return (
-    <div className="bg-[#1e1b4b] rounded-lg shadow-sm border border-white/10 overflow-hidden">
-      <div className="p-4 border-b border-white/10 flex items-center justify-between">
+    <div className="rounded-xl overflow-hidden" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderLeft: styles.borderLeft }}>
+      <div className="p-4 border-b flex items-center justify-between" style={{ borderColor: 'var(--border-color)' }}>
         <div className="flex items-center gap-2">
-          {icon}
-          <h3 className="font-semibold text-white">{title}</h3>
+          <div className="rounded-lg p-1.5" style={{ background: styles.iconBg }}>
+            <Icon className="h-4 w-4" style={{ color: styles.iconColor }} strokeWidth={1.75} />
+          </div>
+          <h3 className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>{title}</h3>
         </div>
-        <span className={`px-2 py-1 rounded-full text-xs font-medium ${badgeClasses[color]}`}>
-          {items.length}
+        <span className="px-2 py-0.5 rounded-full text-xs font-medium" style={{ background: styles.badgeBg, color: styles.badgeColor, fontVariantNumeric: 'tabular-nums' }}>
+          {count}
         </span>
       </div>
       <div className="p-4">
         {items.length === 0 ? (
-          <p className="text-slate-400 text-sm text-center py-4">{emptyMessage}</p>
+          <EmptyState
+            icon={emptyIcon}
+            title={emptyTitle}
+            description={emptyDescription}
+            compact
+          />
         ) : (
           <div className="space-y-3">
             {items.map((item) => (
-              <div key={item.id} className="flex items-start gap-3 p-2 rounded hover:bg-white/5 transition-colors">
+              <div key={item.id} className="flex items-start gap-3 p-2 rounded-lg transition-colors" onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-card-hover)'; }} onMouseLeave={(e) => { e.currentTarget.style.background = ''; }}>
                 {renderItem(item)}
               </div>
             ))}
             {pagination && pagination.totalPages > 1 && (
-              <div className="flex items-center justify-between pt-3 border-t border-white/10">
+              <div className="flex items-center justify-between pt-3 border-t" style={{ borderColor: 'var(--border-color)' }}>
                 <button
                   onClick={() => pagination.onPageChange(pagination.currentPage - 1)}
                   disabled={pagination.currentPage === 1}
-                  className="text-xs px-2 py-1 rounded bg-white/5 text-slate-300 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="text-xs px-2 py-1 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}
+                  onMouseEnter={(e) => { if (pagination.currentPage !== 1) e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
+                  onMouseLeave={(e) => { if (pagination.currentPage !== 1) e.currentTarget.style.background = 'var(--bg-elevated)'; }}
                 >
                   Previous
                 </button>
-                <span className="text-xs text-slate-400">
+                <span className="text-xs" style={{ color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
                   {pagination.currentPage} / {pagination.totalPages}
                 </span>
                 <button
                   onClick={() => pagination.onPageChange(pagination.currentPage + 1)}
                   disabled={pagination.currentPage === pagination.totalPages}
-                  className="text-xs px-2 py-1 rounded bg-white/5 text-slate-300 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="text-xs px-2 py-1 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}
+                  onMouseEnter={(e) => { if (pagination.currentPage !== pagination.totalPages) e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
+                  onMouseLeave={(e) => { if (pagination.currentPage !== pagination.totalPages) e.currentTarget.style.background = 'var(--bg-elevated)'; }}
                 >
                   Next
                 </button>
@@ -320,30 +357,32 @@ function BottleneckItem({ item, formatCurrency, formatTimeAgo, formatHours, show
   return (
     <div className="flex-1 min-w-0">
       <div className="flex items-center justify-between mb-1">
-        <span className="font-medium text-sm text-white truncate">
+        <span className="font-medium text-sm truncate" style={{ color: 'var(--text-primary)' }}>
           {item.invoice_number}
         </span>
-        <span className="text-sm font-semibold text-white ml-2">
+        <span className="text-sm font-semibold ml-2" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
           {formatCurrency(item.amount, item.currency)}
         </span>
       </div>
-      <div className="flex items-center justify-between text-xs text-slate-400">
+      <div className="flex items-center justify-between text-xs" style={{ color: 'var(--text-secondary)' }}>
         <span className="truncate">{item.vendor_name}</span>
         {showStage && item.current_stage && (
-          <span className="ml-2 px-2 py-0.5 bg-white/10 rounded text-slate-300">
+          <span className="ml-2 px-2 py-0.5 rounded text-[10px]" style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}>
             {item.current_stage.replace(/_/g, ' ')}
           </span>
         )}
         {showRiskLevel && item.risk_level && (
-          <span className={`ml-2 px-2 py-0.5 rounded ${
-            item.risk_level === 'CRITICAL' ? 'bg-red-500/20 text-red-400' : 'bg-yellow-500/20 text-yellow-400'
-          }`}>
+          <span className="ml-2 px-2 py-0.5 rounded text-[10px]" style={
+            item.risk_level === 'CRITICAL'
+              ? { background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', color: 'var(--accent-red)' }
+              : { background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' }
+          }>
             {item.risk_level}
           </span>
         )}
       </div>
       {(item.remaining_hours !== undefined || item.stage_entered_at) && (
-        <div className="flex items-center justify-between text-xs text-slate-500 mt-1">
+        <div className="flex items-center justify-between text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
           {item.remaining_hours !== undefined && (
             <span>{formatHours(item.remaining_hours)} remaining</span>
           )}

@@ -5,6 +5,7 @@ import {
   schedulePayment,
   processPayment,
   getScheduledPayments,
+  releaseFromHold,
 } from '../services/postingService';
 import { logAudit } from '../services/auditLogService';
 
@@ -15,12 +16,17 @@ export const postInvoiceController = async (
 ) => {
   try {
     const { id } = req.params;
-    const result = await postInvoice(id, req.user!.id);
+    const { bypassVarianceCheck } = req.body || {};
+    
+    // Only ACCOUNTING_SUPERVISOR can bypass variance check
+    const canBypass = req.user!.role === 'ACCOUNTING_SUPERVISOR' && bypassVarianceCheck === true;
+    
+    const result = await postInvoice(id, req.user!.id, canBypass);
     await logAudit({
       invoice_id: id,
       performed_by: req.user!.id,
       action: 'INVOICE_POSTED',
-      note: `Invoice posted to accounting by ${req.user!.role}`,
+      note: `Invoice posted to accounting by ${req.user!.role}${canBypass ? ' (variance check bypassed)' : ''}`,
     });
     res.json(result);
   } catch (error) {
@@ -76,6 +82,20 @@ export const getScheduledPaymentsController = async (
   try {
     const payments = await getScheduledPayments();
     res.json(payments);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const releaseFromHoldController = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { id } = req.params;
+    const result = await releaseFromHold(id, req.user!.id);
+    res.json(result);
   } catch (error) {
     next(error);
   }

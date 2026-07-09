@@ -27,6 +27,7 @@ export interface SignatureInfo {
   signed_at?: Date;
   signatory_role: SignatoryRole;
   signature_type: SignatureType;
+  ocr_detected?: boolean;
 }
 
 export interface OCRResult {

@@ -11,6 +11,7 @@ import Reports from './components/Reports';
 import AccountingReview from './components/AccountingReview';
 import VendorManagement from './components/VendorManagement';
 import AuditLog from './components/AuditLog';
+import ExtractionDashboard from './components/ExtractionDashboard';
 import ProtectedRoute from './components/ProtectedRoute';
 
 function App() {
@@ -68,6 +69,11 @@ function App() {
             <Route path="/audit-logs" element={
               <ProtectedRoute>
                 <AuditLog />
+              </ProtectedRoute>
+            } />
+            <Route path="/extraction-analytics" element={
+              <ProtectedRoute>
+                <ExtractionDashboard />
               </ProtectedRoute>
             } />
           </Routes>

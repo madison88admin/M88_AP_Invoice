@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { useState } from 'react';
+import { useState, MouseEvent } from 'react';
 import { 
   LayoutDashboard, 
   CheckSquare, 
@@ -13,7 +13,8 @@ import {
   ChevronRight,
   Bell,
   Settings,
-  User
+  User,
+  Activity,
 } from 'lucide-react';
 
 interface NavItem {
@@ -31,6 +32,7 @@ const navItems: NavItem[] = [
   { label: 'Reports', path: '/reports', icon: BarChart3 },
   { label: 'Review', path: '/accounting-review', icon: FileSearch },
   { label: 'Audit Logs', path: '/audit-logs', icon: ClipboardList },
+  { label: 'Extraction Analytics', path: '/extraction-analytics', icon: Activity },
 ];
 
 export default function Sidebar() {
@@ -54,21 +56,22 @@ export default function Sidebar() {
   };
 
   return (
-    <div className="flex h-screen bg-white">
+    <div className="flex h-screen" style={{ background: 'var(--bg-elevated)' }}>
       {/* Sidebar */}
       <aside 
-        className={`${collapsed ? 'w-20' : 'w-64'} bg-[#0F1C2E] text-white transition-all duration-300 ease-in-out flex flex-col`}
+        className={`${collapsed ? 'w-20' : 'w-64'} text-white transition-all duration-300 ease-in-out flex flex-col`}
+        style={{ background: 'var(--bg-card)' }}
       >
         {/* Logo */}
-        <div className="p-4 border-b border-white/10">
+        <div className="p-4 border-b" style={{ borderColor: 'var(--border-color)' }}>
           <div className="flex items-center gap-3">
-            <div className="bg-[#2563EB] p-2 rounded-lg">
-              <LayoutDashboard className="h-6 w-6" />
+            <div className="p-2 rounded-lg" style={{ background: 'var(--accent-blue)' }}>
+              <LayoutDashboard className="h-6 w-6 text-white" />
             </div>
             {!collapsed && (
               <div>
-                <h1 className="font-bold text-lg">Madison 88</h1>
-                <p className="text-xs text-gray-400">Business Solutions</p>
+                <h1 className="font-bold text-lg" style={{ color: 'var(--text-primary)' }}>Madison 88</h1>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Business Solutions</p>
               </div>
             )}
           </div>
@@ -83,10 +86,23 @@ export default function Sidebar() {
                 key={item.path}
                 to={item.path}
                 className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 ${
-                  isActive
-                    ? 'bg-[#2563EB] text-white shadow-lg'
-                    : 'text-gray-300 hover:bg-white/10 hover:text-white'
+                  isActive ? 'text-white shadow-lg' : ''
                 }`}
+                style={
+                  isActive
+                    ? { background: 'var(--accent-blue)' }
+                    : { color: 'var(--text-secondary)' }
+                }
+                onMouseEnter={(e: MouseEvent<HTMLAnchorElement>) => {
+                  if (!isActive) {
+                    (e.currentTarget as HTMLAnchorElement).style.background = 'var(--bg-card-hover)';
+                  }
+                }}
+                onMouseLeave={(e: MouseEvent<HTMLAnchorElement>) => {
+                  if (!isActive) {
+                    (e.currentTarget as HTMLAnchorElement).style.background = '';
+                  }
+                }}
               >
                 <item.icon className={`h-5 w-5 flex-shrink-0 ${collapsed ? 'mx-auto' : ''}`} />
                 {!collapsed && <span className="font-medium">{item.label}</span>}
@@ -96,10 +112,16 @@ export default function Sidebar() {
         </nav>
 
         {/* Collapse Toggle */}
-        <div className="p-4 border-t border-white/10">
+        <div className="p-4 border-t" style={{ borderColor: 'var(--border-color)' }}>
           <button
             onClick={() => setCollapsed(!collapsed)}
-            className="flex items-center justify-center w-full p-2 rounded-lg hover:bg-white/10 transition-colors"
+            className="flex items-center justify-center w-full p-2 rounded-lg transition-colors"
+            onMouseEnter={(e: MouseEvent<HTMLButtonElement>) => {
+              (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-card-hover)';
+            }}
+            onMouseLeave={(e: MouseEvent<HTMLButtonElement>) => {
+              (e.currentTarget as HTMLButtonElement).style.background = '';
+            }}
           >
             {collapsed ? (
               <ChevronRight className="h-5 w-5" />
@@ -113,27 +135,36 @@ export default function Sidebar() {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Top Header */}
-        <header className="bg-white border-b border-gray-200 px-6 py-4">
+        <header className="px-6 py-4 border-b" style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border-color)' }}>
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-500">{getGreeting()}</p>
-              <p className="text-xs text-gray-400">{formatDate()}</p>
+              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{getGreeting()}</p>
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{formatDate()}</p>
             </div>
             <div className="flex items-center gap-4">
               <Link
                 to="/upload"
-                className="px-4 py-2 bg-[#2563EB] text-white rounded-lg hover:bg-[#1d4ed8] transition-colors font-medium"
+                className="px-4 py-2 text-white rounded-lg transition-colors font-medium"
+                style={{ background: 'var(--accent-blue)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--accent-blue-hover)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--accent-blue)'; }}
               >
                 Upload Invoice
               </Link>
-              <button className="relative p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors">
+              <button className="relative p-2 rounded-lg transition-colors" style={{ color: 'var(--text-muted)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = ''; }}
+              >
                 <Bell className="h-5 w-5" />
-                <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" />
+                <span className="absolute top-1 right-1 w-2 h-2 rounded-full" style={{ background: 'var(--accent-red)' }} />
               </button>
-              <button className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors">
+              <button className="p-2 rounded-lg transition-colors" style={{ color: 'var(--text-muted)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = ''; }}
+              >
                 <Settings className="h-5 w-5" />
               </button>
-              <div className="w-8 h-8 bg-[#2563EB] rounded-full flex items-center justify-center">
+              <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: 'var(--accent-blue)' }}>
                 <User className="h-5 w-5 text-white" />
               </div>
             </div>
@@ -141,7 +172,7 @@ export default function Sidebar() {
         </header>
 
         {/* Content Area - This will be filled by the routed component */}
-        <main className="flex-1 overflow-auto bg-gray-50">
+        <main className="flex-1 overflow-auto" style={{ background: 'var(--bg-base)' }}>
           {/* Children will be rendered here by the routing */}
         </main>
       </div>

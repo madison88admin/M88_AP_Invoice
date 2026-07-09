@@ -1,6 +1,6 @@
 import express, { Router } from 'express';
 import prisma from '../config/database';
-import { InvoiceStatus, InvoiceType } from '@ap-invoice/shared';
+import { InvoiceStatus, InvoiceType, calcWorkingHoursElapsed } from '@ap-invoice/shared';
 import { getPaidPIMissingCI } from '../services/piFollowUpService';
 import { getSLACountdown } from '../services/slaReminderService';
 
@@ -128,7 +128,7 @@ async function getAtRiskInvoices() {
   for (const stage of activeStages) {
     const slaHours = stage.sla_hours;
     const enteredAt = new Date(stage.entered_at);
-    const elapsedHours = (now.getTime() - enteredAt.getTime()) / (1000 * 60 * 60);
+    const elapsedHours = calcWorkingHoursElapsed(enteredAt, now);
     const remainingHours = slaHours - elapsedHours;
 
     // At risk if less than 48 hours remaining

@@ -84,8 +84,8 @@ NEXTGEN_API_KEY=your_api_key
 **Implementation:**
 - Enhanced `approvalService.ts` with auto-notify next approver
 - Auto-determines approval tier based on amount:
-  - $0.1-$4,999: Tier 1
-  - $5,000-$99,999: Tier 2
+  - ≤ $2,000: Planning Tier (Coordinator & Manager share 7-day SLA)
+  - $2,001-$99,999: Tier 2
   - ≥ $100,000: Tier 3
 - Auto-creates approval chain as sequential tasks
 - Auto-notifies next approver via email using `notificationService.ts`
@@ -283,7 +283,7 @@ npm run build
 
 ✅ Every signature still required  
 ✅ Digital PDF signing stays digital  
-✅ The 3 approval tiers and thresholds remain unchanged  
+⚠️ **CHANGED:** Approval tiers restructured (Planning Tier ≤$2k, Tier 2 $2k-$100k, Tier 3 ≥$100k) with Coordinator & Manager sharing 7-day SLA  
 ✅ Purchasing still owns invoice validation before Accounting  
 ✅ Accounting still only validates payment/bank details at their stage  
 

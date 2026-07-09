@@ -1,6 +1,6 @@
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
-import { PaymentBatchStatus, InvoiceStatus } from '@ap-invoice/shared';
+import { PaymentBatchStatus, InvoiceStatus, SLA_LIMITS, calcWorkingHoursElapsed } from '@ap-invoice/shared';
 
 /**
  * Get the next Wednesday date from a given date
@@ -407,6 +407,33 @@ export async function approvePaymentBatchByCFO(
     await prisma.invoice.update({
       where: { id: payment.invoice_id },
       data: { status: InvoiceStatus.PAID },
+    });
+
+    // Exit PAYMENT_SCHEDULED stage timestamp
+    const scheduledStage = await prisma.stageTimestamp.findFirst({
+      where: { invoice_id: payment.invoice_id, stage: InvoiceStatus.PAYMENT_SCHEDULED as any, exited_at: null },
+    });
+    if (scheduledStage) {
+      const elapsedHours = calcWorkingHoursElapsed(new Date(scheduledStage.entered_at), new Date());
+      await prisma.stageTimestamp.update({
+        where: { id: scheduledStage.id },
+        data: {
+          exited_at: new Date(),
+          is_breached: elapsedHours > scheduledStage.sla_hours,
+        },
+      });
+    }
+
+    // Create PAID stage timestamp (final stage)
+    await prisma.stageTimestamp.create({
+      data: {
+        invoice_id: payment.invoice_id,
+        stage: InvoiceStatus.PAID as any,
+        entered_at: new Date(),
+        sla_hours: 0,
+        exited_at: new Date(),
+        is_breached: false,
+      },
     });
 
     await prisma.auditLog.create({

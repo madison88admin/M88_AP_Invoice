@@ -159,7 +159,7 @@ export default function AuditLog() {
         </form>
 
         {error && (
-          <div className="rounded-lg p-4 mb-6" style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', color: '#f87171' }}>
+          <div className="rounded-lg p-4 mb-6" style={{ background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)', color: 'var(--accent-red)' }}>
             {error}
           </div>
         )}

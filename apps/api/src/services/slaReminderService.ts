@@ -1,17 +1,19 @@
 import prisma from '../config/database';
-import { InvoiceStatus } from '@ap-invoice/shared';
+import { InvoiceStatus, SLA_LIMITS, calcWorkingHoursElapsed } from '@ap-invoice/shared';
 import { logger } from '../utils/logger';
 import { sendEmail } from './notificationService';
 
-// SLA thresholds in hours per stage (matching slaService)
+// SLA thresholds in hours per stage — derived from SLA_LIMITS
 const SLA_THRESHOLDS: Partial<Record<InvoiceStatus, number>> = {
-  [InvoiceStatus.PENDING_COORDINATOR]: 168, // 7 days
-  [InvoiceStatus.PENDING_MANAGER]: 168, // 7 days
-  [InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER]: 168, // 7 days
-  [InvoiceStatus.PENDING_MLO_PLANNING_MANAGER]: 168, // 7 days
-  [InvoiceStatus.PENDING_SR_MANAGER]: 168, // 7 days
-  [InvoiceStatus.PENDING_POLLY]: 168, // 7 days
-  [InvoiceStatus.PENDING_ACCOUNTING]: 168, // 7 days
+  [InvoiceStatus.PENDING_COORDINATOR]: SLA_LIMITS.COORDINATOR_DAYS * 24,
+  [InvoiceStatus.PENDING_MANAGER]: SLA_LIMITS.PURCHASING_MANAGER_DAYS * 24,
+  [InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER]: SLA_LIMITS.MLO_ACCOUNT_HOLDER_DAYS * 24,
+  [InvoiceStatus.PENDING_MLO_PLANNING_MANAGER]: SLA_LIMITS.MLO_PLANNING_MANAGER_DAYS * 24,
+  [InvoiceStatus.PENDING_SR_MANAGER]: SLA_LIMITS.SR_MANAGER_DAYS * 24,
+  [InvoiceStatus.PENDING_POLLY]: SLA_LIMITS.MS_POLLY_DAYS * 24,
+  [InvoiceStatus.PENDING_ACCOUNTING]: SLA_LIMITS.ACCOUNTING_DAYS * 24,
+  [InvoiceStatus.POSTED_TO_QB]: SLA_LIMITS.PAYMENT_DAYS * 24,
+  [InvoiceStatus.PAYMENT_SCHEDULED]: SLA_LIMITS.PAYMENT_DAYS * 24,
 };
 
 // Reminder thresholds in hours before SLA breach
@@ -59,10 +61,10 @@ export async function checkAndSendSLAReminders(): Promise<SLAReminderResult> {
     });
 
     for (const stage of activeStages) {
-      const slaHours = SLA_THRESHOLDS[stage.stage as InvoiceStatus] || 168;
+      const slaHours = SLA_THRESHOLDS[stage.stage as InvoiceStatus] || (SLA_LIMITS.ACCOUNTING_DAYS * 24);
       const enteredAt = new Date(stage.entered_at);
       const now = new Date();
-      const elapsedHours = (now.getTime() - enteredAt.getTime()) / (1000 * 60 * 60);
+      const elapsedHours = calcWorkingHoursElapsed(enteredAt, now);
       const remainingHours = slaHours - elapsedHours;
 
       // Check if 2-day reminder is needed
@@ -209,7 +211,7 @@ async function sendSLAEscalation(
     if (!invoice) return false;
 
     const escalationEmail = getEscalationEmail(stage);
-    const hoursOver = Math.floor(elapsedHours - (SLA_THRESHOLDS[stage] || 168));
+    const hoursOver = Math.floor(elapsedHours - (SLA_THRESHOLDS[stage] || (SLA_LIMITS.ACCOUNTING_DAYS * 24)));
 
     const subject = `ESCALATION: SLA Breached - Invoice ${invoice.invoice_number} - ${hoursOver} hours overdue`;
 
@@ -313,10 +315,10 @@ export async function getSLACountdown(invoiceId: string): Promise<{
     throw new Error('No active stage found for invoice');
   }
 
-  const slaHours = SLA_THRESHOLDS[activeStage.stage as InvoiceStatus] || 168;
+  const slaHours = SLA_THRESHOLDS[activeStage.stage as InvoiceStatus] || (SLA_LIMITS.ACCOUNTING_DAYS * 24);
   const enteredAt = new Date(activeStage.entered_at);
   const now = new Date();
-  const elapsedHours = (now.getTime() - enteredAt.getTime()) / (1000 * 60 * 60);
+  const elapsedHours = calcWorkingHoursElapsed(enteredAt, now);
   const remainingHours = slaHours - elapsedHours;
   const isBreached = remainingHours <= 0;
 

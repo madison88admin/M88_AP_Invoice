@@ -11,7 +11,14 @@ import { poAuditService } from '../services/poAuditService';
 import { geminiOCRService } from '../services/geminiOCRService';
 import { groqOCRService } from '../services/groqOCRService';
 import { ollamaOCRService } from '../services/ollamaOCRService';
-import { consensusExtractor, RawExtractionResult } from '../services/consensusExtractor';
+import { qwenOCRService } from '../services/qwenOCRService';
+import { fieldDecisionEngine, EngineName } from '../services/fieldDecisionEngine';
+import { validateLineItems, formatLineItemValidation } from '../services/lineItemValidator';
+import { detectFraud } from '../services/fraudDetector';
+import { smartRetry } from '../services/smartRetry';
+import { runSelfValidation } from '../services/selfValidation';
+import { validateAgainstVendorHistory } from '../services/vendorHistoryValidator';
+import { activeLearningService, vendorTemplateService } from '../services/continuousLearningService';
 import crypto from 'crypto';
 import { createChildLogger } from '../utils/logger';
 
@@ -222,73 +229,246 @@ export const uploadMadisonInvoice = async (
 
     console.log('[DEBUG] Madison extraction result:', JSON.stringify(madisonRawResult, null, 2));
 
-    // DSRS v7.3 Dual-Engine Consensus: run pdf2json+madison and Gemini in parallel
-    const pdf2jsonRaw: RawExtractionResult = {
-      vendor_name: madisonRawResult.vendor_name || undefined,
-      invoice_number: madisonRawResult.invoice_number || undefined,
-      invoice_date: madisonRawResult.invoice_date || undefined,
-      due_date: madisonRawResult.due_date || undefined,
-      payment_terms: madisonRawResult.payment_terms || undefined,
-      total_amount: madisonRawResult.amount || undefined,
-      currency: madisonRawResult.currency || undefined,
-      po_number: madisonRawResult.po_number || undefined,
-      mpo_number: madisonRawResult.mpo_number || undefined,
-      brand: madisonRawResult.brand || undefined,
-      brand_code: madisonRawResult.brand_code || undefined,
-      season: madisonRawResult.season || undefined,
-      line_items: undefined,
-    };
-
-    console.log('[DEBUG] pdf2jsonRaw mapped for consensus:', JSON.stringify(pdf2jsonRaw, null, 2));
-
     const extractionContext = {
       vendorName: madisonRawResult.vendor_name || undefined,
     };
 
-    let fallbackResult: any = null;
-    const consensus = await consensusExtractor.extract(
-      madisonRawResult.raw_text || '',
-      fileBuffer,
-      async () => pdf2jsonRaw,
-      async (text, _buffer, context) => {
-        if (groqOCRService.isAvailable()) {
-          const result = await groqOCRService.extractFromText(text, context);
-          if (result) {
-            fallbackResult = result;
-            return result;
-          }
-        }
-        if (geminiOCRService.isAvailable()) {
-          const result = await geminiOCRService.extractFromText(text, context);
-          if (result) {
-            fallbackResult = result;
-            return result;
-          }
-        }
-        if (ollamaOCRService.isAvailable()) {
-          const result = await ollamaOCRService.extractFromText(text, context);
-          fallbackResult = result;
-          return result;
-        }
-        return null;
+    // ============================================================================
+    // PARALLEL ENGINE EXTRACTION — Gemini + Qwen simultaneously, Groq → Ollama fallback
+    // ============================================================================
+    let geminiResult: any = null;
+    let qwenResult: any = null;
+    let groqResult: any = null;
+    let ollamaResult: any = null;
+
+    const parallelEngines: Promise<any>[] = [];
+
+    if (geminiOCRService.isAvailable()) {
+      parallelEngines.push(
+        geminiOCRService.extractFromText(madisonRawResult.raw_text || '', extractionContext)
+          .then(r => { if (r) geminiResult = r; return r; })
+          .catch(e => { console.error('[Gemini] error:', e); return null; })
+      );
+    }
+
+    if (qwenOCRService.isAvailable()) {
+      parallelEngines.push(
+        qwenOCRService.extractFromText(madisonRawResult.raw_text || '', extractionContext)
+          .then(r => { if (r) qwenResult = r; return r; })
+          .catch(e => { console.error('[Qwen] error:', e); return null; })
+      );
+    }
+
+    if (parallelEngines.length > 0) {
+      await Promise.all(parallelEngines);
+    }
+
+    // Sequential fallback only if no LLM produced results
+    if (!geminiResult && !qwenResult) {
+      if (groqOCRService.isAvailable()) {
+        groqResult = await groqOCRService.extractFromText(madisonRawResult.raw_text || '', extractionContext)
+          .catch(e => { console.error('[Groq] error:', e); return null; });
+      }
+      if (!groqResult && ollamaOCRService.isAvailable()) {
+        ollamaResult = await ollamaOCRService.extractFromText(madisonRawResult.raw_text || '', extractionContext)
+          .catch(e => { console.error('[Ollama] error:', e); return null; });
+      }
+    }
+
+    // ============================================================================
+    // FIELD DECISION ENGINE — single source of truth
+    // ============================================================================
+    const decisionEngines: Array<{ engine_name: EngineName; data: Record<string, any>; confidence: number }> = [
+      {
+        engine_name: 'madison',
+        data: {
+          vendor_name: madisonRawResult.vendor_name,
+          invoice_number: madisonRawResult.invoice_number,
+          invoice_date: madisonRawResult.invoice_date,
+          due_date: madisonRawResult.due_date,
+          payment_terms: madisonRawResult.payment_terms,
+          total_amount: madisonRawResult.amount,
+          currency: madisonRawResult.currency,
+          po_number: madisonRawResult.po_number,
+          mpo_number: madisonRawResult.mpo_number,
+          brand: madisonRawResult.brand,
+          brand_code: madisonRawResult.brand_code,
+          season: madisonRawResult.season,
+          ship_to: madisonRawResult.ship_to,
+          sold_to: madisonRawResult.sold_to,
+        },
+        confidence: 75,
       },
-      extractionContext
-    );
+    ];
 
-    console.log(`[DEBUG] Consensus extraction: confidence=${consensus.overall_confidence}, status=${consensus.overall_status}, conflicts=${consensus.conflicts.length}, engines=${consensus.engines_used.join('+')}`);
+    if (geminiResult) {
+      decisionEngines.push({ engine_name: 'gemini', data: geminiResult, confidence: geminiResult.confidence || 70 });
+    }
+    if (qwenResult) {
+      decisionEngines.push({ engine_name: 'qwen', data: qwenResult, confidence: qwenResult.confidence || 70 });
+    }
+    if (groqResult) {
+      decisionEngines.push({ engine_name: 'groq', data: groqResult, confidence: groqResult.confidence || 65 });
+    }
+    if (ollamaResult) {
+      decisionEngines.push({ engine_name: 'ollama', data: ollamaResult, confidence: ollamaResult.confidence || 60 });
+    }
 
-    // DSRS v7.3: Non-destructive consensus fallback. Use the consensus amount only when the
-    // AST kernel explicitly failed, has no internal line items, or its own line item sum is
-    // inconsistent with the consensus amount. This preserves AST correctness when it works and
-    // avoids trusting Gemini when the AST already extracted a valid amount.
+    let fieldDecision: any = null;
+    let lineItemValidation: any = null;
+    let fraudCheck: any = null;
+    let selfValidation: any = null;
+    let vendorHistoryCheck: any = null;
+    let activeLearningQuestions: any = null;
+    let fieldPredictions: any = null;
+    let layoutChangeDetection: any = null;
+    let fallbackResult: any = geminiResult || qwenResult || groqResult || ollamaResult || null;
+
+    try {
+      fieldDecision = await fieldDecisionEngine.decide(decisionEngines, {
+        vendorName: madisonRawResult.vendor_name || undefined,
+        rawText: madisonRawResult.raw_text || undefined,
+      });
+
+      console.log(`[FieldDecision] confidence=${fieldDecision.overall_confidence}, status=${fieldDecision.overall_status}, review_fields=${fieldDecision.review_fields.join(', ') || 'none'}`);
+
+      // Line Item Computation Validation
+      const allLineItems = fieldDecision.final.line_items || [];
+      if (allLineItems.length > 0) {
+        lineItemValidation = validateLineItems(allLineItems, fieldDecision.final.total_amount || undefined);
+        if (!lineItemValidation.all_pass) {
+          console.log(`[LineItemValidation] ${lineItemValidation.failing_count} failed, ${lineItemValidation.warning_count} warnings`);
+        }
+      }
+
+      // Fraud Detection
+      fraudCheck = detectFraud({
+        invoiceVendorName: fieldDecision.final.vendor_name || undefined,
+        invoiceNumber: fieldDecision.final.invoice_number || undefined,
+        totalAmount: fieldDecision.final.total_amount || undefined,
+        currency: fieldDecision.final.currency || undefined,
+        poNumber: fieldDecision.final.po_number || undefined,
+        mpoNumber: fieldDecision.final.mpo_number || undefined,
+      });
+
+      if (!fraudCheck.passed) {
+        console.log(`[FraudDetection] Risk: ${fraudCheck.risk_level} — ${fraudCheck.summary}`);
+      }
+
+      // Smart Retry: re-run only low-confidence fields with focused prompts
+      if (fieldDecision.review_fields.length > 0) {
+        console.log(`[SmartRetry] Attempting retry for ${fieldDecision.review_fields.length} low-confidence fields...`);
+        try {
+          const retriedDecision = await smartRetry(fieldDecision, madisonRawResult.raw_text || '', decisionEngines);
+          if (retriedDecision !== fieldDecision) {
+            fieldDecision = retriedDecision;
+            console.log(`[SmartRetry] Updated decision: confidence=${fieldDecision.overall_confidence}, review_fields=${fieldDecision.review_fields.length}`);
+          }
+        } catch (retryError) {
+          console.error('[SmartRetry] Error:', retryError);
+        }
+      }
+
+      // Self Validation: AI reviews the extracted JSON for inconsistencies
+      try {
+        selfValidation = await runSelfValidation(fieldDecision, madisonRawResult.raw_text || undefined);
+        if (!selfValidation.passed) {
+          console.log(`[SelfValidation] ${selfValidation.summary}`);
+        }
+      } catch (validationError) {
+        console.error('[SelfValidation] Error:', validationError);
+      }
+
+      // Vendor History Validation (bank account, currency, invoice number patterns)
+      try {
+        vendorHistoryCheck = await validateAgainstVendorHistory({
+          vendorName: fieldDecision.final.vendor_name || '',
+          bankName: madisonRawResult.bank_details?.bank_name || undefined,
+          bankAccount: madisonRawResult.bank_details?.account_number || undefined,
+          swiftCode: madisonRawResult.bank_details?.swift_code || undefined,
+          currency: fieldDecision.final.currency || undefined,
+          invoiceNumber: fieldDecision.final.invoice_number || undefined,
+          totalAmount: fieldDecision.final.total_amount || undefined,
+        });
+        if (!vendorHistoryCheck.passed) {
+          console.log(`[VendorHistory] ${vendorHistoryCheck.summary}`);
+        }
+      } catch (historyError) {
+        console.error('[VendorHistory] Error:', historyError);
+      }
+
+      // Active Learning: generate questions for uncertain fields
+      try {
+        activeLearningQuestions = activeLearningService.generateQuestions(fieldDecision, {
+          vendorName: fieldDecision.final.vendor_name || undefined,
+        });
+        if (activeLearningQuestions.needs_input) {
+          console.log(`[ActiveLearning] ${activeLearningQuestions.questions.length} questions for user review`);
+        }
+      } catch (learningError) {
+        console.error('[ActiveLearning] Error:', learningError);
+      }
+
+      // Vendor Template: predict missing fields from historical patterns
+      try {
+        const vendorName = fieldDecision.final.vendor_name || '';
+        if (vendorName) {
+          const template = await vendorTemplateService.autoGenerateTemplate(vendorName);
+          if (template) {
+            const predictions = vendorTemplateService.predictMissingFields(
+              vendorName,
+              fieldDecision.final,
+              template
+            );
+            if (predictions.length > 0) {
+              fieldPredictions = predictions;
+              console.log(`[VendorTemplate] Predicted ${predictions.length} missing fields for ${vendorName}`);
+            }
+
+            // Detect layout changes
+            const layoutCheck = await vendorTemplateService.detectLayoutChange(vendorName, fieldDecision.final);
+            if (layoutCheck.layout_changed) {
+              console.log(`[VendorTemplate] Layout change detected for ${vendorName}: ${layoutCheck.changes.length} changes`);
+              layoutChangeDetection = layoutCheck;
+            }
+          }
+        }
+      } catch (templateError) {
+        console.error('[VendorTemplate] Error:', templateError);
+      }
+    } catch (decisionError) {
+      console.error('[FieldDecision] Error:', decisionError);
+    }
+
+    // Use Field Decision Engine output as the single source of truth
+    const decision = fieldDecision;
+    const decisionFinal = decision?.final || {
+      vendor_name: madisonRawResult.vendor_name || '',
+      invoice_number: madisonRawResult.invoice_number || '',
+      invoice_date: madisonRawResult.invoice_date || '',
+      due_date: madisonRawResult.due_date || null,
+      payment_terms: madisonRawResult.payment_terms || null,
+      total_amount: madisonRawResult.amount || 0,
+      currency: madisonRawResult.currency || 'USD',
+      po_number: madisonRawResult.po_number,
+      mpo_number: madisonRawResult.mpo_number,
+      brand: madisonRawResult.brand,
+      brand_code: madisonRawResult.brand_code,
+      season: madisonRawResult.season,
+      line_items: [],
+    };
+
+    console.log(`[DEBUG] Field Decision: confidence=${decision?.overall_confidence}, status=${decision?.overall_status}, conflicts=${decision?.conflicts.length}, engines=${decision?.engines_used.join('+')}`);
+
+    // AST fallback: if the AST kernel failed, use the decision engine's amount
     const astInternalSum = madisonRawResult.amount_resolution_debug?.internalLineItemSum ?? 0;
     const astAmount = madisonRawResult.amount ?? 0;
-    const consensusAmount = consensus.final.total_amount ?? 0;
-    const consensusLineItemsSum = (consensus.final.line_items || [])
+    const decisionAmount = decisionFinal.total_amount ?? 0;
+    const decisionLineItemsSum = (decisionFinal.line_items || [])
       .reduce((sum: number, li: any) => sum + (Number(li.total_amount) || 0), 0);
 
-    const consensusAmountMatchesItsLineItems = consensusAmount > 0
-      && Math.abs(consensusLineItemsSum - consensusAmount) / consensusAmount < 0.05;
+    const decisionAmountMatchesLineItems = decisionAmount > 0
+      && Math.abs(decisionLineItemsSum - decisionAmount) / decisionAmount < 0.05;
 
     // Normalize invoice number: remove spaces around dashes/slashes
     const cleanInvoiceNumber = (value: string | null | undefined) =>
@@ -303,80 +483,83 @@ export const uploadMadisonInvoice = async (
     };
 
     const astInternalSumBad = astInternalSum > 0
-      && consensusAmount > 0
-      && Math.abs(astInternalSum - consensusAmount) / consensusAmount > 0.5;
+      && decisionAmount > 0
+      && Math.abs(astInternalSum - decisionAmount) / decisionAmount > 0.5;
 
     const astAmountBad = astAmount > 0
-      && consensusAmount > 0
-      && Math.abs(astAmount - consensusAmount) / consensusAmount > 0.5;
+      && decisionAmount > 0
+      && Math.abs(astAmount - decisionAmount) / decisionAmount > 0.5;
 
     const astFailed = madisonRawResult.status === 'AST_FAILURE'
       || (astInternalSum === 0 && !madisonRawResult.amount);
 
-    const useConsensusFallback = astFailed
-      || (consensusAmountMatchesItsLineItems && (astInternalSumBad || astAmountBad));
+    const useDecisionFallback = astFailed
+      || (decisionAmountMatchesLineItems && (astInternalSumBad || astAmountBad));
 
-    if (useConsensusFallback && consensusAmount) {
-      madisonRawResult.amount = consensusAmount;
+    if (useDecisionFallback && decisionAmount) {
+      madisonRawResult.amount = decisionAmount;
       madisonRawResult.status = 'EXTRACTED';
-      madisonRawResult.status_reason = 'amount_from_consensus_fallback';
+      madisonRawResult.status_reason = 'amount_from_decision_engine';
     }
 
-    // Compute total quantity from line items if Madison didn't extract qty_shipped
-    const lineItems = consensus.final.line_items || [];
+    // Compute total quantity from line items
+    const lineItems = decisionFinal.line_items || [];
     const computedQty = lineItems.length > 0
       ? lineItems.reduce((sum: number, li: any) => sum + (Number(li.quantity) || 0), 0)
       : madisonRawResult.qty_shipped;
 
-    // Merge consensus final fields with Madison metadata (keep bank details, qty, etc.)
-    // DSRS v7.3: In AST single-source mode, the AST amount is the authoritative source of truth.
-    // If the AST kernel fails to resolve an amount, fall back to the consensus amount so the
-    // upload is not rejected. In legacy/consensus mode, prefer the consensus amount when available.
+    // In AST mode, Madison amount is authoritative. If AST failed, use decision engine amount.
     const finalAmount = AST_SINGLE_SOURCE_MODE
-      ? (madisonRawResult.amount ?? consensus.final.total_amount)
-      : (consensus.final.total_amount ?? madisonRawResult.amount);
+      ? (madisonRawResult.amount ?? decisionFinal.total_amount)
+      : (decisionFinal.total_amount ?? madisonRawResult.amount);
     const finalCurrency = AST_SINGLE_SOURCE_MODE
-      ? (madisonRawResult.currency ?? consensus.final.currency)
-      : consensus.final.currency;
+      ? (madisonRawResult.currency ?? decisionFinal.currency)
+      : decisionFinal.currency;
 
     console.log('[AMOUNT_DEBUG]', {
-      mode: AST_SINGLE_SOURCE_MODE ? 'AST' : 'CONSENSUS',
+      mode: AST_SINGLE_SOURCE_MODE ? 'AST' : 'DECISION',
       madisonAmount: madisonRawResult.amount,
       madisonCurrency: madisonRawResult.currency,
-      consensusAmount: consensus.final.total_amount,
-      consensusCurrency: consensus.final.currency,
+      decisionAmount: decisionFinal.total_amount,
+      decisionCurrency: decisionFinal.currency,
       finalAmount,
       finalCurrency,
-      source: AST_SINGLE_SOURCE_MODE ? 'MADISON_AST' : (consensus.final.total_amount !== null ? 'CONSENSUS' : 'MADISON')
+      source: AST_SINGLE_SOURCE_MODE ? 'MADISON_AST' : (decisionFinal.total_amount ? 'DECISION' : 'MADISON')
     });
 
-    // DSRS v7.3: Capture the actual upload/receipt time as the SLA base date.
-    // This is the moment the invoice was received by the system, distinct from invoice_date.
     const invoiceReceivedDate = new Date().toISOString();
 
     let madisonResult = {
       ...madisonRawResult,
-      ...consensus.final,
+      ...decisionFinal,
       amount: finalAmount,
       invoice_received_date: invoiceReceivedDate,
-      vendor_name: consensus.final.vendor_name,
-      invoice_number: cleanInvoiceNumber(consensus.final.invoice_number),
-      invoice_date: consensus.final.invoice_date,
+      vendor_name: decisionFinal.vendor_name,
+      invoice_number: cleanInvoiceNumber(decisionFinal.invoice_number),
+      invoice_date: decisionFinal.invoice_date,
       due_date: AST_SINGLE_SOURCE_MODE
-        ? (madisonRawResult.due_date || consensus.final.due_date || null)
-        : (consensus.final.due_date || madisonRawResult.due_date || null),
+        ? (madisonRawResult.due_date || decisionFinal.due_date || null)
+        : (decisionFinal.due_date || madisonRawResult.due_date || null),
       payment_terms: AST_SINGLE_SOURCE_MODE
-        ? (madisonRawResult.payment_terms || consensus.final.payment_terms || null)
-        : (consensus.final.payment_terms || madisonRawResult.payment_terms || null),
+        ? (madisonRawResult.payment_terms || decisionFinal.payment_terms || null)
+        : (decisionFinal.payment_terms || madisonRawResult.payment_terms || null),
       currency: finalCurrency,
-      po_number: cleanPONumber(consensus.final.po_number || madisonRawResult.po_number || null),
-      mpo_number: consensus.final.mpo_number || madisonRawResult.mpo_number || null,
-      brand: consensus.final.brand || madisonRawResult.brand || null,
-      brand_code: consensus.final.brand_code || madisonRawResult.brand_code || null,
-      season: consensus.final.season || madisonRawResult.season || null,
+      po_number: cleanPONumber(decisionFinal.po_number || madisonRawResult.po_number || null),
+      mpo_number: decisionFinal.mpo_number || madisonRawResult.mpo_number || null,
+      brand: decisionFinal.brand || madisonRawResult.brand || null,
+      brand_code: decisionFinal.brand_code || madisonRawResult.brand_code || null,
+      season: decisionFinal.season || madisonRawResult.season || null,
       order_type: madisonRawResult.order_type || null,
       qty_shipped: madisonRawResult.qty_shipped || computedQty || null,
-      consensus,
+      decision: fieldDecision,
+      field_decision: fieldDecision,
+      line_item_validation: lineItemValidation,
+      fraud_check: fraudCheck,
+      self_validation: selfValidation,
+      vendor_history_check: vendorHistoryCheck,
+      active_learning: activeLearningQuestions,
+      field_predictions: fieldPredictions,
+      layout_change: layoutChangeDetection,
     };
 
     // If the Madison extractor mixed up two-column delivery/invoice addresses, prefer the LLM fallback result.
@@ -650,14 +833,24 @@ export const uploadMadisonInvoice = async (
       } : null,
       requires_manual_vendor_assignment: requiresManualVendorAssignment,
       po_validation: poValidation,
-      consensus: {
-        overall_confidence: (madisonResult as any).consensus?.overall_confidence,
-        overall_status: (madisonResult as any).consensus?.overall_status,
-        requires_review: (madisonResult as any).consensus?.requires_review,
-        conflicts: (madisonResult as any).consensus?.conflicts,
-        engines_used: (madisonResult as any).consensus?.engines_used,
-        extraction_time_ms: (madisonResult as any).consensus?.extraction_time_ms,
+      decision: {
+        overall_confidence: (madisonResult as any).decision?.overall_confidence,
+        overall_status: (madisonResult as any).decision?.overall_status,
+        requires_review: (madisonResult as any).decision?.requires_review,
+        review_fields: (madisonResult as any).decision?.review_fields,
+        conflicts: (madisonResult as any).decision?.conflicts,
+        engines_used: (madisonResult as any).decision?.engines_used,
+        engine_notes: (madisonResult as any).decision?.engine_notes,
+        extraction_time_ms: (madisonResult as any).decision?.extraction_time_ms,
+        fields: (madisonResult as any).decision?.fields,
       },
+      line_item_validation: (madisonResult as any).line_item_validation,
+      fraud_check: (madisonResult as any).fraud_check,
+      self_validation: (madisonResult as any).self_validation,
+      vendor_history_check: (madisonResult as any).vendor_history_check,
+      active_learning: (madisonResult as any).active_learning,
+      field_predictions: (madisonResult as any).field_predictions,
+      layout_change: (madisonResult as any).layout_change,
       po_audit: AST_SINGLE_SOURCE_MODE
         ? {
             status: 'PENDING',
@@ -686,8 +879,13 @@ export const confirmOCR = async (
       invoice_date,
       due_date,
       invoice_received_date,
+      date_range_start,
+      date_range_end,
       vendor_id,
+      vendor_name_raw,
       total_amount,
+      invoice_currency_original,
+      exchange_rate_to_usd,
       currency,
       payment_terms,
       incoterm,
@@ -701,26 +899,43 @@ export const confirmOCR = async (
       sold_to,
       invoice_type,
       category,
+      order_type,
+      brand,
+      brand_code,
+      season,
+      mpo_number,
+      customer_po_number,
       bill_to_entity,
-      bank_info,
-      signatures,
+      is_handwritten,
       is_urgent,
       priority_flag,
+      priority_pay_date,
+      bank_info,
+      signatures,
+      ocr_confidence_score,
+      ocr_raw_data,
+      po_validation,
       po_audit_id,
+      qty_shipped,
     } = req.body;
 
     // Import invoice service dynamically to avoid circular dependency
     const invoiceService = await import('../services/invoiceService');
 
-    // Create invoice record with RECEIVED status
+    // Create invoice record — pass through ALL extracted fields to prevent data loss
     const invoice = await invoiceService.createInvoice(
       {
         invoice_number,
         invoice_date,
         due_date,
         invoice_received_date: invoice_received_date || new Date(),
+        date_range_start,
+        date_range_end,
         vendor_id,
+        vendor_name_raw,
         total_amount,
+        invoice_currency_original,
+        exchange_rate_to_usd,
         currency,
         payment_terms,
         incoterm,
@@ -734,13 +949,30 @@ export const confirmOCR = async (
         sold_to,
         invoice_type,
         category,
+        order_type,
+        brand,
+        brand_code,
+        season,
+        mpo_number,
+        customer_po_number,
         bill_to_entity: bill_to_entity || 'MADISON_88_LTD',
-        ocr_raw_data: {
-          bank_info,
-          signatures,
-        },
+        is_handwritten: is_handwritten || false,
         is_urgent: is_urgent || false,
         priority_flag: priority_flag || false,
+        priority_pay_date,
+        qty_shipped,
+        ocr_confidence_score,
+        // Preserve full OCR raw data for audit trail — merge bank_info and signatures into ocr_raw_data
+        ocr_raw_data: ocr_raw_data || {
+          bank_info,
+          signatures,
+          ocr_confidence_score,
+        },
+        po_validation,
+        // Extract bank fields from bank_info if available
+        bank_name: bank_info?.bank_name,
+        swift_code: bank_info?.swift_code,
+        account_number: bank_info?.account_usd || bank_info?.account_number,
       },
       req.user!.id
     );
@@ -766,6 +998,7 @@ export const confirmOCR = async (
               signed_at: sig.signed_at ? new Date(sig.signed_at) : null,
               signatory_role: (sig.signatory_role || sig.role || 'COORDINATOR') as any,
               signature_type: (sig.signature_type || SignatureType.DIGITAL) as any,
+              ocr_detected: sig.ocr_detected ?? false,
             },
           });
         }

@@ -153,6 +153,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [bypassVarianceCheck, setBypassVarianceCheck] = useState(false);
   const [poAuditSummary, setPoAuditSummary] = useState({
     matched: 0,
     warnings: 0,
@@ -592,12 +593,12 @@ export default function Dashboard() {
     }
   };
 
-  const handlePost = async () => {
+  const handlePost = async (bypassVarianceCheck: boolean = false) => {
     if (!selectedInvoice) return;
 
     try {
       setPosting(true);
-      await invoiceApi.post(selectedInvoice.id);
+      await invoiceApi.post(selectedInvoice.id, bypassVarianceCheck);
       showToast('Invoice posted to accounting successfully', 'success');
       await refresh();
       setSelectedInvoice(null);
@@ -621,6 +622,28 @@ export default function Dashboard() {
     } catch (error) {
       console.error('Failed to release invoice from hold:', error);
       showToast('Failed to release invoice from hold', 'error');
+    } finally {
+      setPosting(false);
+    }
+  };
+
+  const handleCheckNextGen = async () => {
+    if (!selectedInvoice) return;
+
+    try {
+      setPosting(true);
+      const result = await invoiceApi.checkNextGen(selectedInvoice.id);
+      if (result.data.hasCriticalChanges) {
+        showToast(`Critical NextGen changes detected: ${result.data.criticalChanges.map((c: any) => c.field).join(', ')}`, 'warning');
+      } else if (result.data.hasChanges) {
+        showToast(`NextGen changes detected (informational): ${result.data.changes.map((c: any) => c.field).join(', ')}`, 'info');
+      } else {
+        showToast('No NextGen changes detected', 'success');
+      }
+      await refresh();
+    } catch (error) {
+      console.error('Failed to check NextGen changes:', error);
+      showToast('Failed to check NextGen changes', 'error');
     } finally {
       setPosting(false);
     }
@@ -838,7 +861,7 @@ export default function Dashboard() {
             ...calcTrend(pendCoord),
           },
           {
-            label: 'PO Validation Results',
+            label: 'NextGen Validation Results',
             value: poFound.length,
             icon: CheckCircle,
             accent: 'success',
@@ -886,7 +909,7 @@ export default function Dashboard() {
             subtitle: 'Coordinator approval rate',
           },
           {
-            label: 'PO Validation Summary',
+            label: 'NextGen Validation Summary',
             value: poSum.length,
             icon: CheckCircle,
             accent: 'success',
@@ -1543,7 +1566,7 @@ export default function Dashboard() {
                 <div className="p-1.5 rounded-lg" style={{ background: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-purple) 20%, transparent)' }}>
                   <FileSearch className="h-4 w-4" style={{ color: 'var(--accent-purple)' }} strokeWidth={1.75} />
                 </div>
-                <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>PO Validation Audit</h3>
+                <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>NextGen Validation Audit</h3>
               </div>
               {poAuditLoading && (
                 <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Loading...</span>
@@ -2146,6 +2169,19 @@ export default function Dashboard() {
                 </button>
               )}
 
+              {/* Check NextGen Changes Button */}
+              {selectedInvoice.mpo_number && (
+                <button
+                  onClick={handleCheckNextGen}
+                  disabled={posting}
+                  className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
+                  style={posting ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--accent-blue)', color: 'var(--text-inverse)' }}
+                >
+                  <FileSearch className="h-4 w-4 mr-2" strokeWidth={1.75} />
+                  {posting ? 'Checking...' : 'Check NextGen Changes'}
+                </button>
+              )}
+
               {/* Validation Button */}
               {(selectedInvoice.status === (InvoiceStatus.RECEIVED as any) ||
                 selectedInvoice.status === (InvoiceStatus.VALIDATION_PENDING as any) ||
@@ -2238,15 +2274,28 @@ export default function Dashboard() {
 
               {/* Posting Actions */}
               {(selectedInvoice.status === InvoiceStatus.APPROVED || selectedInvoice.status === InvoiceStatus.PENDING_ACCOUNTING) && user && hasPermission(user.role, 'canPost') && (
-                <button
-                  onClick={handlePost}
-                  disabled={posting}
-                  className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
-                  style={posting ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--accent-purple)', color: 'var(--text-inverse)', boxShadow: '0 0 16px color-mix(in srgb, var(--accent-purple) 25%, transparent)' }}
-                >
-                  <Send className="h-4 w-4 mr-2" strokeWidth={1.75} />
-                  {posting ? 'Posting...' : 'Post to Accounting'}
-                </button>
+                <>
+                  {user.role === 'ACCOUNTING_SUPERVISOR' && (
+                    <label className="flex items-center gap-2 px-4 py-2 text-xs cursor-pointer" style={{ color: 'var(--text-muted)' }}>
+                      <input
+                        type="checkbox"
+                        checked={bypassVarianceCheck}
+                        onChange={(e) => setBypassVarianceCheck(e.target.checked)}
+                        className="w-4 h-4 rounded"
+                      />
+                      Bypass variance check (override PO amount mismatch)
+                    </label>
+                  )}
+                  <button
+                    onClick={() => handlePost(bypassVarianceCheck)}
+                    disabled={posting}
+                    className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
+                    style={posting ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--accent-purple)', color: 'var(--text-inverse)', boxShadow: '0 0 16px color-mix(in srgb, var(--accent-purple) 25%, transparent)' }}
+                  >
+                    <Send className="h-4 w-4 mr-2" strokeWidth={1.75} />
+                    {posting ? 'Posting...' : 'Post to Accounting'}
+                  </button>
+                </>
               )}
 
               {/* Release Hold — for invoices held at pre-post check (have signatures, held during posting) */}

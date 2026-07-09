@@ -1,5 +1,7 @@
 import Groq from 'groq-sdk';
 import { logger } from '../utils/logger';
+import { correctionLogService } from './correctionLogService';
+import type { ExtractionContext } from './consensusExtractor';
 
 interface ExtractedLineItem {
   description: string;
@@ -27,6 +29,7 @@ export interface ExtractedInvoiceData {
   line_items?: ExtractedLineItem[];
   raw_text?: string;
   extraction_method?: string;
+  engine_name?: string;
   confidence?: number;
 }
 
@@ -138,7 +141,10 @@ export class GroqOCRService {
     return this.isConfigured;
   }
 
-  async extractFromText(rawText: string): Promise<ExtractedInvoiceData | null> {
+  async extractFromText(
+    rawText: string,
+    context?: ExtractionContext
+  ): Promise<ExtractedInvoiceData | null> {
     if (!this.isConfigured || !this.client) {
       logger.warn('Groq OCR not configured — skipping fallback');
       return null;
@@ -152,7 +158,11 @@ export class GroqOCRService {
         ? rawText.substring(0, MAX_GROQ_TEXT_LENGTH) + '\n[TEXT TRUNCATED]'
         : rawText;
 
-      const prompt = EXTRACTION_PROMPT + truncatedText;
+      const fewShot = context
+        ? await correctionLogService.getFewShotPrompt(rawText, context.vendorName, context.invoiceTemplateType)
+        : '';
+
+      const prompt = (fewShot ? fewShot + '\n\n' : '') + EXTRACTION_PROMPT + truncatedText;
 
       const response = await this.client.chat.completions.create({
         model: this.model,
@@ -182,7 +192,33 @@ export class GroqOCRService {
         .replace(/```\n?/g, '')
         .trim();
 
-      const extracted = JSON.parse(cleaned) as ExtractedInvoiceData;
+      let extracted: ExtractedInvoiceData;
+      try {
+        extracted = JSON.parse(cleaned) as ExtractedInvoiceData;
+      } catch (parseError) {
+        logger.error('JSON parse failed, attempting recovery:', {
+          error: parseError instanceof Error ? parseError.message : 'unknown',
+          textLength: cleaned.length,
+          textSample: cleaned.substring(0, 200),
+        });
+
+        // FIX: Try to extract JSON object from malformed response
+        const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+          logger.error('No JSON object found in Groq response');
+          return null;
+        }
+
+        try {
+          extracted = JSON.parse(jsonMatch[0]) as ExtractedInvoiceData;
+          logger.info('JSON recovery successful for Groq response');
+        } catch (recoveryError) {
+          logger.error('JSON recovery failed:', {
+            error: recoveryError instanceof Error ? recoveryError.message : 'unknown',
+          });
+          return null;
+        }
+      }
 
       if (extracted.total_amount) {
         extracted.total_amount = Number(extracted.total_amount);
@@ -199,6 +235,7 @@ export class GroqOCRService {
       }
 
       extracted.extraction_method = 'groq-fallback';
+      extracted.engine_name = 'groq';
       extracted.confidence = this.calculateConfidence(extracted);
 
       logger.info(`Groq OCR extracted: vendor=${extracted.vendor_name}, amount=${extracted.total_amount}, confidence=${extracted.confidence}`);

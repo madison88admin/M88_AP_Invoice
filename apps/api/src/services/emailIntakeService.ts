@@ -190,13 +190,20 @@ async function processAttachment(attachment: any, message: any): Promise<void> {
         bank_charges: ocrResult.bank_charges || 0,
         freight_charges: ocrResult.freight_charges || 0,
         additional_charges: ocrResult.additional_charges || 0,
+        subtotal: ocrResult.subtotal || undefined,
+        tax_amount: (ocrResult as any).tax_amount || undefined,
+        discount_amount: (ocrResult as any).discount_amount || undefined,
+        ship_to: (ocrResult as any).ship_to || undefined,
+        sold_to: (ocrResult as any).sold_to || undefined,
         invoice_type: (ocrResult.invoice_type || InvoiceType.INVOICE) as any,
+        category: ((ocrResult as any).category || 'TRIMS') as any,
         invoice_template_type: (ocrResult as any).invoice_template_type as any,
         order_type: ocrResult.order_type as any,
         brand: ocrResult.brand,
         brand_code: ocrResult.brand_code,
         brand_tier: brand_tier,
         season: ocrResult.season,
+        qty_shipped: (ocrResult as any).qty_shipped || undefined,
         mpo_number: ocrResult.mpo_number,
         customer_po_number: ocrResult.customer_po_number,
         bill_to_entity: (ocrResult.bill_to_entity || 'MADISON_88_LTD') as any,
@@ -206,6 +213,10 @@ async function processAttachment(attachment: any, message: any): Promise<void> {
         priority_pay_date: ocrResult.priority_pay_date ? new Date(ocrResult.priority_pay_date) : null,
         is_duplicate: false,
         ocr_confidence_score: ocrResult.ocr_confidence_score || undefined,
+        ocr_raw_data: ocrResult as any,
+        bank_name: (ocrResult as any).bank_info?.bank_name || (ocrResult as any).bank_name || undefined,
+        swift_code: (ocrResult as any).bank_info?.swift_code || (ocrResult as any).swift_code || undefined,
+        account_number: (ocrResult as any).bank_info?.account_number || (ocrResult as any).account_number || undefined,
         qb_memo: qbMemo,
         qb_account_class: ocrResult.qb_account_class,
         status: (vendorId ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,
@@ -232,6 +243,7 @@ async function processAttachment(attachment: any, message: any): Promise<void> {
             signed_at: sig.signed_at ? new Date(sig.signed_at) : null,
             signatory_role: sig.signatory_role as any,
             signature_type: (sig.signature_type || SignatureType.DIGITAL) as any,
+            ocr_detected: sig.ocr_detected ?? false,
           },
         });
       }
@@ -416,6 +428,7 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
             signed_at: sig.signed_at ? new Date(sig.signed_at) : null,
             signatory_role: sig.signatory_role as any,
             signature_type: (sig.signature_type || SignatureType.DIGITAL) as any,
+            ocr_detected: sig.ocr_detected ?? false,
           },
         });
       }
@@ -611,6 +624,7 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
             signed_at: sig.signed_at ? new Date(sig.signed_at) : null,
             signatory_role: sig.signatory_role as any,
             signature_type: (sig.signature_type || SignatureType.DIGITAL) as any,
+            ocr_detected: sig.ocr_detected ?? false,
           },
         });
       }

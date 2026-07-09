@@ -1,5 +1,6 @@
 import { logger } from '../utils/logger';
 import { NextGenService } from './nextGenService';
+import { AST_SINGLE_SOURCE_MODE } from './extractors/constants';
 
 export type ConfidenceLevel = 'HIGH' | 'MEDIUM' | 'LOW' | 'CONFLICT' | 'MISSING';
 export type DataSource = 'pdf2json' | 'gemini' | 'both' | 'none';
@@ -79,6 +80,12 @@ export interface RawExtractionResult {
   line_items?: any[];
   confidence?: number;
   extraction_method?: string;
+  engine_name?: string;
+}
+
+export interface ExtractionContext {
+  vendorName?: string;
+  invoiceTemplateType?: string;
 }
 
 export class ConsensusExtractor {
@@ -91,40 +98,96 @@ export class ConsensusExtractor {
     return ConsensusExtractor.instance;
   }
 
+  private validateFieldValue(field: string, value: string | undefined): boolean {
+    if (!value || value.trim() === '') return false;
+
+    const trimmed = value.trim();
+
+    switch (field) {
+      case 'vendor_name':
+      case 'invoice_number':
+      case 'po_number':
+      case 'mpo_number':
+      case 'brand':
+      case 'brand_code':
+      case 'season':
+      case 'payment_terms':
+      case 'currency':
+        return trimmed.length > 0;
+      case 'invoice_date':
+      case 'due_date':
+        // Accept ISO date strings or common date formats
+        return /^\d{4}[-/]\d{2}[-/]\d{2}/.test(trimmed) || /^\d{2}[-/]\d{2}[-/]\d{4}/.test(trimmed);
+      case 'total_amount':
+      case 'line_items':
+        return !isNaN(Number(trimmed)) && Number(trimmed) >= 0;
+      default:
+        return trimmed.length > 0;
+    }
+  }
+
+  private levenshteinDistance(a: string, b: string): number {
+    const matrix: number[][] = [];
+    for (let i = 0; i <= b.length; i++) {
+      matrix[i] = [i];
+    }
+    for (let j = 0; j <= a.length; j++) {
+      matrix[0][j] = j;
+    }
+    for (let i = 1; i <= b.length; i++) {
+      for (let j = 1; j <= a.length; j++) {
+        if (b.charAt(i - 1) === a.charAt(j - 1)) {
+          matrix[i][j] = matrix[i - 1][j - 1];
+        } else {
+          matrix[i][j] = Math.min(
+            matrix[i - 1][j - 1] + 1,
+            matrix[i][j - 1] + 1,
+            matrix[i - 1][j] + 1
+          );
+        }
+      }
+    }
+    return matrix[b.length][a.length];
+  }
+
   async extract(
     rawText: string,
     pdfBuffer: Buffer,
     engine1: (text: string) => Promise<RawExtractionResult>,
-    engine2: (text: string, buffer: Buffer) => Promise<RawExtractionResult | null>
+    engine2: (text: string, buffer: Buffer, context?: ExtractionContext) => Promise<RawExtractionResult | null>,
+    context?: ExtractionContext
   ): Promise<ConsensusResult> {
+
+    const extractionContext = context || {};
     const startTime = Date.now();
     const enginesUsed: string[] = [];
     let engineNotes = 'Dual-engine consensus extraction ready.';
 
     const [result1, result2] = await Promise.allSettled([
       engine1(rawText),
-      engine2(rawText, pdfBuffer),
+      engine2(rawText, pdfBuffer, extractionContext),
     ]);
 
     const pdf2jsonResult = result1.status === 'fulfilled' ? result1.value : null;
-    const geminiResult = result2.status === 'fulfilled' ? result2.value : null;
+    const engine2Result = result2.status === 'fulfilled' ? result2.value : null;
+    const engine2Name = engine2Result?.engine_name || 'gemini';
 
     if (pdf2jsonResult) enginesUsed.push('pdf2json+madison');
-    if (geminiResult) enginesUsed.push('gemini');
+    if (engine2Result) enginesUsed.push(engine2Name);
 
     if (result1.status === 'rejected') {
       logger.error('Engine 1 (pdf2json) failed:', result1.reason);
       engineNotes = 'pdf2json engine failed; extraction may be unreliable.';
     }
     if (result2.status === 'rejected') {
-      logger.error('Engine 2 (gemini) failed:', result2.reason);
-      engineNotes = 'Gemini engine failed; running single-engine consensus.';
-    } else if (result2.status === 'fulfilled' && geminiResult === null) {
-      engineNotes = 'Gemini unavailable (missing or invalid GEMINI_API_KEY); running single-engine consensus.';
+      logger.error(`Engine 2 (${engine2Name}) failed:`, result2.reason);
+      engineNotes = `${engine2Name} engine failed; running single-engine consensus.`;
+    } else if (result2.status === 'fulfilled' && engine2Result === null) {
+      engineNotes = `${engine2Name} unavailable (no LLM API key configured); running single-engine consensus.`;
     }
 
     if (enginesUsed.length === 1) {
-      engineNotes += ' Enable GEMINI_API_KEY in apps/api/.env for dual-engine confidence.';
+      engineNotes += ' Enable GROQ_API_KEY, OLLAMA_BASE_URL, or GEMINI_API_KEY in apps/api/.env for dual-engine confidence.';
     }
 
     const conflicts: ConflictDetail[] = [];
@@ -132,7 +195,7 @@ export class ConsensusExtractor {
     const vendor_name = this.compareVendorNames(
       'vendor_name',
       pdf2jsonResult?.vendor_name,
-      geminiResult?.vendor_name,
+      engine2Result?.vendor_name,
       conflicts,
       'WARNING'
     );
@@ -140,7 +203,7 @@ export class ConsensusExtractor {
     const invoice_number = this.compareExact(
       'invoice_number',
       pdf2jsonResult?.invoice_number,
-      geminiResult?.invoice_number,
+      engine2Result?.invoice_number,
       conflicts,
       'CRITICAL'
     );
@@ -148,7 +211,7 @@ export class ConsensusExtractor {
     const invoice_date = this.compareDates(
       'invoice_date',
       pdf2jsonResult?.invoice_date,
-      geminiResult?.invoice_date,
+      engine2Result?.invoice_date,
       conflicts,
       rawText
     );
@@ -156,7 +219,7 @@ export class ConsensusExtractor {
     const due_date = this.compareDates(
       'due_date',
       pdf2jsonResult?.due_date,
-      geminiResult?.due_date,
+      engine2Result?.due_date,
       conflicts,
       rawText
     );
@@ -164,7 +227,7 @@ export class ConsensusExtractor {
     const payment_terms = this.comparePaymentTerms(
       'payment_terms',
       pdf2jsonResult?.payment_terms,
-      geminiResult?.payment_terms,
+      engine2Result?.payment_terms,
       conflicts,
       rawText
     );
@@ -172,7 +235,7 @@ export class ConsensusExtractor {
     const total_amount = this.compareNumbers(
       'total_amount',
       pdf2jsonResult?.total_amount,
-      geminiResult?.total_amount,
+      engine2Result?.total_amount,
       conflicts,
       0
     );
@@ -180,7 +243,7 @@ export class ConsensusExtractor {
     const currency = this.compareExact(
       'currency',
       pdf2jsonResult?.currency,
-      geminiResult?.currency,
+      engine2Result?.currency,
       conflicts,
       'WARNING'
     );
@@ -188,7 +251,7 @@ export class ConsensusExtractor {
     const po_number = this.compareExact(
       'po_number',
       pdf2jsonResult?.po_number,
-      geminiResult?.po_number,
+      engine2Result?.po_number,
       conflicts,
       'CRITICAL'
     );
@@ -196,7 +259,7 @@ export class ConsensusExtractor {
     const mpo_number = this.compareExact(
       'mpo_number',
       pdf2jsonResult?.mpo_number,
-      geminiResult?.mpo_number,
+      engine2Result?.mpo_number,
       conflicts,
       'CRITICAL'
     );
@@ -204,7 +267,7 @@ export class ConsensusExtractor {
     const brand = this.compareBrandNames(
       'brand',
       pdf2jsonResult?.brand,
-      geminiResult?.brand,
+      engine2Result?.brand,
       conflicts,
       'INFO'
     );
@@ -212,7 +275,7 @@ export class ConsensusExtractor {
     const brand_code = this.compareExact(
       'brand_code',
       pdf2jsonResult?.brand_code,
-      geminiResult?.brand_code,
+      engine2Result?.brand_code,
       conflicts,
       'INFO'
     );
@@ -220,14 +283,14 @@ export class ConsensusExtractor {
     const season = this.compareExact(
       'season',
       pdf2jsonResult?.season,
-      geminiResult?.season,
+      engine2Result?.season,
       conflicts,
       'INFO'
     );
 
     const line_items = this.compareLineItems(
       pdf2jsonResult?.line_items,
-      geminiResult?.line_items,
+      engine2Result?.line_items,
       conflicts
     );
 
@@ -243,39 +306,39 @@ export class ConsensusExtractor {
     ];
 
     // NextGen tie-breaker: if engines conflict, resolve using NextGen PO data
-    const mpoOrPo = po_number.value || mpo_number.value || pdf2jsonResult?.mpo_number || pdf2jsonResult?.po_number || geminiResult?.mpo_number || geminiResult?.po_number;
+    const mpoOrPo = po_number.value || mpo_number.value || pdf2jsonResult?.mpo_number || pdf2jsonResult?.po_number || engine2Result?.mpo_number || engine2Result?.po_number;
     if (conflicts.length > 0 && mpoOrPo) {
       const nextGenResolved = await this.resolveConflictsWithNextGen(
         conflicts,
         fields,
         fieldNames,
         {
-          vendor_name: pdf2jsonResult?.vendor_name || geminiResult?.vendor_name,
-          invoice_number: pdf2jsonResult?.invoice_number || geminiResult?.invoice_number,
-          invoice_date: pdf2jsonResult?.invoice_date || geminiResult?.invoice_date,
-          due_date: pdf2jsonResult?.due_date || geminiResult?.due_date,
-          payment_terms: pdf2jsonResult?.payment_terms || geminiResult?.payment_terms,
-          total_amount: pdf2jsonResult?.total_amount || geminiResult?.total_amount,
-          currency: pdf2jsonResult?.currency || geminiResult?.currency,
+          vendor_name: pdf2jsonResult?.vendor_name || engine2Result?.vendor_name,
+          invoice_number: pdf2jsonResult?.invoice_number || engine2Result?.invoice_number,
+          invoice_date: pdf2jsonResult?.invoice_date || engine2Result?.invoice_date,
+          due_date: pdf2jsonResult?.due_date || engine2Result?.due_date,
+          payment_terms: pdf2jsonResult?.payment_terms || engine2Result?.payment_terms,
+          total_amount: pdf2jsonResult?.total_amount || engine2Result?.total_amount,
+          currency: pdf2jsonResult?.currency || engine2Result?.currency,
           po_number: pdf2jsonResult?.po_number,
-          mpo_number: pdf2jsonResult?.mpo_number || geminiResult?.mpo_number,
+          mpo_number: pdf2jsonResult?.mpo_number || engine2Result?.mpo_number,
           brand: pdf2jsonResult?.brand,
           brand_code: pdf2jsonResult?.brand_code,
           season: pdf2jsonResult?.season,
         },
         {
-          vendor_name: geminiResult?.vendor_name,
-          invoice_number: geminiResult?.invoice_number,
-          invoice_date: geminiResult?.invoice_date,
-          due_date: geminiResult?.due_date,
-          payment_terms: geminiResult?.payment_terms,
-          total_amount: geminiResult?.total_amount,
-          currency: geminiResult?.currency,
-          po_number: geminiResult?.po_number,
-          mpo_number: geminiResult?.mpo_number,
-          brand: geminiResult?.brand,
-          brand_code: geminiResult?.brand_code,
-          season: geminiResult?.season,
+          vendor_name: engine2Result?.vendor_name,
+          invoice_number: engine2Result?.invoice_number,
+          invoice_date: engine2Result?.invoice_date,
+          due_date: engine2Result?.due_date,
+          payment_terms: engine2Result?.payment_terms,
+          total_amount: engine2Result?.total_amount,
+          currency: engine2Result?.currency,
+          po_number: engine2Result?.po_number,
+          mpo_number: engine2Result?.mpo_number,
+          brand: engine2Result?.brand,
+          brand_code: engine2Result?.brand_code,
+          season: engine2Result?.season,
         },
         mpoOrPo
       );
@@ -413,7 +476,26 @@ export class ConsensusExtractor {
       reason: `${field} mismatch: "${val1}" vs "${val2}"`,
     });
 
-    // Prioritize Gemini when engines disagree
+    // FIX: Honor AST_SINGLE_SOURCE_MODE - prefer pdf2json (Madison AST) first
+    // Only switch to Gemini if val1 fails validation
+    if (AST_SINGLE_SOURCE_MODE && val1) {
+      // Validate val1 using simple heuristics
+      const isVal1Valid = this.validateFieldValue(field, val1);
+      if (isVal1Valid) {
+        // Use val1 if it's valid
+        return {
+          value: val1,
+          confidence: 'MEDIUM',
+          source: 'pdf2json',
+          pdf2json_value: val1,
+          gemini_value: val2,
+          conflict_reason: `AST_SINGLE_SOURCE_MODE: Preferring pdf2json over Gemini`,
+        };
+      }
+      // If val1 is invalid, use val2 as fallback
+    }
+
+    // Default: Prioritize Gemini when engines disagree (backward compatible)
     return {
       value: val2,
       confidence: 'CONFLICT',
@@ -606,18 +688,18 @@ export class ConsensusExtractor {
     fields: FieldConsensus[],
     fieldNames: string[],
     pdf2jsonResult: RawExtractionResult,
-    geminiResult: RawExtractionResult,
+    engine2Result: RawExtractionResult,
     mpoOrPo: string
   ): Promise<{ fields: FieldConsensus[]; remainingConflicts: ConflictDetail[]; resolvedCount: number } | null> {
     try {
       const nextGenService = NextGenService.getInstance();
       const nextGenResult = await nextGenService.compareInvoiceWithPO({
-        po_number: pdf2jsonResult.po_number || geminiResult.po_number,
-        mpo_number: mpoOrPo?.startsWith('MPO') ? mpoOrPo : (pdf2jsonResult.mpo_number || geminiResult.mpo_number),
-        amount: pdf2jsonResult.total_amount || geminiResult.total_amount || 0,
-        vendor_name: pdf2jsonResult.vendor_name || geminiResult.vendor_name || '',
-        brand: pdf2jsonResult.brand || geminiResult.brand,
-        season: pdf2jsonResult.season || geminiResult.season,
+        po_number: pdf2jsonResult.po_number || engine2Result.po_number,
+        mpo_number: mpoOrPo?.startsWith('MPO') ? mpoOrPo : (pdf2jsonResult.mpo_number || engine2Result.mpo_number),
+        amount: pdf2jsonResult.total_amount || engine2Result.total_amount || 0,
+        vendor_name: pdf2jsonResult.vendor_name || engine2Result.vendor_name || '',
+        brand: pdf2jsonResult.brand || engine2Result.brand,
+        season: pdf2jsonResult.season || engine2Result.season,
         order_type: undefined,
       });
 
@@ -638,7 +720,7 @@ export class ConsensusExtractor {
 
         if (conflict.field === 'brand' && nextGenData.brand) {
           const pdf2jsonBrand = pdf2jsonResult.brand;
-          const geminiBrand = geminiResult.brand;
+          const geminiBrand = engine2Result.brand;
           const nextGenBrand = nextGenData.brand;
           const normalizedNextGen = this.normalizeBrandName(nextGenBrand);
 
@@ -669,7 +751,7 @@ export class ConsensusExtractor {
 
         if (conflict.field === 'vendor_name' && nextGenData.vendor_name) {
           const pdf2jsonVendor = pdf2jsonResult.vendor_name;
-          const geminiVendor = geminiResult.vendor_name;
+          const geminiVendor = engine2Result.vendor_name;
           const nextGenVendor = nextGenData.vendor_name;
           const normalizedNextGen = this.normalizeVendorName(nextGenVendor);
 
@@ -700,7 +782,7 @@ export class ConsensusExtractor {
 
         if (conflict.field === 'season' && nextGenData.season) {
           const pdf2jsonSeason = pdf2jsonResult.season;
-          const geminiSeason = geminiResult.season;
+          const geminiSeason = engine2Result.season;
           const nextGenSeason = nextGenData.season.toUpperCase();
 
           if (pdf2jsonSeason && pdf2jsonSeason.toUpperCase() === nextGenSeason) {
@@ -730,7 +812,7 @@ export class ConsensusExtractor {
 
         if (conflict.field === 'invoice_date' && nextGenData.order_date) {
           const pdf2jsonDate = this.normalizeDate(pdf2jsonResult.invoice_date || '');
-          const geminiDate = this.normalizeDate(geminiResult.invoice_date || '');
+          const geminiDate = this.normalizeDate(engine2Result.invoice_date || '');
           const nextGenDate = this.normalizeDate(nextGenData.order_date.toString());
 
           if (pdf2jsonDate && nextGenDate && pdf2jsonDate === nextGenDate) {
@@ -740,7 +822,7 @@ export class ConsensusExtractor {
               confidence: 'HIGH',
               source: 'both',
               pdf2json_value: pdf2jsonResult.invoice_date,
-              gemini_value: geminiResult.invoice_date,
+              gemini_value: engine2Result.invoice_date,
               conflict_reason: undefined,
             };
             resolved = true;
@@ -751,7 +833,7 @@ export class ConsensusExtractor {
               confidence: 'HIGH',
               source: 'both',
               pdf2json_value: pdf2jsonResult.invoice_date,
-              gemini_value: geminiResult.invoice_date,
+              gemini_value: engine2Result.invoice_date,
               conflict_reason: undefined,
             };
             resolved = true;
@@ -817,12 +899,29 @@ export class ConsensusExtractor {
       };
     }
 
+    // FIX: Levenshtein distance for fuzzy matching (85% similarity threshold)
+    const distance = this.levenshteinDistance(norm1, norm2);
+    const maxLen = Math.max(norm1.length, norm2.length);
+    const similarity = 1 - distance / maxLen;
+
+    if (similarity > 0.85) {
+      // Similar enough - prefer longer name (more specific)
+      const betterValue = cleaned1.length >= cleaned2.length ? cleaned1 : cleaned2;
+      return {
+        value: betterValue,
+        confidence: 'HIGH',
+        source: 'both',
+        pdf2json_value: val1,
+        gemini_value: val2,
+      };
+    }
+
     conflicts.push({
       field,
       pdf2json_value: val1,
       gemini_value: val2,
       severity: conflictSeverity,
-      reason: `${field} mismatch: "${val1}" vs "${val2}"`,
+      reason: `${field} mismatch: "${val1}" vs "${val2}" (similarity: ${(similarity * 100).toFixed(1)}%)`,
     });
 
     // Prioritize Gemini when vendor names disagree

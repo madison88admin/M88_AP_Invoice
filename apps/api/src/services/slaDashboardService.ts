@@ -1,5 +1,5 @@
 import prisma from '../config/database';
-import { InvoiceStatus } from '@ap-invoice/shared';
+import { InvoiceStatus, SLA_LIMITS, calcWorkingHoursElapsed } from '@ap-invoice/shared';
 
 export interface SLAMetrics {
   stage: string;
@@ -20,18 +20,29 @@ export interface SLADashboardReport {
 }
 
 /**
- * Get SLA target hours for each stage
+ * Get SLA target hours for each stage — uses actual InvoiceStatus values
  */
 function getSLATarget(stage: string): number {
   const targets: Record<string, number> = {
-    'VALIDATION': 24,
-    'APPROVAL_TIER_1': 48,
-    'APPROVAL_TIER_2': 72,
-    'APPROVAL_TIER_3': 96,
-    'ACCOUNTING_REVIEW': 24,
-    'PAYMENT_PROCESSING': 48,
+    [InvoiceStatus.PENDING_COORDINATOR]: SLA_LIMITS.COORDINATOR_DAYS * 24,
+    [InvoiceStatus.PENDING_MANAGER]: SLA_LIMITS.PURCHASING_MANAGER_DAYS * 24,
+    [InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER]: SLA_LIMITS.MLO_ACCOUNT_HOLDER_DAYS * 24,
+    [InvoiceStatus.PENDING_MLO_PLANNING_MANAGER]: SLA_LIMITS.MLO_PLANNING_MANAGER_DAYS * 24,
+    [InvoiceStatus.PENDING_SR_MANAGER]: SLA_LIMITS.SR_MANAGER_DAYS * 24,
+    [InvoiceStatus.PENDING_POLLY]: SLA_LIMITS.MS_POLLY_DAYS * 24,
+    [InvoiceStatus.PENDING_ACCOUNTING]: SLA_LIMITS.ACCOUNTING_DAYS * 24,
+    [InvoiceStatus.POSTED_TO_QB]: SLA_LIMITS.PAYMENT_DAYS * 24,
+    [InvoiceStatus.PAYMENT_SCHEDULED]: SLA_LIMITS.PAYMENT_DAYS * 24,
   };
-  return targets[stage] || 48;
+  return targets[stage] || (SLA_LIMITS.ACCOUNTING_DAYS * 24);
+}
+
+/**
+ * Calculate duration in hours from entered_at and exited_at
+ */
+function calcDurationHours(ts: any): number {
+  if (!ts.exited_at) return 0;
+  return calcWorkingHoursElapsed(new Date(ts.entered_at), new Date(ts.exited_at));
 }
 
 /**
@@ -66,7 +77,7 @@ export async function generateSLADashboardReport(): Promise<SLADashboardReport> 
     const compliant = total - breached;
     const complianceRate = total > 0 ? (compliant / total) * 100 : 0;
     
-    const stageTotalDuration = timestamps.reduce((sum: number, ts: any) => sum + (ts.duration_hours || 0), 0);
+    const stageTotalDuration = timestamps.reduce((sum: number, ts: any) => sum + calcDurationHours(ts), 0);
     const averageDuration = total > 0 ? stageTotalDuration / total : 0;
 
     stageMetrics.push({
@@ -164,17 +175,20 @@ export async function getSLABreachesByStage() {
     },
   });
 
-  return breaches.map((breach: any) => ({
-    invoice_id: breach.invoice_id,
-    invoice_number: breach.invoice.invoice_number,
-    vendor_name: breach.invoice.vendor?.name || 'Unknown',
-    stage: breach.stage,
-    entered_at: breach.entered_at,
-    exited_at: breach.exited_at,
-    duration_hours: breach.duration_hours,
-    sla_hours: breach.sla_hours,
-    breach_hours: breach.duration_hours - breach.sla_hours,
-  }));
+  return breaches.map((breach: any) => {
+    const durationHours = calcDurationHours(breach);
+    return {
+      invoice_id: breach.invoice_id,
+      invoice_number: breach.invoice.invoice_number,
+      vendor_name: breach.invoice.vendor?.name || 'Unknown',
+      stage: breach.stage,
+      entered_at: breach.entered_at,
+      exited_at: breach.exited_at,
+      duration_hours: durationHours,
+      sla_hours: breach.sla_hours,
+      breach_hours: durationHours - breach.sla_hours,
+    };
+  });
 }
 
 /**

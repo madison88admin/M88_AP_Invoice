@@ -93,6 +93,25 @@ export async function validateInvoice(invoiceId: string): Promise<InvoiceValidat
     throw new AppError('Invoice not found', 404);
   }
 
+  // Prevent re-validation of invoices that are already in the approval chain or beyond
+  const lockedStatuses = [
+    InvoiceStatus.PENDING_COORDINATOR,
+    InvoiceStatus.PENDING_MANAGER,
+    InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER,
+    InvoiceStatus.PENDING_MLO_PLANNING_MANAGER,
+    InvoiceStatus.PENDING_SR_MANAGER,
+    InvoiceStatus.PENDING_POLLY,
+    InvoiceStatus.PENDING_ACCOUNTING,
+    InvoiceStatus.APPROVED,
+    InvoiceStatus.POSTED_TO_QB,
+    InvoiceStatus.PAYMENT_SCHEDULED,
+    InvoiceStatus.PAID,
+    InvoiceStatus.REJECTED,
+  ];
+  if (lockedStatuses.includes(invoice.status as InvoiceStatus)) {
+    throw new AppError(`Cannot re-validate invoice in status ${invoice.status}. Invoice is already in the approval workflow or has been finalized.`, 400);
+  }
+
   // Clear previous pending exceptions before re-running validation so edits can be validated cleanly
   await prisma.exception.deleteMany({
     where: {
@@ -216,6 +235,13 @@ export async function validateInvoice(invoiceId: string): Promise<InvoiceValidat
     exceptions.push({ reason: ExceptionReason.HANDWRITTEN_DOCUMENT, detail: templateResult.detail || '' });
   }
 
+  // RULE 17 — PO cross-check via NextGen (amount, quantity, vendor)
+  const poResult = await validatePOAgainstNextGen(invoice);
+  results.push(poResult);
+  if (!poResult.passed) {
+    exceptions.push({ reason: poResult.reason || ExceptionReason.PO_NOT_FOUND, detail: poResult.detail || '' });
+  }
+
   // RULE 18 — Vendor threshold exceeded
   const vendorThresholdResult = await validateVendorThreshold(invoice);
   results.push(vendorThresholdResult);
@@ -267,7 +293,7 @@ export async function validateInvoice(invoiceId: string): Promise<InvoiceValidat
 
       // Auto-create approval request when validation passes
       try {
-        await createApprovalRequest(invoiceId, 'system');
+        await createApprovalRequest(invoiceId, 'system', { fromExceptionResolution: true });
       } catch (error) {
         // Log error but don't fail validation if approval request fails
         logger.error('Failed to create approval request:', error);
@@ -552,31 +578,44 @@ async function validateBankDetails(invoice: any): Promise<ValidationResult> {
   }
 
   const ocrBankInfo = (invoice as any).ocr_raw_data?.bank_info;
+  const invoiceBank = {
+    swift_code: invoice.swift_code || ocrBankInfo?.swift_code || '',
+    account_number: invoice.account_number || ocrBankInfo?.account_number || '',
+    bank_name: invoice.bank_name || ocrBankInfo?.bank_name || '',
+  };
 
-  // If OCR didn't extract bank info, allow workflow to proceed if vendor has bank details on file.
-  // This avoids blocking digital/manual invoices where OCR bank extraction is unavailable.
-  if (!ocrBankInfo || !ocrBankInfo.swift_code || !ocrBankInfo.account_number) {
-    if (invoice.vendor?.swift_code && invoice.vendor?.account_number) {
+  // Use vendor bank details as primary source
+  const vendorSwift = invoice.vendor.swift_code || '';
+  const vendorAccount = invoice.vendor.account_number || '';
+
+  // If vendor bank details are missing, fall back to invoice-level bank data extracted from OCR
+  if (!vendorSwift || !vendorAccount) {
+    if (invoiceBank.swift_code && invoiceBank.account_number) {
       return {
         passed: true,
-        message: 'Vendor bank details on file; OCR bank extraction not required',
+        message: 'Invoice bank details extracted from OCR; vendor bank details not required',
       };
     }
     return {
       passed: false,
       reason: ExceptionReason.MISSING_BANK_INFO,
-      message: 'Bank details not extracted from OCR',
-      detail: 'OCR did not extract complete bank information and vendor bank details are incomplete',
+      message: 'Bank details missing',
+      detail: 'Vendor bank details are incomplete and no bank information was extracted from the invoice',
+    };
+  }
+
+  // If OCR didn't extract bank info, allow workflow to proceed because vendor has bank details on file.
+  if (!ocrBankInfo || !invoiceBank.swift_code || !invoiceBank.account_number) {
+    return {
+      passed: true,
+      message: 'Vendor bank details on file; OCR bank extraction not required',
     };
   }
 
   // Compare with vendor records
-  const vendorSwift = invoice.vendor.swift_code;
-  const vendorAccount = invoice.vendor.account_number;
-
   // Normalize SWIFT codes for comparison
   const normalizeSwift = (swift: string) => swift.toUpperCase().replace(/\s/g, '').replace(/X+$/, '');
-  const ocrSwiftNormalized = normalizeSwift(ocrBankInfo.swift_code || '');
+  const ocrSwiftNormalized = normalizeSwift(invoiceBank.swift_code || '');
   const vendorSwiftNormalized = normalizeSwift(vendorSwift || '');
 
   // Compare SWIFT codes
@@ -585,13 +624,13 @@ async function validateBankDetails(invoice: any): Promise<ValidationResult> {
       passed: false,
       reason: ExceptionReason.BANK_DETAIL_MISMATCH,
       message: 'SWIFT code does not match vendor records',
-      detail: `OCR SWIFT: "${ocrBankInfo.swift_code}" vs Vendor SWIFT: "${vendorSwift}"`,
+      detail: `OCR SWIFT: "${invoiceBank.swift_code}" vs Vendor SWIFT: "${vendorSwift}"`,
     };
   }
 
   // Compare account numbers (normalize by removing spaces and dashes)
   const normalizeAccount = (account: string) => account.replace(/[\s-]/g, '');
-  const ocrAccountNormalized = normalizeAccount(ocrBankInfo.account_number || '');
+  const ocrAccountNormalized = normalizeAccount(invoiceBank.account_number || '');
   const vendorAccountNormalized = normalizeAccount(vendorAccount || '');
 
   if (vendorAccount && ocrAccountNormalized && vendorAccountNormalized !== ocrAccountNormalized) {
@@ -599,7 +638,7 @@ async function validateBankDetails(invoice: any): Promise<ValidationResult> {
       passed: false,
       reason: ExceptionReason.BANK_DETAIL_MISMATCH,
       message: 'Account number does not match vendor records',
-      detail: `OCR Account: "${ocrBankInfo.account_number}" vs Vendor Account: "${vendorAccount}"`,
+      detail: `OCR Account: "${invoiceBank.account_number}" vs Vendor Account: "${vendorAccount}"`,
     };
   }
 
@@ -627,6 +666,17 @@ function validateSignatures(amount: number, signatures: any[]): ValidationResult
     return {
       passed: true,
       message: 'Digital workflow - signatures will be collected during approval',
+    };
+  }
+
+  // If OCR-detected pre-existing signatures are present, don't block —
+  // the digital approval workflow will collect any remaining required signatures.
+  const hasOcrSignatures = signatures.some((sig: any) => sig.ocr_detected);
+  if (hasOcrSignatures) {
+    const signedSignatures = signatures?.filter((sig: any) => sig.signed_at) || [];
+    return {
+      passed: true,
+      message: `OCR detected ${signedSignatures.length} pre-existing digital signature(s). Remaining signatures will be collected during approval.`,
     };
   }
 
@@ -875,35 +925,48 @@ async function checkMissingBankInfo(invoice: any): Promise<ValidationResult> {
     };
   }
 
-  // Check if vendor has SWIFT code
-  if (!invoice.vendor.swift_code) {
-    return {
-      passed: false,
-      reason: ExceptionReason.MISSING_BANK_INFO,
-      message: 'Vendor missing SWIFT code',
-      detail: `Vendor "${invoice.vendor.name}" does not have SWIFT code on file - route to Purchasing Coordinator to obtain from vendor`,
-    };
-  }
+  // Check if vendor has SWIFT code and account number
+  const hasVendorBank = invoice.vendor.swift_code && invoice.vendor.account_number;
+  const hasInvoiceBank = (invoice.swift_code || invoice.ocr_raw_data?.bank_info?.swift_code) &&
+                         (invoice.account_number || invoice.ocr_raw_data?.bank_info?.account_number);
 
-  // Check if vendor has account number
-  if (!invoice.vendor.account_number) {
+  if (!hasVendorBank && !hasInvoiceBank) {
+    if (!invoice.vendor.swift_code) {
+      return {
+        passed: false,
+        reason: ExceptionReason.MISSING_BANK_INFO,
+        message: 'Vendor missing SWIFT code',
+        detail: `Vendor "${invoice.vendor.name}" does not have SWIFT code on file and none was extracted from the invoice`,
+      };
+    }
     return {
       passed: false,
       reason: ExceptionReason.MISSING_BANK_INFO,
       message: 'Vendor missing account number',
-      detail: `Vendor "${invoice.vendor.name}" does not have account number on file - route to Purchasing Coordinator to obtain from vendor`,
+      detail: `Vendor "${invoice.vendor.name}" does not have account number on file and none was extracted from the invoice`,
     };
   }
 
   return {
     passed: true,
-    message: 'Vendor bank information is complete',
+    message: hasInvoiceBank && !hasVendorBank
+      ? 'Invoice bank information extracted from OCR is complete'
+      : 'Vendor bank information is complete',
   };
 }
 
 // RULE 17 — PO cross-check via NextGen (fetch-only)
 // FIX 4: Only validate if MPO matches. If MPO mismatch → skip validation, do not compare vendor/brand.
 async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult> {
+  // STATEMENT type — skip PO amount matching entirely.
+  // Monthly statements aggregate multiple periods and won't match a single PO.
+  if (invoice.invoice_type === 'STATEMENT') {
+    return {
+      passed: true,
+      message: 'Statement type — amount variance check skipped. Manual reconciliation required for monthly statement totals.',
+    };
+  }
+
   const poRef = invoice.mpo_number || invoice.po_number;
 
   // No PO reference on invoice — skip (not all invoices have POs)
@@ -923,17 +986,18 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
         })
       : await nextGenService.fetchPOByNumber(invoice.po_number);
 
-    // FIX 4: If PO not found or MPO mismatch, skip validation (do not compare vendor/brand)
+    // If PO not found, keep the invoice in a pending PO state instead of silently skipping.
+    // The user can re-validate once the PO/MPO is added to NextGen.
     if (!po) {
       return {
-        passed: true,
-        message: `PO ${poRef} not found in NextGen — skipping validation (MPO mismatch)`,
-        detail: `Referenced PO could not be found. MPO mismatch detected - skipping vendor/brand comparison.`,
+        passed: false,
+        reason: ExceptionReason.PO_NOT_FOUND,
+        message: `PO ${poRef} not found in NextGen`,
+        detail: `Referenced PO/MPO ${poRef} could not be found in NextGen. The system will keep checking; re-validate once the PO is available.`,
       };
     }
 
-    // FIX 4: Only proceed with comparison if MPO matches
-    // If we got here, MPO matches, so we can safely compare amount and vendor
+    // MPO matches — compare amount, vendor, and quantity
     const differences: string[] = [];
 
     // Amount check (>5% variance = fail)
@@ -946,6 +1010,13 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
           `Amount: invoice $${invoiceAmount.toFixed(2)} vs PO $${poAmount.toFixed(2)} (${(variance * 100).toFixed(1)}% variance)`
         );
       }
+    }
+
+    // Quantity check (if invoice has qty_shipped and PO has line items)
+    const invoiceQty = Number(invoice.qty_shipped || 0);
+    const poQty = (po.line_items || []).reduce((sum: number, li: any) => sum + Number(li.quantity || 0), 0);
+    if (invoiceQty > 0 && poQty > 0 && invoiceQty !== poQty) {
+      differences.push(`Quantity: invoice ${invoiceQty} vs PO ${poQty}`);
     }
 
     // Vendor name check (only if MPO matches)
@@ -968,7 +1039,7 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
 
     return {
       passed: true,
-      message: `PO ${poRef} verified in NextGen — amount and vendor match`,
+      message: `PO ${poRef} verified in NextGen — amount, quantity, and vendor match`,
     };
   } catch (error) {
     // NextGen unavailable — log warning but don't block validation
@@ -1060,13 +1131,18 @@ export async function checkBatchThreshold(invoiceId: string): Promise<{ held: bo
       status: InvoiceStatus.ON_HOLD as any,
       id: { not: invoiceId },
       created_at: { gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1) },
+      exceptions: {
+        some: { reason: ExceptionReason.BATCH_THRESHOLD_NOT_MET as any, status: 'PENDING' as any },
+      },
     },
   });
 
   const heldTotal = heldInvoices.reduce((sum, inv) => sum + Number(inv.total_amount), 0);
   const currentAmount = Number(invoice.total_amount);
   const cumulative = heldTotal + currentAmount;
-  const held = cumulative < BATCH_THRESHOLD;
+  // Only hold if the existing cumulative (before this invoice) is below threshold
+  // The current invoice itself should push it over, not be held
+  const held = heldTotal < BATCH_THRESHOLD;
 
   if (held) {
     // Mark current invoice as ON_HOLD
@@ -1097,7 +1173,7 @@ export async function checkBatchThreshold(invoiceId: string): Promise<{ held: bo
 
     // Create approval request for each released invoice
     try {
-      await createApprovalRequest(heldInvoice.id, 'system');
+      await createApprovalRequest(heldInvoice.id, 'system', { fromExceptionResolution: true });
     } catch (error) {
       logger.error('Failed to create approval request for released invoice:', error);
     }
@@ -1125,3 +1201,110 @@ export async function checkBatchThreshold(invoiceId: string): Promise<{ held: bo
 
   return { held: false, cumulative, released: heldInvoiceIds.length };
 }
+
+/**
+ * Check for NextGen changes on an invoice
+ * Compares stored NextGen data with current NextGen data and flags if changed
+ */
+export async function checkNextGenChanges(invoiceId: string): Promise<{
+  hasChanges: boolean;
+  hasCriticalChanges: boolean;
+  changes: Array<{ field: string; old: any; new: any }>;
+  criticalChanges: Array<{ field: string; old: any; new: any }>;
+  currentData: any;
+}> {
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    include: { vendor: true },
+  });
+
+  if (!invoice || !invoice.mpo_number) {
+    return { hasChanges: false, hasCriticalChanges: false, changes: [], criticalChanges: [], currentData: null };
+  }
+
+  const currentNextGen = await nextGenService.getFullPOByMPO(invoice.mpo_number, {
+    vendor_name: invoice.vendor?.name,
+    amount: Number(invoice.total_amount),
+  });
+
+  if (!currentNextGen) {
+    return { hasChanges: false, hasCriticalChanges: false, changes: [], criticalChanges: [], currentData: null };
+  }
+
+  const storedNextGen = invoice.po_validation ? (typeof invoice.po_validation === 'string' ? JSON.parse(invoice.po_validation) : invoice.po_validation)?.nextgen_data : null;
+  const changes: Array<{ field: string; old: any; new: any }> = [];
+
+  if (storedNextGen) {
+    // Compare key fields
+    if (storedNextGen.amount !== currentNextGen.amount) {
+      changes.push({ field: 'amount', old: storedNextGen.amount, new: currentNextGen.amount });
+    }
+    if (storedNextGen.vendor_name !== currentNextGen.vendor_name) {
+      changes.push({ field: 'vendor_name', old: storedNextGen.vendor_name, new: currentNextGen.vendor_name });
+    }
+    if (storedNextGen.po_number !== currentNextGen.po_number) {
+      changes.push({ field: 'po_number', old: storedNextGen.po_number, new: currentNextGen.po_number });
+    }
+    
+    // Compare line items quantity
+    if (storedNextGen.line_items && currentNextGen.line_items) {
+      const storedQty = storedNextGen.line_items.reduce((sum: number, item: any) => sum + (Number(item.quantity) || 0), 0);
+      const currentQty = currentNextGen.line_items.reduce((sum: number, item: any) => sum + (Number(item.quantity) || 0), 0);
+      if (storedQty !== currentQty) {
+        changes.push({ field: 'total_quantity', old: storedQty, new: currentQty });
+      }
+    }
+    
+    // Compare extracted invoice fields with NextGen
+    if (invoice.qty_shipped && currentNextGen.line_items) {
+      const nextGenQty = currentNextGen.line_items.reduce((sum: number, item: any) => sum + (Number(item.quantity) || 0), 0);
+      if (Number(invoice.qty_shipped) !== nextGenQty) {
+        changes.push({ field: 'invoice_quantity_vs_nextgen', old: Number(invoice.qty_shipped), new: nextGenQty });
+      }
+    }
+    
+    if (invoice.total_amount && currentNextGen.amount) {
+      if (Number(invoice.total_amount) !== Number(currentNextGen.amount)) {
+        changes.push({ field: 'invoice_amount_vs_nextgen', old: Number(invoice.total_amount), new: Number(currentNextGen.amount) });
+      }
+    }
+  }
+
+  const hasChanges = changes.length > 0;
+
+  // Separate critical changes from informational changes
+  const criticalChanges = changes.filter(c => 
+    ['amount', 'vendor_name', 'po_number', 'invoice_amount_vs_nextgen'].includes(c.field)
+  );
+  const hasCriticalChanges = criticalChanges.length > 0;
+
+  // Only create exceptions for critical changes
+  if (hasCriticalChanges) {
+    await prisma.exception.create({
+      data: {
+        invoice_id: invoiceId,
+        reason: ExceptionReason.PO_NOT_FOUND as any,
+        detail: `NextGen critical data changed: ${criticalChanges.map(c => `${c.field} from ${c.old} to ${c.new}`).join(', ')}`,
+        status: 'PENDING' as any,
+      },
+    });
+  }
+
+  // Always update po_validation with current NextGen data and changes flag
+  const currentPoValidation = typeof invoice.po_validation === 'string' ? JSON.parse(invoice.po_validation) : (invoice.po_validation || {});
+  await prisma.invoice.update({
+    where: { id: invoiceId },
+    data: {
+      po_validation: JSON.stringify({
+        ...currentPoValidation,
+        nextgen_data: currentNextGen,
+        last_checked: new Date().toISOString(),
+        has_changes: hasChanges,
+        critical_changes: hasCriticalChanges,
+      }),
+    },
+  });
+
+  return { hasChanges, hasCriticalChanges, changes, criticalChanges, currentData: currentNextGen };
+}
+

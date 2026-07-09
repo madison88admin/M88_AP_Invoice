@@ -56,22 +56,25 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--bg-base)' }}>
-      <div className="w-full max-w-md p-8">
+    <div className="min-h-screen flex items-center justify-center relative overflow-hidden" style={{ background: 'var(--bg-base)' }}>
+      {/* Radial glow behind logo */}
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full opacity-30 pointer-events-none" style={{ background: 'radial-gradient(circle, rgba(108,92,231,0.25) 0%, rgba(198,255,61,0.08) 40%, transparent 70%)' }} />
+
+      <div className="w-full max-w-md p-8 relative z-10">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-xl mb-4" style={{ background: 'var(--logo-bg)', boxShadow: '0 0 40px rgba(99,102,241,0.4)' }}>
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl mb-4 relative" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))', boxShadow: '0 0 40px rgba(108,92,231,0.35)' }}>
             <LayoutDashboard className="w-8 h-8 text-white" />
           </div>
           <h1 className="text-3xl font-bold mb-2" style={{ color: 'var(--text-primary)' }}>Madison 88</h1>
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>AP Invoice System</p>
         </div>
 
-        <div className="rounded-2xl p-8" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)' }}>
+        <div className="rounded-2xl p-8" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.15)' }}>
           <h2 className="text-xl font-semibold mb-6" style={{ color: 'var(--text-primary)' }}>Sign in</h2>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label htmlFor="email" className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>
+              <label htmlFor="email" className="block text-sm font-medium mb-2" style={{ color: 'var(--text-secondary)' }}>
                 Email
               </label>
               <div className="relative">
@@ -81,7 +84,7 @@ export default function Login() {
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3 rounded-lg focus:outline-none focus:ring-2 transition-all"
+                  className="w-full pl-10 pr-4 py-3 rounded-xl focus:outline-none focus:ring-2 transition-all"
                   style={{
                     background: 'var(--input-bg)',
                     border: '1px solid var(--input-border)',
@@ -94,7 +97,7 @@ export default function Login() {
             </div>
 
             <div>
-              <label htmlFor="password" className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>
+              <label htmlFor="password" className="block text-sm font-medium mb-2" style={{ color: 'var(--text-secondary)' }}>
                 Password
               </label>
               <div className="relative">
@@ -104,7 +107,7 @@ export default function Login() {
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3 rounded-lg focus:outline-none focus:ring-2 transition-all"
+                  className="w-full pl-10 pr-4 py-3 rounded-xl focus:outline-none focus:ring-2 transition-all"
                   style={{
                     background: 'var(--input-bg)',
                     border: '1px solid var(--input-border)',
@@ -117,28 +120,30 @@ export default function Login() {
             </div>
 
             {error && (
-              <div className="rounded-lg p-3" style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
-                <p className="text-sm" style={{ color: '#f87171' }}>{error}</p>
+              <div className="rounded-xl p-3" style={{ background: 'color-mix(in srgb, var(--accent-red) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}>
+                <p className="text-sm" style={{ color: 'var(--accent-red)' }}>{error}</p>
               </div>
             )}
 
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 rounded-lg font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full py-3 rounded-xl font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
               style={{
-                background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-purple-hover))',
-                color: '#ffffff',
-                boxShadow: '0 0 20px rgba(99,102,241,0.45), 0 4px 15px rgba(0,0,0,0.3)'
+                background: 'var(--accent-lime)',
+                color: 'var(--bg-base)',
+                boxShadow: '0 0 20px var(--accent-lime-glow), 0 4px 15px rgba(0,0,0,0.3)'
               }}
               onMouseEnter={(e) => {
                 if (!loading) {
-                  e.currentTarget.style.boxShadow = '0 0 35px rgba(99,102,241,0.65), 0 4px 20px rgba(0,0,0,0.4)';
+                  e.currentTarget.style.background = 'var(--accent-lime-hover)';
+                  e.currentTarget.style.boxShadow = '0 0 30px var(--accent-lime-glow), 0 4px 20px rgba(0,0,0,0.4)';
                   e.currentTarget.style.transform = 'translateY(-1px)';
                 }
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.boxShadow = '0 0 20px rgba(99,102,241,0.45), 0 4px 15px rgba(0,0,0,0.3)';
+                e.currentTarget.style.background = 'var(--accent-lime)';
+                e.currentTarget.style.boxShadow = '0 0 20px var(--accent-lime-glow), 0 4px 15px rgba(0,0,0,0.3)';
                 e.currentTarget.style.transform = 'translateY(0)';
               }}
             >
@@ -156,19 +161,21 @@ export default function Login() {
                   key={item.email}
                   type="button"
                   onClick={() => applyQuickLogin(item.email, item.password)}
-                  className="text-xs px-3 py-1 rounded-lg transition-all"
+                  className="text-xs px-3 py-1.5 rounded-lg transition-all"
                   style={{
-                    background: 'var(--bg-card-hover)',
+                    background: 'transparent',
                     border: '1px solid var(--border-color)',
-                    color: 'var(--text-muted)'
+                    color: 'var(--text-secondary)'
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.background = 'var(--input-bg)';
-                    e.currentTarget.style.color = 'var(--text-primary)';
+                    e.currentTarget.style.background = 'var(--bg-card-hover)';
+                    e.currentTarget.style.borderColor = 'var(--accent-lime)';
+                    e.currentTarget.style.color = 'var(--accent-lime)';
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.background = 'var(--bg-card-hover)';
-                    e.currentTarget.style.color = 'var(--text-muted)';
+                    e.currentTarget.style.background = 'transparent';
+                    e.currentTarget.style.borderColor = 'var(--border-color)';
+                    e.currentTarget.style.color = 'var(--text-secondary)';
                   }}
                 >
                   {item.label}

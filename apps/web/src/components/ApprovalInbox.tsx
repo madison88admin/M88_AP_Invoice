@@ -101,57 +101,17 @@ export default function ApprovalInbox() {
   };
 
   return (
-    <div className="min-h-screen relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%)' }}>
-      {/* Layered Background Atmosphere */}
-      <div style={{ position: 'fixed', inset: 0, zIndex: 0, overflow: 'hidden', pointerEvents: 'none' }}>
-        {/* Purple orb top-right */}
-        <div 
-          style={{ 
-            position: 'absolute', 
-            top: '-10%', 
-            right: '-5%', 
-            width: '500px', 
-            height: '500px',
-            background: 'radial-gradient(circle, rgba(139,92,246,0.25), transparent 70%)',
-            filter: 'blur(60px)', 
-            animation: 'drift1 10s ease-in-out infinite alternate'
-          }}
-        />
-        {/* Blue orb bottom-left */}
-        <div 
-          style={{ 
-            position: 'absolute', 
-            bottom: '-10%', 
-            left: '-5%', 
-            width: '600px', 
-            height: '600px',
-            background: 'radial-gradient(circle, rgba(59,130,246,0.2), transparent 70%)',
-            filter: 'blur(80px)', 
-            animation: 'drift2 13s ease-in-out infinite alternate'
-          }}
-        />
-        {/* Teal orb center */}
-        <div 
-          style={{ 
-            position: 'absolute', 
-            top: '40%', 
-            left: '35%', 
-            width: '400px', 
-            height: '400px',
-            background: 'radial-gradient(circle, rgba(20,184,166,0.12), transparent 70%)',
-            filter: 'blur(70px)', 
-            animation: 'drift3 9s ease-in-out infinite alternate'
-          }}
-        />
-      </div>
-
+    <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
       <div className="relative z-10">
-        <header style={{ background: 'rgba(10, 14, 30, 0.6)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }} className="px-6 py-4">
+        <header className="px-6 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
           <div className="flex items-center">
-            <Link to="/" className="mr-4 text-slate-300 hover:text-white transition-colors">
-              <ArrowLeft className="h-6 w-6" />
+            <Link to="/" className="mr-4 transition-colors" style={{ color: 'var(--text-muted)' }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
+            >
+              <ArrowLeft className="h-5 w-5" strokeWidth={1.75} />
             </Link>
-            <h1 className="text-2xl font-bold text-white">Approval Inbox</h1>
+            <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Approval Inbox</h1>
           </div>
         </header>
 
@@ -159,59 +119,56 @@ export default function ApprovalInbox() {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Invoice List */}
             <div className="lg:col-span-2">
-              <div style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }}>
-                <div className="px-6 py-4" style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
-                  <h2 className="text-lg font-semibold text-white">
-                    Pending Approvals ({pendingApprovals.length})
+              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
+                <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
+                  <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    Pending Approvals
                   </h2>
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{pendingApprovals.length} items</span>
                 </div>
                 {loading ? (
-                  <div className="px-6 py-12 text-center text-slate-400">Loading...</div>
+                  <div className="px-6 py-12 text-center" style={{ color: 'var(--text-muted)' }}>Loading...</div>
                 ) : pendingApprovals.length === 0 ? (
-                  <div className="px-6 py-12 text-center text-slate-400">
-                    No pending approvals
+                  <div className="px-6 py-12 text-center">
+                    <div className="inline-flex p-4 rounded-2xl mb-3" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
+                      <CheckCircle className="h-8 w-8" style={{ color: 'var(--text-subtle)' }} strokeWidth={1.75} />
+                    </div>
+                    <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>No pending approvals</p>
                   </div>
                 ) : (
                   <>
-                    <div className="divide-y divide-white/5">
-                      {displayedInvoices.map((invoice) => (
+                    <div>
+                      {displayedInvoices.map((invoice, idx) => (
                       <div
                         key={invoice.id}
                         onClick={() => setSelectedInvoice(invoice)}
-                        className={`px-6 py-4 cursor-pointer transition-colors ${
-                          selectedInvoice?.id === invoice.id ? 'bg-white/5' : ''
-                        }`}
-                        style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', transition: 'background 150ms ease' }}
-                        onMouseEnter={(e) => {
-                          if (selectedInvoice?.id !== invoice.id) {
-                            e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
-                          }
+                        className="px-6 py-4 cursor-pointer transition-colors"
+                        style={{
+                          borderTop: idx > 0 ? '1px solid var(--border-subtle)' : 'none',
+                          background: selectedInvoice?.id === invoice.id ? 'var(--bg-card-hover)' : undefined,
                         }}
-                        onMouseLeave={(e) => {
-                          if (selectedInvoice?.id !== invoice.id) {
-                            e.currentTarget.style.background = 'transparent';
-                          }
-                        }}
+                        onMouseEnter={(e) => { if (selectedInvoice?.id !== invoice.id) e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
+                        onMouseLeave={(e) => { if (selectedInvoice?.id !== invoice.id) e.currentTarget.style.background = ''; }}
                       >
                         <div className="flex items-center justify-between">
                           <div className="flex items-center space-x-4">
-                            <div className="p-2 rounded-lg" style={{ background: 'rgba(234, 179, 8, 0.2)' }}>
-                              <Clock className="h-5 w-5 text-amber-400" />
+                            <div className="p-2 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}>
+                              <Clock className="h-5 w-5" style={{ color: 'var(--accent-amber)' }} strokeWidth={1.75} />
                             </div>
                             <div>
-                              <p className="text-sm font-medium text-white">
+                              <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
                                 {invoice.invoice_number}
                               </p>
-                              <p className="text-sm text-slate-400">
+                              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
                                 {invoice.vendor_name}
                               </p>
                             </div>
                           </div>
                           <div className="text-right">
-                            <p className="text-sm font-medium text-white">
+                            <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
                               {invoice.currency} {Number(invoice.total_amount).toFixed(2)}
                             </p>
-                            <p className="text-xs text-slate-400">
+                            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
                               {getApprovalStatus(invoice)}
                             </p>
                           </div>
@@ -220,16 +177,14 @@ export default function ApprovalInbox() {
                     ))}
                   </div>
                   {/* Pagination Controls */}
-                  <div className="px-6 py-4 flex items-center justify-between" style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                  <div className="px-6 py-4 flex items-center justify-between" style={{ borderTop: '1px solid var(--border-subtle)' }}>
                     <button
                       onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
                       disabled={currentPage === 1}
-                      className="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      style={{ 
-                        background: currentPage === 1 ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.1)',
-                        color: 'var(--text-primary)',
-                        border: '1px solid var(--border-color)'
-                      }}
+                      className="px-4 py-2 rounded-xl text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}
+                      onMouseEnter={(e) => { if (currentPage !== 1) { e.currentTarget.style.background = 'var(--bg-card-hover)'; e.currentTarget.style.color = 'var(--text-primary)'; } }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--bg-elevated)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
                     >
                       Previous
                     </button>
@@ -239,12 +194,10 @@ export default function ApprovalInbox() {
                     <button
                       onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
                       disabled={currentPage === totalPages}
-                      className="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      style={{ 
-                        background: currentPage === totalPages ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.1)',
-                        color: 'var(--text-primary)',
-                        border: '1px solid var(--border-color)'
-                      }}
+                      className="px-4 py-2 rounded-xl text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}
+                      onMouseEnter={(e) => { if (currentPage !== totalPages) { e.currentTarget.style.background = 'var(--bg-card-hover)'; e.currentTarget.style.color = 'var(--text-primary)'; } }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--bg-elevated)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
                     >
                       Next
                     </button>
@@ -257,34 +210,34 @@ export default function ApprovalInbox() {
             {/* Invoice Detail Panel */}
             {selectedInvoice && (
               <div className="lg:col-span-1">
-                <div style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }}>
-                  <div className="px-6 py-4" style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
-                    <h3 className="text-lg font-semibold text-white">
+                <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
+                  <div className="px-6 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
+                    <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
                       Invoice Details
                     </h3>
                   </div>
                   <div className="p-6 space-y-4">
                     <div>
-                      <p className="text-sm text-slate-400">Invoice Number</p>
-                      <p className="text-sm font-medium text-white">
+                      <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Invoice Number</p>
+                      <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
                         {selectedInvoice.invoice_number}
                       </p>
                     </div>
                     <div>
-                      <p className="text-sm text-slate-400">Vendor</p>
-                      <p className="text-sm font-medium text-white">
+                      <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Vendor</p>
+                      <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
                         {selectedInvoice.vendor_name}
                       </p>
                     </div>
                     <div>
-                      <p className="text-sm text-slate-400">Amount</p>
-                      <p className="text-sm font-medium text-white">
+                      <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Amount</p>
+                      <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
                         {selectedInvoice.currency} {Number(selectedInvoice.total_amount).toFixed(2)}
                       </p>
                     </div>
                     <div>
-                      <p className="text-sm text-slate-400">Invoice Date</p>
-                      <p className="text-sm font-medium text-white">
+                      <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Invoice Date</p>
+                      <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
                         {selectedInvoice.invoice_date
                           ? new Date(selectedInvoice.invoice_date).toLocaleDateString()
                           : 'N/A'}
@@ -293,8 +246,8 @@ export default function ApprovalInbox() {
 
                     {/* Approval Progress */}
                     {selectedInvoice.signatures && selectedInvoice.signatures.length > 0 && (
-                      <div className="pt-4" style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}>
-                        <p className="text-sm font-medium text-white mb-3">
+                      <div className="pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                        <p className="text-sm font-medium mb-3" style={{ color: 'var(--text-primary)' }}>
                           Approval Progress
                         </p>
                         <div className="space-y-2">
@@ -304,20 +257,18 @@ export default function ApprovalInbox() {
                                 key={sig.id}
                                 className="flex items-center justify-between text-sm"
                               >
-                                <span className="text-slate-300">{sig.signatory_role}</span>
+                                <span style={{ color: 'var(--text-secondary)' }}>{sig.signatory_role}</span>
                                 <div className="flex items-center">
                                   {sig.signed_at && (
-                                    <CheckCircle className="h-4 w-4 text-green-400 mr-1" />
+                                    <CheckCircle className="h-4 w-4 mr-1" style={{ color: 'var(--accent-lime)' }} strokeWidth={1.75} />
                                   )}
                                   {!sig.signed_at && (
-                                    <Clock className="h-4 w-4 text-amber-400 mr-1" />
+                                    <Clock className="h-4 w-4 mr-1" style={{ color: 'var(--accent-amber)' }} strokeWidth={1.75} />
                                   )}
                                   <span
-                                    className={`${
-                                      sig.signed_at
-                                        ? 'text-green-400'
-                                        : 'text-amber-400'
-                                    }`}
+                                    style={{
+                                      color: sig.signed_at ? 'var(--accent-lime)' : 'var(--accent-amber)',
+                                    }}
                                   >
                                     {sig.signed_at ? 'Signed' : 'Pending'}
                                   </span>
@@ -329,21 +280,34 @@ export default function ApprovalInbox() {
                     )}
 
                     {/* Action Buttons */}
-                    <div className="pt-4 space-y-2" style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                    <div className="pt-4 space-y-2" style={{ borderTop: '1px solid var(--border-subtle)' }}>
                       <button
                         onClick={handleApprove}
                         disabled={approving}
-                        className="w-full flex items-center justify-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:bg-slate-600 disabled:cursor-not-allowed"
+                        className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-semibold text-sm"
+                        style={approving
+                          ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' }
+                          : { background: 'var(--accent-lime)', color: 'var(--bg-base)', boxShadow: '0 0 16px var(--accent-lime-glow)' }
+                        }
+                        onMouseEnter={(e) => { if (!approving) e.currentTarget.style.background = 'var(--accent-lime-hover)'; }}
+                        onMouseLeave={(e) => { if (!approving) e.currentTarget.style.background = 'var(--accent-lime)'; }}
                       >
-                        <CheckCircle className="h-4 w-4 mr-2" />
+                        <CheckCircle className="h-4 w-4 mr-2" strokeWidth={1.75} />
                         {approving ? 'Approving...' : 'Approve'}
                       </button>
                       <button
                         onClick={() => setShowRejectModal(true)}
                         disabled={rejecting}
-                        className="w-full flex items-center justify-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:bg-slate-600 disabled:cursor-not-allowed"
+                        className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                        style={{
+                          background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)',
+                          color: 'var(--accent-red)',
+                          border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)',
+                        }}
+                        onMouseEnter={(e) => { if (!rejecting) e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-red) 20%, transparent)'; }}
+                        onMouseLeave={(e) => { if (!rejecting) e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-red) 10%, transparent)'; }}
                       >
-                        <XCircle className="h-4 w-4 mr-2" />
+                        <XCircle className="h-4 w-4 mr-2" strokeWidth={1.75} />
                         Reject
                       </button>
                     </div>
@@ -357,17 +321,18 @@ export default function ApprovalInbox() {
 
       {/* Reject Modal */}
       {showRejectModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-          <div style={{ background: 'rgba(15, 23, 42, 0.9)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '16px', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }} className="max-w-md w-full mx-4">
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="max-w-md w-full mx-4 rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
             <div className="p-6">
-              <h3 className="text-lg font-semibold text-white mb-4">
+              <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
                 Reject Invoice
               </h3>
               <textarea
                 value={rejectReason}
                 onChange={(e) => setRejectReason(e.target.value)}
                 placeholder="Please provide a reason for rejection..."
-                className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent text-white placeholder-slate-400"
+                className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
                 rows={4}
               />
               <div className="mt-4 flex justify-end space-x-3">
@@ -376,14 +341,23 @@ export default function ApprovalInbox() {
                     setShowRejectModal(false);
                     setRejectReason('');
                   }}
-                  className="px-4 py-2 text-slate-300 hover:text-white transition-colors"
+                  className="px-4 py-2 transition-colors text-sm"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleReject}
                   disabled={!rejectReason.trim() || rejecting}
-                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:bg-slate-600 disabled:cursor-not-allowed"
+                  className="px-4 py-2 rounded-xl transition-colors disabled:cursor-not-allowed text-sm font-medium"
+                  style={!rejectReason.trim() || rejecting
+                    ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' }
+                    : { background: 'var(--accent-red)', color: '#fff' }
+                  }
+                  onMouseEnter={(e) => { if (rejectReason.trim() && !rejecting) e.currentTarget.style.opacity = '0.9'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
                 >
                   {rejecting ? 'Rejecting...' : 'Confirm Rejection'}
                 </button>

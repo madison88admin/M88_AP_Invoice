@@ -1,12 +1,14 @@
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { ExceptionStatus, ExceptionReason, InvoiceStatus } from '@ap-invoice/shared';
+import { createApprovalRequest } from './approvalService';
+import { logger } from '../utils/logger';
 
 export async function resolveException(
   exceptionId: string,
   resolution: string,
   userId: string
-) {
+): Promise<{ exception: any; approvalWarning?: string }> {
   const exception = await prisma.exception.findUnique({
     where: { id: exceptionId },
     include: { invoice: true },
@@ -20,12 +22,12 @@ export async function resolveException(
     throw new AppError('Exception is already resolved', 400);
   }
 
-  // Update exception status to RESOLVED
+  // Update exception status to RESOLVED — preserve original detail, put resolution in resolution_notes
   const updatedException = await prisma.exception.update({
     where: { id: exceptionId },
     data: {
       status: ExceptionStatus.RESOLVED as any,
-      detail: resolution,
+      resolution_notes: resolution,
       resolved_at: new Date(),
       resolved_by: userId,
     },
@@ -69,10 +71,28 @@ export async function resolveException(
           note: 'Invoice status changed from EXCEPTION_FLAGGED to VALIDATION_PENDING after all exceptions resolved',
         },
       });
+
+      // Auto-proceed to approval workflow now that all exceptions are resolved
+      let approvalWarning: string | undefined;
+      try {
+        await createApprovalRequest(exception.invoice_id, userId, { fromExceptionResolution: true });
+        await prisma.auditLog.create({
+          data: {
+            invoice_id: exception.invoice_id,
+            action: 'APPROVAL_REQUESTED',
+            performed_by: userId,
+            note: 'Approval request auto-created after exception resolution',
+          },
+        });
+      } catch (err: any) {
+        logger.error(`Failed to auto-create approval request for invoice ${exception.invoice_id} after exception resolution:`, err);
+        approvalWarning = `All exceptions resolved, but approval request could not be created: ${err.message}. The invoice is now in VALIDATION_PENDING — please update the brand_code and manually request approval.`;
+      }
+      return { exception: updatedException, approvalWarning };
     }
   }
 
-  return updatedException;
+  return { exception: updatedException };
 }
 
 /**
@@ -189,6 +209,13 @@ export async function autoResolveLowRiskExceptions(invoiceId: string): Promise<{
         note: `Auto-resolved all ${resolvedCount} exception(s). Status: EXCEPTION_FLAGGED → VALIDATION_PENDING`,
       },
     });
+
+    // Auto-proceed to approval workflow
+    try {
+      await createApprovalRequest(invoiceId, 'system', { fromExceptionResolution: true });
+    } catch (err: any) {
+      logger.error(`Failed to auto-create approval request for invoice ${invoiceId} after auto-resolve:`, err);
+    }
   }
 
   return { resolved: resolvedCount, remaining: remainingCount, details: results };
@@ -231,7 +258,7 @@ export async function waiveException(
   exceptionId: string,
   waiverReason: string,
   userId: string
-) {
+): Promise<{ exception: any; approvalWarning?: string }> {
   const exception = await prisma.exception.findUnique({
     where: { id: exceptionId },
     include: { invoice: true },
@@ -244,13 +271,16 @@ export async function waiveException(
   if (exception.status === (ExceptionStatus.RESOLVED as any)) {
     throw new AppError('Exception is already resolved', 400);
   }
+  if (exception.status === (ExceptionStatus.WAIVED as any)) {
+    throw new AppError('Exception is already waived', 400);
+  }
 
-  // Update exception status to WAIVED
+  // Update exception status to WAIVED — preserve original detail, put waiver reason in resolution_notes
   const updatedException = await prisma.exception.update({
     where: { id: exceptionId },
     data: {
       status: ExceptionStatus.WAIVED as any,
-      detail: `Waived: ${waiverReason}`,
+      resolution_notes: `Waived: ${waiverReason}`,
       resolved_at: new Date(),
       resolved_by: userId,
     },
@@ -294,8 +324,26 @@ export async function waiveException(
           note: 'Invoice status changed from EXCEPTION_FLAGGED to VALIDATION_PENDING after all exceptions resolved/waived',
         },
       });
+
+      // Auto-proceed to approval workflow now that all exceptions are waived
+      let approvalWarning: string | undefined;
+      try {
+        await createApprovalRequest(exception.invoice_id, userId, { fromExceptionResolution: true });
+        await prisma.auditLog.create({
+          data: {
+            invoice_id: exception.invoice_id,
+            action: 'APPROVAL_REQUESTED',
+            performed_by: userId,
+            note: 'Approval request auto-created after exception waiver',
+          },
+        });
+      } catch (err: any) {
+        logger.error(`Failed to auto-create approval request for invoice ${exception.invoice_id} after exception waiver:`, err);
+        approvalWarning = `All exceptions waived, but approval request could not be created: ${err.message}. The invoice is now in VALIDATION_PENDING — please update the brand_code and manually request approval.`;
+      }
+      return { exception: updatedException, approvalWarning };
     }
   }
 
-  return updatedException;
+  return { exception: updatedException };
 }

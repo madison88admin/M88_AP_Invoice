@@ -1,5 +1,5 @@
-import { InvoiceStatus, OrderType } from '@ap-invoice/shared';
-import { formatCurrency, formatDate, cn } from '../lib/utils';
+import { InvoiceStatus, OrderType, calcWorkingHoursElapsed } from '@ap-invoice/shared';
+import { formatCurrency, formatDate } from '../lib/utils';
 import { FileText, Calendar, DollarSign, Eye, Check, Flag } from 'lucide-react';
 import { MockInvoice } from '../lib/mockData';
 import { POValidationBadge } from './POValidationBadge';
@@ -8,47 +8,49 @@ interface InvoiceTableProps {
   invoices: MockInvoice[];
   onInvoiceClick?: (invoice: MockInvoice) => void;
   loading?: boolean;
+  emptyHint?: 'filters' | 'default';
 }
 
-const statusColors: Partial<Record<InvoiceStatus, { bg: string; text: string }>> = {
-  [InvoiceStatus.RECEIVED]: { bg: 'bg-amber-500/20', text: 'text-amber-400' },
-  [InvoiceStatus.OCR_PROCESSING]: { bg: 'bg-purple-500/20', text: 'text-purple-400' },
-  [InvoiceStatus.VALIDATION_PENDING]: { bg: 'bg-blue-500/20', text: 'text-blue-400' },
-  [InvoiceStatus.EXCEPTION_FLAGGED]: { bg: 'bg-red-500/20', text: 'text-red-400' },
-  [InvoiceStatus.PENDING_COORDINATOR]: { bg: 'bg-amber-500/20', text: 'text-amber-400' },
-  [InvoiceStatus.PENDING_MANAGER]: { bg: 'bg-amber-500/20', text: 'text-amber-400' },
-  [InvoiceStatus.PENDING_MLO_PLANNING_MANAGER]: { bg: 'bg-amber-500/20', text: 'text-amber-400' },
-  [InvoiceStatus.PENDING_SR_MANAGER]: { bg: 'bg-amber-500/20', text: 'text-amber-400' },
-  [InvoiceStatus.PENDING_POLLY]: { bg: 'bg-amber-500/20', text: 'text-amber-400' },
-  [InvoiceStatus.PENDING_ACCOUNTING]: { bg: 'bg-blue-500/20', text: 'text-blue-400' },
-  [InvoiceStatus.APPROVED]: { bg: 'bg-green-500/20', text: 'text-green-400' },
-  [InvoiceStatus.POSTED_TO_QB]: { bg: 'bg-blue-500/20', text: 'text-blue-400' },
-  [InvoiceStatus.PAYMENT_SCHEDULED]: { bg: 'bg-blue-500/20', text: 'text-blue-400' },
-  [InvoiceStatus.PAID]: { bg: 'bg-green-500/20', text: 'text-green-400' },
-  [InvoiceStatus.REJECTED]: { bg: 'bg-gray-500/20', text: 'text-gray-400' },
-  [InvoiceStatus.ON_HOLD]: { bg: 'bg-yellow-500/20', text: 'text-yellow-400' },
+const statusColors: Partial<Record<InvoiceStatus, { bg: string; color: string }>> = {
+  [InvoiceStatus.RECEIVED]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' },
+  [InvoiceStatus.OCR_PROCESSING]: { bg: 'color-mix(in srgb, var(--accent-violet) 10%, transparent)', color: 'var(--accent-violet)' },
+  [InvoiceStatus.VALIDATION_PENDING]: { bg: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', color: 'var(--accent-blue)' },
+  [InvoiceStatus.EXCEPTION_FLAGGED]: { bg: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', color: 'var(--accent-red)' },
+  [InvoiceStatus.PENDING_COORDINATOR]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' },
+  [InvoiceStatus.PENDING_MANAGER]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' },
+  [InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' },
+  [InvoiceStatus.PENDING_MLO_PLANNING_MANAGER]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' },
+  [InvoiceStatus.PENDING_SR_MANAGER]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' },
+  [InvoiceStatus.PENDING_POLLY]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' },
+  [InvoiceStatus.PENDING_ACCOUNTING]: { bg: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', color: 'var(--accent-blue)' },
+  [InvoiceStatus.APPROVED]: { bg: 'color-mix(in srgb, var(--accent-lime) 10%, transparent)', color: 'var(--accent-lime)' },
+  [InvoiceStatus.POSTED_TO_QB]: { bg: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', color: 'var(--accent-blue)' },
+  [InvoiceStatus.PAYMENT_SCHEDULED]: { bg: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', color: 'var(--accent-blue)' },
+  [InvoiceStatus.PAID]: { bg: 'color-mix(in srgb, var(--accent-lime) 10%, transparent)', color: 'var(--accent-lime)' },
+  [InvoiceStatus.REJECTED]: { bg: 'color-mix(in srgb, var(--text-muted) 10%, transparent)', color: 'var(--text-secondary)' },
+  [InvoiceStatus.ON_HOLD]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' },
 };
 
-const orderTypeColors: Record<OrderType, { bg: string; text: string }> = {
-  BULK: { bg: 'bg-green-500/20', text: 'text-green-400' },
-  SMS: { bg: 'bg-amber-500/20', text: 'text-amber-400' },
-  SAMPLE: { bg: 'bg-purple-500/20', text: 'text-purple-400' },
+const orderTypeColors: Record<OrderType, { bg: string; color: string }> = {
+  BULK: { bg: 'color-mix(in srgb, var(--accent-green) 10%, transparent)', color: 'var(--accent-lime)' },
+  SMS: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' },
+  SAMPLE: { bg: 'color-mix(in srgb, var(--accent-violet) 10%, transparent)', color: 'var(--accent-violet)' },
 };
 
-function getSLAStatus(invoice: MockInvoice): { label: string; color: string } | null {
+function getSLAStatus(invoice: MockInvoice): { label: string; bg: string; color: string } | null {
   const timestamps = (invoice as any).stage_timestamps || [];
   const current = timestamps.find((t: any) => t.stage === invoice.status && !t.exited_at);
   if (!current || !current.sla_hours) return null;
-  const entered = new Date(current.entered_at).getTime();
-  const due = entered + current.sla_hours * 60 * 60 * 1000;
-  const remaining = due - Date.now();
-  const hoursRemaining = remaining / (1000 * 60 * 60);
-  if (remaining <= 0) return { label: 'Overdue', color: 'bg-red-500 text-white' };
-  if (hoursRemaining <= 24) return { label: 'Due soon', color: 'bg-amber-500 text-black' };
+  const enteredAt = new Date(current.entered_at);
+  const now = new Date();
+  const elapsedHours = calcWorkingHoursElapsed(enteredAt, now);
+  const hoursRemaining = current.sla_hours - elapsedHours;
+  if (hoursRemaining <= 0) return { label: 'Overdue', bg: 'var(--accent-red)', color: 'var(--text-inverse)' };
+  if (hoursRemaining <= 24) return { label: 'Due soon', bg: 'var(--accent-amber)', color: 'var(--text-primary)' };
   return null;
 }
 
-export default function InvoiceTable({ invoices, onInvoiceClick, loading = false }: InvoiceTableProps) {
+export default function InvoiceTable({ invoices, onInvoiceClick, loading = false, emptyHint = 'default' }: InvoiceTableProps) {
   // Use invoices as-is
   const sortedInvoices = invoices;
 
@@ -58,8 +60,8 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
         <div className="space-y-3">
           {[...Array(6)].map((_, i) => (
             <div key={i} className="flex items-center gap-4 animate-pulse" style={{ animationDelay: `${i * 100}ms` }}>
-              <div className="w-4 h-4 bg-white/10 rounded" />
-              <div className="flex-1 h-12 bg-white/5 rounded-lg" />
+              <div className="w-4 h-4 rounded" style={{ background: 'var(--bg-card-hover)' }} />
+              <div className="flex-1 h-12 rounded-lg" style={{ background: 'var(--bg-elevated)' }} />
             </div>
           ))}
         </div>
@@ -69,101 +71,103 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
 
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-white/5">
-        <thead style={{ background: 'rgba(255,255,255,0.05)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+      <table className="min-w-full">
+        <thead style={{ background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border-subtle)' }}>
           <tr>
             <th className="px-4 py-3 text-left" style={{ width: '32px' }}>
-              <input type="checkbox" className="rounded" style={{ border: '1px solid rgba(255,255,255,0.2)', background: 'transparent' }} />
+              <input type="checkbox" className="rounded" style={{ accentColor: 'var(--accent-lime)' }} />
             </th>
-            <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px', width: '32px' }}>
+            <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '32px', color: 'var(--text-muted)' }}>
               Priority
             </th>
-            <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
+            <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
               Invoice #
             </th>
-            <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
+            <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
               Vendor
             </th>
-            <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px', width: '140px' }}>
+            <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '140px', color: 'var(--text-muted)' }}>
               Brand
             </th>
-            <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px', width: '80px' }}>
+            <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '80px', color: 'var(--text-muted)' }}>
               Brand Tier
             </th>
-            <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px', width: '80px' }}>
+            <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '80px', color: 'var(--text-muted)' }}>
               Order Type
             </th>
-            <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px', width: '60px' }}>
+            <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '60px', color: 'var(--text-muted)' }}>
               Season
             </th>
-            <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px', width: '100px' }}>
+            <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '100px', color: 'var(--text-muted)' }}>
               MPO #
             </th>
-            <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
+            <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
               Date Due
             </th>
-            <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
+            <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
               Amount
             </th>
-            <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
+            <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
               Category
             </th>
-            <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
+            <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
               Status
             </th>
-            <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px', width: '160px' }}>
-              PO Validation
+            <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '160px', color: 'var(--text-muted)' }}>
+              NextGen Validation
             </th>
-            <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px', width: '60px' }}>
+            <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '60px', color: 'var(--text-muted)' }}>
               Signatures
             </th>
-            <th className="px-6 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider" style={{ letterSpacing: '0.08em', fontSize: '11px' }}>
+            <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
               Actions
             </th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-white/5">
-          {sortedInvoices.map((invoice) => (
+        <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
+          {sortedInvoices.map((invoice, index) => (
             <tr
               key={invoice.id}
-              className="cursor-pointer group"
+              className="cursor-pointer group transition-colors duration-150"
               style={{
-                borderBottom: '1px solid rgba(255,255,255,0.04)',
-                transition: 'background 150ms ease',
+                backgroundColor: index % 2 === 0 ? 'transparent' : 'var(--bg-card-hover)',
                 borderLeft: '3px solid transparent'
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
+                e.currentTarget.style.borderLeftColor = 'var(--accent-lime)';
+                e.currentTarget.style.background = 'var(--bg-card-hover)';
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'transparent';
+                e.currentTarget.style.borderLeftColor = 'transparent';
+                e.currentTarget.style.background = index % 2 === 0 ? 'transparent' : 'var(--bg-card-hover)';
               }}
               onClick={() => onInvoiceClick?.(invoice)}
             >
               <td className="px-4 py-4">
-                <input type="checkbox" className="rounded border-white/20 text-[#6366f1] focus:ring-[#6366f1]" />
+                <input type="checkbox" className="rounded" style={{ accentColor: 'var(--accent-lime)' }} />
               </td>
               <td className="px-4 py-4 whitespace-nowrap" style={{ width: '32px' }}>
                 {/* Priority flag column */}
               </td>
               <td className="px-6 py-4 whitespace-nowrap">
                 <div className="flex items-center">
-                  <FileText className="h-4 w-4 text-slate-400 mr-2" />
-                  <span className="text-sm font-medium text-white">
+                  <FileText className="h-4 w-4 mr-2" style={{ color: 'var(--text-muted)' }} strokeWidth={1.75} />
+                  <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
                     {invoice.invoice_number}
                   </span>
                 </div>
               </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-200">
+              <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--text-secondary)' }}>
                 {invoice.vendor_name || 'Unknown'}
               </td>
-              <td className="px-4 py-4 whitespace-nowrap text-sm text-slate-200" style={{ width: '140px' }}>
+              <td className="px-4 py-4 whitespace-nowrap text-sm" style={{ width: '140px', color: 'var(--text-secondary)' }}>
                 {invoice.brand || '—'}
               </td>
               <td className="px-4 py-4 whitespace-nowrap" style={{ width: '80px' }}>
                 {invoice.brand_tier && (
                   <span
-                    className="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-500/20 text-blue-400"
+                    className="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full"
+                    style={{ background: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', color: 'var(--accent-blue)', border: '1px solid color-mix(in srgb, var(--accent-blue) 20%, transparent)' }}
                   >
                     {invoice.brand_tier}
                   </span>
@@ -172,52 +176,46 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
               <td className="px-4 py-4 whitespace-nowrap" style={{ width: '80px' }}>
                 {invoice.order_type && (
                   <span
-                    className={cn(
-                      'px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full',
-                      orderTypeColors[invoice.order_type as OrderType]?.bg,
-                      orderTypeColors[invoice.order_type as OrderType]?.text
-                    )}
+                    className="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full"
+                    style={{ background: orderTypeColors[invoice.order_type as OrderType]?.bg, color: orderTypeColors[invoice.order_type as OrderType]?.color, border: '1px solid var(--border-color)' }}
                   >
                     {invoice.order_type}
                   </span>
                 )}
               </td>
-              <td className="px-4 py-4 whitespace-nowrap text-sm text-slate-200" style={{ width: '60px' }}>
+              <td className="px-4 py-4 whitespace-nowrap text-sm" style={{ width: '60px', color: 'var(--text-secondary)' }}>
                 {invoice.season || '—'}
               </td>
-              <td className="px-4 py-4 whitespace-nowrap text-sm text-slate-200" style={{ width: '100px' }}>
+              <td className="px-4 py-4 whitespace-nowrap text-sm" style={{ width: '100px', color: 'var(--text-secondary)' }}>
                 {invoice.mpo_number || '—'}
               </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-400">
+              <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--text-muted)' }}>
                 <div className="flex items-center">
-                  <Calendar className="h-4 w-4 text-slate-400 mr-2" />
+                  <Calendar className="h-4 w-4 mr-2" style={{ color: 'var(--text-muted)' }} strokeWidth={1.75} />
                   {invoice.invoice_date ? formatDate(invoice.invoice_date) : '—'}
                 </div>
               </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-white font-medium">
+              <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
                 <div className="flex items-center">
-                  <DollarSign className="h-4 w-4 text-slate-400 mr-1" />
+                  <DollarSign className="h-4 w-4 mr-1" style={{ color: 'var(--text-muted)' }} strokeWidth={1.75} />
                   {formatCurrency(Number(invoice.total_amount), invoice.currency)}
                 </div>
               </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-200">
+              <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--text-secondary)' }}>
                 {(invoice.category || invoice.invoice_type).replace(/_/g, ' ')}
               </td>
               <td className="px-6 py-4 whitespace-nowrap">
                 <div className="flex flex-col gap-1">
                   <span
-                    className={cn(
-                      'px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full w-fit',
-                      statusColors[invoice.status]?.bg,
-                      statusColors[invoice.status]?.text
-                    )}
+                    className="px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full w-fit"
+                    style={{ background: statusColors[invoice.status]?.bg, color: statusColors[invoice.status]?.color, border: '1px solid var(--border-color)' }}
                   >
                     {invoice.status.replace(/_/g, ' ')}
                   </span>
                   {(() => {
                     const sla = getSLAStatus(invoice);
                     return sla ? (
-                      <span className={cn('px-2 py-0.5 inline-flex text-[10px] leading-4 font-semibold rounded-full w-fit', sla.color)}>
+                      <span className="px-2 py-0.5 inline-flex text-[10px] leading-4 font-semibold rounded-full w-fit" style={{ background: sla.bg, color: sla.color }}>
                         {sla.label}
                       </span>
                     ) : null;
@@ -230,13 +228,13 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
                   initialStatus={(invoice as any).po_validation_status || 'PENDING'}
                 />
               </td>
-              <td className="px-4 py-4 whitespace-nowrap text-sm text-slate-200" style={{ width: '60px' }}>
+              <td className="px-4 py-4 whitespace-nowrap text-sm" style={{ width: '60px' }}>
                 {invoice.signatures && invoice.signatures.length > 0 ? (
-                  <span className={cn(
-                    'text-xs font-semibold',
-                    invoice.signatures.filter(s => s.signed_at).length === invoice.signatures.length ? 'text-green-400' :
-                    invoice.signatures.filter(s => s.signed_at).length > 0 ? 'text-amber-400' : 'text-red-400'
-                  )}>
+                  <span className="text-xs font-semibold" style={{
+                    color: invoice.signatures.filter(s => s.signed_at).length === invoice.signatures.length ? 'var(--accent-lime)' :
+                    invoice.signatures.filter(s => s.signed_at).length > 0 ? 'var(--accent-amber)' : 'var(--accent-red)',
+                    fontVariantNumeric: 'tabular-nums'
+                  }}>
                     {invoice.signatures.filter(s => s.signed_at).length}/{invoice.signatures.length}
                   </span>
                 ) : '—'}
@@ -248,28 +246,37 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
                       e.stopPropagation();
                       onInvoiceClick?.(invoice);
                     }}
-                    className="p-2 text-slate-400 hover:text-blue-400 hover:bg-white/10 rounded-lg transition-colors"
+                    className="p-2 rounded-xl transition-colors"
+                    style={{ color: 'var(--text-muted)' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-blue)'; e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent'; }}
                     title="View Details"
                   >
-                    <Eye className="h-4 w-4" />
+                    <Eye className="h-4 w-4" strokeWidth={1.75} />
                   </button>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                     }}
-                    className="p-2 text-slate-400 hover:text-green-400 hover:bg-white/10 rounded-lg transition-colors"
+                    className="p-2 rounded-xl transition-colors"
+                    style={{ color: 'var(--text-muted)' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-lime)'; e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent'; }}
                     title="Approve"
                   >
-                    <Check className="h-4 w-4" />
+                    <Check className="h-4 w-4" strokeWidth={1.75} />
                   </button>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                     }}
-                    className="p-2 text-slate-400 hover:text-red-400 hover:bg-white/10 rounded-lg transition-colors"
+                    className="p-2 rounded-xl transition-colors"
+                    style={{ color: 'var(--text-muted)' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-red)'; e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent'; }}
                     title="Flag"
                   >
-                    <Flag className="h-4 w-4" />
+                    <Flag className="h-4 w-4" strokeWidth={1.75} />
                   </button>
                 </div>
               </td>
@@ -279,9 +286,13 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
             <tr>
               <td colSpan={16} className="px-6 py-12 text-center">
                 <div className="flex flex-col items-center justify-center">
-                  <FileText className="h-12 w-12 text-slate-600 mb-4" style={{ animation: 'pulse-soft 2.5s ease-in-out infinite' }} />
-                  <p className="text-sm text-slate-400">No invoices found</p>
-                  <p className="text-xs text-slate-500 mt-1">Upload an invoice to get started</p>
+                  <div className="p-4 rounded-2xl mb-4" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
+                    <FileText className="h-12 w-12" style={{ color: 'var(--text-muted)', animation: 'pulse-soft 2.5s ease-in-out infinite' }} />
+                  </div>
+                  <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>No invoices found</p>
+                  <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                    {emptyHint === 'filters' ? 'No invoices match the active filters — try clearing them.' : 'Upload an invoice to get started'}
+                  </p>
                 </div>
               </td>
             </tr>

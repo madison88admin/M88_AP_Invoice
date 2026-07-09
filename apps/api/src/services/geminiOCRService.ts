@@ -1,5 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { logger } from '../utils/logger';
+import { correctionLogService } from './correctionLogService';
+import type { ExtractionContext } from './consensusExtractor';
 
 interface ExtractedLineItem {
   description: string;
@@ -25,6 +27,7 @@ export interface ExtractedInvoiceData {
   line_items?: ExtractedLineItem[];
   raw_text?: string;
   extraction_method?: string;
+  engine_name?: string;
   confidence?: number;
 }
 
@@ -138,7 +141,10 @@ export class GeminiOCRService {
     return this.isConfigured;
   }
 
-  async extractFromText(rawText: string): Promise<ExtractedInvoiceData | null> {
+  async extractFromText(
+    rawText: string,
+    context?: ExtractionContext
+  ): Promise<ExtractedInvoiceData | null> {
     if (!this.isConfigured || !this.model) {
       logger.warn('Gemini OCR not configured — skipping fallback');
       return null;
@@ -153,7 +159,11 @@ export class GeminiOCRService {
         ? rawText.substring(0, MAX_GEMINI_TEXT_LENGTH) + '\n[TEXT TRUNCATED]'
         : rawText;
 
-      const prompt = EXTRACTION_PROMPT + truncatedText;
+      const fewShot = context
+        ? await correctionLogService.getFewShotPrompt(rawText, context.vendorName, context.invoiceTemplateType)
+        : '';
+
+      const prompt = (fewShot ? fewShot + '\n\n' : '') + EXTRACTION_PROMPT + truncatedText;
 
       const result = await this.model.generateContent(prompt);
       const response = await result.response;
@@ -165,7 +175,33 @@ export class GeminiOCRService {
         .replace(/```\n?/g, '')
         .trim();
 
-      const extracted = JSON.parse(cleaned) as ExtractedInvoiceData;
+      let extracted: ExtractedInvoiceData;
+      try {
+        extracted = JSON.parse(cleaned) as ExtractedInvoiceData;
+      } catch (parseError) {
+        logger.error('JSON parse failed, attempting recovery:', {
+          error: parseError instanceof Error ? parseError.message : 'unknown',
+          textLength: cleaned.length,
+          textSample: cleaned.substring(0, 200),
+        });
+
+        // FIX: Try to extract JSON object from malformed response
+        const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+          logger.error('No JSON object found in Gemini response');
+          return null;
+        }
+
+        try {
+          extracted = JSON.parse(jsonMatch[0]) as ExtractedInvoiceData;
+          logger.info('JSON recovery successful for Gemini response');
+        } catch (recoveryError) {
+          logger.error('JSON recovery failed:', {
+            error: recoveryError instanceof Error ? recoveryError.message : 'unknown',
+          });
+          return null;
+        }
+      }
 
       // Validate and clean numbers
       if (extracted.total_amount) {
@@ -184,6 +220,7 @@ export class GeminiOCRService {
       }
 
       extracted.extraction_method = 'gemini-fallback';
+      extracted.engine_name = 'gemini';
       extracted.confidence = this.calculateConfidence(extracted);
 
       logger.info(`Gemini OCR extracted: vendor=${extracted.vendor_name}, amount=${extracted.total_amount}, confidence=${extracted.confidence}`);
@@ -226,6 +263,7 @@ export class GeminiOCRService {
 
       const extracted = JSON.parse(cleaned) as ExtractedInvoiceData;
       extracted.extraction_method = 'gemini-vision-fallback';
+      extracted.engine_name = 'gemini';
       extracted.confidence = this.calculateConfidence(extracted);
 
       return extracted;

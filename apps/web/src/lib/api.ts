@@ -38,8 +38,9 @@ export const invoiceApi = {
   requestApproval: (id: string) => api.post(`/api/invoices/${id}/request-approval`),
   approve: (id: string, signerName: string) => api.post(`/api/invoices/${id}/approve`, { signerName }),
   reject: (id: string, reason: string) => api.post(`/api/invoices/${id}/reject`, { reason }),
-  post: (id: string) => api.post(`/api/invoices/${id}/post`),
+  post: (id: string, bypassVarianceCheck: boolean = false) => api.post(`/api/invoices/${id}/post`, { bypassVarianceCheck }),
   releaseHold: (id: string) => api.post(`/api/invoices/${id}/release-hold`),
+  checkNextGen: (id: string) => api.post(`/api/invoices/${id}/check-nextgen`),
   schedulePayment: (id: string, paymentDate: string) => api.post(`/api/invoices/${id}/schedule-payment`, { paymentDate }),
 };
 

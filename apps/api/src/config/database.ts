@@ -29,6 +29,16 @@ export const getPrisma = () => realPrisma;
 
 export const isDbEnabled = () => DB_ENABLED;
 
+export const isDbConnected = async () => {
+  if (!DB_ENABLED || !realPrisma) return false;
+  try {
+    await realPrisma.$queryRaw`SELECT 1`;
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export const connectDatabase = async () => {
   if (!DB_ENABLED || !realPrisma) {
     console.log('[Database] DB disabled - skipping connection');

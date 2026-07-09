@@ -35,9 +35,9 @@ export default function MyTasksWidget({ user, invoices, onFilterClick }: MyTasks
       label: 'Pending Approvals',
       count: pendingApprovals.length,
       icon: CheckCircle,
-      color: 'text-amber-400',
-      bg: 'bg-amber-500/10',
-      border: 'border-amber-500/20',
+      color: 'var(--accent-amber)',
+      bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)',
+      border: 'color-mix(in srgb, var(--accent-amber) 20%, transparent)',
       status: undefined as InvoiceStatus | undefined,
       show: pendingApprovals.length > 0,
     },
@@ -45,9 +45,9 @@ export default function MyTasksWidget({ user, invoices, onFilterClick }: MyTasks
       label: 'Ready to Post',
       count: pendingPosts.length,
       icon: Send,
-      color: 'text-blue-400',
-      bg: 'bg-blue-500/10',
-      border: 'border-blue-500/20',
+      color: 'var(--accent-purple)',
+      bg: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)',
+      border: 'color-mix(in srgb, var(--accent-purple) 20%, transparent)',
       status: InvoiceStatus.APPROVED,
       show: pendingPosts.length > 0,
     },
@@ -55,9 +55,9 @@ export default function MyTasksWidget({ user, invoices, onFilterClick }: MyTasks
       label: 'Ready to Schedule',
       count: pendingPayments.length,
       icon: Clock,
-      color: 'text-purple-400',
-      bg: 'bg-purple-500/10',
-      border: 'border-purple-500/20',
+      color: 'var(--accent-violet)',
+      bg: 'color-mix(in srgb, var(--accent-violet) 10%, transparent)',
+      border: 'color-mix(in srgb, var(--accent-violet) 20%, transparent)',
       status: InvoiceStatus.POSTED_TO_QB,
       show: pendingPayments.length > 0,
     },
@@ -65,9 +65,9 @@ export default function MyTasksWidget({ user, invoices, onFilterClick }: MyTasks
       label: 'Exceptions to Resolve',
       count: pendingExceptions.length,
       icon: AlertTriangle,
-      color: 'text-red-400',
-      bg: 'bg-red-500/10',
-      border: 'border-red-500/20',
+      color: 'var(--accent-red)',
+      bg: 'color-mix(in srgb, var(--accent-red) 10%, transparent)',
+      border: 'color-mix(in srgb, var(--accent-red) 20%, transparent)',
       status: InvoiceStatus.EXCEPTION_FLAGGED,
       show: pendingExceptions.length > 0,
     },
@@ -75,9 +75,9 @@ export default function MyTasksWidget({ user, invoices, onFilterClick }: MyTasks
 
   if (tasks.length === 0) {
     return (
-      <div className="p-4 mb-6 bg-white/5 border border-white/10 rounded-lg">
-        <p className="text-sm text-slate-400 flex items-center gap-2">
-          <FileText className="h-4 w-4 text-[#6366f1]" />
+      <div className="p-4 mb-6 rounded-xl" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
+        <p className="text-sm flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
+          <FileText className="h-4 w-4" style={{ color: 'var(--accent-purple)' }} strokeWidth={1.75} />
           No tasks requiring your attention right now.
         </p>
       </div>
@@ -86,8 +86,8 @@ export default function MyTasksWidget({ user, invoices, onFilterClick }: MyTasks
 
   return (
     <div className="mb-6">
-      <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
-        <FileText className="h-4 w-4 text-[#6366f1]" />
+      <h3 className="text-sm font-semibold mb-3 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+        <FileText className="h-4 w-4" style={{ color: 'var(--accent-purple)' }} strokeWidth={1.75} />
         My Tasks
       </h3>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -95,14 +95,17 @@ export default function MyTasksWidget({ user, invoices, onFilterClick }: MyTasks
           <button
             key={task.label}
             onClick={() => onFilterClick(task.status)}
-            className={`p-4 ${task.bg} border ${task.border} rounded-lg hover:bg-white/10 transition-colors text-left`}
+            className="p-4 rounded-xl transition-colors text-left"
+            style={{ background: task.bg, border: `1px solid ${task.border}` }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = task.bg; }}
           >
             <div className="flex items-center justify-between">
-              <span className={`text-2xl font-bold ${task.color}`}>{task.count}</span>
-              <task.icon className={`h-5 w-5 ${task.color}`} />
+              <span className="text-2xl font-bold" style={{ color: task.color, fontVariantNumeric: 'tabular-nums' }}>{task.count}</span>
+              <task.icon className="h-5 w-5" style={{ color: task.color }} strokeWidth={1.75} />
             </div>
-            <p className="text-sm text-white mt-2">{task.label}</p>
-            <p className="text-xs text-slate-400 mt-1">Click to filter</p>
+            <p className="text-sm mt-2" style={{ color: 'var(--text-primary)' }}>{task.label}</p>
+            <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Click to filter</p>
           </button>
         ))}
       </div>

@@ -1,5 +1,6 @@
 export * from './types';
 export * from './validation-rules';
+export * from './sla-utils';
 export {
   PaymentTerms,
   BillToEntity,

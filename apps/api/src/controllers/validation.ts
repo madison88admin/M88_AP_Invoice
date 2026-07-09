@@ -1,6 +1,6 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../middleware/auth';
-import { validateInvoice } from '../services/validationService';
+import { validateInvoice, checkNextGenChanges } from '../services/validationService';
 import { logAudit } from '../services/auditLogService';
 
 export const validateInvoiceController = async (
@@ -25,6 +25,26 @@ export const validateInvoiceController = async (
       action: 'INVOICE_VALIDATION_FAILED',
       note: `Validation failed: ${(error as Error).message || error}`,
     });
+    next(error);
+  }
+};
+
+export const checkNextGenChangesController = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { id } = req.params;
+    const result = await checkNextGenChanges(id);
+    await logAudit({
+      invoice_id: id,
+      performed_by: req.user!.id,
+      action: 'NEXTGEN_CHECK',
+      note: `NextGen change check completed. Has changes: ${result.hasChanges}. Changes: ${result.changes.length}`,
+    });
+    res.json(result);
+  } catch (error) {
     next(error);
   }
 };

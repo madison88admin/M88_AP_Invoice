@@ -2,7 +2,6 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { AppError } from './errorHandler';
 import { UserRole } from '@ap-invoice/shared';
-import { getMsalApp } from '../config/msal';
 
 export interface AuthRequest extends Request {
   user?: {
@@ -26,57 +25,26 @@ export const authenticate = async (
 ) => {
   try {
     const authHeader = req.headers.authorization;
-    
+
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       throw new AppError('Authentication required', 401);
     }
 
+    if (!process.env.JWT_SECRET) {
+      throw new AppError('JWT_SECRET is not configured', 500);
+    }
+
     const token = authHeader.substring(7);
-    
-    // Try JWT first (for development/testing)
-    if (process.env.JWT_SECRET) {
-      try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET) as any;
-        req.user = {
-          id: decoded.id,
-          email: decoded.email,
-          name: decoded.name,
-          role: decoded.role,
-        };
-        return next();
-      } catch (jwtError) {
-        // JWT failed, try MSAL
-      }
-    }
+    const decoded = jwt.verify(token, process.env.JWT_SECRET) as any;
 
-    // MSAL authentication for production
-    try {
-      const msalApp = getMsalApp();
-      if (!msalApp) {
-        throw new AppError('MSAL not configured — set AZURE_CLIENT_ID and AZURE_CLIENT_SECRET', 500);
-      }
+    req.user = {
+      id: decoded.id,
+      email: decoded.email,
+      name: decoded.name,
+      role: decoded.role || UserRole.ACCOUNTING_ASSOCIATE,
+    };
 
-      const oboRequest = {
-        scopes: ['https://graph.microsoft.com/.default'],
-        oboAssertion: token,
-      };
-      
-      const response = await msalApp.acquireTokenOnBehalfOf(oboRequest);
-      
-      // Extract user info from the token
-      const decoded = jwt.decode(token) as any;
-      
-      req.user = {
-        id: decoded.oid || decoded.sub,
-        email: decoded.email || decoded.upn,
-        name: decoded.name || decoded.preferred_username,
-        role: decoded.roles?.[0] || UserRole.ACCOUNTING_ASSOCIATE, // Default role if not specified
-      };
-      
-      next();
-    } catch (msalError) {
-      throw new AppError('Invalid or expired token', 401);
-    }
+    next();
   } catch (error) {
     next(new AppError('Authentication failed', 401));
   }

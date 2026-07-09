@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import api from '../lib/api';
 
 export type POValidationStatus =
   | 'PENDING'
@@ -53,7 +54,7 @@ const STATUS_CONFIG: Record<POValidationStatus, { color: string; icon: string; l
 
 const FINAL_STATUSES: POValidationStatus[] = ['MATCHED', 'WARNING', 'MISMATCH', 'NOT_FOUND', 'SKIPPED', 'ERROR'];
 
-export function POValidationBadge({ invoiceId, initialStatus = 'PENDING', pollInterval = 5000 }: POValidationBadgeProps) {
+export function POValidationBadge({ invoiceId, initialStatus = 'PENDING', pollInterval = 30000 }: POValidationBadgeProps) {
   const [status, setStatus] = useState<POValidationStatus>(initialStatus);
   const [details, setDetails] = useState<POAuditResult | null>(null);
   const [showDetails, setShowDetails] = useState(false);
@@ -66,9 +67,8 @@ export function POValidationBadge({ invoiceId, initialStatus = 'PENDING', pollIn
     let mounted = true;
     const poll = async () => {
       try {
-        const res = await fetch(`/api/invoices/${invoiceId}/po-status`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data: POAuditResult = await res.json();
+        const res = await api.get(`/api/invoices/${invoiceId}/po-status`);
+        const data: POAuditResult = res.data;
         if (!mounted) return;
         setStatus(data.status);
         setDetails(data);
@@ -131,7 +131,7 @@ export function POValidationBadge({ invoiceId, initialStatus = 'PENDING', pollIn
             bg-slate-900/95 border border-white/10
             backdrop-blur-md shadow-2xl"
         >
-          <p className="text-xs font-semibold text-slate-200 mb-3">PO Validation Details</p>
+          <p className="text-xs font-semibold text-slate-200 mb-3">NextGen Validation Details</p>
 
           {details.nextgen_data ? (
             <div className="space-y-1.5 text-xs text-slate-400">

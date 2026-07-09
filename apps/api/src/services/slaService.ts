@@ -1,15 +1,15 @@
 import prisma from '../config/database';
-import { InvoiceStatus } from '@ap-invoice/shared';
+import { InvoiceStatus, SLA_LIMITS, calcWorkingHoursElapsed } from '@ap-invoice/shared';
 
-// SLA thresholds in hours for each stage
+// SLA thresholds in hours for each stage — derived from SLA_LIMITS
 const SLA_THRESHOLDS: Partial<Record<InvoiceStatus, number>> = {
-  [InvoiceStatus.PENDING_COORDINATOR]: 168,
-  [InvoiceStatus.PENDING_MANAGER]: 168,
-  [InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER]: 168,
-  [InvoiceStatus.PENDING_MLO_PLANNING_MANAGER]: 168,
-  [InvoiceStatus.PENDING_SR_MANAGER]: 168,
-  [InvoiceStatus.PENDING_POLLY]: 168,
-  [InvoiceStatus.PENDING_ACCOUNTING]: 168,
+  [InvoiceStatus.PENDING_COORDINATOR]: SLA_LIMITS.COORDINATOR_DAYS * 24,
+  [InvoiceStatus.PENDING_MANAGER]: SLA_LIMITS.PURCHASING_MANAGER_DAYS * 24,
+  [InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER]: SLA_LIMITS.MLO_ACCOUNT_HOLDER_DAYS * 24,
+  [InvoiceStatus.PENDING_MLO_PLANNING_MANAGER]: SLA_LIMITS.MLO_PLANNING_MANAGER_DAYS * 24,
+  [InvoiceStatus.PENDING_SR_MANAGER]: SLA_LIMITS.SR_MANAGER_DAYS * 24,
+  [InvoiceStatus.PENDING_POLLY]: SLA_LIMITS.MS_POLLY_DAYS * 24,
+  [InvoiceStatus.PENDING_ACCOUNTING]: SLA_LIMITS.ACCOUNTING_DAYS * 24,
 };
 
 /**
@@ -21,7 +21,7 @@ export async function enterStage(invoiceId: string, stage: InvoiceStatus): Promi
       invoice_id: invoiceId,
       stage: stage as any,
       entered_at: new Date(),
-      sla_hours: SLA_THRESHOLDS[stage] || 48,
+      sla_hours: SLA_THRESHOLDS[stage] || (SLA_LIMITS.ACCOUNTING_DAYS * 24),
       is_breached: false,
     },
   });
@@ -46,10 +46,9 @@ export async function exitStage(invoiceId: string, stage: InvoiceStatus): Promis
 
   const exitedAt = new Date();
   const enteredAt = new Date(stageTimestamp.entered_at);
-  const durationMs = exitedAt.getTime() - enteredAt.getTime();
-  const durationHours = durationMs / (1000 * 60 * 60);
+  const durationHours = calcWorkingHoursElapsed(enteredAt, exitedAt);
 
-  const isBreached = durationHours > (SLA_THRESHOLDS[stage] || 48);
+  const isBreached = durationHours > (SLA_THRESHOLDS[stage] || (SLA_LIMITS.ACCOUNTING_DAYS * 24));
 
   await prisma.stageTimestamp.update({
     where: { id: stageTimestamp.id },
@@ -114,21 +113,24 @@ export async function getSLAStatistics(stage?: InvoiceStatus) {
     },
   });
 
-  const avgDuration = await prisma.stageTimestamp.aggregate({
+  // Get all completed stage timestamps to calculate actual duration
+  const completedStages = await prisma.stageTimestamp.findMany({
     where: {
       ...where,
       exited_at: { not: null },
     },
-    _avg: {
-      sla_hours: true,
-    },
   });
+
+  const totalDurationHours = completedStages.reduce((sum, ts) => {
+    const duration = calcWorkingHoursElapsed(new Date(ts.entered_at), new Date(ts.exited_at!));
+    return sum + duration;
+  }, 0);
 
   return {
     total_stages: totalStages,
     breached_stages: breachedStages,
     breach_rate: totalStages > 0 ? (breachedStages / totalStages) * 100 : 0,
-    average_sla_hours: avgDuration._avg?.sla_hours || 0,
+    average_duration_hours: totalStages > 0 ? totalDurationHours / totalStages : 0,
   };
 }
 

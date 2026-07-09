@@ -3,87 +3,60 @@ import { Link } from 'react-router-dom';
 import { InvoiceStatus } from '@ap-invoice/shared';
 import { useMockData } from '../contexts/MockDataContext';
 import { MockInvoice } from '../lib/mockData';
-import { FileText, Search, Filter, Download, Eye, CheckCircle, XCircle, Calendar, FileSearch } from 'lucide-react';
-
+import { FileText, Search, Filter, Download, Eye, CheckCircle, XCircle, Calendar, FileSearch, AlertTriangle } from 'lucide-react';
 export default function AccountingReview() {
   const { invoices } = useMockData();
   const [loading, setLoading] = useState(true);
   const [selectedInvoice, setSelectedInvoice] = useState<MockInvoice | null>(null);
+  const [activeTab, setActiveTab] = useState<'posted' | 'soa'>('posted');
   const [filters, setFilters] = useState({
     status: InvoiceStatus.POSTED_TO_QB,
     search: '',
   });
 
+  const statementInvoices = invoices.filter(i => i.invoice_type === 'STATEMENT');
+
   useEffect(() => {
     setLoading(false);
   }, [invoices]);
 
-  const filteredInvoices = invoices.filter(invoice =>
-    invoice.invoice_number.toLowerCase().includes(filters.search.toLowerCase()) ||
-    invoice.vendor_name.toLowerCase().includes(filters.search.toLowerCase())
-  );
+  const filteredInvoices = invoices.filter(invoice => {
+    if (activeTab === 'soa' && invoice.invoice_type !== 'STATEMENT') return false;
+    if (activeTab === 'posted' && invoice.invoice_type === 'STATEMENT') return false;
+    return invoice.invoice_number.toLowerCase().includes(filters.search.toLowerCase()) ||
+    invoice.vendor_name.toLowerCase().includes(filters.search.toLowerCase());
+  });
+
+  const getInvoiceStatusStyle = (status: string): React.CSSProperties => {
+    if (status === InvoiceStatus.POSTED_TO_QB) {
+      return { background: 'color-mix(in srgb, var(--accent-purple) 12%, transparent)', color: 'var(--accent-purple)', border: '1px solid color-mix(in srgb, var(--accent-purple) 20%, transparent)' };
+    }
+    if (status === InvoiceStatus.PAID) {
+      return { background: 'color-mix(in srgb, var(--accent-green) 12%, transparent)', color: 'var(--accent-green)', border: '1px solid color-mix(in srgb, var(--accent-green) 20%, transparent)' };
+    }
+    return { background: 'color-mix(in srgb, var(--accent-amber) 12%, transparent)', color: 'var(--accent-amber)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' };
+  };
 
   return (
-    <div className="min-h-screen relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%)' }}>
-      {/* Layered Background Atmosphere */}
-      <div style={{ position: 'fixed', inset: 0, zIndex: 0, overflow: 'hidden', pointerEvents: 'none' }}>
-        {/* Purple orb top-right */}
-        <div 
-          style={{ 
-            position: 'absolute', 
-            top: '-10%', 
-            right: '-5%', 
-            width: '500px', 
-            height: '500px',
-            background: 'radial-gradient(circle, rgba(139,92,246,0.25), transparent 70%)',
-            filter: 'blur(60px)', 
-            animation: 'drift1 10s ease-in-out infinite alternate'
-          }}
-        />
-        {/* Blue orb bottom-left */}
-        <div 
-          style={{ 
-            position: 'absolute', 
-            bottom: '-10%', 
-            left: '-5%', 
-            width: '600px', 
-            height: '600px',
-            background: 'radial-gradient(circle, rgba(59,130,246,0.2), transparent 70%)',
-            filter: 'blur(80px)', 
-            animation: 'drift2 13s ease-in-out infinite alternate'
-          }}
-        />
-        {/* Teal orb center */}
-        <div 
-          style={{ 
-            position: 'absolute', 
-            top: '40%', 
-            left: '35%', 
-            width: '400px', 
-            height: '400px',
-            background: 'radial-gradient(circle, rgba(20,184,166,0.12), transparent 70%)',
-            filter: 'blur(70px)', 
-            animation: 'drift3 9s ease-in-out infinite alternate'
-          }}
-        />
-      </div>
-
+    <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
       <div className="relative z-10">
-        <header style={{ background: 'rgba(10, 14, 30, 0.6)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }} className="px-6 py-4 sticky top-0">
+        <header className="px-6 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)', boxShadow: '0 8px 32px rgba(20,184,166,0.3)' }}>
-                <FileSearch className="h-6 w-6 text-white" />
+              <div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))', boxShadow: '0 0 16px color-mix(in srgb, var(--accent-purple) 25%, transparent)' }}>
+                <FileSearch className="h-5 w-5 text-white" strokeWidth={1.75} />
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-white">Accounting Review</h1>
-                <p className="text-xs text-slate-400">Review posted invoices and audit trail</p>
+                <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Accounting Review</h1>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Review posted invoices and audit trail</p>
               </div>
             </div>
             <Link
               to="/"
-              className="group flex items-center px-4 py-2.5 text-white rounded-xl transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5"
-              style={{ background: 'linear-gradient(135deg, #64748b 0%, #475569 100%)' }}
+              className="flex items-center px-4 py-2.5 rounded-xl transition-all text-sm font-medium"
+              style={{ color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-card-hover)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = ''; e.currentTarget.style.color = 'var(--text-secondary)'; }}
             >
               Back to Dashboard
             </Link>
@@ -91,111 +64,132 @@ export default function AccountingReview() {
         </header>
 
         <main className="px-6 py-8">
+          {/* Tab Switcher */}
+          <div className="flex gap-2 mb-6">
+            <button
+              onClick={() => setActiveTab('posted')}
+              className="px-4 py-2.5 rounded-xl transition-all text-sm font-medium"
+              style={activeTab === 'posted'
+                ? { background: 'var(--accent-purple)', color: 'white' }
+                : { background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}
+            >
+              Posted Invoices
+            </button>
+            <button
+              onClick={() => setActiveTab('soa')}
+              className="px-4 py-2.5 rounded-xl transition-all text-sm font-medium flex items-center gap-2"
+              style={activeTab === 'soa'
+                ? { background: 'var(--accent-amber)', color: 'white' }
+                : { background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}
+            >
+              <AlertTriangle className="h-4 w-4" strokeWidth={1.75} />
+              SOA Reconciliation ({statementInvoices.length})
+            </button>
+          </div>
+
+          {/* SOA Info Banner */}
+          {activeTab === 'soa' && (
+            <div className="p-4 mb-6 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-amber) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}>
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="h-5 w-5 flex-shrink-0 mt-0.5" style={{ color: 'var(--accent-amber)' }} strokeWidth={1.75} />
+                <div>
+                  <p className="text-sm font-medium" style={{ color: 'var(--accent-amber)' }}>Statement Type — Manual SOA Reconciliation Required</p>
+                  <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>These are monthly statement invoices with aggregated totals (current charges + prior overdue + finance surcharge). PO amount matching is skipped. Reconcile against vendor Statements of Account manually.</p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Filters */}
-          <div style={{ background: 'rgba(255, 255, 255, 0.04)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', border: '1px solid rgba(255, 255, 255, 0.07)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }} className="p-6 mb-6">
+          <div className="p-6 mb-6 rounded-2xl" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
             <div className="flex items-center gap-4">
               <div className="flex-1">
                 <div className="relative">
-                  <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-slate-400 h-5 w-5" />
+                  <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 h-5 w-5" style={{ color: 'var(--text-muted)' }} strokeWidth={1.75} />
                   <input
                     type="text"
                     placeholder="Search invoices..."
                     value={filters.search}
                     onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-                    className="pl-12 pr-4 py-3 w-full bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all text-white placeholder-slate-400"
+                    className="pl-12 pr-4 py-3 w-full rounded-xl focus:outline-none transition-all text-sm"
+                    style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
                   />
                 </div>
               </div>
               <select
                 value={filters.status}
                 onChange={(e) => setFilters({ ...filters, status: e.target.value as InvoiceStatus })}
-                className="px-4 py-3 bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all text-white"
+                className="px-4 py-3 rounded-xl focus:outline-none transition-all text-sm"
+                style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
               >
                 <option value={InvoiceStatus.POSTED_TO_QB}>Posted</option>
                 <option value={InvoiceStatus.PAID}>Paid</option>
                 <option value={InvoiceStatus.PAYMENT_SCHEDULED}>Payment Scheduled</option>
                 <option value="">All Statuses</option>
               </select>
-              <button className="flex items-center px-4 py-3 text-white rounded-xl transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5" style={{ background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)' }}>
-                <Filter className="h-5 w-5 mr-2" />
+              <button className="flex items-center px-4 py-3 text-white rounded-xl transition-all text-sm font-medium" style={{ background: 'var(--accent-purple)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--accent-purple-hover)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--accent-purple)'; }}
+              >
+                <Filter className="h-5 w-5 mr-2" strokeWidth={1.75} />
                 More Filters
               </button>
             </div>
           </div>
 
           {/* Invoice Table */}
-          <div style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }} className="overflow-hidden">
-            <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
-              <h2 className="text-lg font-semibold text-white">
-                Posted Invoices ({filteredInvoices.length})
+          <div className="overflow-hidden rounded-2xl" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
+            <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
+              <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
+                {activeTab === 'soa' ? 'SOA Reconciliation Queue' : 'Posted Invoices'} ({filteredInvoices.length})
               </h2>
-              <button className="flex items-center px-4 py-2.5 text-white rounded-xl transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5" style={{ background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)' }}>
-                <Download className="h-5 w-5 mr-2" />
+              <button className="flex items-center px-4 py-2.5 rounded-xl transition-all text-sm font-semibold" style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--accent-lime-hover)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--accent-lime)'; }}
+              >
+                <Download className="h-5 w-5 mr-2" strokeWidth={1.75} />
                 Export
               </button>
             </div>
 
             {loading ? (
-              <div className="p-6 text-center text-slate-400">Loading invoices...</div>
+              <div className="p-6 text-center" style={{ color: 'var(--text-muted)' }}>Loading invoices...</div>
             ) : (
-              <table className="min-w-full divide-y divide-white/5">
-                <thead style={{ background: 'rgba(255,255,255,0.05)' }}>
+              <table className="min-w-full">
+                <thead style={{ background: 'var(--bg-elevated)' }}>
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                      Invoice Number
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                      Vendor
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                      Amount
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                      Status
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                      Posted Date
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                      Actions
-                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Invoice Number</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Vendor</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Amount</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Status</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Posted Date</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/5">
-                  {filteredInvoices.map((invoice) => (
-                    <tr key={invoice.id} className="hover:bg-white/5 transition-colors">
+                <tbody>
+                  {filteredInvoices.map((invoice, idx) => (
+                    <tr key={invoice.id} className="transition-colors" style={{ borderTop: idx > 0 ? '1px solid var(--border-subtle)' : 'none' }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = ''; }}
+                    >
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center">
-                          <FileText className="h-5 w-5 text-slate-400 mr-2" />
-                          <span className="text-sm font-medium text-white">{invoice.invoice_number}</span>
+                          <FileText className="h-5 w-5 mr-2" style={{ color: 'var(--text-muted)' }} strokeWidth={1.75} />
+                          <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{invoice.invoice_number}</span>
                         </div>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-white">
-                        {invoice.vendor_name}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-white">
-                        ${invoice.total_amount.toLocaleString()}
-                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--text-secondary)' }}>{invoice.vendor_name}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>${invoice.total_amount.toLocaleString()}</td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                          invoice.status === (InvoiceStatus.POSTED_TO_QB as any)
-                            ? 'bg-blue-500/20 text-blue-300'
-                            : invoice.status === InvoiceStatus.PAID
-                            ? 'bg-green-500/20 text-green-300'
-                            : 'bg-yellow-500/20 text-yellow-300'
-                        }`}>
-                          {invoice.status}
-                        </span>
+                        <span className="px-2 py-1 text-xs font-medium rounded-full" style={getInvoiceStatusStyle(invoice.status)}>{invoice.status}</span>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-white">
-                        {invoice.updated_at ? new Date(invoice.updated_at).toLocaleDateString() : 'N/A'}
-                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--text-secondary)' }}>{invoice.updated_at ? new Date(invoice.updated_at).toLocaleDateString() : 'N/A'}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                        <button
-                          onClick={() => setSelectedInvoice(invoice)}
-                          className="text-blue-400 hover:text-blue-300 mr-3 transition-colors"
+                        <button onClick={() => setSelectedInvoice(invoice)} className="transition-colors" style={{ color: 'var(--accent-purple)' }}
+                          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-violet)'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--accent-purple)'; }}
                         >
-                          <Eye className="h-5 w-5" />
+                          <Eye className="h-5 w-5" strokeWidth={1.75} />
                         </button>
                       </td>
                     </tr>
@@ -205,89 +199,88 @@ export default function AccountingReview() {
             )}
 
             {!loading && filteredInvoices.length === 0 && (
-              <div className="p-6 text-center text-slate-400">No invoices found</div>
+              <div className="p-6 text-center" style={{ color: 'var(--text-muted)' }}>No invoices found</div>
             )}
           </div>
 
           {/* Invoice Detail Panel */}
           {selectedInvoice && (
-            <div className="mt-6" style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }}>
+            <div className="mt-6 rounded-2xl" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
               <div className="p-6">
                 <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-lg font-semibold text-white">Invoice Details</h2>
-                  <button
-                    onClick={() => setSelectedInvoice(null)}
-                    className="text-slate-400 hover:text-white transition-colors"
+                  <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Invoice Details</h2>
+                  <button onClick={() => setSelectedInvoice(null)} className="transition-colors" style={{ color: 'var(--text-muted)' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
                   >
-                    <XCircle className="h-6 w-6" />
+                    <XCircle className="h-6 w-6" strokeWidth={1.75} />
                   </button>
                 </div>
 
                 <div className="grid grid-cols-2 gap-6">
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-1">Invoice Number</label>
-                    <p className="text-sm text-white font-medium">{selectedInvoice.invoice_number}</p>
+                    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Invoice Number</label>
+                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.invoice_number}</p>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-1">Vendor</label>
-                    <p className="text-sm text-white font-medium">{selectedInvoice.vendor_name}</p>
+                    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Vendor</label>
+                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.vendor_name}</p>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-1">Amount</label>
-                    <p className="text-sm text-white font-medium">${selectedInvoice.total_amount.toLocaleString()}</p>
+                    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Amount</label>
+                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>${selectedInvoice.total_amount.toLocaleString()}</p>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-1">Currency</label>
-                    <p className="text-sm text-white font-medium">{selectedInvoice.currency}</p>
+                    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Currency</label>
+                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.currency}</p>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-1">Invoice Date</label>
-                    <p className="text-sm text-white font-medium">{selectedInvoice.invoice_date ? new Date(selectedInvoice.invoice_date).toLocaleDateString() : 'N/A'}</p>
+                    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Invoice Date</label>
+                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.invoice_date ? new Date(selectedInvoice.invoice_date).toLocaleDateString() : 'N/A'}</p>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-1">Due Date</label>
-                    <p className="text-sm text-white font-medium">
-                      {selectedInvoice.due_date
-                        ? new Date(selectedInvoice.due_date).toLocaleDateString()
-                        : 'N/A'}
-                    </p>
+                    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Due Date</label>
+                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.due_date ? new Date(selectedInvoice.due_date).toLocaleDateString() : 'N/A'}</p>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-1">Status</label>
-                    <p className="text-sm text-white font-medium">{selectedInvoice.status}</p>
+                    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Status</label>
+                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.status}</p>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-1">Posted Date</label>
-                    <p className="text-sm text-white font-medium">{selectedInvoice.updated_at ? new Date(selectedInvoice.updated_at).toLocaleDateString() : 'N/A'}</p>
+                    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Posted Date</label>
+                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.updated_at ? new Date(selectedInvoice.updated_at).toLocaleDateString() : 'N/A'}</p>
                   </div>
                 </div>
 
-                <div className="mt-6 pt-6" style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}>
-                  <h3 className="text-md font-medium text-white mb-3">Bank Information</h3>
+                <div className="mt-6 pt-6" style={{ borderTop: '1px solid var(--border-color)' }}>
+                  <h3 className="text-md font-medium mb-3" style={{ color: 'var(--text-primary)' }}>Bank Information</h3>
                   <div className="space-y-3">
                     <div>
-                      <label className="block text-sm font-medium text-slate-400 mb-1">Bank Name</label>
-                      <p className="text-sm text-white font-medium">{selectedInvoice.bank_name || 'N/A'}</p>
+                      <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Bank Name</label>
+                      <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.bank_name || 'N/A'}</p>
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-slate-400 mb-1">Account Number</label>
-                      <p className="text-sm text-white font-medium">{selectedInvoice.account_number || 'N/A'}</p>
+                      <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Account Number</label>
+                      <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.account_number || 'N/A'}</p>
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-slate-400 mb-1">SWIFT Code</label>
-                      <p className="text-sm text-white font-medium">{selectedInvoice.swift_code || 'N/A'}</p>
+                      <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>SWIFT Code</label>
+                      <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.swift_code || 'N/A'}</p>
                     </div>
-                    <div className="mt-4 p-3 rounded-lg" style={{ background: selectedInvoice.swift_code && selectedInvoice.account_number ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)', border: selectedInvoice.swift_code && selectedInvoice.account_number ? '1px solid rgba(34, 197, 94, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)' }}>
+                    <div className="mt-4 p-3 rounded-xl" style={selectedInvoice.swift_code && selectedInvoice.account_number
+                      ? { background: 'color-mix(in srgb, var(--accent-green) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-green) 20%, transparent)' }
+                      : { background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }
+                    }>
                       <div className="flex items-center">
                         {selectedInvoice.swift_code && selectedInvoice.account_number ? (
                           <>
-                            <CheckCircle className="h-5 w-5 mr-2 text-green-400" />
-                            <span className="text-sm text-green-300 font-medium">Bank information is complete and validated</span>
+                            <CheckCircle className="h-5 w-5 mr-2" style={{ color: 'var(--accent-green)' }} strokeWidth={1.75} />
+                            <span className="text-sm font-medium" style={{ color: 'var(--accent-green)' }}>Bank information is complete and validated</span>
                           </>
                         ) : (
                           <>
-                            <XCircle className="h-5 w-5 mr-2 text-red-400" />
-                            <span className="text-sm text-red-300 font-medium">Bank information is incomplete - requires vendor update</span>
+                            <XCircle className="h-5 w-5 mr-2" style={{ color: 'var(--accent-red)' }} strokeWidth={1.75} />
+                            <span className="text-sm font-medium" style={{ color: 'var(--accent-red)' }}>Bank information is incomplete - requires vendor update</span>
                           </>
                         )}
                       </div>
@@ -295,15 +288,15 @@ export default function AccountingReview() {
                   </div>
                 </div>
 
-                <div className="mt-6 pt-6" style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}>
-                  <h3 className="text-md font-medium text-white mb-3">Audit Trail</h3>
+                <div className="mt-6 pt-6" style={{ borderTop: '1px solid var(--border-color)' }}>
+                  <h3 className="text-md font-medium mb-3" style={{ color: 'var(--text-primary)' }}>Audit Trail</h3>
                   <div className="space-y-2">
-                    <div className="flex items-center text-sm text-slate-400">
-                      <CheckCircle className="h-4 w-4 mr-2 text-green-400" />
+                    <div className="flex items-center text-sm" style={{ color: 'var(--text-secondary)' }}>
+                      <CheckCircle className="h-4 w-4 mr-2" style={{ color: 'var(--accent-green)' }} strokeWidth={1.75} />
                       <span>Posted on {selectedInvoice.updated_at ? new Date(selectedInvoice.updated_at).toLocaleString() : 'N/A'}</span>
                     </div>
-                    <div className="flex items-center text-sm text-slate-400">
-                      <Calendar className="h-4 w-4 mr-2 text-blue-400" />
+                    <div className="flex items-center text-sm" style={{ color: 'var(--text-secondary)' }}>
+                      <Calendar className="h-4 w-4 mr-2" style={{ color: 'var(--accent-purple)' }} strokeWidth={1.75} />
                       <span>Created on {selectedInvoice.created_at ? new Date(selectedInvoice.created_at).toLocaleString() : 'N/A'}</span>
                     </div>
                   </div>

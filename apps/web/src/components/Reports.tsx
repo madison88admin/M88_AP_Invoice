@@ -44,7 +44,7 @@ interface ExceptionRateData {
   exception_rate: number;
 }
 
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8'];
+const COLORS = ['#6C5CE7', '#C6FF3D', '#F59E0B', '#EF4444', '#3B82F6'];
 
 export default function Reports() {
   const { invoices } = useMockData();
@@ -53,7 +53,7 @@ export default function Reports() {
   // Calculate KPI metrics from real invoice data
   const kpiMetrics: KPIMetrics = {
     total_invoices: invoices.length,
-    pending_approvals: invoices.filter(i => i.status === 'PENDING_MANAGER' || i.status === 'PENDING_MLO_PLANNING_MANAGER' || i.status === 'PENDING_SR_MANAGER' || i.status === 'PENDING_POLLY').length,
+    pending_approvals: invoices.filter(i => i.status === 'PENDING_MANAGER' || i.status === 'PENDING_MLO_ACCOUNT_HOLDER' || i.status === 'PENDING_MLO_PLANNING_MANAGER' || i.status === 'PENDING_SR_MANAGER' || i.status === 'PENDING_POLLY').length,
     pending_exceptions: invoices.filter(i => i.exceptions.length > 0).length,
     scheduled_payments: invoices.filter(i => i.status === 'PAYMENT_SCHEDULED').length,
     total_amount_pending: invoices.filter(i => i.status !== 'PAID').reduce((sum, i) => sum + i.total_amount, 0),
@@ -86,14 +86,14 @@ export default function Reports() {
       if (existing) {
         existing.total_invoices++;
         existing.total_amount += inv.total_amount;
-        if (inv.status === 'PAID' || inv.status === 'APPROVED') existing.approved_invoices++;
+        if (['PAID', 'APPROVED', 'PENDING_ACCOUNTING', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED'].includes(inv.status)) existing.approved_invoices++;
         if (inv.status === 'REJECTED') existing.rejected_invoices++;
         if (['VALIDATION_PENDING', 'PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_MLO_ACCOUNT_HOLDER', 'PENDING_MLO_PLANNING_MANAGER', 'PENDING_SR_MANAGER', 'PENDING_POLLY'].includes(inv.status)) existing.pending_invoices++;
       } else {
         buckets.set(key, {
           date: key,
           total_invoices: 1,
-          approved_invoices: ['PAID', 'APPROVED'].includes(inv.status) ? 1 : 0,
+          approved_invoices: ['PAID', 'APPROVED', 'PENDING_ACCOUNTING', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED'].includes(inv.status) ? 1 : 0,
           rejected_invoices: inv.status === 'REJECTED' ? 1 : 0,
           pending_invoices: ['VALIDATION_PENDING', 'PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_MLO_ACCOUNT_HOLDER', 'PENDING_MLO_PLANNING_MANAGER', 'PENDING_SR_MANAGER', 'PENDING_POLLY'].includes(inv.status) ? 1 : 0,
           total_amount: inv.total_amount,
@@ -106,7 +106,7 @@ export default function Reports() {
   // Calculate payment status data from real invoice data
   const paymentStatusData: PaymentStatusData[] = [
     { status: 'Paid', count: invoices.filter(i => i.status === 'PAID').length, total_amount: invoices.filter(i => i.status === 'PAID').reduce((sum, i) => sum + i.total_amount, 0) },
-    { status: 'Pending', count: invoices.filter(i => i.status === 'PENDING_MANAGER' || i.status === 'PENDING_MLO_PLANNING_MANAGER' || i.status === 'PENDING_SR_MANAGER' || i.status === 'PENDING_POLLY').length, total_amount: invoices.filter(i => i.status === 'PENDING_MANAGER' || i.status === 'PENDING_MLO_PLANNING_MANAGER' || i.status === 'PENDING_SR_MANAGER' || i.status === 'PENDING_POLLY').reduce((sum, i) => sum + i.total_amount, 0) },
+    { status: 'Pending', count: invoices.filter(i => i.status === 'PENDING_MANAGER' || i.status === 'PENDING_MLO_ACCOUNT_HOLDER' || i.status === 'PENDING_MLO_PLANNING_MANAGER' || i.status === 'PENDING_SR_MANAGER' || i.status === 'PENDING_POLLY').length, total_amount: invoices.filter(i => i.status === 'PENDING_MANAGER' || i.status === 'PENDING_MLO_ACCOUNT_HOLDER' || i.status === 'PENDING_MLO_PLANNING_MANAGER' || i.status === 'PENDING_SR_MANAGER' || i.status === 'PENDING_POLLY').reduce((sum, i) => sum + i.total_amount, 0) },
     { status: 'Scheduled', count: invoices.filter(i => i.status === 'PAYMENT_SCHEDULED').length, total_amount: invoices.filter(i => i.status === 'PAYMENT_SCHEDULED').reduce((sum, i) => sum + i.total_amount, 0) },
   ];
 
@@ -161,70 +161,30 @@ export default function Reports() {
   })();
 
   return (
-    <div className="min-h-screen relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%)' }}>
-      {/* Layered Background Atmosphere */}
-      <div style={{ position: 'fixed', inset: 0, zIndex: 0, overflow: 'hidden', pointerEvents: 'none' }}>
-        {/* Purple orb top-right */}
-        <div 
-          style={{ 
-            position: 'absolute', 
-            top: '-10%', 
-            right: '-5%', 
-            width: '500px', 
-            height: '500px',
-            background: 'radial-gradient(circle, rgba(139,92,246,0.25), transparent 70%)',
-            filter: 'blur(60px)', 
-            animation: 'drift1 10s ease-in-out infinite alternate'
-          }}
-        />
-        {/* Blue orb bottom-left */}
-        <div 
-          style={{ 
-            position: 'absolute', 
-            bottom: '-10%', 
-            left: '-5%', 
-            width: '600px', 
-            height: '600px',
-            background: 'radial-gradient(circle, rgba(59,130,246,0.2), transparent 70%)',
-            filter: 'blur(80px)', 
-            animation: 'drift2 13s ease-in-out infinite alternate'
-          }}
-        />
-        {/* Teal orb center */}
-        <div 
-          style={{ 
-            position: 'absolute', 
-            top: '40%', 
-            left: '35%', 
-            width: '400px', 
-            height: '400px',
-            background: 'radial-gradient(circle, rgba(20,184,166,0.12), transparent 70%)',
-            filter: 'blur(70px)', 
-            animation: 'drift3 9s ease-in-out infinite alternate'
-          }}
-        />
-      </div>
-
+    <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
       <div className="relative z-10 max-w-7xl mx-auto p-6">
-        <header style={{ background: 'rgba(10, 14, 30, 0.6)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }} className="px-6 py-4 sticky top-0 -mx-6 mb-8">
+        <header className="px-6 py-4 -mx-6 mb-8" style={{ borderBottom: '1px solid var(--border-color)' }}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <Link to="/" className="text-slate-300 hover:text-white transition-colors">
-                <ArrowLeft className="h-6 w-6" />
+              <Link to="/" className="transition-colors" style={{ color: 'var(--text-muted)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
+              >
+                <ArrowLeft className="h-5 w-5" strokeWidth={1.75} />
               </Link>
-              <div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, #3b82f6 0%, #6366f1 100%)', boxShadow: '0 8px 32px rgba(59,130,246,0.3)' }}>
-                <TrendingUp className="h-6 w-6 text-white" />
+              <div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))', boxShadow: '0 0 16px color-mix(in srgb, var(--accent-purple) 25%, transparent)' }}>
+                <TrendingUp className="h-5 w-5 text-white" strokeWidth={1.75} />
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-white">Reports & Analytics</h1>
-                <p className="text-xs text-slate-400">Comprehensive insights into your invoice processing performance</p>
+                <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Reports & Analytics</h1>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Comprehensive insights into your invoice processing performance</p>
               </div>
             </div>
           </div>
         </header>
 
         {/* Tab Navigation */}
-        <div style={{ background: 'rgba(255, 255, 255, 0.04)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', border: '1px solid rgba(255, 255, 255, 0.07)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }} className="p-2 mb-6">
+        <div className="p-2 mb-6 rounded-2xl" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
           <div className="flex space-x-2">
             {[
               { id: 'kpi', label: 'KPI Dashboard', icon: TrendingUp },
@@ -236,14 +196,15 @@ export default function Reports() {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id as any)}
-                className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-medium transition-all duration-200 ${
-                  activeTab === tab.id
-                    ? 'text-white shadow-md'
-                    : 'text-slate-400 hover:bg-white/10'
-                }`}
-                style={activeTab === tab.id ? { background: 'linear-gradient(135deg, #3b82f6 0%, #6366f1 100%)' } : {}}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-medium transition-all duration-200"
+                style={activeTab === tab.id
+                  ? { background: 'var(--accent-purple)', color: '#fff', boxShadow: '0 0 16px color-mix(in srgb, var(--accent-purple) 20%, transparent)' }
+                  : { color: 'var(--text-muted)' }
+                }
+                onMouseEnter={(e) => { if (activeTab !== tab.id) { e.currentTarget.style.background = 'var(--bg-card-hover)'; e.currentTarget.style.color = 'var(--text-primary)'; } }}
+                onMouseLeave={(e) => { if (activeTab !== tab.id) { e.currentTarget.style.background = ''; e.currentTarget.style.color = 'var(--text-muted)'; } }}
               >
-                <tab.icon className="h-5 w-5" />
+                <tab.icon className="h-5 w-5" strokeWidth={1.75} />
                 {tab.label}
               </button>
             ))}
@@ -305,19 +266,19 @@ export default function Reports() {
 
         {/* Invoice Volume */}
         {activeTab === 'volume' && (
-          <div style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }} className="p-6">
-            <h2 className="text-xl font-semibold text-white mb-4">Invoice Volume Over Time</h2>
+          <div className="p-6 rounded-2xl" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
+            <h2 className="text-xl font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>Invoice Volume Over Time</h2>
             <ResponsiveContainer width="100%" height={400}>
               <BarChart data={invoiceVolumeData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-                <XAxis dataKey="date" stroke="#94a3b8" />
-                <YAxis stroke="#94a3b8" />
-                <Tooltip contentStyle={{ backgroundColor: 'rgba(15, 23, 42, 0.95)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.1)', color: '#fff' }} />
-                <Legend />
-                <Bar dataKey="total_invoices" fill="#3b82f6" name="Total" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="approved_invoices" fill="#10b981" name="Approved" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="rejected_invoices" fill="#f59e0b" name="Rejected" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="pending_invoices" fill="#ef4444" name="Pending" radius={[4, 4, 0, 0]} />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-subtle)" />
+                <XAxis dataKey="date" stroke="var(--text-muted)" />
+                <YAxis stroke="var(--text-muted)" />
+                <Tooltip contentStyle={{ background: 'var(--bg-card)', borderRadius: '12px', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }} />
+                <Legend wrapperStyle={{ color: 'var(--text-secondary)' }} />
+                <Bar dataKey="total_invoices" fill="#6C5CE7" name="Total" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="approved_invoices" fill="#C6FF3D" name="Approved" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="rejected_invoices" fill="#F59E0B" name="Rejected" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="pending_invoices" fill="#EF4444" name="Pending" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -325,8 +286,8 @@ export default function Reports() {
 
         {/* Payment Status */}
         {activeTab === 'payments' && (
-          <div style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }} className="p-6">
-            <h2 className="text-xl font-semibold text-white mb-4">Payment Batch Status</h2>
+          <div className="p-6 rounded-2xl" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
+            <h2 className="text-xl font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>Payment Batch Status</h2>
             <ResponsiveContainer width="100%" height={400}>
               <PieChart>
                 <Pie
@@ -343,7 +304,7 @@ export default function Reports() {
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Pie>
-                <Tooltip contentStyle={{ backgroundColor: 'rgba(15, 23, 42, 0.95)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.1)', color: '#fff' }} />
+                <Tooltip contentStyle={{ background: 'var(--bg-card)', borderRadius: '12px', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }} />
               </PieChart>
             </ResponsiveContainer>
           </div>
@@ -351,16 +312,16 @@ export default function Reports() {
 
         {/* Vendor Spending */}
         {activeTab === 'vendors' && (
-          <div style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }} className="p-6">
-            <h2 className="text-xl font-semibold text-white mb-4">Top 10 Vendors by Spending</h2>
+          <div className="p-6 rounded-2xl" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
+            <h2 className="text-xl font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>Top 10 Vendors by Spending</h2>
             <ResponsiveContainer width="100%" height={400}>
               <BarChart data={vendorSpendingData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-                <XAxis dataKey="vendor_name" angle={-45} textAnchor="end" height={100} stroke="#94a3b8" />
-                <YAxis stroke="#94a3b8" />
-                <Tooltip contentStyle={{ backgroundColor: 'rgba(15, 23, 42, 0.95)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.1)', color: '#fff' }} />
-                <Legend />
-                <Bar dataKey="total_amount" fill="#3b82f6" name="Total Amount" radius={[4, 4, 0, 0]} />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-subtle)" />
+                <XAxis dataKey="vendor_name" angle={-45} textAnchor="end" height={100} stroke="var(--text-muted)" />
+                <YAxis stroke="var(--text-muted)" />
+                <Tooltip contentStyle={{ background: 'var(--bg-card)', borderRadius: '12px', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }} />
+                <Legend wrapperStyle={{ color: 'var(--text-secondary)' }} />
+                <Bar dataKey="total_amount" fill="#6C5CE7" name="Total Amount" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -368,16 +329,16 @@ export default function Reports() {
 
         {/* Exception Rate */}
         {activeTab === 'exceptions' && (
-          <div style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }} className="p-6">
-            <h2 className="text-xl font-semibold text-white mb-4">Exception Rate Over Time</h2>
+          <div className="p-6 rounded-2xl" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
+            <h2 className="text-xl font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>Exception Rate Over Time</h2>
             <ResponsiveContainer width="100%" height={400}>
               <LineChart data={exceptionRateData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-                <XAxis dataKey="date" stroke="#94a3b8" />
-                <YAxis stroke="#94a3b8" />
-                <Tooltip contentStyle={{ backgroundColor: 'rgba(15, 23, 42, 0.95)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.1)', color: '#fff' }} />
-                <Legend />
-                <Line type="monotone" dataKey="exception_rate" stroke="#ef4444" name="Exception Rate %" strokeWidth={3} dot={{ fill: '#ef4444', strokeWidth: 2, r: 4 }} />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-subtle)" />
+                <XAxis dataKey="date" stroke="var(--text-muted)" />
+                <YAxis stroke="var(--text-muted)" />
+                <Tooltip contentStyle={{ background: 'var(--bg-card)', borderRadius: '12px', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }} />
+                <Legend wrapperStyle={{ color: 'var(--text-secondary)' }} />
+                <Line type="monotone" dataKey="exception_rate" stroke="#EF4444" name="Exception Rate %" strokeWidth={3} dot={{ fill: '#EF4444', strokeWidth: 2, r: 4 }} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -385,46 +346,51 @@ export default function Reports() {
 
         {/* Recent Activity */}
         {activeTab === 'activity' && (
-          <div style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }} className="p-6">
-            <h2 className="text-xl font-semibold text-white mb-4">Recent Activity</h2>
+          <div className="p-6 rounded-2xl" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
+            <h2 className="text-xl font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>Recent Activity</h2>
             {invoices && invoices.length > 0 ? (
               <div className="space-y-3">
-                {invoices.slice(0, 10).map((invoice) => (
+                {invoices.slice(0, 10).map((invoice) => {
+                  const activityStyle: React.CSSProperties = invoice.status === 'PAID'
+                    ? { background: 'color-mix(in srgb, var(--accent-green) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-green) 20%, transparent)' }
+                    : invoice.status === 'EXCEPTION_FLAGGED'
+                    ? { background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }
+                    : invoice.status.includes('PENDING')
+                    ? { background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }
+                    : { background: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-purple) 20%, transparent)' };
+                  const iconColor = invoice.status === 'PAID' ? 'var(--accent-green)' :
+                    invoice.status === 'EXCEPTION_FLAGGED' ? 'var(--accent-red)' :
+                    invoice.status.includes('PENDING') ? 'var(--accent-amber)' : 'var(--accent-purple)';
+                  return (
                   <div
                     key={invoice.id}
-                    className="flex items-center justify-between p-4 rounded-lg transition-colors hover:bg-white/5"
-                    style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}
+                    className="flex items-center justify-between p-4 rounded-xl transition-colors"
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = ''; }}
                   >
                     <div className="flex items-center gap-4">
-                      <div className={`p-2 rounded-lg ${
-                        invoice.status === 'PAID' ? 'bg-green-500/20' :
-                        invoice.status === 'EXCEPTION_FLAGGED' ? 'bg-red-500/20' :
-                        invoice.status.includes('PENDING') ? 'bg-amber-500/20' :
-                        'bg-blue-500/20'
-                      }`}>
-                        <FileText className="h-4 w-4 ${
-                          invoice.status === 'PAID' ? 'text-green-400' :
-                          invoice.status === 'EXCEPTION_FLAGGED' ? 'text-red-400' :
-                          invoice.status.includes('PENDING') ? 'text-amber-400' :
-                          'text-blue-400'
-                        }" />
+                      <div className="p-2 rounded-lg" style={activityStyle}>
+                        <FileText className="h-4 w-4" style={{ color: iconColor }} strokeWidth={1.75} />
                       </div>
                       <div>
-                        <p className="text-sm font-medium text-white">{invoice.invoice_number}</p>
-                        <p className="text-xs text-slate-400">{invoice.vendor_name || 'Unknown Vendor'}</p>
+                        <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{invoice.invoice_number}</p>
+                        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{invoice.vendor_name || 'Unknown Vendor'}</p>
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className="text-sm font-medium text-white">${invoice.total_amount.toLocaleString()}</p>
-                      <p className="text-xs text-slate-400">{invoice.status}</p>
+                      <p className="text-sm font-medium" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>${invoice.total_amount.toLocaleString()}</p>
+                      <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{invoice.status}</p>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div className="text-center py-12">
-                <FileText className="h-12 w-12 text-slate-600 mx-auto mb-4" />
-                <p className="text-sm text-slate-400">No recent activity</p>
+                <div className="inline-flex p-4 rounded-2xl mb-3" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
+                  <FileText className="h-8 w-8" style={{ color: 'var(--text-subtle)' }} strokeWidth={1.75} />
+                </div>
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No recent activity</p>
               </div>
             )}
           </div>
@@ -435,29 +401,30 @@ export default function Reports() {
 }
 
 function KPICard({ title, value, icon, color }: { title: string; value: string | number; icon: React.ReactNode; color: string }) {
-  const colorClasses = {
-    blue: 'bg-gradient-to-br from-blue-500 to-blue-600',
-    green: 'bg-gradient-to-br from-green-500 to-green-600',
-    yellow: 'bg-gradient-to-br from-yellow-500 to-yellow-600',
-    red: 'bg-gradient-to-br from-red-500 to-red-600',
-    purple: 'bg-gradient-to-br from-purple-500 to-purple-600',
+  const colorStyles: Record<string, React.CSSProperties> = {
+    blue: { background: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-purple) 20%, transparent)', color: 'var(--accent-purple)' },
+    green: { background: 'color-mix(in srgb, var(--accent-green) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-green) 20%, transparent)', color: 'var(--accent-green)' },
+    yellow: { background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)', color: 'var(--accent-amber)' },
+    red: { background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)', color: 'var(--accent-red)' },
+    purple: { background: 'color-mix(in srgb, var(--accent-violet) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-violet) 20%, transparent)', color: 'var(--accent-violet)' },
   };
 
   return (
-    <div className="group transition-all duration-300 overflow-hidden" style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)' }}>
+    <div className="rounded-2xl overflow-hidden transition-all duration-300" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}
+      onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--border-color-hover)'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border-color)'; }}
+    >
       <div className="relative p-6">
-        <div className="absolute top-0 right-0 w-32 h-32 rounded-full -mr-16 -mt-16 opacity-30 group-hover:opacity-50 transition-opacity" style={{ background: 'radial-gradient(circle, rgba(255,255,255,0.15), transparent 70%)' }} />
         <div className="relative flex items-center justify-between">
           <div>
-            <p className="text-sm font-semibold text-slate-400 mb-1">{title}</p>
-            <p className="text-3xl font-bold text-white">{value}</p>
+            <p className="text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>{title}</p>
+            <p className="text-3xl font-bold" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{value}</p>
           </div>
-          <div className={`${colorClasses[color as keyof typeof colorClasses]} p-4 rounded-2xl shadow-lg group-hover:scale-110 transition-transform duration-300`}>
+          <div className="p-4 rounded-2xl" style={colorStyles[color] || colorStyles.blue}>
             {icon}
           </div>
         </div>
       </div>
-      <div className="h-1" style={{ background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent)' }} />
     </div>
   );
 }

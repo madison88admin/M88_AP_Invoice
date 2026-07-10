@@ -25,12 +25,12 @@ interface MockDataContextType {
   error: string | null;
   refresh: (silent?: boolean) => Promise<void>;
   updateInvoice: (id: string, updates: Partial<MockInvoice>) => void;
-  approveInvoice: (id: string, signerName: string, signerRole: string) => Promise<void>;
+  approveInvoice: (id: string, signerName: string) => Promise<void>;
   rejectInvoice: (id: string, reason: string) => Promise<void>;
   postToQuickBooks: (id: string) => Promise<void>;
   resolveException: (invoiceId: string, exceptionId: string, resolution: string) => Promise<{ approvalWarning?: string } | void>;
-  createPaymentBatch: (invoiceIds: string[], batchName: string) => Promise<void>;
-  approvePaymentBatch: (batchId: string, approver: string) => Promise<void>;
+  createPaymentBatch: (paymentIds: string[]) => Promise<void>;
+  approvePaymentBatch: (batchId: string) => Promise<void>;
   getInvoicesByStatus: (status: InvoiceStatus) => MockInvoice[];
   getInvoicesByStage: (stage: string) => MockInvoice[];
   getInvoicesByBrandTier: (brandTier: string) => MockInvoice[];
@@ -165,17 +165,17 @@ const apiInvoiceToMock = (invoice: any): MockInvoice => {
 
 const apiBatchToMock = (batch: any): MockPaymentBatch => ({
   id: batch.id || '',
-  batch_name: batch.batch_name || batch.name || '',
+  batch_name: batch.batch_number || batch.batch_name || batch.name || '',
   status: batch.status || 'DRAFT',
   total_amount: Number(batch.total_amount || 0),
   currency: batch.currency || 'USD',
   due_date: batch.due_date ? dateToString(batch.due_date) : dateToString(new Date()),
-  invoice_count: batch.invoice_count || 0,
-  invoices: batch.invoice_ids || [],
+  invoice_count: batch.payment_count || batch.invoice_count || 0,
+  invoices: (batch.payments || batch.invoice_ids || []).map((p: any) => p.invoice_id || p.invoice?.id || p.id || ''),
   created_at: dateToString(batch.created_at),
   submitted_at: batch.submitted_at ? dateToString(batch.submitted_at) : undefined,
   approved_at: batch.approved_at ? dateToString(batch.approved_at) : undefined,
-  approved_by: batch.approved_by || undefined,
+  approved_by: batch.approved_by || batch.processed_by || undefined,
   processed_at: batch.processed_at ? dateToString(batch.processed_at) : undefined,
   confirmation_pdf: batch.confirmation_pdf || undefined,
 });
@@ -191,24 +191,31 @@ export const MockDataProvider = ({ children }: MockDataProviderProps) => {
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Only fetch payment batches for roles that have permission
-  const canFetchPaymentBatches = user && ['ACCOUNTING_SUPERVISOR', 'CFO', 'SUPERADMIN', 'IT_ADMIN'].includes(user.role);
+  const canFetchPaymentBatches = user && ['ACCOUNTING_SUPERVISOR', 'CFO', 'IT_ADMIN'].includes(user.role);
+  // SUPERADMIN: no invoice/vendor data needed (system maintenance only)
+  const skipInvoiceFetch = user?.role === 'SUPERADMIN';
 
   const refresh = useCallback(async (silent = false) => {
     if (!isAuthenticated) return;
     try {
       if (silent) setIsRefreshing(true); else setLoading(true);
       setError(null);
-      const fetches: Promise<any>[] = [
-        invoiceApi.getAll().catch(() => ({ data: [] })),
-        vendorApi.getAll().catch(() => ({ data: [] })),
-      ];
+      const fetches: Promise<any>[] = [];
+      if (!skipInvoiceFetch) {
+        fetches.push(invoiceApi.getAll().catch(() => ({ data: [] })));
+        fetches.push(vendorApi.getAll().catch(() => ({ data: [] })));
+      }
       if (canFetchPaymentBatches) {
         fetches.push(paymentBatchApi.getAll().catch(() => ({ data: [] })));
       }
-      const [invoiceRes, vendorRes, batchRes] = await Promise.all(fetches);
-      setInvoices((invoiceRes.data || []).map(apiInvoiceToMock));
-      setVendors((vendorRes.data || []).map(apiVendorToMock));
+      const results = await Promise.all(fetches);
+      if (!skipInvoiceFetch) {
+        const [invoiceRes, vendorRes] = results;
+        setInvoices((invoiceRes.data || []).map(apiInvoiceToMock));
+        setVendors((vendorRes.data || []).map(apiVendorToMock));
+      }
       if (canFetchPaymentBatches) {
+        const batchRes = skipInvoiceFetch ? results[0] : results[2];
         setPaymentBatches((batchRes?.data || []).map(apiBatchToMock));
       }
     } catch (err: any) {
@@ -217,7 +224,7 @@ export const MockDataProvider = ({ children }: MockDataProviderProps) => {
       setLoading(false);
       setIsRefreshing(false);
     }
-  }, [isAuthenticated, canFetchPaymentBatches]);
+  }, [isAuthenticated, canFetchPaymentBatches, skipInvoiceFetch]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -273,7 +280,7 @@ export const MockDataProvider = ({ children }: MockDataProviderProps) => {
 
   const approvePaymentBatch = useCallback(
     async (batchId: string) => {
-      await paymentBatchApi.process(batchId);
+      await paymentBatchApi.approve(batchId);
       await refresh();
     },
     [refresh]

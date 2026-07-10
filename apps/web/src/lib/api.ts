@@ -98,4 +98,31 @@ export const notificationApi = {
   markAllAsRead: () => api.patch('/api/notifications/mark-all-read'),
 };
 
+export const slaAnalyticsApi = {
+  getSummary: (days?: number) => api.get('/api/sla-analytics/summary', { params: { days } }),
+  getCycleTimes: (days?: number) => api.get('/api/sla-analytics/cycle-times', { params: { days } }),
+  getBreaches: () => api.get('/api/sla-analytics/breaches'),
+  getBottlenecks: () => api.get('/api/sla-analytics/bottlenecks'),
+};
+
+export const onHoldQueueApi = {
+  getAll: (status?: string, vendorId?: string) => api.get('/api/on-hold-queue', { params: { status, vendorId } }),
+  getStats: () => api.get('/api/on-hold-queue/stats'),
+};
+
+export const auditExportApi = {
+  exportCsv: (params?: any) => api.get('/api/audit-logs/export', { params, responseType: 'blob' }),
+};
+
+export const userApi = {
+  getAll: () => api.get('/api/users'),
+  getById: (id: string) => api.get(`/api/users/${id}`),
+  create: (data: { name: string; email: string; role: string; password: string; active?: boolean }) =>
+    api.post('/api/users', data),
+  update: (id: string, data: Partial<{ name: string; email: string; role: string; password: string; active: boolean }>) =>
+    api.patch(`/api/users/${id}`, data),
+  delete: (id: string) => api.delete(`/api/users/${id}`),
+  getRoles: () => api.get('/api/users/roles/list'),
+};
+
 export default api;

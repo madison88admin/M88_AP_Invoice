@@ -12,6 +12,10 @@ import AccountingReview from './components/AccountingReview';
 import VendorManagement from './components/VendorManagement';
 import AuditLog from './components/AuditLog';
 import ExtractionDashboard from './components/ExtractionDashboard';
+import SLAAnalyticsDashboard from './components/SLAAnalyticsDashboard';
+import OnHoldQueue from './components/OnHoldQueue';
+import UserManagement from './components/UserManagement';
+import SettingsPage from './components/SettingsPage';
 import ProtectedRoute from './components/ProtectedRoute';
 
 function App() {
@@ -74,6 +78,26 @@ function App() {
             <Route path="/extraction-analytics" element={
               <ProtectedRoute>
                 <ExtractionDashboard />
+              </ProtectedRoute>
+            } />
+            <Route path="/sla-analytics" element={
+              <ProtectedRoute>
+                <SLAAnalyticsDashboard />
+              </ProtectedRoute>
+            } />
+            <Route path="/on-hold-queue" element={
+              <ProtectedRoute>
+                <OnHoldQueue />
+              </ProtectedRoute>
+            } />
+            <Route path="/users" element={
+              <ProtectedRoute>
+                <UserManagement />
+              </ProtectedRoute>
+            } />
+            <Route path="/settings" element={
+              <ProtectedRoute>
+                <SettingsPage />
               </ProtectedRoute>
             } />
           </Routes>

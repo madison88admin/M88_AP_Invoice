@@ -161,7 +161,7 @@ export default function Reports() {
   })();
 
   return (
-    <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
+    <div className="min-h-screen animate-page-in" style={{ background: 'var(--bg-base)' }}>
       <div className="relative z-10 max-w-7xl mx-auto p-6">
         <header className="px-6 py-4 -mx-6 mb-8" style={{ borderBottom: '1px solid var(--border-color)' }}>
           <div className="flex items-center justify-between">

@@ -331,7 +331,7 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
   }
 
   // Only coordinators, accounting supervisors, or admins can edit invoice data
-  const allowedRoles = ['PURCHASING_COORDINATOR', 'ACCOUNTING_SUPERVISOR', 'ADMIN', 'SUPERADMIN', 'IT_ADMIN'];
+  const allowedRoles = ['PURCHASING_COORDINATOR', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'];
   if (!allowedRoles.includes(userRole)) {
     throw new AppError('Not authorized to edit invoice data', 403);
   }

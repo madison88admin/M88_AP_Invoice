@@ -36,6 +36,7 @@ model Vendor {
   vat_number              String?
   eori_number             String?
   
+  contact_email           String?
   is_active               Boolean  @default(true)
   onboarded_by            String?
   bank_verified_at        DateTime?

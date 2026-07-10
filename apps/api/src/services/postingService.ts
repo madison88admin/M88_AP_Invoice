@@ -3,6 +3,8 @@ import { InvoiceStatus, ExceptionReason, SLA_LIMITS, calcWorkingHoursElapsed } f
 import { AppError } from '../middleware/errorHandler';
 import { nextGenService } from './nextGenService';
 import { inAppNotificationService } from './inAppNotificationService';
+import { sendPaymentConfirmationToSupplier } from './notificationService';
+import { logger } from '../utils/logger';
 
 // QuickBooks Online API configuration
 const QB_CLIENT_ID = process.env.QB_CLIENT_ID || '';
@@ -500,6 +502,31 @@ export async function processPayment(paymentId: string, userId: string) {
       note: `Payment processed successfully. Reference: ${paymentResult.reference}`,
     },
   });
+
+  // Send payment confirmation email to supplier if vendor has contact email
+  try {
+    const fullInvoice = await prisma.invoice.findUnique({
+      where: { id: payment.invoice_id },
+      include: { vendor: true },
+    });
+    if (fullInvoice?.vendor?.contact_email) {
+      await sendPaymentConfirmationToSupplier(
+        payment.invoice_id,
+        fullInvoice.invoice_number,
+        fullInvoice.vendor.name,
+        fullInvoice.vendor.contact_email,
+        Number(payment.amount),
+        payment.currency || 'USD',
+        paymentResult.reference,
+        new Date()
+      );
+      logger.info(`Payment confirmation email sent to ${fullInvoice.vendor.contact_email} for invoice ${fullInvoice.invoice_number}`);
+    } else {
+      logger.info(`No vendor contact email on file for invoice ${fullInvoice?.invoice_number} — skipping supplier confirmation email`);
+    }
+  } catch (emailError) {
+    logger.error('Failed to send payment confirmation email to supplier:', emailError);
+  }
 
   return paymentResult;
 }

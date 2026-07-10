@@ -1,33 +1,19 @@
 // Role-based permissions
 export const ROLE_PERMISSIONS = {
   SUPERADMIN: {
-    canApprove: true,
-    canReject: true,
-    canPost: true,
-    canSchedulePayment: true,
+    canApprove: false,
+    canReject: false,
+    canPost: false,
+    canSchedulePayment: false,
     canUpload: false,
-    canViewAllInvoices: true,
-    canViewReports: true,
-    canViewFinancialReports: true,
+    canValidate: false,
+    canRequestApproval: false,
+    canViewAllInvoices: false,
+    canViewReports: false,
+    canViewFinancialReports: false,
     canManageUsers: true,
-    canEditInvoice: true,
-    canDeleteInvoice: true,
-    canViewSystemHealth: true,
-    canViewErrorLogs: true,
-    canConfigureSystem: true,
-  },
-  ADMIN: {
-    canApprove: true,
-    canReject: true,
-    canPost: true,
-    canSchedulePayment: true,
-    canUpload: true,
-    canViewAllInvoices: true,
-    canViewReports: true,
-    canViewFinancialReports: true,
-    canManageUsers: true,
-    canEditInvoice: true,
-    canDeleteInvoice: true,
+    canEditInvoice: false,
+    canDeleteInvoice: false,
     canViewSystemHealth: true,
     canViewErrorLogs: true,
     canConfigureSystem: true,
@@ -37,7 +23,9 @@ export const ROLE_PERMISSIONS = {
     canReject: false,
     canPost: true,
     canSchedulePayment: true,
-    canUpload: true,
+    canUpload: false,
+    canValidate: false,
+    canRequestApproval: false,
     canViewAllInvoices: false,
     canViewMyInvoices: true,
     canViewReports: false,
@@ -55,6 +43,8 @@ export const ROLE_PERMISSIONS = {
     canPost: true,
     canSchedulePayment: true,
     canUpload: false,
+    canValidate: false,
+    canRequestApproval: false,
     canViewAllInvoices: true,
     canViewReports: true,
     canViewFinancialReports: false,
@@ -72,6 +62,8 @@ export const ROLE_PERMISSIONS = {
     canPost: false,
     canSchedulePayment: false,
     canUpload: true,
+    canValidate: true,
+    canRequestApproval: true,
     canViewAllInvoices: false,
     canViewPendingApprovals: true,
     canViewReports: false,
@@ -213,9 +205,11 @@ export const ROLE_PERMISSIONS = {
   IT_ADMIN: {
     canApprove: false,
     canReject: false,
-    canPost: false,
-    canSchedulePayment: false,
+    canPost: true,
+    canSchedulePayment: true,
     canUpload: true,
+    canValidate: true,
+    canRequestApproval: true,
     canViewAllInvoices: true,
     canViewReports: true,
     canViewFinancialReports: true,
@@ -231,7 +225,7 @@ export const ROLE_PERMISSIONS = {
 
 // Role-based invoice stage access
 export const ROLE_STAGE_ACCESS: Record<string, string[]> = {
-  SUPERADMIN: [], // Superadmin can access all stages
+  SUPERADMIN: [], // System maintenance only — no invoice stage access
   ACCOUNTING_ASSOCIATE: ['VALIDATION_PENDING', 'APPROVED', 'POSTED_TO_QB', 'PENDING_ACCOUNTING', 'ON_HOLD'],
   ACCOUNTING_SUPERVISOR: ['VALIDATION_PENDING', 'PENDING_ACCOUNTING', 'APPROVED', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'ON_HOLD'],
   PURCHASING_COORDINATOR: ['VALIDATION_PENDING', 'EXCEPTION_FLAGGED', 'PENDING_COORDINATOR', 'ON_HOLD'],
@@ -240,9 +234,8 @@ export const ROLE_STAGE_ACCESS: Record<string, string[]> = {
   PLANNING_MANAGER: ['PENDING_MLO_PLANNING_MANAGER'],
   SR_MANAGER_GLOBAL_PRODUCTION: ['PENDING_SR_MANAGER'],
   MS_POLLY: ['PENDING_POLLY'],
-  CFO: ['POSTED_TO_QB', 'PAYMENT_SCHEDULED'],
-  PRESIDENT: ['POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID'],
-  ADMIN: [], // Admin can access all stages
+  CFO: ['PENDING_ACCOUNTING', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED'],
+  PRESIDENT: ['PENDING_ACCOUNTING', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID'],
   IT_ADMIN: [], // System maintenance only; cannot approve/reject/hold
 };
 
@@ -255,7 +248,7 @@ export function hasPermission(role: string, permission: string): boolean {
 
 // Check if a role can access a specific invoice stage
 export function canAccessStage(role: string, stage: string): boolean {
-  if (role === 'ADMIN' || role === 'SUPERADMIN') return true;
+  if (role === 'SUPERADMIN') return false; // No invoice stage access
   const accessibleStages = ROLE_STAGE_ACCESS[role];
   if (!accessibleStages) return false;
   return accessibleStages.includes(stage);
@@ -264,13 +257,14 @@ export function canAccessStage(role: string, stage: string): boolean {
 // Check if a user with the given role can approve/reject an invoice in the given status
 export function canUserApproveStatus(role: string, status: string): boolean {
   if (!hasPermission(role, 'canApprove')) return false;
-  if (role === 'ADMIN' || role === 'SUPERADMIN' || role === 'PRESIDENT') return true;
+  if (role === 'PRESIDENT') return true;
   return canAccessStage(role, status);
 }
 
 // Get invoices filtered by role's accessible stages
 export function filterInvoicesByRole(invoices: any[], role: string): any[] {
-  if (role === 'ADMIN' || role === 'SUPERADMIN' || role === 'IT_ADMIN') return invoices;
+  if (role === 'SUPERADMIN') return []; // No invoice visibility
+  if (role === 'IT_ADMIN') return invoices; // Read-only all invoices
   const accessibleStages = ROLE_STAGE_ACCESS[role];
   if (!accessibleStages || accessibleStages.length === 0) return invoices;
   return invoices.filter(inv => accessibleStages.includes(inv.status) || accessibleStages.includes(inv.current_stage));

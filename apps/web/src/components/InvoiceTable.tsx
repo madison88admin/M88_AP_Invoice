@@ -3,6 +3,7 @@ import { formatCurrency, formatDate } from '../lib/utils';
 import { FileText, Calendar, DollarSign, Eye, Check, Flag } from 'lucide-react';
 import { MockInvoice } from '../lib/mockData';
 import { POValidationBadge } from './POValidationBadge';
+import { Skeleton } from './ui/Skeleton';
 
 interface InvoiceTableProps {
   invoices: MockInvoice[];
@@ -57,11 +58,20 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
   if (loading) {
     return (
       <div className="px-6 py-4">
-        <div className="space-y-3">
+        <div className="space-y-2">
           {[...Array(6)].map((_, i) => (
-            <div key={i} className="flex items-center gap-4 animate-pulse" style={{ animationDelay: `${i * 100}ms` }}>
-              <div className="w-4 h-4 rounded" style={{ background: 'var(--bg-card-hover)' }} />
-              <div className="flex-1 h-12 rounded-lg" style={{ background: 'var(--bg-elevated)' }} />
+            <div key={i} className="flex items-center gap-3 py-3" style={{ animationDelay: `${i * 60}ms` }}>
+              <Skeleton className="h-4 w-4 rounded" />
+              <Skeleton className="h-4 w-4 rounded" />
+              <div className="flex-1 flex items-center gap-4">
+                <Skeleton className="h-4 w-28" />
+                <Skeleton className="h-4 w-32" />
+                <Skeleton className="h-5 w-16 rounded-full" />
+                <Skeleton className="h-4 w-20" />
+                <Skeleton className="h-4 w-24" />
+                <Skeleton className="h-5 w-20 rounded-full" />
+              </div>
+              <Skeleton className="h-8 w-8 rounded-lg" />
             </div>
           ))}
         </div>
@@ -128,10 +138,11 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
           {sortedInvoices.map((invoice, index) => (
             <tr
               key={invoice.id}
-              className="cursor-pointer group transition-colors duration-150"
+              className="cursor-pointer group transition-colors duration-150 animate-fade-in"
               style={{
                 backgroundColor: index % 2 === 0 ? 'transparent' : 'var(--bg-card-hover)',
-                borderLeft: '3px solid transparent'
+                borderLeft: '3px solid transparent',
+                animationDelay: `${index * 30}ms`,
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.borderLeftColor = 'var(--accent-lime)';
@@ -257,6 +268,7 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
+                      onInvoiceClick?.(invoice);
                     }}
                     className="p-2 rounded-xl transition-colors"
                     style={{ color: 'var(--text-muted)' }}
@@ -269,6 +281,7 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
+                      onInvoiceClick?.(invoice);
                     }}
                     className="p-2 rounded-xl transition-colors"
                     style={{ color: 'var(--text-muted)' }}

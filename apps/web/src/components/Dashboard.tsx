@@ -17,7 +17,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { MockInvoice } from '../lib/mockData';
 import { hasPermission, filterInvoicesByRole, canUserApproveStatus } from '../lib/roleAccess';
 import { cn } from '../lib/utils';
-import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, LogOut, Edit, Unlock } from 'lucide-react';
+import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, LogOut, Edit, Unlock, Users, Loader2 } from 'lucide-react';
 import { Skeleton, SkeletonBar } from './ui/Skeleton';
 
 // Custom hook for number count-up animation
@@ -200,9 +200,9 @@ export default function Dashboard() {
       return allInvoices;
     }
 
-    // SUPERADMIN - all invoices
+    // SUPERADMIN - no invoice visibility (system maintenance only)
     if (role === 'SUPERADMIN') {
-      return allInvoices;
+      return [];
     }
 
     // PURCHASING_COORDINATOR - pending their approval, validation, or batch hold (they upload first)
@@ -1152,24 +1152,26 @@ export default function Dashboard() {
             trendUp: false,
           },
           {
-            label: 'Total Invoices',
-            value: allInvoices.length,
-            icon: FileText,
+            label: 'Active Users',
+            value: '12',
+            icon: Users,
             accent: 'info',
-            ...calcTrend(allInvoices),
-          },
-          {
-            label: 'Exceptions',
-            value: exceptionsCount.count,
-            icon: AlertCircle,
-            accent: 'danger',
-            ...calcTrend(allInvoices.filter(i => i.status === InvoiceStatus.EXCEPTION_FLAGGED)),
+            trend: '—',
+            trendUp: false,
           },
           {
             label: 'System Configuration',
             value: 'Active',
             icon: Settings,
             accent: 'default',
+            trend: '—',
+            trendUp: false,
+          },
+          {
+            label: 'Error Logs',
+            value: '0',
+            icon: AlertCircle,
+            accent: 'danger',
             trend: '—',
             trendUp: false,
           },
@@ -1299,6 +1301,14 @@ export default function Dashboard() {
               label="Review"
               collapsed={sidebarCollapsed}
               onClick={() => navigate('/accounting-review')}
+            />
+          )}
+          {user && (user.role === 'IT_ADMIN' || user.role === 'SUPERADMIN') && (
+            <SidebarItem
+              icon={Users}
+              label="User Management"
+              collapsed={sidebarCollapsed}
+              onClick={() => navigate('/users')}
             />
           )}
           {user && (user.role === 'IT_ADMIN' || user.role === 'SUPERADMIN') && (
@@ -1492,7 +1502,7 @@ export default function Dashboard() {
           <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Dashboard</h2>
-              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Manage invoices, approvals, and validations</p>
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{user?.role === 'SUPERADMIN' ? 'System maintenance, user and role management' : 'Manage invoices, approvals, and validations'}</p>
             </div>
             <div className="flex items-center gap-3">
               {user && (user.role === 'PURCHASING_COORDINATOR' || user.role === 'IT_ADMIN') && (
@@ -1545,7 +1555,7 @@ export default function Dashboard() {
               {kpis.map((kpi, idx) => {
                 const accent: any = kpi.accent || 'default';
                 return (
-                  <div key={kpi.label} className="animate-fade-in-up" style={{ animationDelay: `${idx * 50}ms` }}>
+                  <div key={kpi.label} className="animate-fade-in-up card-lift" style={{ animationDelay: `${idx * 50}ms` }}>
                     <StatCard
                       title={kpi.label}
                       value={kpi.value}
@@ -1560,6 +1570,7 @@ export default function Dashboard() {
           )}
 
           {/* PO Validation Audit — unified horizontal scorecard */}
+          {user?.role !== 'SUPERADMIN' && (
           <div className="mb-6 rounded-2xl p-5" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
@@ -1569,7 +1580,10 @@ export default function Dashboard() {
                 <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>NextGen Validation Audit</h3>
               </div>
               {poAuditLoading && (
-                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Loading...</span>
+                <span className="text-xs flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
+                  <Loader2 className="h-3 w-3 animate-spin" strokeWidth={2} />
+                  Loading...
+                </span>
               )}
             </div>
 
@@ -1621,6 +1635,7 @@ export default function Dashboard() {
               {poAuditSummary.total} invoice(s) audited against NextGen PO data. Audit is async and informational only.
             </p>
           </div>
+          )}
 
           {/* Bottleneck View - Hide for IT_ADMIN and SUPERADMIN */}
           {user && user.role !== 'IT_ADMIN' && user.role !== 'SUPERADMIN' && (
@@ -1798,7 +1813,8 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Invoice Table */}
+          {/* Invoice Table — hidden from SUPERADMIN (system maintenance only) */}
+          {user?.role !== 'SUPERADMIN' && (
           <div className="rounded-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.25)]" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
             <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
               <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Invoices</h2>
@@ -1845,6 +1861,7 @@ export default function Dashboard() {
               </div>
             )}
           </div>
+          )}
 
           {/* Supplier Balance Analysis - Only for CFO and ACCOUNTING_SUPERVISOR */}
           {user && (user.role === 'CFO' || user.role === 'ACCOUNTING_SUPERVISOR') && (
@@ -2170,14 +2187,14 @@ export default function Dashboard() {
               )}
 
               {/* Check NextGen Changes Button */}
-              {selectedInvoice.mpo_number && (
+              {selectedInvoice.mpo_number && user && ['PURCHASING_COORDINATOR', 'ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'].includes(user.role) && (
                 <button
                   onClick={handleCheckNextGen}
                   disabled={posting}
                   className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
                   style={posting ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--accent-blue)', color: 'var(--text-inverse)' }}
                 >
-                  <FileSearch className="h-4 w-4 mr-2" strokeWidth={1.75} />
+                  {posting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" strokeWidth={1.75} /> : <FileSearch className="h-4 w-4 mr-2" strokeWidth={1.75} />}
                   {posting ? 'Checking...' : 'Check NextGen Changes'}
                 </button>
               )}
@@ -2186,20 +2203,20 @@ export default function Dashboard() {
               {(selectedInvoice.status === (InvoiceStatus.RECEIVED as any) ||
                 selectedInvoice.status === (InvoiceStatus.VALIDATION_PENDING as any) ||
                 selectedInvoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any) ||
-                selectedInvoice.status === (InvoiceStatus.ON_HOLD as any)) && (
+                selectedInvoice.status === (InvoiceStatus.ON_HOLD as any)) && user && hasPermission(user.role, 'canValidate') && (
                 <button
                   onClick={handleValidate}
                   disabled={validating}
                   className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
                   style={validating ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--accent-purple)', color: 'var(--text-inverse)', boxShadow: '0 0 16px color-mix(in srgb, var(--accent-purple) 25%, transparent)' }}
                 >
-                  <Shield className="h-4 w-4 mr-2" strokeWidth={1.75} />
+                  {validating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" strokeWidth={1.75} /> : <Shield className="h-4 w-4 mr-2" strokeWidth={1.75} />}
                   {validating ? 'Validating...' : (selectedInvoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any) || selectedInvoice.status === (InvoiceStatus.ON_HOLD as any) ? 'Re-Validate' : selectedInvoice.status === (InvoiceStatus.RECEIVED as any) ? 'Process & Validate' : 'Run Validation')}
                 </button>
               )}
 
               {/* Resolve Exceptions Button */}
-              {selectedInvoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any) && user && hasPermission(user.role, 'canEditInvoice') && (
+              {selectedInvoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any) && user && ['PURCHASING_COORDINATOR', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'].includes(user.role) && (
                 <button
                   onClick={() => navigate('/exceptions')}
                   className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl hover:opacity-80 transition-all font-medium text-sm"
@@ -2215,26 +2232,27 @@ export default function Dashboard() {
               )}
 
               {/* Request Approval Button — for invoices in VALIDATION_PENDING that need manual approval trigger */}
-              {selectedInvoice.status === (InvoiceStatus.VALIDATION_PENDING as any) && user && hasPermission(user.role, 'canEditInvoice') && (
+              {selectedInvoice.status === (InvoiceStatus.VALIDATION_PENDING as any) && user && hasPermission(user.role, 'canRequestApproval') && (
                 <button
                   onClick={handleRequestApproval}
                   disabled={requestingApproval}
                   className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
                   style={requestingApproval ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--accent-violet)', color: 'var(--text-inverse)', boxShadow: '0 0 16px color-mix(in srgb, var(--accent-violet) 25%, transparent)' }}
                 >
-                  <Send className="h-4 w-4 mr-2" strokeWidth={1.75} />
+                  {requestingApproval ? <Loader2 className="h-4 w-4 mr-2 animate-spin" strokeWidth={1.75} /> : <Send className="h-4 w-4 mr-2" strokeWidth={1.75} />}
                   {requestingApproval ? 'Requesting...' : 'Request Approval'}
                 </button>
               )}
 
-              {/* Approval Actions — only for invoices already in a pending approval stage */}
+              {/* Approval Actions — only for invoices in a pending approval stage (not PENDING_ACCOUNTING which is a posting stage) */}
               {selectedInvoice.status && user && canUserApproveStatus(user.role, String(selectedInvoice.status)) &&
                 String(selectedInvoice.status).startsWith('PENDING_') &&
+                String(selectedInvoice.status) !== 'PENDING_ACCOUNTING' &&
                 (!selectedInvoice.current_stage ||
                   selectedInvoice.current_stage === user.role ||
                   (selectedInvoice.current_stage === 'COORDINATOR' && user.role === 'PURCHASING_COORDINATOR') ||
-                  (selectedInvoice.current_stage === 'MLO_PLANNING_MANAGER' && user.role === 'PLANNING_MANAGER') ||
-                  (selectedInvoice.current_stage === 'ACCOUNTING_REVIEWER' && (user.role === 'ACCOUNTING_ASSOCIATE' || user.role === 'ACCOUNTING_SUPERVISOR' || user.role === 'CFO'))
+                  (selectedInvoice.current_stage === 'MLO_PLANNING_MANAGER' && (user.role === 'PLANNING_MANAGER' || user.role === 'MLO_ACCOUNT_HOLDER' || user.role === 'MLO_PLANNING_MANAGER')) ||
+                  (selectedInvoice.current_stage === 'ACCOUNTING_REVIEWER' && (user.role === 'ACCOUNTING_ASSOCIATE' || user.role === 'ACCOUNTING_SUPERVISOR' || user.role === 'CFO' || user.role === 'PRESIDENT'))
                 ) && (
                 <div className="space-y-2">
                   {hasPermission(user.role, 'canApprove') && (
@@ -2292,8 +2310,8 @@ export default function Dashboard() {
                     className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
                     style={posting ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--accent-purple)', color: 'var(--text-inverse)', boxShadow: '0 0 16px color-mix(in srgb, var(--accent-purple) 25%, transparent)' }}
                   >
-                    <Send className="h-4 w-4 mr-2" strokeWidth={1.75} />
-                    {posting ? 'Posting...' : 'Post to Accounting'}
+                  {posting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" strokeWidth={1.75} /> : <Send className="h-4 w-4 mr-2" strokeWidth={1.75} />}
+                  {posting ? 'Posting...' : 'Post to Accounting'}
                   </button>
                 </>
               )}
@@ -2306,7 +2324,7 @@ export default function Dashboard() {
                   className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
                   style={posting ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--accent-amber)', color: 'var(--text-inverse)' }}
                 >
-                  <Unlock className="h-4 w-4 mr-2" strokeWidth={1.75} />
+                  {posting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" strokeWidth={1.75} /> : <Unlock className="h-4 w-4 mr-2" strokeWidth={1.75} />}
                   {posting ? 'Releasing...' : 'Release from Hold'}
                 </button>
               )}
@@ -2445,8 +2463,8 @@ export default function Dashboard() {
 
       {/* Reject Modal */}
       {showRejectModal && (
-        <div className="fixed inset-0 flex items-center justify-center z-50" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
-          <div className="max-w-md w-full mx-4 rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+        <div className="fixed inset-0 flex items-center justify-center z-50 animate-backdrop" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
+          <div className="max-w-md w-full mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div className="p-6">
               <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
                 Reject Invoice
@@ -2488,8 +2506,8 @@ export default function Dashboard() {
 
       {/* Schedule Payment Modal */}
       {showSchedulePaymentModal && (
-        <div className="fixed inset-0 flex items-center justify-center z-50" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
-          <div className="max-w-md w-full mx-4 rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+        <div className="fixed inset-0 flex items-center justify-center z-50 animate-backdrop" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
+          <div className="max-w-md w-full mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div className="p-6">
               <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
                 Schedule Payment
@@ -2535,8 +2553,8 @@ export default function Dashboard() {
 
       {/* Edit Invoice Modal */}
       {showEditModal && selectedInvoice && (
-        <div className="fixed inset-0 flex items-center justify-center z-50" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
-          <div className="max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+        <div className="fixed inset-0 flex items-center justify-center z-50 animate-backdrop" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
+          <div className="max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div className="p-6">
               <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
                 Edit Invoice
@@ -2640,7 +2658,7 @@ export default function Dashboard() {
         {toasts.map((toast) => (
           <div 
             key={toast.id}
-            className="rounded-xl border shadow-2xl"
+            className="rounded-xl border shadow-2xl animate-slide-in-right"
             style={{ 
               background: 'var(--bg-card)',
               borderLeft: toast.type === 'success' ? '3px solid var(--accent-lime)' : toast.type === 'error' ? '3px solid var(--accent-red)' : toast.type === 'warning' ? '3px solid var(--accent-amber)' : '3px solid var(--accent-purple)',
@@ -2648,31 +2666,31 @@ export default function Dashboard() {
               boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
               padding: '12px 16px',
               minWidth: '280px',
+              maxWidth: '400px',
               borderRadius: '12px',
-              transform: 'translateX(100%)',
-              opacity: 0,
-              animation: `toastSlideIn 250ms ease-out forwards`
             }}
           >
-            <style>{`
-              @keyframes toastSlideIn {
-                to {
-                  transform: translateX(0);
-                  opacity: 1;
-                }
-              }
-            `}</style>
             <div className="flex items-center gap-3">
               {toast.type === 'success' ? (
-                <CheckCircle className="h-5 w-5" style={{ color: 'var(--accent-lime)' }} strokeWidth={1.75} />
+                <CheckCircle className="h-5 w-5 flex-shrink-0" style={{ color: 'var(--accent-lime)' }} strokeWidth={1.75} />
               ) : toast.type === 'error' ? (
-                <XCircle className="h-5 w-5" style={{ color: 'var(--accent-red)' }} strokeWidth={1.75} />
+                <XCircle className="h-5 w-5 flex-shrink-0" style={{ color: 'var(--accent-red)' }} strokeWidth={1.75} />
               ) : toast.type === 'warning' ? (
-                <AlertTriangle className="h-5 w-5" style={{ color: 'var(--accent-amber)' }} strokeWidth={1.75} />
+                <AlertTriangle className="h-5 w-5 flex-shrink-0" style={{ color: 'var(--accent-amber)' }} strokeWidth={1.75} />
               ) : (
-                <Bell className="h-5 w-5" style={{ color: 'var(--accent-purple)' }} strokeWidth={1.75} />
+                <Bell className="h-5 w-5 flex-shrink-0" style={{ color: 'var(--accent-purple)' }} strokeWidth={1.75} />
               )}
               <span className="text-sm" style={{ color: 'var(--text-primary)' }}>{toast.message}</span>
+            </div>
+            <div className="mt-2 h-0.5 rounded-full overflow-hidden" style={{ background: 'var(--bg-elevated)' }}>
+              <div 
+                className="h-full rounded-full"
+                style={{ 
+                  background: toast.type === 'success' ? 'var(--accent-lime)' : toast.type === 'error' ? 'var(--accent-red)' : toast.type === 'warning' ? 'var(--accent-amber)' : 'var(--accent-purple)',
+                  animation: 'progressFill 3s linear forwards',
+                  '--progress-width': '100%',
+                } as React.CSSProperties}
+              />
             </div>
           </div>
         ))}

@@ -1,6 +1,8 @@
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
-import { PaymentBatchStatus, InvoiceStatus, SLA_LIMITS, calcWorkingHoursElapsed } from '@ap-invoice/shared';
+import { PaymentBatchStatus } from '@ap-invoice/shared';
+import { processPayment } from './postingService';
+import { logger } from '../utils/logger';
 
 /**
  * Get the next Wednesday date from a given date
@@ -393,57 +395,23 @@ export async function approvePaymentBatchByCFO(
     throw new AppError('Batch is not pending CFO approval', 400);
   }
 
-  // Process each payment in the batch
+  // Process each payment in the batch via processPayment for consistent behavior
+  // (email notifications, payment references, in-app notifications, stage timestamps)
   for (const payment of batch.payments) {
-    await prisma.payment.update({
-      where: { id: payment.id },
-      data: {
-        status: 'PAID',
-        paid_at: new Date(),
-      },
-    });
-
-    // Update invoice status to PAID
-    await prisma.invoice.update({
-      where: { id: payment.invoice_id },
-      data: { status: InvoiceStatus.PAID },
-    });
-
-    // Exit PAYMENT_SCHEDULED stage timestamp
-    const scheduledStage = await prisma.stageTimestamp.findFirst({
-      where: { invoice_id: payment.invoice_id, stage: InvoiceStatus.PAYMENT_SCHEDULED as any, exited_at: null },
-    });
-    if (scheduledStage) {
-      const elapsedHours = calcWorkingHoursElapsed(new Date(scheduledStage.entered_at), new Date());
-      await prisma.stageTimestamp.update({
-        where: { id: scheduledStage.id },
-        data: {
-          exited_at: new Date(),
-          is_breached: elapsedHours > scheduledStage.sla_hours,
-        },
-      });
+    if (payment.status === 'PAID') {
+      logger.warn(`Payment ${payment.id} in batch ${batch.batch_number} is already PAID — skipping`);
+      continue;
     }
-
-    // Create PAID stage timestamp (final stage)
-    await prisma.stageTimestamp.create({
-      data: {
-        invoice_id: payment.invoice_id,
-        stage: InvoiceStatus.PAID as any,
-        entered_at: new Date(),
-        sla_hours: 0,
-        exited_at: new Date(),
-        is_breached: false,
-      },
-    });
-
-    await prisma.auditLog.create({
-      data: {
-        invoice_id: payment.invoice_id,
-        action: 'PAYMENT_PROCESSED',
-        performed_by: userId,
-        note: `Payment ${payment.id} processed in batch ${batch.batch_number}`,
-      },
-    });
+    if (payment.status !== 'SCHEDULED') {
+      logger.warn(`Payment ${payment.id} in batch ${batch.batch_number} has status ${payment.status} — skipping`);
+      continue;
+    }
+    try {
+      await processPayment(payment.id, userId);
+    } catch (err) {
+      logger.error(`Failed to process payment ${payment.id} in batch ${batch.batch_number}:`, err);
+      throw new AppError(`Payment ${payment.id} failed to process: ${err instanceof Error ? err.message : 'unknown error'}`, 500);
+    }
   }
 
   const updatedBatch = await prisma.paymentBatch.update({
@@ -482,8 +450,8 @@ export async function cancelPaymentBatch(
     throw new AppError('Payment batch not found', 404);
   }
 
-  if (batch.status !== PaymentBatchStatus.DRAFT) {
-    throw new AppError('Only DRAFT batches can be cancelled', 400);
+  if (batch.status !== PaymentBatchStatus.DRAFT && batch.status !== PaymentBatchStatus.PENDING_CFO) {
+    throw new AppError('Only DRAFT or PENDING_CFO batches can be cancelled', 400);
   }
 
   // Update batch status to CANCELLED

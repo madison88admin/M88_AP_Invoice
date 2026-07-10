@@ -70,10 +70,14 @@ function formatMs(ms: number): string {
 }
 
 function confidenceColor(conf: number): string {
-  if (conf >= 80) return 'text-green-500';
-  if (conf >= 60) return 'text-yellow-500';
-  if (conf >= 40) return 'text-orange-500';
-  return 'text-red-500';
+  if (conf >= 80) return 'var(--accent-green)';
+  if (conf >= 60) return 'var(--accent-amber)';
+  if (conf >= 40) return 'var(--accent-amber)';
+  return 'var(--accent-red)';
+}
+
+function confidenceColorVar(conf: number): string {
+  return confidenceColor(conf);
 }
 
 export default function ExtractionDashboard() {
@@ -101,18 +105,21 @@ export default function ExtractionDashboard() {
 
   if (loading && !data) {
     return (
-      <div className="flex items-center justify-center h-screen">
-        <RefreshCw className="w-8 h-8 animate-spin text-blue-500" />
-        <span className="ml-3 text-gray-500">Loading analytics...</span>
+      <div className="flex flex-col items-center justify-center h-screen gap-4 animate-fade-in" style={{ background: 'var(--bg-base)' }}>
+        <div className="relative">
+          <div className="absolute inset-0 rounded-full animate-ping opacity-20" style={{ background: 'var(--accent-blue)' }} />
+          <div className="h-10 w-10 rounded-full border-2 animate-spin" style={{ borderTopColor: 'var(--accent-blue)', borderRightColor: 'var(--accent-blue)', borderBottomColor: 'transparent', borderLeftColor: 'transparent' }} />
+        </div>
+        <p className="text-sm animate-pulse" style={{ color: 'var(--text-muted)' }}>Loading analytics...</p>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-screen">
-        <AlertTriangle className="w-8 h-8 text-red-500" />
-        <span className="ml-3 text-red-500">{error}</span>
+      <div className="flex flex-col items-center justify-center h-screen gap-3 animate-fade-in" style={{ background: 'var(--bg-base)' }}>
+        <AlertTriangle className="w-8 h-8" style={{ color: 'var(--accent-red)' }} />
+        <span className="text-sm" style={{ color: 'var(--accent-red)' }}>{error}</span>
       </div>
     );
   }
@@ -133,15 +140,15 @@ export default function ExtractionDashboard() {
   ];
 
   return (
-    <div className="p-6 space-y-6 max-w-[1600px] mx-auto">
+    <div className="p-6 space-y-6 max-w-[1600px] mx-auto animate-page-in" style={{ background: 'var(--bg-base)', minHeight: '100vh' }}>
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Activity className="w-7 h-7 text-blue-500" />
+          <h1 className="text-2xl font-bold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+            <Activity className="w-7 h-7" style={{ color: 'var(--accent-blue)' }} />
             Extraction Analytics
           </h1>
-          <p className="text-sm text-gray-500 mt-1">
+          <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>
             Real-time monitoring of extraction pipeline performance
           </p>
         </div>
@@ -149,7 +156,8 @@ export default function ExtractionDashboard() {
           <select
             value={days}
             onChange={(e) => setDays(Number(e.target.value))}
-            className="px-3 py-2 border rounded-lg text-sm bg-white dark:bg-gray-800 dark:border-gray-700"
+            className="px-3 py-2 rounded-lg text-sm transition-all"
+            style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
           >
             <option value={7}>Last 7 days</option>
             <option value={30}>Last 30 days</option>
@@ -157,7 +165,10 @@ export default function ExtractionDashboard() {
           </select>
           <button
             onClick={fetchData}
-            className="px-3 py-2 bg-blue-500 text-white rounded-lg text-sm hover:bg-blue-600 flex items-center gap-2"
+            className="px-3 py-2 rounded-lg text-sm flex items-center gap-2 transition-all"
+            style={{ background: 'var(--accent-blue)', color: 'var(--text-inverse)' }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--accent-blue-hover)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--accent-blue)'; }}
           >
             <RefreshCw className="w-4 h-4" />
             Refresh
@@ -178,28 +189,28 @@ export default function ExtractionDashboard() {
           label="Auto-Approved"
           value={`${data.performance.auto_approved_rate}%`}
           subtitle={`${data.performance.total_processed} processed`}
-          color="text-green-500"
+          color="var(--accent-green)"
         />
         <KpiCard
           icon={<Shield className="w-5 h-5" />}
           label="Fraud Detected"
           value={`${data.performance.fraud_detection_rate}%`}
-          color="text-orange-500"
+          color="var(--accent-amber)"
         />
         <KpiCard
           icon={<Brain className="w-5 h-5" />}
           label="Self-Validation Pass"
           value={`${data.performance.self_validation_pass_rate}%`}
-          color="text-blue-500"
+          color="var(--accent-blue)"
         />
       </div>
 
       {/* Confidence Section */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Confidence Trend */}
-        <div className="lg:col-span-2 bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <TrendingUp className="w-5 h-5 text-blue-500" />
+        <div className="lg:col-span-2 rounded-xl p-6" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+            <TrendingUp className="w-5 h-5" style={{ color: 'var(--accent-blue)' }} />
             Confidence Trend
           </h2>
           {data.confidence.trend.length > 0 ? (
@@ -220,8 +231,8 @@ export default function ExtractionDashboard() {
         </div>
 
         {/* Confidence Distribution */}
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-          <h2 className="text-lg font-semibold mb-4">Confidence Distribution</h2>
+        <div className="rounded-xl p-6" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+          <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>Confidence Distribution</h2>
           {data.confidence.distribution.high + data.confidence.distribution.medium + data.confidence.distribution.low + data.confidence.distribution.missing > 0 ? (
             <ResponsiveContainer width="100%" height={250}>
               <PieChart>
@@ -239,9 +250,9 @@ export default function ExtractionDashboard() {
       </div>
 
       {/* Per-Field Confidence */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-          <Gauge className="w-5 h-5 text-purple-500" />
+      <div className="rounded-xl p-6" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+          <Gauge className="w-5 h-5" style={{ color: 'var(--accent-purple)' }} />
           Per-Field Confidence
         </h2>
         {data.confidence.per_field.length > 0 ? (
@@ -262,16 +273,16 @@ export default function ExtractionDashboard() {
       </div>
 
       {/* Vendor Analytics */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-          <Building2 className="w-5 h-5 text-green-500" />
+      <div className="rounded-xl p-6" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+          <Building2 className="w-5 h-5" style={{ color: 'var(--accent-green)' }} />
           Vendor Analytics
         </h2>
         {data.vendors.vendors.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-gray-200 dark:border-gray-700 text-left text-gray-500">
+                <tr className="text-left" style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
                   <th className="pb-2 pr-4">Vendor</th>
                   <th className="pb-2 pr-4 text-right">Invoices</th>
                   <th className="pb-2 pr-4 text-right">Avg Conf</th>
@@ -282,23 +293,23 @@ export default function ExtractionDashboard() {
               </thead>
               <tbody>
                 {data.vendors.vendors.map((v, i) => (
-                  <tr key={i} className="border-b border-gray-100 dark:border-gray-700/50">
-                    <td className="py-2 pr-4 font-medium">{v.vendor_name}</td>
-                    <td className="py-2 pr-4 text-right">{v.invoice_count}</td>
-                    <td className={`py-2 pr-4 text-right font-medium ${confidenceColor(v.avg_confidence)}`}>
+                  <tr key={i} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                    <td className="py-2 pr-4 font-medium" style={{ color: 'var(--text-primary)' }}>{v.vendor_name}</td>
+                    <td className="py-2 pr-4 text-right" style={{ color: 'var(--text-secondary)' }}>{v.invoice_count}</td>
+                    <td className="py-2 pr-4 text-right font-medium" style={{ color: confidenceColorVar(v.avg_confidence) }}>
                       {v.avg_confidence}%
                     </td>
-                    <td className="py-2 pr-4 text-right">
+                    <td className="py-2 pr-4 text-right" style={{ color: 'var(--text-secondary)' }}>
                       {v.correction_count > 0 ? (
-                        <span className="text-orange-500">{v.correction_count}</span>
+                        <span style={{ color: 'var(--accent-amber)' }}>{v.correction_count}</span>
                       ) : '-'}
                     </td>
-                    <td className="py-2 pr-4 text-right">
+                    <td className="py-2 pr-4 text-right" style={{ color: 'var(--text-secondary)' }}>
                       {v.fraud_flags > 0 ? (
-                        <span className="text-red-500">{v.fraud_flags}</span>
+                        <span style={{ color: 'var(--accent-red)' }}>{v.fraud_flags}</span>
                       ) : '-'}
                     </td>
-                    <td className="py-2 text-xs text-gray-500">
+                    <td className="py-2 text-xs" style={{ color: 'var(--text-muted)' }}>
                       {v.top_error_fields.length > 0 ? v.top_error_fields.join(', ') : '-'}
                     </td>
                   </tr>
@@ -314,9 +325,9 @@ export default function ExtractionDashboard() {
       {/* Error Analytics */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Error Trend */}
-        <div className="lg:col-span-2 bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <AlertTriangle className="w-5 h-5 text-orange-500" />
+        <div className="lg:col-span-2 rounded-xl p-6" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+            <AlertTriangle className="w-5 h-5" style={{ color: 'var(--accent-amber)' }} />
             Error & Warning Trend
           </h2>
           {data.errors.trend.length > 0 ? (
@@ -337,8 +348,8 @@ export default function ExtractionDashboard() {
         </div>
 
         {/* Severity Distribution */}
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-          <h2 className="text-lg font-semibold mb-4">Issues by Severity</h2>
+        <div className="rounded-xl p-6" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+          <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>Issues by Severity</h2>
           {data.errors.by_severity.CRITICAL + data.errors.by_severity.WARNING + data.errors.by_severity.INFO > 0 ? (
             <ResponsiveContainer width="100%" height={250}>
               <PieChart>
@@ -357,14 +368,14 @@ export default function ExtractionDashboard() {
 
       {/* Top Correction Reasons & Error Fields */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-          <h2 className="text-lg font-semibold mb-4">Top Correction Reasons</h2>
+        <div className="rounded-xl p-6" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+          <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>Top Correction Reasons</h2>
           {data.errors.top_correction_reasons.length > 0 ? (
             <div className="space-y-2">
               {data.errors.top_correction_reasons.map((r, i) => (
-                <div key={i} className="flex items-center justify-between py-2 border-b border-gray-100 dark:border-gray-700/50">
-                  <span className="text-sm">{r.reason}</span>
-                  <span className="text-sm font-medium px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded">
+                <div key={i} className="flex items-center justify-between py-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                  <span className="text-sm" style={{ color: 'var(--text-primary)' }}>{r.reason}</span>
+                  <span className="text-sm font-medium px-2 py-1 rounded" style={{ background: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', color: 'var(--accent-blue)' }}>
                     {r.count}x
                   </span>
                 </div>
@@ -375,24 +386,24 @@ export default function ExtractionDashboard() {
           )}
         </div>
 
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-          <h2 className="text-lg font-semibold mb-4">Errors by Field</h2>
+        <div className="rounded-xl p-6" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+          <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>Errors by Field</h2>
           {data.errors.by_field.length > 0 ? (
             <div className="space-y-2">
               {data.errors.by_field.slice(0, 10).map((f, i) => (
-                <div key={i} className="flex items-center justify-between py-2 border-b border-gray-100 dark:border-gray-700/50">
+                <div key={i} className="flex items-center justify-between py-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                   <div>
-                    <span className="text-sm font-medium">{f.field}</span>
-                    <span className="text-xs text-gray-500 ml-2">{f.sample_issue}</span>
+                    <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{f.field}</span>
+                    <span className="text-xs ml-2" style={{ color: 'var(--text-muted)' }}>{f.sample_issue}</span>
                   </div>
                   <div className="flex gap-2">
                     {f.error_count > 0 && (
-                      <span className="text-xs px-2 py-1 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded">
+                      <span className="text-xs px-2 py-1 rounded" style={{ background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', color: 'var(--accent-red)' }}>
                         {f.error_count} errors
                       </span>
                     )}
                     {f.warning_count > 0 && (
-                      <span className="text-xs px-2 py-1 bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 rounded">
+                      <span className="text-xs px-2 py-1 rounded" style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' }}>
                         {f.warning_count} warnings
                       </span>
                     )}
@@ -407,11 +418,11 @@ export default function ExtractionDashboard() {
       </div>
 
       {/* Processing Timeline */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-          <Clock className="w-5 h-5 text-purple-500" />
+      <div className="rounded-xl p-6" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+          <Clock className="w-5 h-5" style={{ color: 'var(--accent-purple)' }} />
           Processing Timeline
-          <span className="text-sm font-normal text-gray-500 ml-2">
+          <span className="text-sm font-normal ml-2" style={{ color: 'var(--text-muted)' }}>
             Total avg: {formatMs(data.timeline.total_avg_ms)}
           </span>
         </h2>
@@ -434,9 +445,9 @@ export default function ExtractionDashboard() {
 
       {/* Engine Usage */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <Cpu className="w-5 h-5 text-blue-500" />
+        <div className="rounded-xl p-6" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+            <Cpu className="w-5 h-5" style={{ color: 'var(--accent-blue)' }} />
             Engine Usage
           </h2>
           {data.performance.engine_usage.length > 0 ? (
@@ -457,19 +468,19 @@ export default function ExtractionDashboard() {
         </div>
 
         {/* Slowest Invoices */}
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-          <h2 className="text-lg font-semibold mb-4">Slowest Invoices</h2>
+        <div className="rounded-xl p-6" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+          <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>Slowest Invoices</h2>
           {data.timeline.slowest_invoices.length > 0 ? (
             <div className="space-y-2">
               {data.timeline.slowest_invoices.map((inv, i) => (
-                <div key={i} className="flex items-center justify-between py-2 border-b border-gray-100 dark:border-gray-700/50">
+                <div key={i} className="flex items-center justify-between py-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                   <div>
-                    <span className="text-sm font-medium">{inv.invoice_number}</span>
-                    <span className="text-xs text-gray-500 ml-2">{inv.vendor_name}</span>
+                    <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{inv.invoice_number}</span>
+                    <span className="text-xs ml-2" style={{ color: 'var(--text-muted)' }}>{inv.vendor_name}</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-xs text-gray-400">{inv.stage}</span>
-                    <span className="text-sm font-medium text-orange-500">{formatMs(inv.duration_ms)}</span>
+                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{inv.stage}</span>
+                    <span className="text-sm font-medium" style={{ color: 'var(--accent-amber)' }}>{formatMs(inv.duration_ms)}</span>
                   </div>
                 </div>
               ))}
@@ -491,20 +502,20 @@ function KpiCard({ icon, label, value, subtitle, color }: {
   color?: string;
 }) {
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-200 dark:border-gray-700">
+    <div className="rounded-xl p-5 card-lift" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
       <div className="flex items-center justify-between mb-2">
-        <span className="text-gray-500 text-sm">{label}</span>
-        <span className={color || 'text-blue-500'}>{icon}</span>
+        <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{label}</span>
+        <span style={{ color: color || 'var(--accent-blue)' }}>{icon}</span>
       </div>
-      <div className={`text-2xl font-bold ${color || ''}`}>{value}</div>
-      {subtitle && <div className="text-xs text-gray-400 mt-1">{subtitle}</div>}
+      <div className="text-2xl font-bold" style={{ color: color || 'var(--text-primary)' }}>{value}</div>
+      {subtitle && <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{subtitle}</div>}
     </div>
   );
 }
 
 function EmptyState({ message }: { message: string }) {
   return (
-    <div className="flex items-center justify-center h-[200px] text-gray-400 text-sm">
+    <div className="flex items-center justify-center h-[200px] text-sm animate-soft-bounce" style={{ color: 'var(--text-muted)' }}>
       {message}
     </div>
   );

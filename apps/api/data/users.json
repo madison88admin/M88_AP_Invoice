@@ -1,0 +1,122 @@
+[
+  {
+    "id": "1",
+    "name": "Wyssa",
+    "email": "wyssa.martinez@madison88.com",
+    "role": "ACCOUNTING_ASSOCIATE",
+    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
+    "active": true,
+    "createdAt": "2026-07-10T06:29:26.220Z",
+    "updatedAt": "2026-07-10T06:29:26.220Z"
+  },
+  {
+    "id": "2",
+    "name": "AL",
+    "email": "al@madison88.com",
+    "role": "ACCOUNTING_SUPERVISOR",
+    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
+    "active": true,
+    "createdAt": "2026-07-10T06:29:26.220Z",
+    "updatedAt": "2026-07-10T06:29:26.220Z"
+  },
+  {
+    "id": "3",
+    "name": "Joy",
+    "email": "joy.yco@madison88.com",
+    "role": "PURCHASING_COORDINATOR",
+    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
+    "active": true,
+    "createdAt": "2026-07-10T06:29:26.220Z",
+    "updatedAt": "2026-07-10T06:29:26.220Z"
+  },
+  {
+    "id": "4",
+    "name": "Maricon",
+    "email": "maricon.alvarez@madison88.com",
+    "role": "PURCHASING_COORDINATOR",
+    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
+    "active": true,
+    "createdAt": "2026-07-10T06:29:26.220Z",
+    "updatedAt": "2026-07-10T06:29:26.220Z"
+  },
+  {
+    "id": "5",
+    "name": "Maricar",
+    "email": "maricar.tanaleon@madison88.com",
+    "role": "PURCHASING_MANAGER",
+    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
+    "active": true,
+    "createdAt": "2026-07-10T06:29:26.220Z",
+    "updatedAt": "2026-07-10T06:29:26.220Z"
+  },
+  {
+    "id": "6",
+    "name": "Maryann",
+    "email": "maryann.delmonte@madison88.com",
+    "role": "PURCHASING_MANAGER",
+    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
+    "active": true,
+    "createdAt": "2026-07-10T06:29:26.220Z",
+    "updatedAt": "2026-07-10T06:29:26.220Z"
+  },
+  {
+    "id": "7",
+    "name": "Maryan",
+    "email": "maryan.untiveros@madison88.com",
+    "role": "MLO_ACCOUNT_HOLDER",
+    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
+    "active": true,
+    "createdAt": "2026-07-10T06:29:26.220Z",
+    "updatedAt": "2026-07-10T06:29:26.220Z"
+  },
+  {
+    "id": "8",
+    "name": "Edwin",
+    "email": "edwin.garcia@madison88.com",
+    "role": "PLANNING_MANAGER",
+    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
+    "active": true,
+    "createdAt": "2026-07-10T06:29:26.220Z",
+    "updatedAt": "2026-07-10T06:29:26.220Z"
+  },
+  {
+    "id": "9",
+    "name": "Glecie",
+    "email": "glecie.yumena@madison88.com",
+    "role": "PLANNING_MANAGER",
+    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
+    "active": true,
+    "createdAt": "2026-07-10T06:29:26.220Z",
+    "updatedAt": "2026-07-10T06:29:26.220Z"
+  },
+  {
+    "id": "10",
+    "name": "Lindsey",
+    "email": "lindsey.castro@madison88.com",
+    "role": "SR_MANAGER_GLOBAL_PRODUCTION",
+    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
+    "active": true,
+    "createdAt": "2026-07-10T06:29:26.220Z",
+    "updatedAt": "2026-07-10T06:29:26.220Z"
+  },
+  {
+    "id": "11",
+    "name": "Polly",
+    "email": "polly.madison@madison88.com",
+    "role": "MS_POLLY",
+    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
+    "active": true,
+    "createdAt": "2026-07-10T06:29:26.220Z",
+    "updatedAt": "2026-07-10T06:29:26.220Z"
+  },
+  {
+    "id": "12",
+    "name": "JC",
+    "email": "jc@madison88.com",
+    "role": "SUPERADMIN",
+    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
+    "active": true,
+    "createdAt": "2026-07-10T06:29:26.220Z",
+    "updatedAt": "2026-07-10T06:29:26.220Z"
+  }
+]

@@ -21,8 +21,12 @@ import piFollowUpRoutes from './routes/piFollowUp';
 import slaReminderRoutes from './routes/slaReminder';
 import systemRoutes from './routes/system';
 import authRoutes from './routes/auth';
+import userRoutes from './routes/users';
 import auditLogRoutes from './routes/audit';
+import auditExportRoutes from './routes/auditExport';
 import notificationRoutes from './routes/notifications';
+import slaAnalyticsRoutes from './routes/slaAnalytics';
+import onHoldQueueRoutes from './routes/onHoldQueue';
 import testRoutes from './routes/test';
 import { errorHandler } from './middleware/errorHandler';
 import { logger } from './utils/logger';
@@ -86,8 +90,12 @@ app.use('/api/pi-follow-up', piFollowUpRoutes);
 app.use('/api/sla-reminder', slaReminderRoutes);
 app.use('/api/system', systemRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
 app.use('/api/audit-logs', auditLogRoutes);
+app.use('/api/audit-logs', auditExportRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/sla-analytics', slaAnalyticsRoutes);
+app.use('/api/on-hold-queue', onHoldQueueRoutes);
 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_TEST_ROUTES === 'true') {
   app.use('/api/test', testRoutes);
 }

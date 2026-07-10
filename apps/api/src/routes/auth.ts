@@ -23,7 +23,7 @@ const DEMO_USERS = [
   { email: 'maryan.untiveros@madison88.com', name: 'Maryan', role: 'MLO_ACCOUNT_HOLDER', password: 'madison88' },
   { email: 'lindsey.castro@madison88.com', name: 'Lindsey', role: 'SR_MANAGER_GLOBAL_PRODUCTION', password: 'madison88' },
   { email: 'polly.madison@madison88.com', name: 'Polly', role: 'MS_POLLY', password: 'madison88' },
-  { email: 'jc@madison88.com', name: 'JC', role: 'IT_ADMIN', password: 'madison88' },
+  { email: 'jc@madison88.com', name: 'JC', role: 'SUPERADMIN', password: 'madison88' },
 ];
 
 const isDemoLoginEnabled = () => process.env.ENABLE_DEMO_LOGIN === 'true' || process.env.NODE_ENV === 'development';
@@ -97,7 +97,7 @@ function getRoleForUsername(username: string): UserRole {
     'Chris': 'CFO',
     'Polly': 'MS_POLLY',
     'Paul': 'IT_ADMIN',
-    'Jc': 'IT_ADMIN',
+    'Jc': 'SUPERADMIN',
   };
 
   const normalized = username.trim();

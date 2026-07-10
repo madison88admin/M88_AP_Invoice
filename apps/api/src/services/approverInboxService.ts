@@ -182,7 +182,7 @@ function mapUserRoleToSignatoryRoles(userRole: UserRole): SignatoryRole[] {
   const mapping: Record<UserRole, SignatoryRole[]> = {
     [UserRole.PURCHASING_COORDINATOR]: [SignatoryRole.COORDINATOR],
     [UserRole.PURCHASING_MANAGER]: [SignatoryRole.PURCHASING_MANAGER],
-    [UserRole.MLO_ACCOUNT_HOLDER]: [SignatoryRole.MLO_ACCOUNT_HOLDER],
+    [UserRole.MLO_ACCOUNT_HOLDER]: [SignatoryRole.MLO_ACCOUNT_HOLDER, SignatoryRole.MLO_PLANNING_MANAGER],
     [UserRole.PLANNING_MANAGER]: [SignatoryRole.MLO_PLANNING_MANAGER],
     [UserRole.SR_MANAGER_GLOBAL_PRODUCTION]: [SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION],
     [UserRole.MS_POLLY]: [SignatoryRole.MS_POLLY],
@@ -190,8 +190,9 @@ function mapUserRoleToSignatoryRoles(userRole: UserRole): SignatoryRole[] {
     [UserRole.ACCOUNTING_SUPERVISOR]: [SignatoryRole.ACCOUNTING_REVIEWER],
     [UserRole.CFO]: [SignatoryRole.ACCOUNTING_REVIEWER],
     [UserRole.IT_ADMIN]: [SignatoryRole.COORDINATOR],
-    [UserRole.ADMIN]: [SignatoryRole.COORDINATOR],
-    [UserRole.PRESIDENT]: [SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION],
+    [UserRole.SUPERADMIN]: [],
+    [UserRole.ADMIN]: [],
+    [UserRole.PRESIDENT]: [SignatoryRole.ACCOUNTING_REVIEWER],
   };
 
   return mapping[userRole] || [];

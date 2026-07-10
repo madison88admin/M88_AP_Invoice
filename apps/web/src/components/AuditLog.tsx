@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { auditLogApi } from '../lib/api';
 import { LayoutDashboard, LogOut, FileText, Download, Search, RefreshCw } from 'lucide-react';
+import { Skeleton } from './ui/Skeleton';
 
 interface AuditLogItem {
   id: string;
@@ -100,7 +101,7 @@ export default function AuditLog() {
   };
 
   return (
-    <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
+    <div className="min-h-screen animate-page-in" style={{ background: 'var(--bg-base)' }}>
       <header className="px-6 py-4 border-b flex items-center justify-between" style={{ background: 'var(--bg-card)', borderColor: 'var(--border-color)' }}>
         <div className="flex items-center gap-3">
           <div className="p-2 rounded-lg" style={{ background: 'var(--logo-bg)' }}>
@@ -178,9 +179,15 @@ export default function AuditLog() {
               </thead>
               <tbody>
                 {loading ? (
-                  <tr>
-                    <td colSpan={5} className="px-4 py-8 text-center" style={{ color: 'var(--text-muted)' }}>Loading...</td>
-                  </tr>
+                  [...Array(5)].map((_, i) => (
+                    <tr key={i}>
+                      <td className="px-4 py-3"><Skeleton className="h-4 w-32" /></td>
+                      <td className="px-4 py-3"><Skeleton className="h-4 w-24" /></td>
+                      <td className="px-4 py-3"><Skeleton className="h-4 w-28" /></td>
+                      <td className="px-4 py-3"><Skeleton className="h-4 w-20" /></td>
+                      <td className="px-4 py-3"><Skeleton className="h-4 w-16" /></td>
+                    </tr>
+                  ))
                 ) : logs.length === 0 ? (
                   <tr>
                     <td colSpan={5} className="px-4 py-8 text-center" style={{ color: 'var(--text-muted)' }}>

@@ -1,5 +1,7 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useState, MouseEvent } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import { hasPermission } from '../lib/roleAccess';
 import { 
   LayoutDashboard, 
   CheckSquare, 
@@ -15,29 +17,42 @@ import {
   Settings,
   User,
   Activity,
+  Pause,
+  Gauge,
 } from 'lucide-react';
 
 interface NavItem {
   label: string;
   path: string;
   icon: any;
+  roles?: string[];
 }
 
 const navItems: NavItem[] = [
   { label: 'Dashboard', path: '/', icon: LayoutDashboard },
   { label: 'Approvals', path: '/approvals', icon: CheckSquare },
   { label: 'Exceptions', path: '/exceptions', icon: AlertTriangle },
-  { label: 'Vendors', path: '/vendors', icon: Building2 },
-  { label: 'Batches', path: '/payment-batches', icon: Package },
-  { label: 'Reports', path: '/reports', icon: BarChart3 },
-  { label: 'Review', path: '/accounting-review', icon: FileSearch },
-  { label: 'Audit Logs', path: '/audit-logs', icon: ClipboardList },
-  { label: 'Extraction Analytics', path: '/extraction-analytics', icon: Activity },
+  { label: 'On-Hold Queue', path: '/on-hold-queue', icon: Pause, roles: ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'] },
+  { label: 'Vendors', path: '/vendors', icon: Building2, roles: ['PURCHASING_COORDINATOR', 'IT_ADMIN', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE'] },
+  { label: 'Batches', path: '/payment-batches', icon: Package, roles: ['ACCOUNTING_SUPERVISOR', 'CFO', 'IT_ADMIN'] },
+  { label: 'Reports', path: '/reports', icon: BarChart3, roles: ['ACCOUNTING_SUPERVISOR', 'CFO', 'IT_ADMIN', 'ACCOUNTING_ASSOCIATE'] },
+  { label: 'Review', path: '/accounting-review', icon: FileSearch, roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'] },
+  { label: 'Audit Logs', path: '/audit-logs', icon: ClipboardList, roles: ['ACCOUNTING_SUPERVISOR', 'CFO', 'IT_ADMIN', 'ACCOUNTING_ASSOCIATE'] },
+  { label: 'SLA Analytics', path: '/sla-analytics', icon: Gauge, roles: ['ACCOUNTING_SUPERVISOR', 'CFO', 'IT_ADMIN', 'ACCOUNTING_ASSOCIATE'] },
+  { label: 'Extraction Analytics', path: '/extraction-analytics', icon: Activity, roles: ['PURCHASING_COORDINATOR', 'IT_ADMIN', 'ACCOUNTING_SUPERVISOR'] },
 ];
 
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
+  const { user } = useAuth();
+
+  const visibleItems = navItems.filter((item) => {
+    if (user?.role === 'SUPERADMIN') {
+      return item.label === 'Dashboard' || item.label === 'Audit Logs';
+    }
+    return !item.roles || item.roles.includes(user?.role || '') || user?.role === 'IT_ADMIN';
+  });
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -79,19 +94,17 @@ export default function Sidebar() {
 
         {/* Navigation */}
         <nav className="flex-1 p-4 space-y-1">
-          {navItems.map((item) => {
+          {visibleItems.map((item, idx) => {
             const isActive = location.pathname === item.path;
             return (
               <Link
                 key={item.path}
                 to={item.path}
-                className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 ${
-                  isActive ? 'text-white shadow-lg' : ''
-                }`}
+                className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 animate-list-item ${isActive ? 'text-white shadow-lg' : ''}`}
                 style={
                   isActive
-                    ? { background: 'var(--accent-blue)' }
-                    : { color: 'var(--text-secondary)' }
+                    ? { background: 'var(--accent-blue)', animationDelay: `${idx * 30}ms` }
+                    : { color: 'var(--text-secondary)', animationDelay: `${idx * 30}ms` }
                 }
                 onMouseEnter={(e: MouseEvent<HTMLAnchorElement>) => {
                   if (!isActive) {
@@ -142,15 +155,17 @@ export default function Sidebar() {
               <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{formatDate()}</p>
             </div>
             <div className="flex items-center gap-4">
-              <Link
-                to="/upload"
-                className="px-4 py-2 text-white rounded-lg transition-colors font-medium"
-                style={{ background: 'var(--accent-blue)' }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--accent-blue-hover)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--accent-blue)'; }}
-              >
-                Upload Invoice
-              </Link>
+              {hasPermission(user?.role || '', 'canUpload') && (
+                <Link
+                  to="/upload"
+                  className="px-4 py-2 text-white rounded-lg transition-colors font-medium"
+                  style={{ background: 'var(--accent-blue)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--accent-blue-hover)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--accent-blue)'; }}
+                >
+                  Upload Invoice
+                </Link>
+              )}
               <button className="relative p-2 rounded-lg transition-colors" style={{ color: 'var(--text-muted)' }}
                 onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
                 onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = ''; }}
@@ -164,8 +179,8 @@ export default function Sidebar() {
               >
                 <Settings className="h-5 w-5" />
               </button>
-              <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: 'var(--accent-blue)' }}>
-                <User className="h-5 w-5 text-white" />
+              <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold text-white" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}>
+                {user?.name?.split(' ').map(n => n[0]).join('').slice(0, 2) || <User className="h-5 w-5 text-white" />}
               </div>
             </div>
           </div>

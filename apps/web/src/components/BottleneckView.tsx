@@ -40,11 +40,17 @@ export default function BottleneckView() {
 
   useEffect(() => {
     const waitingOnMe = getInvoicesByStage(
-      user?.role === 'PURCHASING_COORDINATOR' ? 'PURCHASING_COORDINATOR' :
+      user?.role === 'PURCHASING_COORDINATOR' ? 'COORDINATOR' :
       user?.role === 'PURCHASING_MANAGER' ? 'PURCHASING_MANAGER' :
-      user?.role === 'PLANNING_MANAGER' ? 'PLANNING_MANAGER' :
-      user?.role === 'SR_MANAGER_GLOBAL_PRODUCTION' ? 'LINDSEY' :
-      user?.role === 'MS_POLLY' ? 'POLLY' : ''
+      user?.role === 'PLANNING_MANAGER' ? 'MLO_PLANNING_MANAGER' :
+      user?.role === 'MLO_PLANNING_MANAGER' ? 'MLO_PLANNING_MANAGER' :
+      user?.role === 'MLO_ACCOUNT_HOLDER' ? 'MLO_ACCOUNT_HOLDER' :
+      user?.role === 'SR_MANAGER_GLOBAL_PRODUCTION' ? 'SR_MANAGER_GLOBAL_PRODUCTION' :
+      user?.role === 'MS_POLLY' ? 'MS_POLLY' :
+      user?.role === 'ACCOUNTING_ASSOCIATE' ? 'ACCOUNTING_REVIEWER' :
+      user?.role === 'ACCOUNTING_SUPERVISOR' ? 'ACCOUNTING_REVIEWER' :
+      user?.role === 'CFO' ? 'ACCOUNTING_REVIEWER' :
+      user?.role === 'PRESIDENT' ? 'ACCOUNTING_REVIEWER' : ''
     ).map(inv => ({
       id: inv.id,
       invoice_number: inv.invoice_number,

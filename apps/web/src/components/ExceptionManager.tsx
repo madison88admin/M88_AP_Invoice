@@ -10,7 +10,7 @@ import { getStatusStyle } from '../lib/statusStyle';
 type ExceptionFilter = 'OPEN' | 'RESOLVED' | 'WAIVED' | 'ALL';
 
 export default function ExceptionManager() {
-  const { invoices, resolveException } = useMockData();
+  const { invoices, resolveException, refresh } = useMockData();
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<ExceptionFilter>('OPEN');
@@ -70,6 +70,7 @@ export default function ExceptionManager() {
 
     try {
       const res = await exceptionApi.waive(selectedException.id, waiverReason);
+      await refresh();
       setSelectedException(null);
       setShowWaiveModal(false);
       setWaiverReason('');
@@ -100,14 +101,18 @@ export default function ExceptionManager() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-screen" style={{ background: 'var(--bg-base)' }}>
-        <div style={{ color: 'var(--text-muted)' }}>Loading exceptions...</div>
+      <div className="flex flex-col items-center justify-center h-screen gap-4 animate-fade-in" style={{ background: 'var(--bg-base)' }}>
+        <div className="relative">
+          <div className="absolute inset-0 rounded-full animate-ping opacity-20" style={{ background: 'var(--accent-amber)' }} />
+          <div className="h-10 w-10 rounded-full border-2 animate-spin" style={{ borderTopColor: 'var(--accent-amber)', borderRightColor: 'var(--accent-amber)', borderBottomColor: 'transparent', borderLeftColor: 'transparent' }} />
+        </div>
+        <p className="text-sm animate-pulse" style={{ color: 'var(--text-muted)' }}>Loading exceptions...</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
+    <div className="min-h-screen animate-page-in" style={{ background: 'var(--bg-base)' }}>
       <div className="relative z-10">
         <div className="px-6 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
           <div className="flex items-center justify-between">
@@ -310,7 +315,7 @@ export default function ExceptionManager() {
                         <div className="text-sm" style={{ color: 'var(--text-primary)' }}>{selectedException.resolved_by}</div>
                       </div>
                     )}
-                    {selectedException.status === 'OPEN' && (
+                    {selectedException.status === 'OPEN' && user && ['PURCHASING_COORDINATOR', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'].includes(user.role) && (
                       <div className="space-y-2 pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
                         <button
                           onClick={() => setShowResolveModal(true)}
@@ -344,8 +349,8 @@ export default function ExceptionManager() {
 
       {/* Resolve Modal */}
       {showResolveModal && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="max-w-md w-full mx-4 rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-backdrop">
+          <div className="max-w-md w-full mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
             <div className="p-6">
               <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
                 Resolve Exception
@@ -392,8 +397,8 @@ export default function ExceptionManager() {
 
       {/* Waive Modal */}
       {showWaiveModal && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="max-w-md w-full mx-4 rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-backdrop">
+          <div className="max-w-md w-full mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
             <div className="p-6">
               <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
                 Waive Exception

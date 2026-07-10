@@ -19,6 +19,10 @@ export default defineConfig({
         timeout: 600000, // 10 minutes
         proxyTimeout: 600000, // 10 minutes
       },
+      '/health': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+      },
     },
   },
 });

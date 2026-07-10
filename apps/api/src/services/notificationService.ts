@@ -255,3 +255,55 @@ export async function sendInvoicePostedNotification(
 
   await sendEmail({ to, subject, body });
 }
+
+export async function sendPaymentConfirmationToSupplier(
+  invoiceId: string,
+  invoiceNumber: string,
+  vendorName: string,
+  vendorEmail: string,
+  amount: number,
+  currency: string,
+  paymentReference: string,
+  paidAt: Date
+): Promise<void> {
+  const subject = `Payment Confirmation - Invoice ${invoiceNumber} - ${vendorName}`;
+
+  const body = `
+    <h2>Payment Confirmation</h2>
+    <p>Dear ${vendorName},</p>
+    <p>We are pleased to confirm that your invoice has been paid. Please find the payment details below:</p>
+    <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
+      <tr>
+        <td style="padding: 8px 12px; border: 1px solid #e0e0e0; font-weight: bold;">Invoice Number</td>
+        <td style="padding: 8px 12px; border: 1px solid #e0e0e0;">${invoiceNumber}</td>
+      </tr>
+      <tr>
+        <td style="padding: 8px 12px; border: 1px solid #e0e0e0; font-weight: bold;">Vendor</td>
+        <td style="padding: 8px 12px; border: 1px solid #e0e0e0;">${vendorName}</td>
+      </tr>
+      <tr>
+        <td style="padding: 8px 12px; border: 1px solid #e0e0e0; font-weight: bold;">Payment Amount</td>
+        <td style="padding: 8px 12px; border: 1px solid #e0e0e0;">${currency} ${amount.toFixed(2)}</td>
+      </tr>
+      <tr>
+        <td style="padding: 8px 12px; border: 1px solid #e0e0e0; font-weight: bold;">Payment Reference</td>
+        <td style="padding: 8px 12px; border: 1px solid #e0e0e0;">${paymentReference}</td>
+      </tr>
+      <tr>
+        <td style="padding: 8px 12px; border: 1px solid #e0e0e0; font-weight: bold;">Payment Date</td>
+        <td style="padding: 8px 12px; border: 1px solid #e0e0e0;">${paidAt.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</td>
+      </tr>
+    </table>
+    <p>If you have any questions regarding this payment, please contact our Accounts Payable team at <a href="mailto:ap@madison88.com">ap@madison88.com</a>.</p>
+    <p>Thank you for your business.</p>
+    <p style="margin-top: 24px; color: #888; font-size: 12px;">
+      Madison 88 Ltd.<br/>
+      Accounts Payable Department<br/>
+      This is an automated message — please do not reply directly.
+    </p>
+  `;
+
+  const cc = process.env.ACCOUNTING_EMAILS?.split(',') || ['accounting@madison88.com'];
+
+  await sendEmail({ to: [vendorEmail], cc, subject, body });
+}

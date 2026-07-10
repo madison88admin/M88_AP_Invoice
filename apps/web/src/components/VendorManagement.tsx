@@ -66,7 +66,7 @@ export default function VendorManagement() {
   };
 
   return (
-    <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
+    <div className="min-h-screen animate-page-in" style={{ background: 'var(--bg-base)' }}>
       <div className="relative z-10">
         <header className="px-6 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
           <div className="flex items-center justify-between">
@@ -142,6 +142,7 @@ export default function VendorManagement() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
+                        {user && ['PURCHASING_COORDINATOR', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'].includes(user.role) && (
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -154,6 +155,7 @@ export default function VendorManagement() {
                         >
                           <Edit className="h-4 w-4" strokeWidth={1.75} />
                         </button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -214,8 +216,8 @@ export default function VendorManagement() {
 
       {/* Edit Modal */}
       {showEditModal && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-backdrop">
+          <div className="max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
             <div className="p-6">
               <div className="flex items-center justify-between mb-6">
                 <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Edit Vendor</h3>

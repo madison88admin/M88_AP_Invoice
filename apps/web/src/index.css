@@ -35,6 +35,7 @@
   --accent-red: #EF4444;
   --accent-amber: #F59E0B;
   --accent-blue: #3B82F6;
+  --accent-blue-hover: #2563eb;
   --logo-bg: #6C5CE7;
   --metric-card-bg: #1C1D22;
 }
@@ -77,6 +78,7 @@
   --accent-red: #dc2626;
   --accent-amber: #d97706;
   --accent-blue: #2563eb;
+  --accent-blue-hover: #1d4ed8;
 
   /* Metric card background — light lavender tint */
   --metric-card-bg: #ede9fe;
@@ -133,6 +135,12 @@
 .theme-toggle-btn:hover {
   background: var(--bg-card-hover);
   color: var(--text-primary);
+}
+.theme-toggle-btn svg {
+  transition: transform 0.3s ease;
+}
+.theme-toggle-btn:hover svg {
+  transform: rotate(15deg);
 }
 
 /* Custom Scrollbar Styling */
@@ -295,4 +303,114 @@
 
 .animate-refresh-pulse {
   animation: refreshPulse 1s ease-in-out infinite;
+}
+
+/* Spinner rotation */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.animate-spin {
+  animation: spin 0.6s linear infinite;
+}
+
+/* Toast slide out */
+@keyframes toastSlideOut {
+  to {
+    transform: translateX(120%);
+    opacity: 0;
+  }
+}
+.animate-toast-out {
+  animation: toastSlideOut 250ms ease-in forwards;
+}
+
+/* Button press feedback */
+@keyframes buttonPress {
+  0% { transform: scale(1); }
+  50% { transform: scale(0.97); }
+  100% { transform: scale(1); }
+}
+.animate-press {
+  animation: buttonPress 0.15s ease-out;
+}
+
+/* Modal backdrop fade */
+@keyframes backdropIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-backdrop {
+  animation: backdropIn 0.2s ease-out forwards;
+}
+
+/* Modal content entrance */
+@keyframes modalIn {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+.animate-modal-in {
+  animation: modalIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Staggered list items */
+@keyframes listStaggerIn {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.animate-list-item {
+  animation: listStaggerIn 0.3s ease-out forwards;
+  opacity: 0;
+}
+
+/* Card hover lift */
+.card-lift {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.card-lift:hover {
+  transform: translateY(-2px);
+}
+
+/* Smooth page transition */
+@keyframes pageIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-page-in {
+  animation: pageIn 0.3s ease-out forwards;
+}
+
+/* Empty state bounce */
+@keyframes softBounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+.animate-soft-bounce {
+  animation: softBounce 2s ease-in-out infinite;
+}
+
+/* Progress bar fill */
+@keyframes progressFill {
+  from { width: 0%; }
+  to { width: var(--progress-width, 100%); }
+}
+.animate-progress {
+  animation: progressFill 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }

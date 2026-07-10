@@ -4,7 +4,7 @@ import { createApprovalRequest } from './approvalService';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils/logger';
 import { nextGenService } from './nextGenService';
-import crypto from 'crypto';
+import { checkDuplicateInvoice as checkDuplicateDetailed } from './duplicateDetectionService';
 
 export interface ValidationResult {
   passed: boolean;
@@ -754,77 +754,43 @@ function validateSignatures(amount: number, signatures: any[]): ValidationResult
   };
 }
 
-// RULE 11 — Duplicate detection
+// RULE 11 — Duplicate detection (delegates to duplicateDetectionService)
 async function checkDuplicateInvoice(invoice: any): Promise<ValidationResult> {
   if (!isDbEnabled()) {
     return { passed: true, message: 'Duplicate check skipped — DB unavailable' };
   }
 
-  // Hash: SHA-256(invoice_number + vendor_id + amount + invoice_date)
-  const hashInput = `${invoice.invoice_number}${invoice.vendor_id || ''}${invoice.total_amount}${invoice.invoice_date || ''}`;
-  const hash = crypto.createHash('sha256').update(hashInput).digest('hex');
-
-  // Check for existing invoice with same invoice_number + vendor
-  let duplicate: any = null;
   try {
-  duplicate = await prisma.invoice.findFirst({
-    where: {
-      invoice_number: invoice.invoice_number,
-      vendor_id: invoice.vendor_id,
-      id: { not: invoice.id },
-    },
-  });
+    const invoiceDate = invoice.invoice_date ? new Date(invoice.invoice_date) : new Date();
+    const result = await checkDuplicateDetailed(
+      invoice.invoice_number,
+      invoice.vendor_id || '',
+      Number(invoice.total_amount),
+      invoiceDate,
+      invoice.id
+    );
 
-  } catch {
-    return { passed: true, message: 'Duplicate check skipped — DB unavailable' };
-  }
+    if (result.is_duplicate) {
+      const detail = result.fuzzy_match_details
+        ? `${result.fuzzy_match_details.match_reason} (existing invoice: ${result.existing_invoice_number || 'unknown'})`
+        : `Duplicate invoice detected (type: ${result.duplicate_type})`;
 
-  if (duplicate) {
-    return {
-      passed: false,
-      reason: ExceptionReason.DUPLICATE_INVOICE,
-      message: 'Duplicate invoice detected',
-      detail: `Invoice ${invoice.invoice_number} already exists for this vendor (ID: ${duplicate.id})`,
-    };
-  }
-
-  // Secondary fuzzy check: same vendor + same amount + date within ±3 days, different invoice number
-  try {
-    const invoiceDate = invoice.invoice_date ? new Date(invoice.invoice_date) : null;
-    if (invoiceDate) {
-      const threeDaysBefore = new Date(invoiceDate.getTime() - 3 * 24 * 60 * 60 * 1000);
-      const threeDaysAfter = new Date(invoiceDate.getTime() + 3 * 24 * 60 * 60 * 1000);
-
-      const fuzzyDuplicate = await prisma.invoice.findFirst({
-        where: {
-          vendor_id: invoice.vendor_id,
-          total_amount: Number(invoice.total_amount),
-          invoice_date: {
-            gte: threeDaysBefore,
-            lte: threeDaysAfter,
-          },
-          invoice_number: { not: invoice.invoice_number },
-          id: { not: invoice.id },
-        },
-      });
-
-      if (fuzzyDuplicate) {
-        return {
-          passed: false,
-          reason: ExceptionReason.DUPLICATE_INVOICE,
-          message: 'Suspected duplicate invoice detected (fuzzy match)',
-          detail: `Invoice with different number (${fuzzyDuplicate.invoice_number}) but same vendor, amount, and date within ±3 days (ID: ${fuzzyDuplicate.id})`,
-        };
-      }
+      return {
+        passed: false,
+        reason: ExceptionReason.DUPLICATE_INVOICE,
+        message: `Duplicate invoice detected — ${result.duplicate_type || 'EXACT'}${result.risk_level ? ` (risk: ${result.risk_level})` : ''}`,
+        detail,
+      };
     }
-  } catch {
-    // Skip fuzzy check if DB unavailable
-  }
 
-  return {
-    passed: true,
-    message: 'No duplicate invoice found',
-  };
+    return {
+      passed: true,
+      message: 'No duplicate invoice found',
+    };
+  } catch (error) {
+    logger.error('Duplicate check failed:', error);
+    return { passed: true, message: 'Duplicate check skipped — error occurred' };
+  }
 }
 
 // RULE 12 — Late submission

@@ -19,7 +19,7 @@ export default function MyTasksWidget({ user, invoices, onFilterClick }: MyTasks
   );
 
   const pendingPosts = hasPermission(role, 'canPost')
-    ? invoices.filter(inv => inv.status === InvoiceStatus.APPROVED)
+    ? invoices.filter(inv => inv.status === InvoiceStatus.PENDING_ACCOUNTING || inv.status === InvoiceStatus.APPROVED)
     : [];
 
   const pendingPayments = hasPermission(role, 'canSchedulePayment')
@@ -48,7 +48,7 @@ export default function MyTasksWidget({ user, invoices, onFilterClick }: MyTasks
       color: 'var(--accent-purple)',
       bg: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)',
       border: 'color-mix(in srgb, var(--accent-purple) 20%, transparent)',
-      status: InvoiceStatus.APPROVED,
+      status: InvoiceStatus.PENDING_ACCOUNTING,
       show: pendingPosts.length > 0,
     },
     {
@@ -91,14 +91,14 @@ export default function MyTasksWidget({ user, invoices, onFilterClick }: MyTasks
         My Tasks
       </h3>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        {tasks.map((task) => (
+        {tasks.map((task, idx) => (
           <button
             key={task.label}
             onClick={() => onFilterClick(task.status)}
-            className="p-4 rounded-xl transition-colors text-left"
-            style={{ background: task.bg, border: `1px solid ${task.border}` }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = task.bg; }}
+            className="p-4 rounded-xl transition-all duration-200 text-left animate-fade-in-up card-lift"
+            style={{ background: task.bg, border: `1px solid ${task.border}`, animationDelay: `${idx * 60}ms` }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-card-hover)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = task.bg; e.currentTarget.style.transform = 'translateY(0)'; }}
           >
             <div className="flex items-center justify-between">
               <span className="text-2xl font-bold" style={{ color: task.color, fontVariantNumeric: 'tabular-nums' }}>{task.count}</span>

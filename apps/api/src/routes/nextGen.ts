@@ -123,7 +123,7 @@ router.get('/pos', async (req, res) => {
 // Skip role-check in development
 const devBypassAdmin = (req: any, res: any, next: any) => {
   if (process.env.NODE_ENV === 'development') return next();
-  return authorize(UserRole.ADMIN, UserRole.IT_ADMIN, UserRole.ACCOUNTING_SUPERVISOR)(req, res, next);
+  return authorize(UserRole.SUPERADMIN, UserRole.IT_ADMIN, UserRole.ACCOUNTING_SUPERVISOR)(req, res, next);
 };
 
 router.get('/status', devBypassAdmin, async (req, res) => {

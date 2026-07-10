@@ -30,7 +30,7 @@ export default function CFOApproval() {
   const [loading, setLoading] = useState(true);
   const [selectedBatch, setSelectedBatch] = useState<PaymentBatch | null>(null);
   const [filters, setFilters] = useState({
-    status: 'DRAFT',
+    status: 'PENDING_CFO',
     search: '',
   });
 
@@ -46,9 +46,9 @@ export default function CFOApproval() {
       const filtered = filters.status ? allBatches.filter((b: any) => b.status === filters.status) : allBatches;
       setBatches(filtered.map((b: any) => ({
         id: b.id,
-        batch_number: b.batch_name || b.name || b.id,
+        batch_number: b.batch_number || b.batch_name || b.name || b.id,
         total_amount: Number(b.total_amount || 0),
-        payment_count: b.invoice_count || 0,
+        payment_count: b.payment_count || b.invoice_count || 0,
         status: b.status || 'DRAFT',
         created_at: new Date(b.created_at),
         processed_at: b.processed_at ? new Date(b.processed_at) : undefined,
@@ -94,7 +94,7 @@ export default function CFOApproval() {
   };
 
   return (
-    <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
+    <div className="min-h-screen animate-page-in" style={{ background: 'var(--bg-base)' }}>
       <div className="relative z-10">
         <header className="px-6 py-4 border-b" style={{ borderColor: 'var(--border-color)' }}>
           <div className="flex items-center justify-between">
@@ -212,7 +212,7 @@ export default function CFOApproval() {
                         >
                           <Eye className="h-5 w-5" strokeWidth={1.75} />
                         </button>
-                        {batch.status === 'DRAFT' && (
+                        {batch.status === 'PENDING_CFO' && (
                           <>
                             <button onClick={() => handleApprove(batch.id)} className="mr-3 transition-colors" style={{ color: 'var(--accent-green)' }}
                               onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.8'; }}
@@ -302,7 +302,7 @@ export default function CFOApproval() {
                   </div>
                 </div>
 
-                {selectedBatch.status === 'DRAFT' && (
+                {selectedBatch.status === 'PENDING_CFO' && (
                   <div className="mt-6 pt-6 flex gap-3 border-t" style={{ borderColor: 'var(--border-color)' }}>
                     <button onClick={() => handleApprove(selectedBatch.id)} className="flex-1 flex items-center justify-center px-4 py-3 rounded-xl transition-all font-semibold text-sm" style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)', boxShadow: '0 0 16px rgba(198,255,61,0.15)' }}
                       onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--accent-lime-hover)'; }}

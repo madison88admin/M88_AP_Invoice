@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { authorize } from '../middleware/auth';
 import { UserRole } from '@ap-invoice/shared';
 import { ollamaFineTuneService } from '../services/ollamaFineTuneService';
+import { cleanupData } from '../controllers/cleanup';
 
 const router = Router() as Router;
 
@@ -53,7 +54,7 @@ router.get('/status', devBypassAdmin, (req: Request, res: Response) => {
           status: 'working',
           description: 'NextGen Forms Auth login with API JWT and role-based access control',
           roles: [
-            'ADMIN',
+            'SUPERADMIN',
             'ACCOUNTING_ASSOCIATE',
             'ACCOUNTING_SUPERVISOR',
             'PURCHASING_COORDINATOR',
@@ -311,5 +312,12 @@ router.post('/finetune/dataset', devBypassAdmin, async (req: Request, res: Respo
     next(error);
   }
 });
+
+/**
+ * POST /api/system/cleanup-data
+ * WARNING: Deletes ALL invoice data from the database
+ * This action cannot be undone
+ */
+router.post('/cleanup-data', devBypassAdmin, cleanupData);
 
 export default router;

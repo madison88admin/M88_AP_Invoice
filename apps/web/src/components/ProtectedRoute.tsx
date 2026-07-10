@@ -1,5 +1,6 @@
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { FullPageSpinner } from './ui/Spinner';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -9,12 +10,12 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
   const { isAuthenticated, isLoading } = useAuth();
 
   if (isLoading) {
-    return <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--bg-base)' }} />;
+    return <FullPageSpinner label="Loading your workspace..." />;
   }
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
   }
 
-  return <>{children}</>;
+  return <div className="animate-page-in">{children}</div>;
 }

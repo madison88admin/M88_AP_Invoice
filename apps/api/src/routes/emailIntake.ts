@@ -7,7 +7,7 @@ const router: Router = Router();
 
 router.use(authenticate);
 
-router.post('/start-poller', authorize(UserRole.IT_ADMIN), async (req, res, next) => {
+router.post('/start-poller', authorize(UserRole.IT_ADMIN, UserRole.SUPERADMIN), async (req, res, next) => {
   try {
     const { interval } = req.body;
     const intervalMinutes = interval || 5;

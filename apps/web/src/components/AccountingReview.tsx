@@ -23,6 +23,7 @@ export default function AccountingReview() {
   const filteredInvoices = invoices.filter(invoice => {
     if (activeTab === 'soa' && invoice.invoice_type !== 'STATEMENT') return false;
     if (activeTab === 'posted' && invoice.invoice_type === 'STATEMENT') return false;
+    if (filters.status && invoice.status !== filters.status) return false;
     return invoice.invoice_number.toLowerCase().includes(filters.search.toLowerCase()) ||
     invoice.vendor_name.toLowerCase().includes(filters.search.toLowerCase());
   });
@@ -38,7 +39,7 @@ export default function AccountingReview() {
   };
 
   return (
-    <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
+    <div className="min-h-screen animate-page-in" style={{ background: 'var(--bg-base)' }}>
       <div className="relative z-10">
         <header className="px-6 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
           <div className="flex items-center justify-between">

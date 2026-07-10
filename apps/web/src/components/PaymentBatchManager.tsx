@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Package, Play, X, AlertCircle, CheckCircle, Clock, DollarSign, ArrowLeft } from 'lucide-react';
+import { Package, Play, X, AlertCircle, CheckCircle, Clock, DollarSign, ArrowLeft, CheckCircle as ApproveIcon } from 'lucide-react';
 import { paymentBatchApi } from '../lib/api';
+import { useAuth } from '../contexts/AuthContext';
 
 interface Payment {
   id: string;
@@ -31,12 +32,15 @@ interface PaymentBatch {
 }
 
 export default function PaymentBatchManager() {
+  const { user } = useAuth();
   const [batches, setBatches] = useState<PaymentBatch[]>([]);
   const [selectedBatch, setSelectedBatch] = useState<PaymentBatch | null>(null);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
+
+  const isCFO = user?.role === 'CFO';
 
   const loadBatches = async () => {
     try {
@@ -45,9 +49,9 @@ export default function PaymentBatchManager() {
       const data = response.data || [];
       setBatches(data.map((b: any) => ({
         id: b.id,
-        batch_number: b.batch_name || b.name || b.id,
+        batch_number: b.batch_number || b.batch_name || b.name || b.id,
         total_amount: Number(b.total_amount || 0),
-        payment_count: b.invoice_count || 0,
+        payment_count: b.payment_count || b.invoice_count || 0,
         status: b.status || 'DRAFT',
         created_at: b.created_at || new Date().toISOString(),
         processed_at: b.processed_at || undefined,
@@ -85,6 +89,19 @@ export default function PaymentBatchManager() {
       setSelectedBatch(null);
     } catch (error) {
       console.error('Failed to process batch:', error);
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleApproveBatch = async (batchId: string) => {
+    setProcessing(true);
+    try {
+      await paymentBatchApi.approve(batchId);
+      await loadBatches();
+      setSelectedBatch(null);
+    } catch (error) {
+      console.error('Failed to approve batch:', error);
     } finally {
       setProcessing(false);
     }
@@ -142,14 +159,18 @@ export default function PaymentBatchManager() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64" style={{ background: 'var(--bg-base)' }}>
-        <div style={{ color: 'var(--text-muted)' }}>Loading payment batches...</div>
+      <div className="flex flex-col items-center justify-center h-64 gap-4 animate-fade-in" style={{ background: 'var(--bg-base)' }}>
+        <div className="relative">
+          <div className="absolute inset-0 rounded-full animate-ping opacity-20" style={{ background: 'var(--accent-purple)' }} />
+          <div className="h-10 w-10 rounded-full border-2 animate-spin" style={{ borderTopColor: 'var(--accent-purple)', borderRightColor: 'var(--accent-purple)', borderBottomColor: 'transparent', borderLeftColor: 'transparent' }} />
+        </div>
+        <p className="text-sm animate-pulse" style={{ color: 'var(--text-muted)' }}>Loading payment batches...</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
+    <div className="min-h-screen animate-page-in" style={{ background: 'var(--bg-base)' }}>
       <div className="relative z-10 px-6 py-8 space-y-6">
         <header className="px-6 py-4 -mx-6" style={{ borderBottom: '1px solid var(--border-color)' }}>
           <div className="flex items-center justify-between">
@@ -249,7 +270,7 @@ export default function PaymentBatchManager() {
                 </div>
               </div>
 
-              {selectedBatch.status === 'DRAFT' && (
+              {selectedBatch.status === 'DRAFT' && (user?.role === 'ACCOUNTING_SUPERVISOR' || user?.role === 'CFO') && (
                 <div className="flex items-center space-x-3 mb-6">
                   <button onClick={() => handleProcessBatch(selectedBatch.id)} disabled={processing}
                     className="flex items-center px-4 py-2.5 rounded-xl transition-colors disabled:opacity-50 text-sm font-semibold"
@@ -258,7 +279,7 @@ export default function PaymentBatchManager() {
                     onMouseLeave={(e) => { if (!processing) e.currentTarget.style.background = 'var(--accent-lime)'; }}
                   >
                     <Play className="h-4 w-4 mr-2" strokeWidth={1.75} />
-                    Process Batch
+                    Submit for CFO Approval
                   </button>
                   <button onClick={() => setShowCancelModal(true)} disabled={processing}
                     className="flex items-center px-4 py-2.5 rounded-xl transition-colors disabled:opacity-50 text-sm font-medium"
@@ -268,6 +289,31 @@ export default function PaymentBatchManager() {
                   >
                     <X className="h-4 w-4 mr-2" strokeWidth={1.75} />
                     Cancel Batch
+                  </button>
+                </div>
+              )}
+
+              {selectedBatch.status === 'PENDING_CFO' && (isCFO || user?.role === 'ACCOUNTING_SUPERVISOR') && (
+                <div className="flex items-center space-x-3 mb-6">
+                  {isCFO && (
+                  <button onClick={() => handleApproveBatch(selectedBatch.id)} disabled={processing}
+                    className="flex items-center px-4 py-2.5 rounded-xl transition-colors disabled:opacity-50 text-sm font-semibold"
+                    style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}
+                    onMouseEnter={(e) => { if (!processing) e.currentTarget.style.background = 'var(--accent-lime-hover)'; }}
+                    onMouseLeave={(e) => { if (!processing) e.currentTarget.style.background = 'var(--accent-lime)'; }}
+                  >
+                    <CheckCircle className="h-4 w-4 mr-2" strokeWidth={1.75} />
+                    Approve & Process Payments
+                  </button>
+                  )}
+                  <button onClick={() => setShowCancelModal(true)} disabled={processing}
+                    className="flex items-center px-4 py-2.5 rounded-xl transition-colors disabled:opacity-50 text-sm font-medium"
+                    style={{ background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', color: 'var(--accent-red)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}
+                    onMouseEnter={(e) => { if (!processing) e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-red) 20%, transparent)'; }}
+                    onMouseLeave={(e) => { if (!processing) e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-red) 10%, transparent)'; }}
+                  >
+                    <X className="h-4 w-4 mr-2" strokeWidth={1.75} />
+                    Reject Batch
                   </button>
                 </div>
               )}
@@ -314,8 +360,8 @@ export default function PaymentBatchManager() {
         )}
 
         {showCancelModal && (
-          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
-            <div className="p-6 max-w-md w-full mx-4 rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-backdrop">
+            <div className="p-6 max-w-md w-full mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
               <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>Cancel Payment Batch</h3>
               <p className="text-sm mb-4" style={{ color: 'var(--text-secondary)' }}>Are you sure you want to cancel batch {selectedBatch?.batch_number}? This will unlink all payments from the batch.</p>
               <div className="mb-4">

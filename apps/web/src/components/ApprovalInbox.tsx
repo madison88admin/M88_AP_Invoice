@@ -2,25 +2,26 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
-import { CheckCircle, XCircle, Clock, ArrowLeft } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, ArrowLeft, Loader2 } from 'lucide-react';
 import { MockInvoice } from '../lib/mockData';
+import { Skeleton } from './ui/Skeleton';
 
-const mapUserRoleToSignatoryRole = (role: string): string | null => {
-  const mapping: Record<string, string> = {
-    'PURCHASING_COORDINATOR': 'COORDINATOR',
-    'PURCHASING_MANAGER': 'PURCHASING_MANAGER',
-    'PLANNING_MANAGER': 'MLO_PLANNING_MANAGER',
-    'MLO_PLANNING_MANAGER': 'MLO_PLANNING_MANAGER',
-    'MLO_ACCOUNT_HOLDER': 'MLO_ACCOUNT_HOLDER',
-    'SR_MANAGER_GLOBAL_PRODUCTION': 'SR_MANAGER_GLOBAL_PRODUCTION',
-    'MS_POLLY': 'MS_POLLY',
-    'ACCOUNTING_ASSOCIATE': 'ACCOUNTING_REVIEWER',
-    'ACCOUNTING_SUPERVISOR': 'ACCOUNTING_REVIEWER',
-    'CFO': 'ACCOUNTING_REVIEWER',
-    'IT_ADMIN': 'COORDINATOR',
-    'ADMIN': 'COORDINATOR',
+const mapUserRoleToSignatoryRoles = (role: string): string[] => {
+  const mapping: Record<string, string[]> = {
+    'PURCHASING_COORDINATOR': ['COORDINATOR'],
+    'PURCHASING_MANAGER': ['PURCHASING_MANAGER'],
+    'PLANNING_MANAGER': ['MLO_PLANNING_MANAGER'],
+    'MLO_PLANNING_MANAGER': ['MLO_PLANNING_MANAGER'],
+    'MLO_ACCOUNT_HOLDER': ['MLO_ACCOUNT_HOLDER', 'MLO_PLANNING_MANAGER'],
+    'SR_MANAGER_GLOBAL_PRODUCTION': ['SR_MANAGER_GLOBAL_PRODUCTION'],
+    'MS_POLLY': ['MS_POLLY'],
+    'ACCOUNTING_ASSOCIATE': ['ACCOUNTING_REVIEWER'],
+    'ACCOUNTING_SUPERVISOR': ['ACCOUNTING_REVIEWER'],
+    'CFO': ['ACCOUNTING_REVIEWER'],
+    'PRESIDENT': ['ACCOUNTING_REVIEWER'],
+    'SUPERADMIN': [],
   };
-  return mapping[role] || null;
+  return mapping[role] || [];
 };
 
 export default function ApprovalInbox() {
@@ -44,10 +45,14 @@ export default function ApprovalInbox() {
   // Filter invoices to show only pending approvals for the current user's role
   const pendingApprovals = invoices.filter(invoice => {
     if (!invoice.signatures || invoice.signatures.length === 0) return false;
-    const pending = invoice.signatures.find(s => !s.signed_at);
-    if (!pending) return false;
-    const userSignatoryRole = user ? mapUserRoleToSignatoryRole(user.role) : null;
-    return userSignatoryRole ? pending.signatory_role === userSignatoryRole : false;
+    // Exclude invoices not in an active approval workflow
+    const status = String(invoice.status || '');
+    if (!status.startsWith('PENDING_') || status === 'PENDING_ACCOUNTING') return false;
+    // Find the first unsigned signature (sequential enforcement — signatures are in route order)
+    const firstPending = invoice.signatures.find(s => !s.signed_at);
+    if (!firstPending) return false;
+    const userSignatoryRoles = user ? mapUserRoleToSignatoryRoles(user.role) : [];
+    return userSignatoryRoles.length > 0 ? userSignatoryRoles.includes(firstPending.signatory_role) : false;
   });
 
   // Pagination logic
@@ -61,7 +66,7 @@ export default function ApprovalInbox() {
 
     try {
       setApproving(true);
-      await approveInvoice(selectedInvoice.id, user.name, user.role);
+      await approveInvoice(selectedInvoice.id, user.name);
       setSelectedInvoice(null);
     } catch (error) {
       console.error('Failed to approve invoice:', error);
@@ -101,7 +106,7 @@ export default function ApprovalInbox() {
   };
 
   return (
-    <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
+    <div className="min-h-screen animate-page-in" style={{ background: 'var(--bg-base)' }}>
       <div className="relative z-10">
         <header className="px-6 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
           <div className="flex items-center">
@@ -127,7 +132,18 @@ export default function ApprovalInbox() {
                   <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{pendingApprovals.length} items</span>
                 </div>
                 {loading ? (
-                  <div className="px-6 py-12 text-center" style={{ color: 'var(--text-muted)' }}>Loading...</div>
+                  <div className="px-6 py-4 space-y-4">
+                    {[...Array(3)].map((_, i) => (
+                      <div key={i} className="flex items-center gap-4 p-4 rounded-xl" style={{ background: 'var(--bg-elevated)' }}>
+                        <Skeleton className="h-10 w-10 rounded-xl" />
+                        <div className="flex-1 space-y-2">
+                          <Skeleton className="h-4 w-32" />
+                          <Skeleton className="h-3 w-48" />
+                        </div>
+                        <Skeleton className="h-6 w-20 rounded-lg" />
+                      </div>
+                    ))}
+                  </div>
                 ) : pendingApprovals.length === 0 ? (
                   <div className="px-6 py-12 text-center">
                     <div className="inline-flex p-4 rounded-2xl mb-3" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>

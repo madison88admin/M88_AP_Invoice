@@ -658,8 +658,6 @@ function mapUserRoleToSignatoryRoles(userRole: string): SignatoryRole[] {
     'ACCOUNTING_SUPERVISOR': [SignatoryRole.ACCOUNTING_REVIEWER],
     'CFO': [SignatoryRole.ACCOUNTING_REVIEWER],
     'PRESIDENT': [SignatoryRole.ACCOUNTING_REVIEWER],
-    'IT_ADMIN': [SignatoryRole.COORDINATOR],
-    'ADMIN': [SignatoryRole.COORDINATOR],
   };
 
   return mapping[userRole] || [];

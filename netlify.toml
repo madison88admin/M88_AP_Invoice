@@ -8,6 +8,14 @@
   NPM_FLAGS = "--version"
 
 [[redirects]]
+  from = "/api/invoices/upload*"
+  to = "http://5.223.78.194/api/invoices/upload:splat"
+  status = 200
+  force = true
+  [redirects.headers]
+    X-Netlify-Timeout = "300"
+
+[[redirects]]
   from = "/api/*"
   to = "http://5.223.78.194/api/:splat"
   status = 200

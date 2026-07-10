@@ -14,6 +14,12 @@
   force = true
 
 [[redirects]]
+  from = "/health/*"
+  to = "http://5.223.78.194/health/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200

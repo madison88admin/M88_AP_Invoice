@@ -56,13 +56,35 @@ export const invoiceApi = {
   confirmOCR: (id: string, data: any) => api.post(`/api/invoices/${id}/confirm-ocr`, data),
   saveCorrection: (id: string, data: any) => api.post(`/api/invoices/${id}/correct-extraction`, data),
   saveStandaloneCorrection: (data: any) => api.post('/api/invoices/corrections', data),
-  validate: (id: string) => api.post(`/api/invoices/${id}/validate`),
+  validate: async (id: string) => {
+    const res = await api.post(`/api/invoices/${id}/validate`, {}, { timeout: 30000 });
+    const jobId = res.data.jobId;
+    if (!jobId) return res;
+    for (let i = 0; i < 60; i++) {
+      await new Promise(r => setTimeout(r, 5000));
+      const poll = await api.get(`/api/invoices/jobs/${jobId}`, { timeout: 10000 });
+      if (poll.data.status === 'completed') return { data: poll.data.result };
+      if (poll.data.status === 'failed') throw new Error(poll.data.error || 'Validation failed');
+    }
+    throw new Error('Validation timed out');
+  },
   requestApproval: (id: string) => api.post(`/api/invoices/${id}/request-approval`),
   approve: (id: string, signerName: string) => api.post(`/api/invoices/${id}/approve`, { signerName }),
   reject: (id: string, reason: string) => api.post(`/api/invoices/${id}/reject`, { reason }),
   post: (id: string, bypassVarianceCheck: boolean = false) => api.post(`/api/invoices/${id}/post`, { bypassVarianceCheck }),
   releaseHold: (id: string) => api.post(`/api/invoices/${id}/release-hold`),
-  checkNextGen: (id: string) => api.post(`/api/invoices/${id}/check-nextgen`),
+  checkNextGen: async (id: string) => {
+    const res = await api.post(`/api/invoices/${id}/check-nextgen`, {}, { timeout: 30000 });
+    const jobId = res.data.jobId;
+    if (!jobId) return res;
+    for (let i = 0; i < 60; i++) {
+      await new Promise(r => setTimeout(r, 5000));
+      const poll = await api.get(`/api/invoices/jobs/${jobId}`, { timeout: 10000 });
+      if (poll.data.status === 'completed') return { data: poll.data.result };
+      if (poll.data.status === 'failed') throw new Error(poll.data.error || 'NextGen check failed');
+    }
+    throw new Error('NextGen check timed out');
+  },
   schedulePayment: (id: string, paymentDate: string) => api.post(`/api/invoices/${id}/schedule-payment`, { paymentDate }),
 };
 

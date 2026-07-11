@@ -88,10 +88,12 @@ router.post('/powerautomate-webhook', webhookApiKey, async (req, res, next) => {
 });
 
 /**
- * SharePoint-triggered Webhook Endpoint (API key auth)
- * Called by Power Automate when file is saved to SharePoint
- * Expects: { sharepointUrl, fileName, emailSubject, fromAddress, receivedDateTime }
+ * SharePoint/OneDrive Webhook Endpoint (API key auth)
+ * Called by Power Automate when file is saved to SharePoint/OneDrive
+ * Expects: { fileName, emailSubject, fromAddress, receivedDateTime, fileContentBase64?, sharepointUrl? }
  * Headers: x-api-key: <WEBHOOK_API_KEY>
+ * If fileContentBase64 is provided, API processes directly (no download needed).
+ * If only sharepointUrl is provided, API downloads from SharePoint.
  * Returns: { jobId } — process runs async, poll /api/invoices/jobs/:jobId for status
  */
 router.post('/sharepoint-webhook', webhookApiKey, async (req, res, next) => {
@@ -101,13 +103,22 @@ router.post('/sharepoint-webhook', webhookApiKey, async (req, res, next) => {
       fileName, 
       emailSubject, 
       fromAddress, 
-      receivedDateTime 
+      receivedDateTime,
+      fileContentBase64,
+      contentType,
     } = req.body;
 
-    if (!sharepointUrl || !fileName) {
+    if (!fileName) {
       return res.status(400).json({ 
         success: false, 
-        error: 'Missing required fields: sharepointUrl, fileName' 
+        error: 'Missing required field: fileName' 
+      });
+    }
+
+    if (!fileContentBase64 && !sharepointUrl) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Either fileContentBase64 or sharepointUrl is required' 
       });
     }
 
@@ -115,13 +126,27 @@ router.post('/sharepoint-webhook', webhookApiKey, async (req, res, next) => {
 
     setImmediate(async () => {
       try {
-        const result = await processSharePointFile({
-          sharepointUrl,
-          fileName,
-          emailSubject: emailSubject || '',
-          fromAddress: fromAddress || '',
-          receivedDateTime: receivedDateTime || new Date().toISOString(),
-        });
+        let result;
+        if (fileContentBase64) {
+          // Power Automate sent the file content directly — no need to download
+          result = await processPowerAutomateAttachment({
+            attachmentBase64: fileContentBase64,
+            fileName,
+            contentType: contentType || 'application/pdf',
+            emailSubject: emailSubject || '',
+            fromAddress: fromAddress || '',
+            receivedDateTime: receivedDateTime || new Date().toISOString(),
+          });
+        } else {
+          // Fall back to downloading from SharePoint URL
+          result = await processSharePointFile({
+            sharepointUrl,
+            fileName,
+            emailSubject: emailSubject || '',
+            fromAddress: fromAddress || '',
+            receivedDateTime: receivedDateTime || new Date().toISOString(),
+          });
+        }
         completeJob(jobId, result);
       } catch (error: any) {
         failJob(jobId, error.message || String(error));
@@ -133,7 +158,7 @@ router.post('/sharepoint-webhook', webhookApiKey, async (req, res, next) => {
       success: true, 
       jobId, 
       status: 'processing',
-      message: `SharePoint file ${fileName} received, processing started` 
+      message: `File ${fileName} received, processing started` 
     });
   } catch (error) {
     next(error);

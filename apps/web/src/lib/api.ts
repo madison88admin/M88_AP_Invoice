@@ -27,8 +27,17 @@ export const invoiceApi = {
   upload: (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
-    return api.post('/api/invoices/upload-madison', formData, {
+    const isProduction = window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
+    const uploadApi = isProduction
+      ? axios.create({ baseURL: 'http://5.223.78.194', timeout: 300000 })
+      : api;
+    if (isProduction) {
+      const token = localStorage.getItem('auth_token');
+      if (token) uploadApi.defaults.headers.common.Authorization = `Bearer ${token}`;
+    }
+    return uploadApi.post('/api/invoices/upload-madison', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 300000,
     });
   },
   confirmOCR: (id: string, data: any) => api.post(`/api/invoices/${id}/confirm-ocr`, data),

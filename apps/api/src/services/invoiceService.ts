@@ -207,27 +207,19 @@ export const createInvoice = async (invoiceData: any, userId: string) => {
     invoice.id, String(invoice_number), vendor_name_raw || 'Unknown', '', 'RECEIVED'
   );
 
-  // Auto-trigger validation so batch threshold and other checks run immediately
-  try {
-    const { validateInvoice } = await import('./validationService');
-    await validateInvoice(invoice.id);
-  } catch (error) {
-    // Log but don't fail creation if validation has issues
-    console.error('[AutoValidation] Failed after invoice creation:', error);
-  }
-
-  // Re-fetch to return the updated invoice with validation results
-  const updatedInvoice = await prisma.invoice.findUnique({
-    where: { id: invoice.id },
-    include: {
-      vendor: true,
-      signatures: true,
-      exceptions: true,
-      stage_timestamps: true,
-    },
+  // Auto-trigger validation in background (non-blocking) so invoice creation returns quickly
+  setImmediate(async () => {
+    try {
+      const { validateInvoice } = await import('./validationService');
+      await validateInvoice(invoice.id);
+      console.log('[AutoValidation] Completed for invoice:', invoice.id);
+    } catch (error) {
+      console.error('[AutoValidation] Failed after invoice creation:', error);
+    }
   });
 
-  return updatedInvoice || invoice;
+  // Return the created invoice immediately (without waiting for validation)
+  return invoice;
 };
 
 export const getInvoices = async (filters: any) => {

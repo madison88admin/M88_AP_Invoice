@@ -1,13 +1,22 @@
 import { Router } from 'express';
 import { authenticate, authorize } from '../middleware/auth';
 import { startEmailPoller, processPowerAutomateAttachment, processSharePointFile } from '../services/emailIntakeService';
+import { createJob, completeJob, failJob, getJob, cleanupOldJobs } from '../services/jobStore';
 import { UserRole } from '@ap-invoice/shared';
 
 const router: Router = Router();
 
-router.use(authenticate);
+// Simple API key middleware for webhook endpoints (Power Automate can't send JWT)
+const webhookApiKey = (req: any, res: any, next: any) => {
+  const apiKey = req.headers['x-api-key'] || req.body.apiKey;
+  if (!apiKey || apiKey !== process.env.WEBHOOK_API_KEY) {
+    return res.status(401).json({ success: false, error: 'Invalid or missing API key' });
+  }
+  next();
+};
 
-router.post('/start-poller', authorize(UserRole.IT_ADMIN, UserRole.SUPERADMIN), async (req, res, next) => {
+// Authenticated routes (for admin UI)
+router.post('/start-poller', authenticate, authorize(UserRole.IT_ADMIN, UserRole.SUPERADMIN), async (req, res, next) => {
   try {
     const { interval } = req.body;
     const intervalMinutes = interval || 5;
@@ -24,11 +33,13 @@ router.post('/start-poller', authorize(UserRole.IT_ADMIN, UserRole.SUPERADMIN), 
 });
 
 /**
- * Power Automate Webhook Endpoint (No authentication for Power Automate)
+ * Power Automate Webhook Endpoint (API key auth, not JWT)
  * Called by Power Automate flow when new invoice email arrives
  * Expects: { attachmentBase64, fileName, contentType, emailSubject, fromAddress, receivedDateTime }
+ * Headers: x-api-key: <WEBHOOK_API_KEY>
+ * Returns: { jobId } — process runs async, poll /api/invoices/jobs/:jobId for status
  */
-router.post('/powerautomate-webhook', async (req, res, next) => {
+router.post('/powerautomate-webhook', webhookApiKey, async (req, res, next) => {
   try {
     const { 
       attachmentBase64, 
@@ -46,28 +57,44 @@ router.post('/powerautomate-webhook', async (req, res, next) => {
       });
     }
 
-    const result = await processPowerAutomateAttachment({
-      attachmentBase64,
-      fileName,
-      contentType: contentType || 'application/pdf',
-      emailSubject: emailSubject || '',
-      fromAddress: fromAddress || '',
-      receivedDateTime: receivedDateTime || new Date().toISOString(),
+    const jobId = createJob('powerautomate-intake');
+
+    setImmediate(async () => {
+      try {
+        const result = await processPowerAutomateAttachment({
+          attachmentBase64,
+          fileName,
+          contentType: contentType || 'application/pdf',
+          emailSubject: emailSubject || '',
+          fromAddress: fromAddress || '',
+          receivedDateTime: receivedDateTime || new Date().toISOString(),
+        });
+        completeJob(jobId, result);
+      } catch (error: any) {
+        failJob(jobId, error.message || String(error));
+      }
+      cleanupOldJobs();
     });
 
-    res.json(result);
+    res.status(202).json({ 
+      success: true, 
+      jobId, 
+      status: 'processing',
+      message: `Attachment ${fileName} received, processing started` 
+    });
   } catch (error) {
     next(error);
   }
 });
 
 /**
- * SharePoint-triggered Webhook Endpoint
+ * SharePoint-triggered Webhook Endpoint (API key auth)
  * Called by Power Automate when file is saved to SharePoint
  * Expects: { sharepointUrl, fileName, emailSubject, fromAddress, receivedDateTime }
- * API will download file from SharePoint and process it
+ * Headers: x-api-key: <WEBHOOK_API_KEY>
+ * Returns: { jobId } — process runs async, poll /api/invoices/jobs/:jobId for status
  */
-router.post('/sharepoint-webhook', async (req, res, next) => {
+router.post('/sharepoint-webhook', webhookApiKey, async (req, res, next) => {
   try {
     const { 
       sharepointUrl, 
@@ -84,15 +111,30 @@ router.post('/sharepoint-webhook', async (req, res, next) => {
       });
     }
 
-    const result = await processSharePointFile({
-      sharepointUrl,
-      fileName,
-      emailSubject: emailSubject || '',
-      fromAddress: fromAddress || '',
-      receivedDateTime: receivedDateTime || new Date().toISOString(),
+    const jobId = createJob('sharepoint-intake');
+
+    setImmediate(async () => {
+      try {
+        const result = await processSharePointFile({
+          sharepointUrl,
+          fileName,
+          emailSubject: emailSubject || '',
+          fromAddress: fromAddress || '',
+          receivedDateTime: receivedDateTime || new Date().toISOString(),
+        });
+        completeJob(jobId, result);
+      } catch (error: any) {
+        failJob(jobId, error.message || String(error));
+      }
+      cleanupOldJobs();
     });
 
-    res.json(result);
+    res.status(202).json({ 
+      success: true, 
+      jobId, 
+      status: 'processing',
+      message: `SharePoint file ${fileName} received, processing started` 
+    });
   } catch (error) {
     next(error);
   }

@@ -24,21 +24,34 @@ export const invoiceApi = {
   create: (data: any) => api.post('/api/invoices', data),
   updateStatus: (id: string, status: string) => api.patch(`/api/invoices/${id}/status`, { status }),
   update: (id: string, data: any) => api.patch(`/api/invoices/${id}`, data),
-  upload: (file: File) => {
+  upload: async (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
-    const isProduction = window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
-    const uploadApi = isProduction
-      ? axios.create({ baseURL: 'http://5.223.78.194', timeout: 300000 })
-      : api;
-    if (isProduction) {
-      const token = localStorage.getItem('auth_token');
-      if (token) uploadApi.defaults.headers.common.Authorization = `Bearer ${token}`;
-    }
-    return uploadApi.post('/api/invoices/upload-madison', formData, {
+
+    // Use async upload endpoint to avoid Netlify 30s proxy timeout
+    const uploadRes = await api.post('/api/invoices/upload-madison-async', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: 300000,
+      timeout: 30000,
     });
+
+    const jobId = uploadRes.data.jobId;
+    if (!jobId) throw new Error('No job ID returned from upload');
+
+    // Poll for completion (up to 5 minutes)
+    const maxAttempts = 60;
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      const pollRes = await api.get(`/api/invoices/upload-jobs/${jobId}`, { timeout: 10000 });
+      const job = pollRes.data;
+
+      if (job.status === 'completed') {
+        return { data: job.result };
+      }
+      if (job.status === 'failed') {
+        throw new Error(job.error || 'OCR extraction failed');
+      }
+    }
+    throw new Error('OCR extraction timed out after 5 minutes');
   },
   confirmOCR: (id: string, data: any) => api.post(`/api/invoices/${id}/confirm-ocr`, data),
   saveCorrection: (id: string, data: any) => api.post(`/api/invoices/${id}/correct-extraction`, data),

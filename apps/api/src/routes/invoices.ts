@@ -18,6 +18,8 @@ router.use(authenticate);
 // Invoice upload endpoints (auth + role required)
 router.post('/upload', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), upload.single('file'), uploadController.uploadInvoice);
 router.post('/upload-madison', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), upload.single('file'), uploadController.uploadMadisonInvoice);
+router.post('/upload-madison-async', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), upload.single('file'), uploadController.uploadMadisonInvoiceAsync);
+router.get('/upload-jobs/:jobId', uploadController.getUploadJobStatus);
 
 // DSRS v7.3 async PO audit polling endpoint — informational only, non-blocking
 router.get('/:id/po-status', async (req, res, next) => {

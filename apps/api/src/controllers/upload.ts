@@ -22,6 +22,16 @@ import { activeLearningService, vendorTemplateService } from '../services/contin
 import crypto from 'crypto';
 import { createChildLogger } from '../utils/logger';
 
+// ─── Async upload job storage ───
+interface UploadJob {
+  id: string;
+  status: 'processing' | 'completed' | 'failed';
+  result?: any;
+  error?: string;
+  createdAt: number;
+}
+const uploadJobs = new Map<string, UploadJob>();
+
 export const uploadInvoice = async (
   req: Request,
   res: Response,
@@ -1006,6 +1016,111 @@ export const confirmOCR = async (
     }
 
     res.status(201).json(invoice);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── Async upload: returns job ID immediately, processes in background ───
+export const uploadMadisonInvoiceAsync = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    if (!req.file) {
+      throw new AppError('No file uploaded', 400);
+    }
+
+    const jobId = crypto.randomUUID();
+    const fileBuffer = Buffer.from(req.file.buffer);
+    const fileName = req.file.originalname;
+    const mimeType = req.file.mimetype;
+    const user = (req as any).user;
+
+    uploadJobs.set(jobId, {
+      id: jobId,
+      status: 'processing',
+      createdAt: Date.now(),
+    });
+
+    // Process in background — reuse the same logic as uploadMadisonInvoice
+    // by calling the internal function with a mock req/res
+    setImmediate(async () => {
+      try {
+        const mockReq = {
+          file: { buffer: fileBuffer, originalname: fileName, mimetype: mimeType },
+          user,
+          headers: req.headers,
+          body: req.body,
+        } as any;
+
+        let resultData: any = null;
+        let resultError: string | null = null;
+
+        // Capture the response by intercepting res.json
+        const mockRes = {
+          status: () => mockRes,
+          json: (data: any) => { resultData = data; return mockRes; },
+        } as any;
+
+        const mockNext = (err?: any) => {
+          if (err) resultError = err.message || String(err);
+        };
+
+        await uploadMadisonInvoice(mockReq, mockRes, mockNext);
+
+        const job = uploadJobs.get(jobId);
+        if (job) {
+          if (resultError) {
+            job.status = 'failed';
+            job.error = resultError;
+          } else if (resultData) {
+            job.status = 'completed';
+            job.result = resultData;
+          } else {
+            job.status = 'failed';
+            job.error = 'No result returned from extraction';
+          }
+        }
+      } catch (err: any) {
+        const job = uploadJobs.get(jobId);
+        if (job) {
+          job.status = 'failed';
+          job.error = err.message || String(err);
+        }
+      }
+
+      // Clean up old jobs (older than 10 minutes)
+      const now = Date.now();
+      for (const [id, j] of uploadJobs.entries()) {
+        if (now - j.createdAt > 600000) uploadJobs.delete(id);
+      }
+    });
+
+    res.status(202).json({ jobId, status: 'processing', message: 'Upload received, processing started' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── Poll upload job status ───
+export const getUploadJobStatus = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const job = uploadJobs.get(req.params.jobId);
+    if (!job) {
+      throw new AppError('Job not found', 404);
+    }
+    res.json({
+      jobId: job.id,
+      status: job.status,
+      result: job.status === 'completed' ? job.result : undefined,
+      error: job.status === 'failed' ? job.error : undefined,
+    });
   } catch (error) {
     next(error);
   }

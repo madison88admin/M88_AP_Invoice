@@ -245,7 +245,7 @@ async function sendSLAEscalation(
  */
 function getApproverEmail(stage: InvoiceStatus): string {
   const emailMapping: Partial<Record<InvoiceStatus, string>> = {
-    [InvoiceStatus.PENDING_COORDINATOR]: process.env.COORDINATOR_EMAIL || 'coordinator@madison88.com',
+    [InvoiceStatus.PENDING_COORDINATOR]: process.env.COORDINATOR_EMAIL || 'PURCHASINGTEAM@madison88.com',
     [InvoiceStatus.PENDING_MANAGER]: process.env.PURCHASING_MANAGER_EMAIL || 'purchasing-manager@madison88.com',
     [InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER]: process.env.MLO_ACCOUNT_HOLDER_EMAIL || 'mlo-account-holder@madison88.com',
     [InvoiceStatus.PENDING_MLO_PLANNING_MANAGER]: process.env.MLO_PLANNING_MANAGER_EMAIL || 'planning-manager@madison88.com',

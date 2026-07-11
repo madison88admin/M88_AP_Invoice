@@ -199,7 +199,7 @@ export async function sendHandwrittenDocumentNotification(
     <p><a href="${process.env.APP_URL || 'http://localhost:5173'}/exceptions">View in Exception Manager</a></p>
   `;
 
-  const to = process.env.PURCHASING_COORDINATOR_EMAILS?.split(',') || ['purchasing@madison88.com'];
+  const to = process.env.PURCHASING_COORDINATOR_EMAILS?.split(',') || ['PURCHASINGTEAM@madison88.com'];
 
   await sendEmail({ to, subject, body });
 }
@@ -223,7 +223,7 @@ export async function sendMissingBankInfoNotification(
     <p><a href="${process.env.APP_URL || 'http://localhost:5173'}/vendors">Manage Vendors</a></p>
   `;
 
-  const to = process.env.PURCHASING_COORDINATOR_EMAILS?.split(',') || ['purchasing@madison88.com'];
+  const to = process.env.PURCHASING_COORDINATOR_EMAILS?.split(',') || ['PURCHASINGTEAM@madison88.com'];
 
   await sendEmail({ to, subject, body });
 }
@@ -303,7 +303,10 @@ export async function sendPaymentConfirmationToSupplier(
     </p>
   `;
 
-  const cc = process.env.ACCOUNTING_EMAILS?.split(',') || ['accounting@madison88.com'];
+  const cc = [
+    ...(process.env.ACCOUNTING_EMAILS?.split(',') || ['accounting@madison88.com']),
+    ...(process.env.PURCHASING_COORDINATOR_EMAILS?.split(',') || ['PURCHASINGTEAM@madison88.com']),
+  ];
 
   await sendEmail({ to: [vendorEmail], cc, subject, body });
 }

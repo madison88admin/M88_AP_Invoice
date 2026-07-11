@@ -680,7 +680,7 @@ function getEmailForRole(signerRole: string): string | null {
   // In production, this would query a user/role mapping table
   // For now, return environment variables or default emails
   const emailMapping: Record<string, string> = {
-    [SignatoryRole.COORDINATOR]: process.env.COORDINATOR_EMAIL || 'coordinator@madison88.com',
+    [SignatoryRole.COORDINATOR]: process.env.COORDINATOR_EMAIL || 'PURCHASINGTEAM@madison88.com',
     [SignatoryRole.PURCHASING_MANAGER]: process.env.PURCHASING_MANAGER_EMAIL || 'purchasing-manager@madison88.com',
     [SignatoryRole.MLO_ACCOUNT_HOLDER]: process.env.MLO_ACCOUNT_HOLDER_EMAIL || 'mlo-account-holder@madison88.com',
     [SignatoryRole.MLO_PLANNING_MANAGER]: process.env.MLO_PLANNING_MANAGER_EMAIL || 'planning-manager@madison88.com',

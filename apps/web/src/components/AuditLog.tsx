@@ -104,9 +104,7 @@ export default function AuditLog() {
     <div className="min-h-screen animate-page-in" style={{ background: 'var(--bg-base)' }}>
       <header className="px-6 py-4 border-b flex items-center justify-between" style={{ background: 'var(--bg-card)', borderColor: 'var(--border-color)' }}>
         <div className="flex items-center gap-3">
-          <div className="p-2 rounded-lg" style={{ background: 'var(--logo-bg)' }}>
-            <LayoutDashboard className="h-6 w-6 text-white" />
-          </div>
+          <img src="/madison-logo.png" alt="Madison 88" className="h-8 w-auto" />
           <h1 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Audit Logs</h1>
         </div>
         <div className="flex items-center gap-3">

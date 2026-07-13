@@ -1248,9 +1248,7 @@ export default function Dashboard() {
         {/* Logo */}
         <div className="p-5" style={{ borderBottom: '1px solid var(--border-color)' }}>
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-xl flex-shrink-0" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))', boxShadow: '0 0 16px rgba(108,92,231,0.25)' }}>
-              <LayoutDashboard className="h-6 w-6" style={{ color: 'var(--text-primary)' }} strokeWidth={1.75} />
-            </div>
+            <img src="/madison-logo.png" alt="Madison 88" className="h-10 w-auto flex-shrink-0" />
             {!sidebarCollapsed && (
               <div>
                 <h1 className="font-bold text-lg" style={{ color: 'var(--text-primary)' }}>Madison 88</h1>

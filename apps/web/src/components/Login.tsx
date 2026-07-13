@@ -75,9 +75,7 @@ export default function Login() {
         {/* Top — Logo & Brand */}
         <div className="relative z-10 animate-fade-in-up">
           <div className="flex items-center gap-3 mb-2">
-            <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))', boxShadow: '0 0 30px rgba(108,92,231,0.4)' }}>
-              <LayoutDashboard className="w-6 h-6 text-white" />
-            </div>
+            <img src="/madison-logo.png" alt="Madison 88" className="h-12 w-auto" />
             <div>
               <h1 className="text-xl font-bold text-white">Madison 88</h1>
               <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>Business Solutions</p>

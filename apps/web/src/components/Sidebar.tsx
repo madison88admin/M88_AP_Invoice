@@ -34,7 +34,7 @@ const navItems: NavItem[] = [
   { label: 'Exceptions', path: '/exceptions', icon: AlertTriangle },
   { label: 'On-Hold Queue', path: '/on-hold-queue', icon: Pause, roles: ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'] },
   { label: 'Vendors', path: '/vendors', icon: Building2, roles: ['PURCHASING_COORDINATOR', 'IT_ADMIN', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE'] },
-  { label: 'Batches', path: '/payment-batches', icon: Package, roles: ['ACCOUNTING_SUPERVISOR', 'CFO', 'IT_ADMIN'] },
+  { label: 'Batches', path: '/payment-batches', icon: Package, roles: ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'CFO', 'IT_ADMIN'] },
   { label: 'Reports', path: '/reports', icon: BarChart3, roles: ['ACCOUNTING_SUPERVISOR', 'CFO', 'IT_ADMIN', 'ACCOUNTING_ASSOCIATE'] },
   { label: 'Review', path: '/accounting-review', icon: FileSearch, roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'] },
   { label: 'Audit Logs', path: '/audit-logs', icon: ClipboardList, roles: ['ACCOUNTING_SUPERVISOR', 'CFO', 'IT_ADMIN', 'ACCOUNTING_ASSOCIATE'] },
@@ -80,15 +80,7 @@ export default function Sidebar() {
         {/* Logo */}
         <div className="p-4 border-b" style={{ borderColor: 'var(--border-color)' }}>
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg" style={{ background: 'var(--accent-blue)' }}>
-              <LayoutDashboard className="h-6 w-6 text-white" />
-            </div>
-            {!collapsed && (
-              <div>
-                <h1 className="font-bold text-lg" style={{ color: 'var(--text-primary)' }}>Madison 88</h1>
-                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Business Solutions</p>
-              </div>
-            )}
+            <img src="/madison-logo.png" alt="Madison 88" className="h-10 w-auto flex-shrink-0" />
           </div>
         </div>
 

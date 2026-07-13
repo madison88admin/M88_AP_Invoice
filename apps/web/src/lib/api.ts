@@ -112,6 +112,9 @@ export const paymentBatchApi = {
   process: (batchId: string) => api.post(`/api/payment-batches/${batchId}/process`),
   approve: (batchId: string) => api.post(`/api/payment-batches/${batchId}/approve`),
   cancel: (batchId: string, reason: string) => api.post(`/api/payment-batches/${batchId}/cancel`, { reason }),
+  getScheduledPayments: () => api.get('/api/payment-batches/scheduled-payments'),
+  selectPayments: (paymentIds: string[]) => api.post('/api/payment-batches/select', { paymentIds }),
+  deselectPayments: (paymentIds: string[]) => api.post('/api/payment-batches/deselect', { paymentIds }),
 };
 
 export const vendorApi = {

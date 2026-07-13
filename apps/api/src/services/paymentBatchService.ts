@@ -248,13 +248,13 @@ export async function createPaymentBatch(
   }
 
   // Calculate total batch amount
-  const totalAmount = payments.reduce((sum: number, p: any) => sum + p.amount, 0);
+  const totalAmount = payments.reduce((sum: number, p: any) => sum + Number(p.amount), 0);
 
   // Create payment batch
   const batch = await prisma.paymentBatch.create({
     data: {
       batch_number: generateBatchNumber(),
-      total_amount: totalAmount,
+      total_amount: totalAmount.toFixed(2),
       payment_count: payments.length,
       status: PaymentBatchStatus.DRAFT as any,
       created_by: userId,

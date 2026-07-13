@@ -1293,7 +1293,7 @@ export default function Dashboard() {
               onClick={() => navigate('/vendors')}
             />
           )}
-          {user && ['CFO', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE'].includes(user.role) && (
+          {user && ['CFO', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
             <SidebarItem
               icon={Package}
               label="Batches"

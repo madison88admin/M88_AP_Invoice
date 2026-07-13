@@ -56,10 +56,10 @@ export const authorize = (...roles: UserRole[]) => {
       return next(new AppError('Authentication required', 401));
     }
 
-    if (!roles.includes(req.user.role)) {
-      return next(new AppError('Insufficient permissions', 403));
+    if (req.user.role === UserRole.SUPERADMIN || roles.includes(req.user.role)) {
+      return next();
     }
 
-    next();
+    return next(new AppError('Insufficient permissions', 403));
   };
 };

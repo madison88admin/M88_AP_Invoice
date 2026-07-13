@@ -677,7 +677,7 @@ export default function Dashboard() {
     setSendingConfirmation(true);
     try {
       const res = await invoiceApi.sendPaymentConfirmation(selectedInvoice.id);
-      showToast(`Payment confirmation sent to ${res.data.sent_to}`, 'success');
+      showToast(res.data.sent_to ? `Payment confirmation sent to ${res.data.sent_to}` : 'Payment confirmation marked as sent (no vendor email)', 'success');
       await refresh();
       setShowConfirmSendModal(false);
     } catch (error: any) {
@@ -2612,9 +2612,19 @@ export default function Dashboard() {
                 Send Payment Confirmation
               </h3>
               <p className="text-sm mb-4" style={{ color: 'var(--text-secondary)' }}>
-                Send payment confirmation to <strong>{selectedInvoice.vendor?.name}</strong> at <strong>{selectedInvoice.vendor?.contact_email || 'N/A'}</strong>?
-                <br /><br />
-                This will also CC <strong>PURCHASINGTEAM@madison88.com</strong> for visibility.
+                {selectedInvoice.vendor?.contact_email ? (
+                  <>
+                    Send payment confirmation to <strong>{selectedInvoice.vendor?.name}</strong> at <strong>{selectedInvoice.vendor.contact_email}</strong>?
+                    <br /><br />
+                    This will also CC <strong>PURCHASINGTEAM@madison88.com</strong> for visibility.
+                  </>
+                ) : (
+                  <>
+                    Mark payment confirmation as sent for <strong>{selectedInvoice.vendor?.name}</strong>?
+                    <br /><br />
+                    <span style={{ color: 'var(--accent-amber)' }}>No vendor email on file — email will be skipped. Invoice will be marked as confirmation sent for tracking purposes.</span>
+                  </>
+                )}
               </p>
               <div className="flex justify-end space-x-3">
                 <button

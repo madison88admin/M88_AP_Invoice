@@ -133,35 +133,37 @@ export const sendPaymentConfirmationController = async (
       throw new AppError('Invoice must be PAID before sending payment confirmation', 400);
     }
 
-    // 2. Check vendor email
-    if (!invoice.vendor?.contact_email) {
-      throw new AppError('Vendor email not found — add vendor email before sending', 400);
-    }
-
-    // 3. Find the linked payment record
+    // 2. Find the linked payment record
     const payment = invoice.payments.find(p => p.status === 'PAID' && p.reference);
     if (!payment) {
       throw new AppError('No paid payment record found with a reference number', 400);
     }
 
-    // 4. Send email
-    try {
-      await sendPaymentConfirmationToSupplier(
-        invoice.id,
-        invoice.invoice_number,
-        invoice.vendor.name,
-        invoice.vendor.contact_email,
-        Number(payment.amount),
-        payment.currency || invoice.currency || 'USD',
-        payment.reference!,
-        payment.paid_at || new Date()
-      );
-    } catch (emailError) {
-      logger.error('Failed to send payment confirmation email:', emailError);
-      throw new AppError('Failed to send payment confirmation email — please try again', 500);
+    // 3. Send email if vendor has contact email, otherwise skip
+    const vendorEmail = invoice.vendor?.contact_email;
+    let emailSent = false;
+    if (vendorEmail) {
+      try {
+        await sendPaymentConfirmationToSupplier(
+          invoice.id,
+          invoice.invoice_number,
+          invoice.vendor.name,
+          vendorEmail,
+          Number(payment.amount),
+          payment.currency || invoice.currency || 'USD',
+          payment.reference!,
+          payment.paid_at || new Date()
+        );
+        emailSent = true;
+      } catch (emailError) {
+        logger.error('Failed to send payment confirmation email:', emailError);
+        throw new AppError('Failed to send payment confirmation email — please try again', 500);
+      }
+    } else {
+      logger.info(`No vendor contact email for invoice ${invoice.invoice_number} — marking confirmation as sent without email`);
     }
 
-    // 5. Update invoice status + timestamp
+    // 4. Update invoice status + timestamp
     const sentAt = new Date();
     await prisma.invoice.update({
       where: { id },
@@ -171,21 +173,25 @@ export const sendPaymentConfirmationController = async (
       },
     });
 
-    // 6. Audit log
+    // 5. Audit log
+    const auditNote = vendorEmail
+      ? `Payment confirmation sent by ${req.user!.role} to ${vendorEmail}, CC: PURCHASINGTEAM@madison88.com. Reference: ${payment.reference}, Amount: ${payment.currency || 'USD'} ${Number(payment.amount).toFixed(2)}`
+      : `Payment confirmation marked as sent by ${req.user!.role} (no vendor email on file). Reference: ${payment.reference}, Amount: ${payment.currency || 'USD'} ${Number(payment.amount).toFixed(2)}`;
     await logAudit({
       invoice_id: id,
       performed_by: req.user!.id,
       action: 'PAYMENT_CONFIRMATION_SENT',
-      note: `Payment confirmation sent by ${req.user!.role} to ${invoice.vendor.contact_email}, CC: PURCHASINGTEAM@madison88.com. Reference: ${payment.reference}, Amount: ${payment.currency || 'USD'} ${Number(payment.amount).toFixed(2)}`,
+      note: auditNote,
     });
 
-    logger.info(`Payment confirmation sent for invoice ${invoice.invoice_number} to ${invoice.vendor.contact_email}`);
+    logger.info(`Payment confirmation ${emailSent ? 'sent' : 'marked'} for invoice ${invoice.invoice_number}${vendorEmail ? ' to ' + vendorEmail : ' (no email)'}`);
 
     res.json({
       success: true,
-      sent_to: invoice.vendor.contact_email,
-      cc: 'PURCHASINGTEAM@madison88.com',
+      sent_to: vendorEmail || null,
+      cc: vendorEmail ? 'PURCHASINGTEAM@madison88.com' : null,
       sent_at: sentAt.toISOString(),
+      email_sent: emailSent,
     });
   } catch (error) {
     next(error);

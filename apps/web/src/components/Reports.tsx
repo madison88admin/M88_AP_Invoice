@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { TrendingUp, DollarSign, FileText, AlertTriangle, Clock, CheckCircle, ArrowLeft } from 'lucide-react';
+import { TrendingUp, DollarSign, FileText, AlertTriangle, Clock, CheckCircle, ArrowLeft, Calendar, Download, Package } from 'lucide-react';
 import { useMockData } from '../contexts/MockDataContext';
+import { useAuth } from '../contexts/AuthContext';
 
 interface KPIMetrics {
   total_invoices: number;
@@ -47,8 +48,10 @@ interface ExceptionRateData {
 const COLORS = ['#6C5CE7', '#C6FF3D', '#F59E0B', '#EF4444', '#3B82F6'];
 
 export default function Reports() {
-  const { invoices } = useMockData();
-  const [activeTab, setActiveTab] = useState<'kpi' | 'volume' | 'payments' | 'vendors' | 'exceptions' | 'activity'>('kpi');
+  const { invoices, paymentBatches } = useMockData();
+  const { user } = useAuth();
+  const [activeTab, setActiveTab] = useState<'kpi' | 'volume' | 'payments' | 'weekly' | 'vendors' | 'exceptions' | 'activity'>('kpi');
+  const isSupervisor = user?.role === 'ACCOUNTING_SUPERVISOR';
 
   // Calculate KPI metrics from real invoice data
   const kpiMetrics: KPIMetrics = {
@@ -102,6 +105,94 @@ export default function Reports() {
     });
     return Array.from(buckets.values()).sort((a, b) => a.date.localeCompare(b.date)).slice(-12);
   })();
+
+  // Calculate weekly payment processing report data
+  const weeklyPaymentData = (() => {
+    const buckets = new Map<string, {
+      weekStart: string;
+      weekLabel: string;
+      scheduled_count: number;
+      scheduled_amount: number;
+      paid_count: number;
+      paid_amount: number;
+      batch_count: number;
+      batch_amount: number;
+      vendor_breakdown: Map<string, { count: number; amount: number }>;
+    }>();
+
+    const getWeekStart = (date: Date) => {
+      const d = new Date(date);
+      d.setDate(d.getDate() - d.getDay());
+      d.setHours(0, 0, 0, 0);
+      return d;
+    };
+
+    const getWeekLabel = (d: Date) => {
+      const end = new Date(d);
+      end.setDate(d.getDate() + 6);
+      return `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+    };
+
+    // Process invoices for scheduled/paid data
+    invoices.forEach(inv => {
+      const date = new Date(inv.invoice_date || inv.created_at || Date.now());
+      const ws = getWeekStart(date);
+      const key = ws.toISOString().split('T')[0];
+      const label = getWeekLabel(ws);
+      let bucket = buckets.get(key);
+      if (!bucket) {
+        bucket = { weekStart: key, weekLabel: label, scheduled_count: 0, scheduled_amount: 0, paid_count: 0, paid_amount: 0, batch_count: 0, batch_amount: 0, vendor_breakdown: new Map() };
+        buckets.set(key, bucket);
+      }
+      if (inv.status === 'PAYMENT_SCHEDULED') {
+        bucket.scheduled_count++;
+        bucket.scheduled_amount += inv.total_amount;
+      }
+      if (inv.status === 'PAID' || inv.status === 'PAYMENT_CONFIRMATION_SENT') {
+        bucket.paid_count++;
+        bucket.paid_amount += inv.total_amount;
+      }
+      const vName = inv.vendor_name || 'Unknown';
+      const vb = bucket.vendor_breakdown.get(vName) || { count: 0, amount: 0 };
+      if (inv.status === 'PAID' || inv.status === 'PAYMENT_CONFIRMATION_SENT' || inv.status === 'PAYMENT_SCHEDULED') {
+        vb.count++;
+        vb.amount += inv.total_amount;
+        bucket.vendor_breakdown.set(vName, vb);
+      }
+    });
+
+    // Process payment batches
+    paymentBatches.forEach(batch => {
+      const date = new Date(batch.created_at || Date.now());
+      const ws = getWeekStart(date);
+      const key = ws.toISOString().split('T')[0];
+      const label = getWeekLabel(ws);
+      let bucket = buckets.get(key);
+      if (!bucket) {
+        bucket = { weekStart: key, weekLabel: label, scheduled_count: 0, scheduled_amount: 0, paid_count: 0, paid_amount: 0, batch_count: 0, batch_amount: 0, vendor_breakdown: new Map() };
+        buckets.set(key, bucket);
+      }
+      bucket.batch_count++;
+      bucket.batch_amount += batch.total_amount;
+    });
+
+    return Array.from(buckets.values()).sort((a, b) => a.weekStart.localeCompare(b.weekStart)).slice(-8);
+  })();
+
+  const handleExportWeeklyCSV = () => {
+    const headers = ['Week', 'Scheduled Count', 'Scheduled Amount', 'Paid Count', 'Paid Amount', 'Batch Count', 'Batch Amount'];
+    const rows = weeklyPaymentData.map(w => [
+      w.weekLabel, w.scheduled_count, `$${w.scheduled_amount.toFixed(2)}`, w.paid_count, `$${w.paid_amount.toFixed(2)}`, w.batch_count, `$${w.batch_amount.toFixed(2)}`
+    ]);
+    const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `weekly-payment-report-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   // Calculate payment status data from real invoice data
   const paymentStatusData: PaymentStatusData[] = [
@@ -190,6 +281,7 @@ export default function Reports() {
               { id: 'kpi', label: 'KPI Dashboard', icon: TrendingUp },
               { id: 'volume', label: 'Invoice Volume', icon: FileText },
               { id: 'payments', label: 'Payment Status', icon: DollarSign },
+              ...(isSupervisor ? [{ id: 'weekly', label: 'Weekly Payments', icon: Calendar }] : []),
               { id: 'vendors', label: 'Vendor Spending', icon: TrendingUp },
               { id: 'exceptions', label: 'Exception Rate', icon: AlertTriangle },
             ].map(tab => (
@@ -307,6 +399,128 @@ export default function Reports() {
                 <Tooltip contentStyle={{ background: 'var(--bg-card)', borderRadius: '12px', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }} />
               </PieChart>
             </ResponsiveContainer>
+          </div>
+        )}
+
+        {/* Weekly Payment Processing Report (FR-006) - Accounting Supervisor only */}
+        {activeTab === 'weekly' && isSupervisor && (
+          <div className="space-y-6">
+            {/* Summary Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              <KPICard title="Total Paid (All Weeks)" value={`$${weeklyPaymentData.reduce((s, w) => s + w.paid_amount, 0).toLocaleString()}`} icon={<DollarSign className="h-6 w-6" />} color="green" />
+              <KPICard title="Total Scheduled (All Weeks)" value={`$${weeklyPaymentData.reduce((s, w) => s + w.scheduled_amount, 0).toLocaleString()}`} icon={<Clock className="h-6 w-6" />} color="yellow" />
+              <KPICard title="Total Batches (All Weeks)" value={weeklyPaymentData.reduce((s, w) => s + w.batch_count, 0)} icon={<Package className="h-6 w-6" />} color="purple" />
+              <KPICard title="Avg Weekly Paid" value={`$${weeklyPaymentData.length > 0 ? Math.round(weeklyPaymentData.reduce((s, w) => s + w.paid_amount, 0) / weeklyPaymentData.length).toLocaleString() : 0}`} icon={<TrendingUp className="h-6 w-6" />} color="blue" />
+            </div>
+
+            {/* Export Button */}
+            <div className="flex justify-end">
+              <button
+                onClick={handleExportWeeklyCSV}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-colors"
+                style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-card-hover)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--bg-elevated)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+              >
+                <Download className="h-4 w-4" strokeWidth={1.75} />
+                Export CSV
+              </button>
+            </div>
+
+            {/* Weekly Chart */}
+            <div className="p-6 rounded-2xl" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
+              <h2 className="text-xl font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>Weekly Payment Processing</h2>
+              <ResponsiveContainer width="100%" height={350}>
+                <BarChart data={weeklyPaymentData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-subtle)" />
+                  <XAxis dataKey="weekLabel" stroke="var(--text-muted)" fontSize={11} />
+                  <YAxis stroke="var(--text-muted)" />
+                  <Tooltip contentStyle={{ background: 'var(--bg-card)', borderRadius: '12px', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }} />
+                  <Legend wrapperStyle={{ color: 'var(--text-secondary)' }} />
+                  <Bar dataKey="scheduled_amount" fill="#F59E0B" name="Scheduled $" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="paid_amount" fill="#C6FF3D" name="Paid $" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="batch_amount" fill="#6C5CE7" name="Batch $" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Weekly Breakdown Table */}
+            <div className="p-6 rounded-2xl" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
+              <h2 className="text-xl font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>Weekly Breakdown</h2>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
+                      <th className="text-left py-3 px-4 font-semibold" style={{ color: 'var(--text-secondary)' }}>Week</th>
+                      <th className="text-right py-3 px-4 font-semibold" style={{ color: 'var(--text-secondary)' }}>Scheduled</th>
+                      <th className="text-right py-3 px-4 font-semibold" style={{ color: 'var(--text-secondary)' }}>Scheduled $</th>
+                      <th className="text-right py-3 px-4 font-semibold" style={{ color: 'var(--text-secondary)' }}>Paid</th>
+                      <th className="text-right py-3 px-4 font-semibold" style={{ color: 'var(--text-secondary)' }}>Paid $</th>
+                      <th className="text-right py-3 px-4 font-semibold" style={{ color: 'var(--text-secondary)' }}>Batches</th>
+                      <th className="text-right py-3 px-4 font-semibold" style={{ color: 'var(--text-secondary)' }}>Batch $</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {weeklyPaymentData.length > 0 ? weeklyPaymentData.map((w, i) => (
+                      <tr key={i} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                        <td className="py-3 px-4" style={{ color: 'var(--text-primary)' }}>{w.weekLabel}</td>
+                        <td className="py-3 px-4 text-right" style={{ color: 'var(--accent-amber)' }}>{w.scheduled_count}</td>
+                        <td className="py-3 px-4 text-right" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>${w.scheduled_amount.toLocaleString()}</td>
+                        <td className="py-3 px-4 text-right" style={{ color: 'var(--accent-green)' }}>{w.paid_count}</td>
+                        <td className="py-3 px-4 text-right" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>${w.paid_amount.toLocaleString()}</td>
+                        <td className="py-3 px-4 text-right" style={{ color: 'var(--accent-purple)' }}>{w.batch_count}</td>
+                        <td className="py-3 px-4 text-right" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>${w.batch_amount.toLocaleString()}</td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td colSpan={7} className="py-12 text-center" style={{ color: 'var(--text-muted)' }}>No payment data available</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Vendor Breakdown per Week */}
+            <div className="p-6 rounded-2xl" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
+              <h2 className="text-xl font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>Vendor Payment Breakdown by Week</h2>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
+                      <th className="text-left py-3 px-4 font-semibold" style={{ color: 'var(--text-secondary)' }}>Week</th>
+                      <th className="text-left py-3 px-4 font-semibold" style={{ color: 'var(--text-secondary)' }}>Vendor</th>
+                      <th className="text-right py-3 px-4 font-semibold" style={{ color: 'var(--text-secondary)' }}>Invoices</th>
+                      <th className="text-right py-3 px-4 font-semibold" style={{ color: 'var(--text-secondary)' }}>Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {weeklyPaymentData.flatMap(w =>
+                      Array.from(w.vendor_breakdown.entries())
+                        .sort(([, a], [, b]) => b.amount - a.amount)
+                        .slice(0, 5)
+                        .map(([vendor, data]) => ({ week: w.weekLabel, vendor, ...data }))
+                    ).length > 0 ? weeklyPaymentData.flatMap(w =>
+                      Array.from(w.vendor_breakdown.entries())
+                        .sort(([, a], [, b]) => b.amount - a.amount)
+                        .slice(0, 5)
+                        .map(([vendor, data]) => ({ week: w.weekLabel, vendor, ...data }))
+                    ).map((row, i) => (
+                      <tr key={i} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                        <td className="py-3 px-4" style={{ color: 'var(--text-muted)' }}>{row.week}</td>
+                        <td className="py-3 px-4" style={{ color: 'var(--text-primary)' }}>{row.vendor}</td>
+                        <td className="py-3 px-4 text-right" style={{ color: 'var(--text-secondary)' }}>{row.count}</td>
+                        <td className="py-3 px-4 text-right" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>${row.amount.toLocaleString()}</td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td colSpan={4} className="py-12 text-center" style={{ color: 'var(--text-muted)' }}>No vendor payment data available</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         )}
 

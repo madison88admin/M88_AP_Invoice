@@ -8,6 +8,9 @@ import rateLimit from 'express-rate-limit';
 import invoiceRoutes from './routes/invoices';
 import vendorRoutes from './routes/vendors';
 import emailIntakeRoutes from './routes/emailIntake';
+import emailInvoiceRoutes from './routes/emailInvoice';
+import paymentConfirmationRoutes from './routes/paymentConfirmation';
+import apiKeyRoutes from './routes/apiKeys';
 import approvalRoutes from './routes/approvals';
 import paymentRoutes from './routes/payments';
 import exceptionRoutes from './routes/exceptions';
@@ -68,7 +71,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // Apply general rate limiter to all routes except uploads (which have their own limiter)
 app.use((req, res, next) => {
-  if (req.method === 'POST' && (req.path === '/api/invoices/upload' || req.path === '/api/invoices/upload-madison')) {
+  if (req.method === 'POST' && (req.path === '/api/invoices/upload' || req.path === '/api/invoices/upload-madison' || req.path === '/api/email/invoice' || req.path === '/api/email/manual-invoice' || req.path === '/api/payment-confirmations/upload')) {
     return uploadLimiter(req, res, next);
   }
   return generalLimiter(req, res, next);
@@ -77,6 +80,9 @@ app.use((req, res, next) => {
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/vendors', vendorRoutes);
 app.use('/api/email-intake', emailIntakeRoutes);
+app.use('/api/email', emailInvoiceRoutes);
+app.use('/api/payment-confirmations', paymentConfirmationRoutes);
+app.use('/api/api-keys', apiKeyRoutes);
 app.use('/api/approvals', approvalRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/exceptions', exceptionRoutes);

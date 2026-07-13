@@ -1,4 +1,5 @@
 import { Response, NextFunction } from 'express';
+import { randomUUID } from 'crypto';
 import { AuthRequest } from '../middleware/auth';
 import {
   postInvoice,
@@ -172,6 +173,10 @@ export const sendPaymentConfirmationController = async (
         confirmation_sent_at: sentAt,
       },
     });
+
+    // 4b. Create PaymentConfirmation record for tracking
+    const confirmationId = randomUUID();
+    await prisma.$executeRaw`INSERT INTO "APInvoice_PaymentConfirmation" (id, invoice_id, payment_id, vendor_name, vendor_email, amount, currency, payment_reference, email_sent, cc_email, sent_by, sent_at, created_at) VALUES (${confirmationId}, ${id}, ${payment.id}, ${invoice.vendor?.name || 'Unknown'}, ${vendorEmail || null}, ${Number(payment.amount)}::numeric, ${payment.currency || invoice.currency || 'USD'}, ${payment.reference}, ${emailSent}, ${emailSent ? 'PURCHASINGTEAM@madison88.com' : null}, ${req.user!.id}, ${sentAt}, ${sentAt})`;
 
     // 5. Audit log
     const auditNote = vendorEmail

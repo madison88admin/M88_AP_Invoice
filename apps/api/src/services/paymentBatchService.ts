@@ -392,67 +392,6 @@ export async function processPaymentBatch(
   return updatedBatch;
 }
 
-/**
- * CFO approves a payment batch and executes payment
- */
-export async function approvePaymentBatchByCFO(
-  batchId: string,
-  userId: string
-) {
-  const batch = await prisma.paymentBatch.findUnique({
-    where: { id: batchId },
-    include: {
-      payments: true,
-    },
-  });
-
-  if (!batch) {
-    throw new AppError('Payment batch not found', 404);
-  }
-
-  if (batch.status !== PaymentBatchStatus.PENDING_CFO) {
-    throw new AppError('Batch is not pending CFO approval', 400);
-  }
-
-  // Process each payment in the batch via processPayment for consistent behavior
-  // (email notifications, payment references, in-app notifications, stage timestamps)
-  for (const payment of batch.payments) {
-    if (payment.status === 'PAID') {
-      logger.warn(`Payment ${payment.id} in batch ${batch.batch_number} is already PAID — skipping`);
-      continue;
-    }
-    if (payment.status !== 'SCHEDULED') {
-      logger.warn(`Payment ${payment.id} in batch ${batch.batch_number} has status ${payment.status} — skipping`);
-      continue;
-    }
-    try {
-      await processPayment(payment.id, userId);
-    } catch (err) {
-      logger.error(`Failed to process payment ${payment.id} in batch ${batch.batch_number}:`, err);
-      throw new AppError(`Payment ${payment.id} failed to process: ${err instanceof Error ? err.message : 'unknown error'}`, 500);
-    }
-  }
-
-  const updatedBatch = await prisma.paymentBatch.update({
-    where: { id: batchId },
-    data: {
-      status: PaymentBatchStatus.PROCESSED as any,
-      processed_at: new Date(),
-      processed_by: userId,
-    },
-  });
-
-  await prisma.auditLog.create({
-    data: {
-      action: 'PAYMENT_BATCH_PROCESSED',
-      performed_by: userId,
-      note: `Payment batch ${batch.batch_number} approved by CFO and processed with ${batch.payments.length} payments`,
-    },
-  });
-
-  return updatedBatch;
-}
-
 export async function cancelPaymentBatch(
   batchId: string,
   userId: string,

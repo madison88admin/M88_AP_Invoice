@@ -42,7 +42,7 @@ router.post('/:id/reject', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.P
 router.post('/:id/post', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), postingController.postInvoiceController);
 router.post('/:id/release-hold', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), postingController.releaseFromHoldController);
 router.post('/:id/schedule-payment', authorize(UserRole.ACCOUNTING_SUPERVISOR), postingController.schedulePaymentController);
-router.post('/:id/send-payment-confirmation', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), postingController.sendPaymentConfirmationController);
+router.post('/:id/send-payment-confirmation', authorize(UserRole.ACCOUNTING_SUPERVISOR), postingController.sendPaymentConfirmationController);
 router.post('/:id/check-nextgen', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), validationController.checkNextGenAsyncController);
 router.post('/:id/check-nextgen-sync', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), validationController.checkNextGenChangesController);
 router.get('/jobs/:jobId', validationController.getJobStatusController);

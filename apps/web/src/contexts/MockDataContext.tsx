@@ -30,7 +30,6 @@ interface MockDataContextType {
   postToQuickBooks: (id: string) => Promise<void>;
   resolveException: (invoiceId: string, exceptionId: string, resolution: string) => Promise<{ approvalWarning?: string } | void>;
   createPaymentBatch: (paymentIds: string[]) => Promise<void>;
-  approvePaymentBatch: (batchId: string) => Promise<void>;
   getInvoicesByStatus: (status: InvoiceStatus) => MockInvoice[];
   getInvoicesByStage: (stage: string) => MockInvoice[];
   getInvoicesByBrandTier: (brandTier: string) => MockInvoice[];
@@ -278,14 +277,6 @@ export const MockDataProvider = ({ children }: MockDataProviderProps) => {
     [refresh]
   );
 
-  const approvePaymentBatch = useCallback(
-    async (batchId: string) => {
-      await paymentBatchApi.approve(batchId);
-      await refresh();
-    },
-    [refresh]
-  );
-
   const getInvoicesByStatus = useCallback(
     (status: InvoiceStatus) => invoices.filter(inv => inv.status === status),
     [invoices]
@@ -318,7 +309,6 @@ export const MockDataProvider = ({ children }: MockDataProviderProps) => {
         postToQuickBooks,
         resolveException,
         createPaymentBatch,
-        approvePaymentBatch,
         getInvoicesByStatus,
         getInvoicesByStage,
         getInvoicesByBrandTier,

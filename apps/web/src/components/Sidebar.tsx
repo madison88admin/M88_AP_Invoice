@@ -1,6 +1,7 @@
 import { Link, useLocation } from 'react-router-dom';
-import { useState, MouseEvent } from 'react';
+import { useState, MouseEvent, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useMockData } from '../contexts/MockDataContext';
 import { hasPermission } from '../lib/roleAccess';
 import { 
   LayoutDashboard, 
@@ -26,17 +27,18 @@ interface NavItem {
   path: string;
   icon: any;
   roles?: string[];
+  badgeKey?: string;
 }
 
 const navItems: NavItem[] = [
   { label: 'Dashboard', path: '/', icon: LayoutDashboard },
-  { label: 'Approvals', path: '/approvals', icon: CheckSquare },
-  { label: 'Exceptions', path: '/exceptions', icon: AlertTriangle },
+  { label: 'Approvals', path: '/approvals', icon: CheckSquare, badgeKey: 'approvals' },
+  { label: 'Exceptions', path: '/exceptions', icon: AlertTriangle, badgeKey: 'exceptions' },
   { label: 'On-Hold Queue', path: '/on-hold-queue', icon: Pause, roles: ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'] },
-  { label: 'Vendors', path: '/vendors', icon: Building2, roles: ['PURCHASING_COORDINATOR', 'IT_ADMIN', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE'] },
-  { label: 'Batches', path: '/payment-batches', icon: Package, roles: ['ACCOUNTING_SUPERVISOR', 'CFO', 'IT_ADMIN'] },
+  { label: 'Vendors', path: '/vendors', icon: Building2, roles: ['PURCHASING_COORDINATOR', 'IT_ADMIN', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE'], badgeKey: 'vendors' },
+  { label: 'Batches', path: '/payment-batches', icon: Package, roles: ['ACCOUNTING_SUPERVISOR', 'CFO', 'IT_ADMIN'], badgeKey: 'batches' },
   { label: 'Reports', path: '/reports', icon: BarChart3, roles: ['ACCOUNTING_SUPERVISOR', 'CFO', 'IT_ADMIN', 'ACCOUNTING_ASSOCIATE'] },
-  { label: 'Review', path: '/accounting-review', icon: FileSearch, roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'] },
+  { label: 'Review', path: '/accounting-review', icon: FileSearch, roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'review' },
   { label: 'Audit Logs', path: '/audit-logs', icon: ClipboardList, roles: ['ACCOUNTING_SUPERVISOR', 'CFO', 'IT_ADMIN', 'ACCOUNTING_ASSOCIATE'] },
   { label: 'SLA Analytics', path: '/sla-analytics', icon: Gauge, roles: ['ACCOUNTING_SUPERVISOR', 'CFO', 'IT_ADMIN', 'ACCOUNTING_ASSOCIATE'] },
   { label: 'Extraction Analytics', path: '/extraction-analytics', icon: Activity, roles: ['PURCHASING_COORDINATOR', 'IT_ADMIN', 'ACCOUNTING_SUPERVISOR'] },
@@ -46,6 +48,15 @@ export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
   const { user } = useAuth();
+  const { invoices, vendors, paymentBatches } = useMockData();
+
+  const badges: Record<string, number> = {
+    approvals: invoices.filter(i => ['PENDING_MANAGER', 'PENDING_MLO_PLANNING_MANAGER', 'PENDING_SR_MANAGER', 'PENDING_POLLY'].includes(i.status)).length,
+    exceptions: invoices.filter(i => i.exceptions.some(e => e.status === 'OPEN')).length,
+    vendors: vendors.filter(v => !v.bank_verified_at).length,
+    batches: paymentBatches.filter(b => b.status === 'DRAFT').length,
+    review: invoices.filter(i => ['PENDING_ACCOUNTING', 'APPROVED', 'POSTED_TO_QB', 'PAID'].includes(i.status)).length,
+  };
 
   const visibleItems = navItems.filter((item) => {
     if (user?.role === 'SUPERADMIN') {
@@ -92,7 +103,7 @@ export default function Sidebar() {
               <Link
                 key={item.path}
                 to={item.path}
-                className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 animate-list-item ${isActive ? 'text-white shadow-lg' : ''}`}
+                className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 animate-list-item relative ${isActive ? 'text-white shadow-lg' : ''}`}
                 style={
                   isActive
                     ? { background: 'var(--accent-blue)', animationDelay: `${idx * 30}ms` }
@@ -111,6 +122,24 @@ export default function Sidebar() {
               >
                 <item.icon className={`h-5 w-5 flex-shrink-0 ${collapsed ? 'mx-auto' : ''}`} />
                 {!collapsed && <span className="font-medium">{item.label}</span>}
+                {!collapsed && item.badgeKey && badges[item.badgeKey] !== undefined && badges[item.badgeKey] !== 0 && (
+                  <span
+                    className="flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] font-bold ml-auto"
+                    style={{
+                      background: 'color-mix(in srgb, var(--accent-lime) 15%, transparent)',
+                      color: 'var(--accent-lime)',
+                      border: '1px solid color-mix(in srgb, var(--accent-lime) 20%, transparent)',
+                    }}
+                  >
+                    {badges[item.badgeKey]}
+                  </span>
+                )}
+                {collapsed && item.badgeKey && badges[item.badgeKey] !== undefined && badges[item.badgeKey] !== 0 && (
+                  <span
+                    className="absolute top-1 right-1 w-2 h-2 rounded-full"
+                    style={{ background: 'var(--accent-lime)' }}
+                  />
+                )}
               </Link>
             );
           })}

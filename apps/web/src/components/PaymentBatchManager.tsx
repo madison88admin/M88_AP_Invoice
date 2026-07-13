@@ -205,19 +205,6 @@ export default function PaymentBatchManager() {
     }
   };
 
-  const handleApproveBatch = async (batchId: string) => {
-    setProcessing(true);
-    try {
-      await paymentBatchApi.approve(batchId);
-      await loadBatches();
-      setSelectedBatch(null);
-    } catch (error) {
-      console.error('Failed to approve batch:', error);
-    } finally {
-      setProcessing(false);
-    }
-  };
-
   const handleCancelBatch = async () => {
     if (!selectedBatch || !cancelReason) return;
     setProcessing(true);
@@ -238,10 +225,6 @@ export default function PaymentBatchManager() {
     switch (status) {
       case 'DRAFT':
         return { background: 'color-mix(in srgb, var(--accent-amber) 12%, transparent)', color: 'var(--accent-amber)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' };
-      case 'PENDING_CFO':
-        return { background: 'color-mix(in srgb, var(--accent-purple) 12%, transparent)', color: 'var(--accent-purple)', border: '1px solid color-mix(in srgb, var(--accent-purple) 20%, transparent)' };
-      case 'APPROVED':
-        return { background: 'color-mix(in srgb, var(--accent-violet) 12%, transparent)', color: 'var(--accent-violet)', border: '1px solid color-mix(in srgb, var(--accent-violet) 20%, transparent)' };
       case 'PROCESSED':
         return { background: 'color-mix(in srgb, var(--accent-green) 12%, transparent)', color: 'var(--accent-green)', border: '1px solid color-mix(in srgb, var(--accent-green) 20%, transparent)' };
       case 'CANCELLED':
@@ -255,10 +238,6 @@ export default function PaymentBatchManager() {
     switch (status) {
       case 'DRAFT':
         return <Clock className="h-4 w-4" />;
-      case 'PENDING_CFO':
-        return <Play className="h-4 w-4" />;
-      case 'APPROVED':
-        return <CheckCircle className="h-4 w-4" />;
       case 'PROCESSED':
         return <CheckCircle className="h-4 w-4" />;
       case 'CANCELLED':

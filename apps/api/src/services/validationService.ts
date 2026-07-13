@@ -106,6 +106,7 @@ export async function validateInvoice(invoiceId: string): Promise<InvoiceValidat
     InvoiceStatus.POSTED_TO_QB,
     InvoiceStatus.PAYMENT_SCHEDULED,
     InvoiceStatus.PAID,
+    InvoiceStatus.PAYMENT_CONFIRMATION_SENT,
     InvoiceStatus.REJECTED,
   ];
   if (lockedStatuses.includes(invoice.status as InvoiceStatus)) {

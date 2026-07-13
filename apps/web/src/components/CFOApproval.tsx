@@ -77,10 +77,10 @@ export default function CFOApproval() {
 
   const handleApprove = async (batchId: string) => {
     try {
-      await paymentBatchApi.approve(batchId);
+      await paymentBatchApi.process(batchId);
       loadBatches();
     } catch (error) {
-      console.error('Failed to approve batch:', error);
+      console.error('Failed to process batch:', error);
     }
   };
 

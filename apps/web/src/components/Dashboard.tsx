@@ -122,7 +122,7 @@ function calcTrend(invoiceList: { created_at?: string }[]): { trend: string; tre
 export default function Dashboard() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
-  const { invoices, refresh, loading: ctxLoading } = useMockData();
+  const { invoices, vendors, paymentBatches, refresh, loading: ctxLoading } = useMockData();
   const [selectedInvoice, setSelectedInvoice] = useState<MockInvoice | null>(null);
   const [validating, setValidating] = useState(false);
   const [requestingApproval, setRequestingApproval] = useState(false);
@@ -356,7 +356,12 @@ export default function Dashboard() {
     return remainingHours <= 24 && remainingHours > 0;
   }).length, 1200, countUpStarted);
   const totalAmountCount = useCountUp(Math.floor(allInvoices.reduce((sum, i) => sum + i.total_amount, 0)), 1200, countUpStarted);
-  const exceptionsCount = useCountUp(allInvoices.filter(i => i.exceptions.length > 0).length, 1200, countUpStarted);
+  const exceptionsCount = useCountUp(allInvoices.filter(i => i.exceptions.some(e => e.status === 'OPEN')).length, 1200, countUpStarted);
+
+  // Sidebar badge counts
+  const draftBatchCount = paymentBatches.filter(b => b.status === 'DRAFT').length;
+  const reviewPendingCount = allInvoices.filter(i => ['PENDING_ACCOUNTING', 'APPROVED', 'POSTED_TO_QB', 'PAID'].includes(i.status)).length;
+  const vendorsPendingVerification = vendors.filter(v => !v.bank_verified_at).length;
 
   const showToast = (message: string, type: 'success' | 'error' | 'warning' | 'info' = 'info') => {
     const id = Date.now().toString();
@@ -1289,6 +1294,7 @@ export default function Dashboard() {
             <SidebarItem
               icon={Building2}
               label="Vendors"
+              badge={vendorsPendingVerification}
               collapsed={sidebarCollapsed}
               onClick={() => navigate('/vendors')}
             />
@@ -1297,6 +1303,7 @@ export default function Dashboard() {
             <SidebarItem
               icon={Package}
               label="Batches"
+              badge={draftBatchCount}
               collapsed={sidebarCollapsed}
               onClick={() => navigate('/payment-batches')}
             />
@@ -1313,6 +1320,7 @@ export default function Dashboard() {
             <SidebarItem
               icon={FileSearch}
               label="Review"
+              badge={reviewPendingCount}
               collapsed={sidebarCollapsed}
               onClick={() => navigate('/accounting-review')}
             />
@@ -2358,7 +2366,7 @@ export default function Dashboard() {
               )}
 
               {/* Send Payment Confirmation — only for PAID invoices, only Accounting roles */}
-              {selectedInvoice.status === (InvoiceStatus.PAID as any) && user && (user.role === 'ACCOUNTING_ASSOCIATE' || user.role === 'ACCOUNTING_SUPERVISOR') && (
+              {selectedInvoice.status === (InvoiceStatus.PAID as any) && user && user.role === 'ACCOUNTING_SUPERVISOR' && (
                 <button
                   onClick={() => setShowConfirmSendModal(true)}
                   disabled={sendingConfirmation}

@@ -114,9 +114,9 @@ export const sendPaymentConfirmationController = async (
   try {
     const { id } = req.params;
 
-    // Permission check — only ACCOUNTING_ASSOCIATE and ACCOUNTING_SUPERVISOR
-    if (req.user!.role !== 'ACCOUNTING_ASSOCIATE' && req.user!.role !== 'ACCOUNTING_SUPERVISOR') {
-      throw new AppError('Only Accounting Associate or Supervisor can send payment confirmations', 403);
+    // Permission check — only ACCOUNTING_SUPERVISOR
+    if (req.user!.role !== 'ACCOUNTING_SUPERVISOR') {
+      throw new AppError('Only Accounting Supervisor can send payment confirmations', 403);
     }
 
     // 1. Fetch invoice — must be PAID

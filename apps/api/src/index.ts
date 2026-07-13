@@ -39,6 +39,8 @@ import { groqOCRService } from './services/groqOCRService';
 import { ollamaOCRService } from './services/ollamaOCRService';
 import { qwenOCRService } from './services/qwenOCRService';
 import { checkAndSendSLAReminders } from './services/slaReminderService';
+import { startSharePointWatcher, stopSharePointWatcher } from './services/sharePointWatcherService';
+import { startFileWatcher, stopFileWatcher } from './services/fileWatcherService';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -206,6 +208,18 @@ const startServer = async () => {
 
     server.setTimeout(600000); // 10 minutes
 
+    // Start SharePoint folder watcher (polls IncomingInvoices every 30s)
+    const watcherIntervalSec = parseInt(process.env.SHAREPOINT_WATCHER_INTERVAL_SEC || '30', 10);
+    startSharePointWatcher(watcherIntervalSec).catch((err) => {
+      logger.error('Failed to start SharePoint watcher:', err);
+    });
+
+    // Start local file watcher (polls /incoming-invoices for SFTP drops)
+    const fileWatcherIntervalSec = parseInt(process.env.FILE_WATCHER_INTERVAL_SEC || '30', 10);
+    startFileWatcher(fileWatcherIntervalSec).catch((err) => {
+      logger.error('Failed to start file watcher:', err);
+    });
+
     // SLA reminder scheduler — runs every hour
     const SLA_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
     const slaInterval = setInterval(async () => {
@@ -232,6 +246,8 @@ const startServer = async () => {
     // Graceful shutdown
     const shutdown = async () => {
       logger.info('Shutting down server...');
+      stopSharePointWatcher();
+      stopFileWatcher();
       clearInterval(slaInterval);
       server.close();
       await disconnectDatabase();

@@ -76,10 +76,6 @@ export default function Login() {
         <div className="relative z-10 animate-fade-in-up">
           <div className="flex items-center gap-3 mb-2">
             <img src="/madison-logo.png" alt="Madison 88" className="h-12 w-auto" />
-            <div>
-              <h1 className="text-xl font-bold text-white">Madison 88</h1>
-              <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>Business Solutions</p>
-            </div>
           </div>
         </div>
 

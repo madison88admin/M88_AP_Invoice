@@ -1249,12 +1249,6 @@ export default function Dashboard() {
         <div className="p-5" style={{ borderBottom: '1px solid var(--border-color)' }}>
           <div className="flex items-center gap-3">
             <img src="/madison-logo.png" alt="Madison 88" className="h-10 w-auto flex-shrink-0" />
-            {!sidebarCollapsed && (
-              <div>
-                <h1 className="font-bold text-lg" style={{ color: 'var(--text-primary)' }}>Madison 88</h1>
-                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>AP Invoice</p>
-              </div>
-            )}
           </div>
         </div>
 

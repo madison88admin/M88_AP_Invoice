@@ -557,7 +557,7 @@ export default function PaymentBatchManager() {
                 </div>
               </div>
 
-              {selectedBatch.status === 'DRAFT' && (user?.role === 'ACCOUNTING_SUPERVISOR' || user?.role === 'CFO') && (
+              {selectedBatch.status === 'DRAFT' && isSupervisor && (
                 <div className="flex items-center space-x-3 mb-6">
                   <button onClick={() => handleProcessBatch(selectedBatch.id)} disabled={processing}
                     className="flex items-center px-4 py-2.5 rounded-xl transition-colors disabled:opacity-50 text-sm font-semibold"
@@ -565,8 +565,8 @@ export default function PaymentBatchManager() {
                     onMouseEnter={(e) => { if (!processing) e.currentTarget.style.background = 'var(--accent-lime-hover)'; }}
                     onMouseLeave={(e) => { if (!processing) e.currentTarget.style.background = 'var(--accent-lime)'; }}
                   >
-                    <Play className="h-4 w-4 mr-2" strokeWidth={1.75} />
-                    Submit for CFO Approval
+                    {processing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" strokeWidth={1.75} />}
+                    Execute Payments
                   </button>
                   <button onClick={() => setShowCancelModal(true)} disabled={processing}
                     className="flex items-center px-4 py-2.5 rounded-xl transition-colors disabled:opacity-50 text-sm font-medium"
@@ -576,31 +576,6 @@ export default function PaymentBatchManager() {
                   >
                     <X className="h-4 w-4 mr-2" strokeWidth={1.75} />
                     Cancel Batch
-                  </button>
-                </div>
-              )}
-
-              {selectedBatch.status === 'PENDING_CFO' && (isCFO || user?.role === 'ACCOUNTING_SUPERVISOR') && (
-                <div className="flex items-center space-x-3 mb-6">
-                  {isCFO && (
-                  <button onClick={() => handleApproveBatch(selectedBatch.id)} disabled={processing}
-                    className="flex items-center px-4 py-2.5 rounded-xl transition-colors disabled:opacity-50 text-sm font-semibold"
-                    style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}
-                    onMouseEnter={(e) => { if (!processing) e.currentTarget.style.background = 'var(--accent-lime-hover)'; }}
-                    onMouseLeave={(e) => { if (!processing) e.currentTarget.style.background = 'var(--accent-lime)'; }}
-                  >
-                    <CheckCircle className="h-4 w-4 mr-2" strokeWidth={1.75} />
-                    Approve & Process Payments
-                  </button>
-                  )}
-                  <button onClick={() => setShowCancelModal(true)} disabled={processing}
-                    className="flex items-center px-4 py-2.5 rounded-xl transition-colors disabled:opacity-50 text-sm font-medium"
-                    style={{ background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', color: 'var(--accent-red)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}
-                    onMouseEnter={(e) => { if (!processing) e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-red) 20%, transparent)'; }}
-                    onMouseLeave={(e) => { if (!processing) e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-red) 10%, transparent)'; }}
-                  >
-                    <X className="h-4 w-4 mr-2" strokeWidth={1.75} />
-                    Reject Batch
                   </button>
                 </div>
               )}

@@ -352,11 +352,30 @@ export async function processPaymentBatch(
     throw new AppError('Batch is not in DRAFT status', 400);
   }
 
-  // Move batch to CFO approval queue
+  // Process each payment in the batch via processPayment for consistent behavior
+  // (email notifications, payment references, in-app notifications, stage timestamps)
+  for (const payment of batch.payments) {
+    if (payment.status === 'PAID') {
+      logger.warn(`Payment ${payment.id} in batch ${batch.batch_number} is already PAID — skipping`);
+      continue;
+    }
+    if (payment.status !== 'SCHEDULED') {
+      logger.warn(`Payment ${payment.id} in batch ${batch.batch_number} has status ${payment.status} — skipping`);
+      continue;
+    }
+    try {
+      await processPayment(payment.id, userId);
+    } catch (err) {
+      logger.error(`Failed to process payment ${payment.id} in batch ${batch.batch_number}:`, err);
+      throw new AppError(`Payment ${payment.id} failed to process: ${err instanceof Error ? err.message : 'unknown error'}`, 500);
+    }
+  }
+
+  // Mark batch as PROCESSED
   const updatedBatch = await prisma.paymentBatch.update({
     where: { id: batchId },
     data: {
-      status: PaymentBatchStatus.PENDING_CFO as any,
+      status: PaymentBatchStatus.PROCESSED as any,
       processed_by: userId,
       processed_at: new Date(),
     },
@@ -364,9 +383,9 @@ export async function processPaymentBatch(
 
   await prisma.auditLog.create({
     data: {
-      action: 'PAYMENT_BATCH_PENDING_CFO',
+      action: 'PAYMENT_BATCH_PROCESSED',
       performed_by: userId,
-      note: `Payment batch ${batch.batch_number} submitted for CFO approval. ${batch.payments.length} payments totaling ${batch.total_amount}`,
+      note: `Payment batch ${batch.batch_number} executed by Accounting Supervisor. ${batch.payments.length} payments processed, invoices marked as PAID, remittance advice sent.`,
     },
   });
 

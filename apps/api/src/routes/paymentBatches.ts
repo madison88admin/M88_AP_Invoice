@@ -13,8 +13,7 @@ router.get('/:batchId', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.CFO, 
 router.post('/', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.CFO), paymentBatchController.createPaymentBatchController);
 router.post('/select', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.CFO), paymentBatchController.selectPaymentsForBatchController);
 router.post('/deselect', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.CFO), paymentBatchController.deselectPaymentsForBatchController);
-router.post('/:batchId/process', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.CFO), paymentBatchController.processPaymentBatchController);
-router.post('/:batchId/approve', authorize(UserRole.CFO), paymentBatchController.approvePaymentBatchByCFOController);
+router.post('/:batchId/process', authorize(UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.processPaymentBatchController);
 router.post('/:batchId/cancel', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.CFO), paymentBatchController.cancelPaymentBatchController);
 
 export default router;

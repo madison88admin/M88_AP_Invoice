@@ -206,7 +206,7 @@ export const ROLE_PERMISSIONS = {
     canApprove: false,
     canReject: false,
     canPost: true,
-    canSchedulePayment: true,
+    canSchedulePayment: false,
     canUpload: true,
     canValidate: true,
     canRequestApproval: true,

@@ -112,6 +112,9 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
             <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '100px', color: 'var(--text-muted)' }}>
               MPO #
             </th>
+            <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '70px', color: 'var(--text-muted)' }}>
+              Qty
+            </th>
             <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
               Date Due
             </th>
@@ -200,6 +203,9 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
               </td>
               <td className="px-4 py-4 whitespace-nowrap text-sm" style={{ width: '100px', color: 'var(--text-secondary)' }}>
                 {invoice.mpo_number || '—'}
+              </td>
+              <td className="px-4 py-4 whitespace-nowrap text-sm" style={{ width: '70px', color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
+                {invoice.qty_shipped != null ? invoice.qty_shipped.toLocaleString() : '—'}
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--text-muted)' }}>
                 <div className="flex items-center">
@@ -298,7 +304,7 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
           ))}
           {sortedInvoices.length === 0 && (
             <tr>
-              <td colSpan={16} className="px-6 py-12 text-center">
+              <td colSpan={17} className="px-6 py-12 text-center">
                 <div className="flex flex-col items-center justify-center">
                   <div className="p-4 rounded-2xl mb-4" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
                     <FileText className="h-12 w-12" style={{ color: 'var(--text-muted)', animation: 'pulse-soft 2.5s ease-in-out infinite' }} />

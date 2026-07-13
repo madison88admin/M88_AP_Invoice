@@ -120,6 +120,16 @@ export async function validateInvoice(invoiceId: string): Promise<InvoiceValidat
     },
   });
 
+  // Fetch previously resolved/waived exceptions so we don't re-create them
+  const previouslyHandled = await prisma.exception.findMany({
+    where: {
+      invoice_id: invoiceId,
+      status: { in: ['RESOLVED', 'WAIVED'] } as any,
+    },
+    select: { reason: true },
+  });
+  const handledReasons = new Set(previouslyHandled.map(e => e.reason as string));
+
   const results: ValidationResult[] = [];
   const exceptions: Array<{ reason: ExceptionReason; detail: string }> = [];
 
@@ -251,9 +261,11 @@ export async function validateInvoice(invoiceId: string): Promise<InvoiceValidat
 
   const passed = results.every(r => r.passed);
 
-  // Create exception records for failed validations
-  if (exceptions.length > 0) {
-    for (const exc of exceptions) {
+  // Create exception records for failed validations (skip previously resolved/waived)
+  const newExceptions = exceptions.filter(exc => !handledReasons.has(exc.reason as string));
+
+  if (newExceptions.length > 0) {
+    for (const exc of newExceptions) {
       await prisma.exception.create({
         data: {
           invoice_id: invoiceId,
@@ -267,6 +279,12 @@ export async function validateInvoice(invoiceId: string): Promise<InvoiceValidat
     await prisma.invoice.update({
       where: { id: invoiceId },
       data: { status: InvoiceStatus.EXCEPTION_FLAGGED as any },
+    });
+  } else if (exceptions.length > 0 && newExceptions.length === 0) {
+    // All failing rules were previously resolved/waived — proceed to VALIDATION_PENDING
+    await prisma.invoice.update({
+      where: { id: invoiceId },
+      data: { status: InvoiceStatus.VALIDATION_PENDING as any },
     });
   } else {
     // Batch threshold check: hold invoices below $100 cumulative per vendor

@@ -126,6 +126,14 @@ const statusMap: Record<string, { label: string; styleObj: React.CSSProperties }
       borderColor: 'color-mix(in srgb, var(--accent-lime) 30%, transparent)',
     },
   },
+  PAYMENT_CONFIRMATION_SENT: {
+    label: 'Confirmation Sent',
+    styleObj: {
+      background: 'color-mix(in srgb, var(--accent-green) 12%, transparent)',
+      color: 'var(--accent-green)',
+      borderColor: 'color-mix(in srgb, var(--accent-green) 30%, transparent)',
+    },
+  },
   REJECTED: {
     label: 'Rejected',
     styleObj: {

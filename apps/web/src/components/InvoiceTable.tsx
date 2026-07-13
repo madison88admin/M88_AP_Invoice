@@ -28,6 +28,7 @@ const statusColors: Partial<Record<InvoiceStatus, { bg: string; color: string }>
   [InvoiceStatus.POSTED_TO_QB]: { bg: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', color: 'var(--accent-blue)' },
   [InvoiceStatus.PAYMENT_SCHEDULED]: { bg: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', color: 'var(--accent-blue)' },
   [InvoiceStatus.PAID]: { bg: 'color-mix(in srgb, var(--accent-lime) 10%, transparent)', color: 'var(--accent-lime)' },
+  [InvoiceStatus.PAYMENT_CONFIRMATION_SENT]: { bg: 'color-mix(in srgb, var(--accent-green) 12%, transparent)', color: 'var(--accent-green)' },
   [InvoiceStatus.REJECTED]: { bg: 'color-mix(in srgb, var(--text-muted) 10%, transparent)', color: 'var(--text-secondary)' },
   [InvoiceStatus.ON_HOLD]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' },
 };

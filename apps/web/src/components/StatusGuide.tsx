@@ -19,7 +19,8 @@ const statusGuide: Record<InvoiceStatus, { label: string; description: string; n
   [InvoiceStatus.APPROVED]: { label: 'Approved', description: 'All approvals completed.', nextSteps: 'Accounting posts to QuickBooks.', color: 'bg-green-500' },
   [InvoiceStatus.POSTED_TO_QB]: { label: 'Posted to QB', description: 'Invoice posted to QuickBooks.', nextSteps: 'Accounting schedules payment.', color: 'bg-blue-500' },
   [InvoiceStatus.PAYMENT_SCHEDULED]: { label: 'Payment Scheduled', description: 'Payment date set.', nextSteps: 'Payment will be released on the scheduled date.', color: 'bg-blue-500' },
-  [InvoiceStatus.PAID]: { label: 'Paid', description: 'Payment completed.', nextSteps: 'No further action needed.', color: 'bg-green-500' },
+  [InvoiceStatus.PAID]: { label: 'Paid', description: 'Payment completed.', nextSteps: 'Accounting sends payment confirmation to supplier.', color: 'bg-green-500' },
+  [InvoiceStatus.PAYMENT_CONFIRMATION_SENT]: { label: 'Confirmation Sent', description: 'Payment confirmation email sent to supplier.', nextSteps: 'Process complete — no further action needed.', color: 'bg-green-600' },
   [InvoiceStatus.REJECTED]: { label: 'Rejected', description: 'Invoice was rejected.', nextSteps: 'Coordinator reviews and corrects or discards.', color: 'bg-gray-500' },
 };
 

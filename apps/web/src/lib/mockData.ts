@@ -42,7 +42,7 @@ export interface MockInvoice {
   updated_at?: string;
   created_at?: string;
   uploaded_by?: string;
-  vendor?: { name: string };
+  vendor?: { name: string; contact_email?: string };
   incoterm?: string;
   bill_to_entity?: string;
   priority_flag?: boolean;

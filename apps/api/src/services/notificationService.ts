@@ -266,36 +266,35 @@ export async function sendPaymentConfirmationToSupplier(
   paymentReference: string,
   paidAt: Date
 ): Promise<void> {
-  const subject = `Payment Confirmation - Invoice ${invoiceNumber} - ${vendorName}`;
+  const subject = `Payment Confirmation — Invoice ${invoiceNumber}`;
+
+  const formattedDate = paidAt.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: '2-digit' });
 
   const body = `
     <h2>Payment Confirmation</h2>
     <p>Dear ${vendorName},</p>
-    <p>We are pleased to confirm that your invoice has been paid. Please find the payment details below:</p>
+    <p>Please be informed that payment has been processed for the following invoice:</p>
     <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
       <tr>
         <td style="padding: 8px 12px; border: 1px solid #e0e0e0; font-weight: bold;">Invoice Number</td>
         <td style="padding: 8px 12px; border: 1px solid #e0e0e0;">${invoiceNumber}</td>
       </tr>
       <tr>
-        <td style="padding: 8px 12px; border: 1px solid #e0e0e0; font-weight: bold;">Vendor</td>
-        <td style="padding: 8px 12px; border: 1px solid #e0e0e0;">${vendorName}</td>
+        <td style="padding: 8px 12px; border: 1px solid #e0e0e0; font-weight: bold;">Amount Paid</td>
+        <td style="padding: 8px 12px; border: 1px solid #e0e0e0;">${currency} ${amount.toFixed(2)}</td>
       </tr>
       <tr>
-        <td style="padding: 8px 12px; border: 1px solid #e0e0e0; font-weight: bold;">Payment Amount</td>
-        <td style="padding: 8px 12px; border: 1px solid #e0e0e0;">${currency} ${amount.toFixed(2)}</td>
+        <td style="padding: 8px 12px; border: 1px solid #e0e0e0; font-weight: bold;">Payment Date</td>
+        <td style="padding: 8px 12px; border: 1px solid #e0e0e0;">${formattedDate}</td>
       </tr>
       <tr>
         <td style="padding: 8px 12px; border: 1px solid #e0e0e0; font-weight: bold;">Payment Reference</td>
         <td style="padding: 8px 12px; border: 1px solid #e0e0e0;">${paymentReference}</td>
       </tr>
-      <tr>
-        <td style="padding: 8px 12px; border: 1px solid #e0e0e0; font-weight: bold;">Payment Date</td>
-        <td style="padding: 8px 12px; border: 1px solid #e0e0e0;">${paidAt.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</td>
-      </tr>
     </table>
-    <p>If you have any questions regarding this payment, please contact our Accounts Payable team at <a href="mailto:ap@madison88.com">ap@madison88.com</a>.</p>
-    <p>Thank you for your business.</p>
+    <p>Please allow 2-3 business days for the funds to reflect in your account.</p>
+    <p>For any questions, please contact us at <a href="mailto:PURCHASINGTEAM@madison88.com">PURCHASINGTEAM@madison88.com</a>.</p>
+    <p>Best regards,<br/>Madison 88 Accounts Payable Team</p>
     <p style="margin-top: 24px; color: #888; font-size: 12px;">
       Madison 88 Ltd.<br/>
       Accounts Payable Department<br/>

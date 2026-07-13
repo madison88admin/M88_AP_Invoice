@@ -35,6 +35,9 @@ export default function AccountingReview() {
     if (status === InvoiceStatus.PAID) {
       return { background: 'color-mix(in srgb, var(--accent-green) 12%, transparent)', color: 'var(--accent-green)', border: '1px solid color-mix(in srgb, var(--accent-green) 20%, transparent)' };
     }
+    if (status === InvoiceStatus.PAYMENT_CONFIRMATION_SENT) {
+      return { background: 'color-mix(in srgb, var(--accent-lime) 12%, transparent)', color: 'var(--accent-lime)', border: '1px solid color-mix(in srgb, var(--accent-lime) 20%, transparent)' };
+    }
     return { background: 'color-mix(in srgb, var(--accent-amber) 12%, transparent)', color: 'var(--accent-amber)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' };
   };
 
@@ -125,6 +128,7 @@ export default function AccountingReview() {
               >
                 <option value={InvoiceStatus.POSTED_TO_QB}>Posted</option>
                 <option value={InvoiceStatus.PAID}>Paid</option>
+                <option value={InvoiceStatus.PAYMENT_CONFIRMATION_SENT}>Confirmation Sent</option>
                 <option value={InvoiceStatus.PAYMENT_SCHEDULED}>Payment Scheduled</option>
                 <option value="">All Statuses</option>
               </select>

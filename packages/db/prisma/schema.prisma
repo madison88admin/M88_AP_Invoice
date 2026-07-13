@@ -146,6 +146,9 @@ model Invoice {
   payment_terms         String?
   payment_penalty_rate  Decimal?
   
+  // Payment confirmation
+  confirmation_sent_at  DateTime?
+  
   // Meta
   source                InvoiceSource @default(EMAIL)
   raw_file_url          String?
@@ -317,6 +320,7 @@ enum InvoiceStatus {
   POSTED_TO_QB
   PAYMENT_SCHEDULED
   PAID
+  PAYMENT_CONFIRMATION_SENT
   REJECTED
   ON_HOLD
 }

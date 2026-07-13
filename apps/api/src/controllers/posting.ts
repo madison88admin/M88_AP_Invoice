@@ -8,6 +8,11 @@ import {
   releaseFromHold,
 } from '../services/postingService';
 import { logAudit } from '../services/auditLogService';
+import { sendPaymentConfirmationToSupplier } from '../services/notificationService';
+import { InvoiceStatus } from '@ap-invoice/shared';
+import prisma from '../config/database';
+import { AppError } from '../middleware/errorHandler';
+import { logger } from '../utils/logger';
 
 export const postInvoiceController = async (
   req: AuthRequest,
@@ -96,6 +101,92 @@ export const releaseFromHoldController = async (
     const { id } = req.params;
     const result = await releaseFromHold(id, req.user!.id);
     res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const sendPaymentConfirmationController = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { id } = req.params;
+
+    // Permission check — only ACCOUNTING_ASSOCIATE and ACCOUNTING_SUPERVISOR
+    if (req.user!.role !== 'ACCOUNTING_ASSOCIATE' && req.user!.role !== 'ACCOUNTING_SUPERVISOR') {
+      throw new AppError('Only Accounting Associate or Supervisor can send payment confirmations', 403);
+    }
+
+    // 1. Fetch invoice — must be PAID
+    const invoice = await prisma.invoice.findUnique({
+      where: { id },
+      include: { vendor: true, payments: true },
+    });
+
+    if (!invoice) {
+      throw new AppError('Invoice not found', 404);
+    }
+
+    if (invoice.status !== InvoiceStatus.PAID) {
+      throw new AppError('Invoice must be PAID before sending payment confirmation', 400);
+    }
+
+    // 2. Check vendor email
+    if (!invoice.vendor?.contact_email) {
+      throw new AppError('Vendor email not found — add vendor email before sending', 400);
+    }
+
+    // 3. Find the linked payment record
+    const payment = invoice.payments.find(p => p.status === 'PAID' && p.reference);
+    if (!payment) {
+      throw new AppError('No paid payment record found with a reference number', 400);
+    }
+
+    // 4. Send email
+    try {
+      await sendPaymentConfirmationToSupplier(
+        invoice.id,
+        invoice.invoice_number,
+        invoice.vendor.name,
+        invoice.vendor.contact_email,
+        Number(payment.amount),
+        payment.currency || invoice.currency || 'USD',
+        payment.reference!,
+        payment.paid_at || new Date()
+      );
+    } catch (emailError) {
+      logger.error('Failed to send payment confirmation email:', emailError);
+      throw new AppError('Failed to send payment confirmation email — please try again', 500);
+    }
+
+    // 5. Update invoice status + timestamp
+    const sentAt = new Date();
+    await prisma.invoice.update({
+      where: { id },
+      data: {
+        status: InvoiceStatus.PAYMENT_CONFIRMATION_SENT as any,
+        confirmation_sent_at: sentAt,
+      },
+    });
+
+    // 6. Audit log
+    await logAudit({
+      invoice_id: id,
+      performed_by: req.user!.id,
+      action: 'PAYMENT_CONFIRMATION_SENT',
+      note: `Payment confirmation sent by ${req.user!.role} to ${invoice.vendor.contact_email}, CC: PURCHASINGTEAM@madison88.com. Reference: ${payment.reference}, Amount: ${payment.currency || 'USD'} ${Number(payment.amount).toFixed(2)}`,
+    });
+
+    logger.info(`Payment confirmation sent for invoice ${invoice.invoice_number} to ${invoice.vendor.contact_email}`);
+
+    res.json({
+      success: true,
+      sent_to: invoice.vendor.contact_email,
+      cc: 'PURCHASINGTEAM@madison88.com',
+      sent_at: sentAt.toISOString(),
+    });
   } catch (error) {
     next(error);
   }

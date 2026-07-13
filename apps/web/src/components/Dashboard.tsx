@@ -154,6 +154,8 @@ export default function Dashboard() {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [bypassVarianceCheck, setBypassVarianceCheck] = useState(false);
+  const [sendingConfirmation, setSendingConfirmation] = useState(false);
+  const [showConfirmSendModal, setShowConfirmSendModal] = useState(false);
   const [poAuditSummary, setPoAuditSummary] = useState({
     matched: 0,
     warnings: 0,
@@ -665,6 +667,22 @@ export default function Dashboard() {
     }
   };
 
+  const handleSendPaymentConfirmation = async () => {
+    if (!selectedInvoice) return;
+    setSendingConfirmation(true);
+    try {
+      const res = await invoiceApi.sendPaymentConfirmation(selectedInvoice.id);
+      showToast(`Payment confirmation sent to ${res.data.sent_to}`, 'success');
+      await refresh();
+      setShowConfirmSendModal(false);
+    } catch (error: any) {
+      const msg = error?.response?.data?.message || 'Failed to send payment confirmation';
+      showToast(msg, 'error');
+    } finally {
+      setSendingConfirmation(false);
+    }
+  };
+
   // Payables aging — compute from real invoice data
   const payablesAging = useMemo(() => {
     const today = new Date();
@@ -815,6 +833,7 @@ export default function Dashboard() {
         const pendingVal = allInvoices.filter(i => i.status === InvoiceStatus.VALIDATION_PENDING);
         const validated = allInvoices.filter(i => i.status === InvoiceStatus.APPROVED);
         const excInvs = allInvoices.filter(i => i.status === InvoiceStatus.EXCEPTION_FLAGGED);
+        const paidPendingConfirmation = allInvoices.filter(i => i.status === InvoiceStatus.PAID);
         return [
           {
             label: 'My Invoices',
@@ -831,11 +850,12 @@ export default function Dashboard() {
             ...calcTrend(pendingVal),
           },
           {
-            label: 'Validated Today',
-            value: validated.length,
-            icon: CheckCircle,
+            label: 'PAID — Confirmation Pending',
+            value: paidPendingConfirmation.length,
+            icon: Send,
             accent: 'success',
-            ...calcTrend(validated),
+            ...calcTrend(paidPendingConfirmation),
+            subtitle: 'Send payment confirmations',
           },
           {
             label: 'Exceptions',
@@ -929,6 +949,7 @@ export default function Dashboard() {
         const pendingAssoc = allInvoices.filter(i => i.status === 'VALIDATION_PENDING');
         const excSup = allInvoices.filter(i => i.status === InvoiceStatus.EXCEPTION_FLAGGED);
         const readyPost = allInvoices.filter(i => i.status === InvoiceStatus.APPROVED || i.status === InvoiceStatus.PENDING_ACCOUNTING);
+        const paidPendingConfSup = allInvoices.filter(i => i.status === InvoiceStatus.PAID);
         return [
           {
             label: 'All Invoices Overview',
@@ -945,18 +966,19 @@ export default function Dashboard() {
             ...calcTrend(pendingAssoc),
           },
           {
+            label: 'PAID — Confirmation Pending',
+            value: paidPendingConfSup.length,
+            icon: Send,
+            accent: 'success',
+            ...calcTrend(paidPendingConfSup),
+            subtitle: 'Send payment confirmations',
+          },
+          {
             label: 'Exception Flags',
             value: exceptionsCount.count,
             icon: AlertCircle,
             accent: 'danger',
             ...calcTrend(excSup),
-          },
-          {
-            label: 'Ready for Posting',
-            value: readyPost.length,
-            icon: CheckCircle,
-            accent: 'success',
-            ...calcTrend(readyPost),
           },
         ];
       }
@@ -2343,6 +2365,36 @@ export default function Dashboard() {
                 </button>
               )}
 
+              {/* Send Payment Confirmation — only for PAID invoices, only Accounting roles */}
+              {selectedInvoice.status === (InvoiceStatus.PAID as any) && user && (user.role === 'ACCOUNTING_ASSOCIATE' || user.role === 'ACCOUNTING_SUPERVISOR') && (
+                <button
+                  onClick={() => setShowConfirmSendModal(true)}
+                  disabled={sendingConfirmation}
+                  className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
+                  style={sendingConfirmation
+                    ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' }
+                    : { background: 'var(--accent-lime)', color: 'var(--text-inverse)', boxShadow: '0 0 16px color-mix(in srgb, var(--accent-lime) 25%, transparent)' }
+                  }
+                >
+                  {sendingConfirmation ? <Loader2 className="h-4 w-4 mr-2 animate-spin" strokeWidth={1.75} /> : <Send className="h-4 w-4 mr-2" strokeWidth={1.75} />}
+                  {sendingConfirmation ? 'Sending...' : 'Send Payment Confirmation'}
+                </button>
+              )}
+
+              {/* Payment Confirmation Sent — read-only label */}
+              {selectedInvoice.status === (InvoiceStatus.PAYMENT_CONFIRMATION_SENT as any) && (selectedInvoice as any).confirmation_sent_at && (
+                <div className="p-3 rounded-xl text-xs" style={{ background: 'color-mix(in srgb, var(--accent-lime) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-lime) 20%, transparent)' }}>
+                  <div className="flex items-center gap-2" style={{ color: 'var(--accent-lime)' }}>
+                    <CheckCircle className="h-4 w-4" strokeWidth={1.75} />
+                    <span className="font-medium">Confirmation Sent</span>
+                  </div>
+                  <p className="mt-1" style={{ color: 'var(--text-secondary)' }}>
+                    Sent on {new Date((selectedInvoice as any).confirmation_sent_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: '2-digit' })} to {selectedInvoice.vendor?.name}
+                    <br />CC: PURCHASINGTEAM@madison88.com
+                  </p>
+                </div>
+              )}
+
               {/* Audit Log */}
               <AuditLogViewer invoiceId={selectedInvoice.id} />
 
@@ -2544,6 +2596,47 @@ export default function Dashboard() {
                   style={!paymentDate ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--accent-purple)', color: 'var(--text-inverse)' }}
                 >
                   Schedule Payment
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Send Payment Confirmation Modal */}
+      {showConfirmSendModal && selectedInvoice && (
+        <div className="fixed inset-0 flex items-center justify-center z-50 animate-backdrop" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
+          <div className="max-w-md w-full mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+            <div className="p-6">
+              <h3 className="text-lg font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
+                Send Payment Confirmation
+              </h3>
+              <p className="text-sm mb-4" style={{ color: 'var(--text-secondary)' }}>
+                Send payment confirmation to <strong>{selectedInvoice.vendor?.name}</strong> at <strong>{selectedInvoice.vendor?.contact_email || 'N/A'}</strong>?
+                <br /><br />
+                This will also CC <strong>PURCHASINGTEAM@madison88.com</strong> for visibility.
+              </p>
+              <div className="flex justify-end space-x-3">
+                <button
+                  onClick={() => setShowConfirmSendModal(false)}
+                  className="px-4 py-2 transition-colors text-sm"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSendPaymentConfirmation}
+                  disabled={sendingConfirmation}
+                  className="px-4 py-2 rounded-xl transition-colors text-sm font-medium flex items-center gap-2"
+                  style={sendingConfirmation
+                    ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' }
+                    : { background: 'var(--accent-lime)', color: 'var(--text-inverse)' }
+                  }
+                >
+                  {sendingConfirmation && <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.75} />}
+                  {sendingConfirmation ? 'Sending...' : 'Confirm & Send'}
                 </button>
               </div>
             </div>

@@ -86,6 +86,7 @@ export const invoiceApi = {
     throw new Error('NextGen check timed out');
   },
   schedulePayment: (id: string, paymentDate: string) => api.post(`/api/invoices/${id}/schedule-payment`, { paymentDate }),
+  sendPaymentConfirmation: (id: string) => api.post(`/api/invoices/${id}/send-payment-confirmation`),
 };
 
 export const approvalApi = {

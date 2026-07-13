@@ -1064,41 +1064,6 @@ export default function Dashboard() {
         ];
       }
 
-      case 'CFO': {
-        const highValue = allInvoices.filter(i => i.total_amount >= 50000);
-        const payBatches = allInvoices.filter(i => i.status === 'PAYMENT_SCHEDULED');
-        return [
-          {
-            label: 'Total AP Amount',
-            value: `$${totalAmountCount.count.toLocaleString()}`,
-            icon: TrendingUp,
-            accent: 'default',
-            ...calcTrend(allInvoices),
-          },
-          {
-            label: 'Cash Flow',
-            value: `$${payBatches.reduce((sum, i) => sum + i.total_amount, 0).toLocaleString()}`,
-            icon: BarChart3,
-            accent: 'success',
-            ...calcTrend(payBatches),
-          },
-          {
-            label: 'High-Value Alerts',
-            value: highValue.length,
-            icon: AlertTriangle,
-            accent: 'danger',
-            ...calcTrend(highValue),
-          },
-          {
-            label: 'Payment Batches',
-            value: payBatches.length,
-            icon: Package,
-            accent: 'default',
-            ...calcTrend(payBatches),
-          },
-        ];
-      }
-
       case 'MS_POLLY': {
         const pendPolly = allInvoices.filter(i => i.status === 'PENDING_POLLY');
         const criticalExc = allInvoices.filter(i => i.status === InvoiceStatus.EXCEPTION_FLAGGED);
@@ -1281,7 +1246,7 @@ export default function Dashboard() {
               onClick={() => navigate('/approvals')}
             />
           )}
-          {user && ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'CFO'].includes(user.role) && (
+          {user && ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
             <SidebarItem
               icon={AlertTriangle}
               label="Exceptions"
@@ -1290,7 +1255,7 @@ export default function Dashboard() {
               onClick={() => navigate('/exceptions')}
             />
           )}
-          {user && ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'CFO'].includes(user.role) && (
+          {user && ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
             <SidebarItem
               icon={Building2}
               label="Vendors"
@@ -1299,7 +1264,7 @@ export default function Dashboard() {
               onClick={() => navigate('/vendors')}
             />
           )}
-          {user && ['CFO', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
+          {user && ['ACCOUNTING_SUPERVISOR'].includes(user.role) && (
             <SidebarItem
               icon={Package}
               label="Batches"
@@ -1308,7 +1273,7 @@ export default function Dashboard() {
               onClick={() => navigate('/payment-batches')}
             />
           )}
-          {user && ['CFO', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
+          {user && ['PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
             <SidebarItem
               icon={BarChart3}
               label="Reports"
@@ -1668,24 +1633,13 @@ export default function Dashboard() {
           <div className="mb-6 flex flex-wrap items-center gap-3">
             {user && user.role === 'ACCOUNTING_SUPERVISOR' && (
               <button
-                onClick={() => navigate('/approvals')}
-                className="inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors"
-                style={{ border: '1px solid color-mix(in srgb, var(--accent-amber) 30%, transparent)', background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-amber) 20%, transparent)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-amber) 10%, transparent)'; }}
-              >
-                Route to CFO
-              </button>
-            )}
-            {user && user.role === 'CFO' && (
-              <button
                 onClick={() => navigate('/payment-batches')}
                 className="inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors"
-                style={{ border: '1px solid color-mix(in srgb, var(--accent-purple) 30%, transparent)', background: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)', color: 'var(--accent-purple)' }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-purple) 20%, transparent)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-purple) 10%, transparent)'; }}
+                style={{ border: '1px solid color-mix(in srgb, var(--accent-lime) 30%, transparent)', background: 'color-mix(in srgb, var(--accent-lime) 10%, transparent)', color: 'var(--accent-lime)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-lime) 20%, transparent)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-lime) 10%, transparent)'; }}
               >
-                Batch Approve Payments
+                Manage Payment Batches
               </button>
             )}
             {user && (user.role === 'IT_ADMIN' || user.role === 'SUPERADMIN') && (
@@ -1885,8 +1839,8 @@ export default function Dashboard() {
           </div>
           )}
 
-          {/* Supplier Balance Analysis - Only for CFO and ACCOUNTING_SUPERVISOR */}
-          {user && (user.role === 'CFO' || user.role === 'ACCOUNTING_SUPERVISOR') && (
+          {/* Supplier Balance Analysis - Only for ACCOUNTING_SUPERVISOR */}
+          {user && user.role === 'ACCOUNTING_SUPERVISOR' && (
             <div className="mt-6 rounded-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.25)]" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
               <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
                 <div>
@@ -1969,8 +1923,8 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Payables Aging - Only for CFO and ACCOUNTING_SUPERVISOR */}
-          {user && (user.role === 'CFO' || user.role === 'ACCOUNTING_SUPERVISOR') && (
+          {/* Payables Aging - Only for ACCOUNTING_SUPERVISOR */}
+          {user && user.role === 'ACCOUNTING_SUPERVISOR' && (
             <div className="mt-6 rounded-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.25)]" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
               <div className="px-6 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
                 <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Payables aging</h2>
@@ -2274,7 +2228,7 @@ export default function Dashboard() {
                   selectedInvoice.current_stage === user.role ||
                   (selectedInvoice.current_stage === 'COORDINATOR' && user.role === 'PURCHASING_COORDINATOR') ||
                   (selectedInvoice.current_stage === 'MLO_PLANNING_MANAGER' && (user.role === 'PLANNING_MANAGER' || user.role === 'MLO_ACCOUNT_HOLDER' || user.role === 'MLO_PLANNING_MANAGER')) ||
-                  (selectedInvoice.current_stage === 'ACCOUNTING_REVIEWER' && (user.role === 'ACCOUNTING_ASSOCIATE' || user.role === 'ACCOUNTING_SUPERVISOR' || user.role === 'CFO' || user.role === 'PRESIDENT'))
+                  (selectedInvoice.current_stage === 'ACCOUNTING_REVIEWER' && (user.role === 'ACCOUNTING_ASSOCIATE' || user.role === 'ACCOUNTING_SUPERVISOR' || user.role === 'PRESIDENT'))
                 ) && (
                 <div className="space-y-2">
                   {hasPermission(user.role, 'canApprove') && (

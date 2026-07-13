@@ -49,7 +49,6 @@ export default function BottleneckView() {
       user?.role === 'MS_POLLY' ? 'MS_POLLY' :
       user?.role === 'ACCOUNTING_ASSOCIATE' ? 'ACCOUNTING_REVIEWER' :
       user?.role === 'ACCOUNTING_SUPERVISOR' ? 'ACCOUNTING_REVIEWER' :
-      user?.role === 'CFO' ? 'ACCOUNTING_REVIEWER' :
       user?.role === 'PRESIDENT' ? 'ACCOUNTING_REVIEWER' : ''
     ).map(inv => ({
       id: inv.id,

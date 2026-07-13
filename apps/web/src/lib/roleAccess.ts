@@ -54,7 +54,6 @@ export const ROLE_PERMISSIONS = {
     canViewSystemHealth: false,
     canViewErrorLogs: false,
     canConfigureSystem: false,
-    canRouteToCFO: true,
   },
   PURCHASING_COORDINATOR: {
     canApprove: true,
@@ -167,24 +166,6 @@ export const ROLE_PERMISSIONS = {
     canConfigureSystem: false,
     canViewExecutiveSummary: true,
   },
-  CFO: {
-    canApprove: true,
-    canReject: true,
-    canPost: false,
-    canSchedulePayment: false,
-    canUpload: false,
-    canViewAllInvoices: true,
-    canViewReports: true,
-    canViewFinancialReports: true,
-    canManageUsers: false,
-    canEditInvoice: false,
-    canDeleteInvoice: false,
-    canViewSystemHealth: false,
-    canViewErrorLogs: false,
-    canConfigureSystem: false,
-    canViewFinancialKPIs: true,
-    canBatchApprovePayments: true,
-  },
   PRESIDENT: {
     canApprove: true,
     canReject: true,
@@ -234,7 +215,6 @@ export const ROLE_STAGE_ACCESS: Record<string, string[]> = {
   PLANNING_MANAGER: ['PENDING_MLO_PLANNING_MANAGER'],
   SR_MANAGER_GLOBAL_PRODUCTION: ['PENDING_SR_MANAGER'],
   MS_POLLY: ['PENDING_POLLY'],
-  CFO: ['PENDING_ACCOUNTING', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED'],
   PRESIDENT: ['PENDING_ACCOUNTING', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID'],
   IT_ADMIN: [], // System maintenance only; cannot approve/reject/hold
 };

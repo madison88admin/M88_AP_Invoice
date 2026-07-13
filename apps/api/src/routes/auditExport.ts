@@ -13,7 +13,7 @@ router.use(authenticate);
  * Export audit logs as CSV for compliance/finance audit purposes.
  * Query params: invoiceId, action, performedBy, startDate, endDate, limit, offset
  */
-router.get('/export', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.CFO, UserRole.IT_ADMIN, UserRole.SUPERADMIN), async (req: Request, res: Response, next: NextFunction) => {
+router.get('/export', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN, UserRole.SUPERADMIN), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { invoiceId, action, performedBy, startDate, endDate } = req.query;
     const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 10000;

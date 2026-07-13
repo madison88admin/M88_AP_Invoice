@@ -39,7 +39,7 @@ interface PaymentBatch {
   batch_number: string;
   total_amount: number;
   payment_count: number;
-  status: 'DRAFT' | 'PENDING_CFO' | 'APPROVED' | 'PROCESSED' | 'CANCELLED';
+  status: 'DRAFT' | 'PROCESSED' | 'CANCELLED';
   created_at: string;
   processed_at?: string;
   cancelled_at?: string;
@@ -60,7 +60,6 @@ export default function PaymentBatchManager() {
   const [selectedPaymentIds, setSelectedPaymentIds] = useState<Set<string>>(new Set());
   const [actionLoading, setActionLoading] = useState(false);
 
-  const isCFO = user?.role === 'CFO';
   const isAssociate = user?.role === 'ACCOUNTING_ASSOCIATE';
   const isSupervisor = user?.role === 'ACCOUNTING_SUPERVISOR';
 
@@ -367,7 +366,7 @@ export default function PaymentBatchManager() {
                       <span className="text-sm ml-2" style={{ color: 'var(--text-muted)' }}>Total: ${selectedTotal.toLocaleString()}</span>
                     </div>
                   </div>
-                  {(isSupervisor || isCFO) && (
+                  {isSupervisor && (
                     <button
                       onClick={handleCreateBatch}
                       disabled={processing}

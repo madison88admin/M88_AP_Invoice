@@ -63,7 +63,6 @@ router.get('/status', devBypassAdmin, (req: Request, res: Response) => {
             'PLANNING_MANAGER',
             'SR_MANAGER_GLOBAL_PRODUCTION',
             'MS_POLLY',
-            'CFO',
             'PRESIDENT',
             'IT_ADMIN',
           ],

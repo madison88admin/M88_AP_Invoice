@@ -17,7 +17,6 @@ const mapUserRoleToSignatoryRoles = (role: string): string[] => {
     'MS_POLLY': ['MS_POLLY'],
     'ACCOUNTING_ASSOCIATE': ['ACCOUNTING_REVIEWER'],
     'ACCOUNTING_SUPERVISOR': ['ACCOUNTING_REVIEWER'],
-    'CFO': ['ACCOUNTING_REVIEWER'],
     'PRESIDENT': ['ACCOUNTING_REVIEWER'],
     'SUPERADMIN': [],
   };

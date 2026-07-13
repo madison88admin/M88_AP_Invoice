@@ -190,7 +190,7 @@ export const MockDataProvider = ({ children }: MockDataProviderProps) => {
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Only fetch payment batches for roles that have permission
-  const canFetchPaymentBatches = user && ['ACCOUNTING_SUPERVISOR', 'CFO', 'IT_ADMIN'].includes(user.role);
+  const canFetchPaymentBatches = user && ['ACCOUNTING_SUPERVISOR', 'IT_ADMIN'].includes(user.role);
   // SUPERADMIN: no invoice/vendor data needed (system maintenance only)
   const skipInvoiceFetch = user?.role === 'SUPERADMIN';
 

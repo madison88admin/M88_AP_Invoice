@@ -150,7 +150,7 @@ export default function SLAAnalyticsDashboard() {
               <option value={30}>Last 30 days</option>
               <option value={90}>Last 90 days</option>
             </select>
-            {user && ['ACCOUNTING_SUPERVISOR', 'CFO', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role) && (
+            {user && ['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role) && (
             <button
               onClick={handleExportAudit}
               disabled={exporting}

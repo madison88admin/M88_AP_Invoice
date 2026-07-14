@@ -851,8 +851,9 @@ export default function Dashboard() {
         const myInvs = allInvoices.filter(i => i.uploaded_by === user.email);
         const pendingVal = allInvoices.filter(i => i.status === InvoiceStatus.VALIDATION_PENDING);
         const validated = allInvoices.filter(i => i.status === InvoiceStatus.APPROVED);
-        const excInvs = allInvoices.filter(i => i.status === InvoiceStatus.EXCEPTION_FLAGGED);
         const paidPendingConfirmation = allInvoices.filter(i => i.status === InvoiceStatus.PAID);
+        const scheduledPayments = allInvoices.filter(i => i.status === InvoiceStatus.PAYMENT_SCHEDULED);
+        const draftBatches = paymentBatches.filter(b => b.status === 'DRAFT');
         return [
           {
             label: 'My Invoices',
@@ -877,11 +878,12 @@ export default function Dashboard() {
             subtitle: 'Send payment confirmations',
           },
           {
-            label: 'Exceptions',
-            value: exceptionsCount.count,
-            icon: AlertCircle,
-            accent: 'danger',
-            ...calcTrend(excInvs),
+            label: 'Draft Payment Batches',
+            value: draftBatches.length,
+            icon: Package,
+            accent: 'warning',
+            ...calcTrend(draftBatches),
+            subtitle: 'Ready for processing',
           },
         ];
       }
@@ -966,9 +968,9 @@ export default function Dashboard() {
 
       case 'ACCOUNTING_SUPERVISOR': {
         const pendingAssoc = allInvoices.filter(i => i.status === 'VALIDATION_PENDING');
-        const excSup = allInvoices.filter(i => i.status === InvoiceStatus.EXCEPTION_FLAGGED);
         const readyPost = allInvoices.filter(i => i.status === InvoiceStatus.APPROVED || i.status === InvoiceStatus.PENDING_ACCOUNTING);
         const paidPendingConfSup = allInvoices.filter(i => i.status === InvoiceStatus.PAID);
+        const allBatches = paymentBatches;
         return [
           {
             label: 'All Invoices Overview',
@@ -993,11 +995,12 @@ export default function Dashboard() {
             subtitle: 'Send payment confirmations',
           },
           {
-            label: 'Exception Flags',
-            value: exceptionsCount.count,
-            icon: AlertCircle,
-            accent: 'danger',
-            ...calcTrend(excSup),
+            label: 'Payment Batches',
+            value: allBatches.length,
+            icon: Package,
+            accent: 'warning',
+            ...calcTrend(allBatches),
+            subtitle: 'View all batches',
           },
         ];
       }
@@ -1260,7 +1263,7 @@ export default function Dashboard() {
               onClick={() => navigate('/approvals')}
             />
           )}
-          {user && ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
+          {user && ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN'].includes(user.role) && (
             <SidebarItem
               icon={AlertTriangle}
               label="Exceptions"
@@ -1278,7 +1281,7 @@ export default function Dashboard() {
               onClick={() => navigate('/vendors')}
             />
           )}
-          {user && ['ACCOUNTING_SUPERVISOR'].includes(user.role) && (
+          {user && ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
             <SidebarItem
               icon={Package}
               label="Batches"
@@ -1645,7 +1648,7 @@ export default function Dashboard() {
 
           {/* Secondary Role-Specific Actions */}
           <div className="mb-6 flex flex-wrap items-center gap-3">
-            {user && user.role === 'ACCOUNTING_SUPERVISOR' && (
+            {user && ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
               <button
                 onClick={() => navigate('/payment-batches')}
                 className="inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors"

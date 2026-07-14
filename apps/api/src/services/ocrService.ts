@@ -647,6 +647,146 @@ async function tryAIFallbacks(
   return null;
 }
 
+// ─── REAL CONFIDENCE CALCULATION ───────────────────────────────────────────
+// Known garbage values that pdf2json or AI might extract incorrectly
+const GARBAGE_VENDOR_NAMES = [
+  'account no', 'invoice', 'invoice invoice', 'invoice invoice no',
+  'tax invoice', 'bill to', 'ship to', 'sold to', 'total', 'amount',
+  'description', 'quantity', 'unit price', 'no.', 'date',
+];
+const GARBAGE_INVOICE_NUMBERS = [
+  'invoice', 'invoice no', 'invoice number', 'no', 'no.', 'number',
+  'account no', 'tax invoice',
+];
+
+function isGarbageValue(value: string | undefined, garbageList: string[]): boolean {
+  if (!value || !value.trim()) return true;
+  const lower = value.trim().toLowerCase();
+  if (garbageList.some(g => lower === g || lower === g + ' no')) return true;
+  // Too short or just generic words
+  if (lower.length < 2) return true;
+  // Repeated words like "INVOICE INVOICE"
+  const words = lower.split(/\s+/);
+  if (words.length >= 2 && words.every(w => w === words[0])) return true;
+  return false;
+}
+
+function isValidAmount(amount: number | undefined): boolean {
+  if (!amount || isNaN(amount) || amount <= 0) return false;
+  if (amount > 10000000) return false; // >$10M is suspicious
+  return true;
+}
+
+function isValidDate(dateStr: string | undefined): boolean {
+  if (!dateStr || !dateStr.trim()) return false;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return false;
+  const year = d.getFullYear();
+  return year >= 2010 && year <= 2030;
+}
+
+/**
+ * Calculate realistic OCR confidence based on actual field quality.
+ * Returns a value between 0 and 1.
+ *
+ * Scoring breakdown (100 points total, scaled to 0-1):
+ * - vendor_name: 20 pts (only if not garbage)
+ * - invoice_number: 15 pts (only if not garbage)
+ * - total_amount: 20 pts (only if valid positive number)
+ * - invoice_date: 10 pts (only if valid date)
+ * - po_number/mpo_number: 15 pts
+ * - currency: 5 pts
+ * - line_items: 5 pts
+ * - bank_info: 5 pts (swift/account)
+ * - signatures: 5 pts
+ *
+ * Penalties:
+ * - Garbage vendor name: -15 pts
+ * - Garbage invoice number: -10 pts
+ * - Missing line items when amount > 0: -5 pts
+ */
+function calculateRealConfidence(
+  extracted: any,
+  usedAIFallback: boolean,
+  ocrEngine: string
+): number {
+  let score = 0;
+
+  // vendor_name (20 pts)
+  if (extracted.vendor_name && !isGarbageValue(extracted.vendor_name, GARBAGE_VENDOR_NAMES)) {
+    score += 20;
+  } else if (extracted.vendor_name && isGarbageValue(extracted.vendor_name, GARBAGE_VENDOR_NAMES)) {
+    score -= 15; // Penalty for garbage
+  }
+
+  // invoice_number (15 pts)
+  if (extracted.invoice_number && !isGarbageValue(extracted.invoice_number, GARBAGE_INVOICE_NUMBERS)) {
+    score += 15;
+  } else if (extracted.invoice_number && isGarbageValue(extracted.invoice_number, GARBAGE_INVOICE_NUMBERS)) {
+    score -= 10;
+  }
+
+  // total_amount (20 pts)
+  const amount = extracted.amount || extracted.total_amount;
+  if (isValidAmount(Number(amount))) {
+    score += 20;
+  }
+
+  // invoice_date (10 pts)
+  if (isValidDate(extracted.invoice_date)) {
+    score += 10;
+  }
+
+  // po_number or mpo_number (15 pts)
+  if ((extracted.po_reference || extracted.po_number || extracted.mpo_number) &&
+      !isGarbageValue(extracted.po_reference || extracted.po_number, [])) {
+    score += 15;
+  }
+
+  // currency (5 pts)
+  if (extracted.currency && extracted.currency.trim().length === 3) {
+    score += 5;
+  }
+
+  // line_items (5 pts)
+  const lineItems = (extracted as any).line_items;
+  if (lineItems && Array.isArray(lineItems) && lineItems.length > 0) {
+    score += 5;
+  } else if (isValidAmount(Number(amount)) && !lineItems) {
+    // Penalty: has amount but no line items
+    score -= 5;
+  }
+
+  // bank_info (5 pts)
+  if ((extracted as any).bank_swift || (extracted as any).bank_account ||
+      (extracted as any).bank_name || (extracted as any).bank_info) {
+    score += 5;
+  }
+
+  // signatures (5 pts)
+  if ((extracted as any).signatures && Array.isArray((extracted as any).signatures) &&
+      (extracted as any).signatures.length > 0) {
+    score += 5;
+  }
+
+  // AI fallback gets a small bonus (better at understanding layout) but not a free pass
+  if (usedAIFallback) {
+    score += 5;
+  }
+
+  // Clamp to 0-100 then scale to 0-1
+  score = Math.max(0, Math.min(100, score));
+  const confidence = score / 100;
+
+  logger.info(
+    `[OCR] Confidence: ${(confidence * 100).toFixed(0)}% (engine: ${ocrEngine}, ` +
+    `vendor: "${extracted.vendor_name}", invoice#: "${extracted.invoice_number}", ` +
+    `amount: ${amount}, date: ${extracted.invoice_date})`
+  );
+
+  return confidence;
+}
+
 export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
   let extracted: Awaited<ReturnType<typeof extractInvoiceFields>>;
   let usedGeminiVision = false;
@@ -793,6 +933,9 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
 
   const poParsed = extracted.po_reference ? parsePOReference(extracted.po_reference) : {};
 
+  // Calculate real confidence based on field quality, not hardcoded values
+  const calculatedConfidence = calculateRealConfidence(extracted, usedAIFallback, ocrEngine);
+
   return {
     invoice_number: extracted.invoice_number || '',
     invoice_date: extracted.invoice_date ? new Date(extracted.invoice_date) : new Date(),
@@ -824,7 +967,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
     is_handwritten: false,
     is_urgent: false,
     priority_pay_date: undefined,
-    ocr_confidence_score: usedAIFallback ? 0.95 : (extracted.vendor_name && extracted.invoice_number ? 0.9 : 0.5),
+    ocr_confidence_score: calculatedConfidence,
     qb_memo: undefined,
     qb_account_class: undefined,
     bank_info: {

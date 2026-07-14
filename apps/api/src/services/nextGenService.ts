@@ -887,6 +887,26 @@ export class NextGenService {
     try {
       if (this.useMock) return this.getMockPOData(mpoNumber);
 
+      // ── Fast path: Try GetEntityBrowserList to find OrderId, then GetById ──
+      try {
+        const orderId = await this.getMPOOrderId(mpoNumber);
+        if (orderId) {
+          logger.info(`MPO ${mpoNumber}: Fast path — GetEntityBrowserList resolved to OrderId ${orderId}`);
+          const result = await this.get<any>(`/MaterialPurchaseOrder/GetById?id=${orderId}`);
+          if (result) {
+            const mapped = this.mapToPOData(result);
+            if (mapped && (mapped.po_number || mapped.mpo_number || mapped.vendor_name)) {
+              logger.info(`MPO ${mpoNumber}: Fast path succeeded via GetById`);
+              // Fetch lines separately
+              const lines = await this.fetchMPOLines(orderId);
+              return { ...mapped, line_items: lines ?? [], mpo_number: mapped.mpo_number || mpoNumber };
+            }
+          }
+        }
+      } catch (e) {
+        logger.warn(`MPO ${mpoNumber}: Fast path failed, falling back to pagination`);
+      }
+
       const allHeaders = await this.fetchAllMPOHeaders(mpoNumber);
       if (allHeaders.length === 0) return null;
 

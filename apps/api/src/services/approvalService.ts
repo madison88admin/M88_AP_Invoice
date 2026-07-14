@@ -13,6 +13,7 @@ import {
   MS_POLLY_NAME,
   determineApprovalTier,
   mapSignatoryRoleToPendingStatus,
+  matchSignerToRole,
 } from '@ap-invoice/shared';
 import { sendApprovalRequestNotification } from './notificationService';
 import { inAppNotificationService } from './inAppNotificationService';
@@ -162,7 +163,7 @@ export async function createApprovalRequest(
 ) {
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
-    include: { vendor: true },
+    include: { vendor: true, signatures: true },
   });
 
   if (!invoice) {
@@ -305,10 +306,44 @@ export async function createApprovalRequest(
     return [{ auto_approved: true, invoice_id: invoiceId }];
   }
 
+  // Check for OCR-detected signatures already on the invoice document
+  // These are signatures extracted from the PDF during OCR processing
+  const ocrSignatures = (invoice.signatures || []).filter(
+    (sig: any) => sig.ocr_detected && sig.signed_at
+  );
+
   // Create signature records for each step in the route
-  const signatures = await Promise.all(
-    approvalRoute.map((step) =>
-      prisma.signature.create({
+  // Auto-sign any step that has a matching OCR-detected signature on the document
+  const createdSignatures: any[] = [];
+  const autoSignedRoles: string[] = [];
+  const now = new Date();
+
+  for (const step of approvalRoute) {
+    // Look for an existing OCR-detected signature matching this role
+    const ocrMatch = ocrSignatures.find((sig: any) => {
+      if (sig.signatory_role === step.role) return true;
+      // Also try matching by name → role (OCR may have assigned a different role)
+      const roleFromName = matchSignerToRole(sig.signatory_name);
+      return roleFromName === step.role;
+    });
+
+    if (ocrMatch) {
+      // Auto-sign: create the signature record as already signed
+      const sig = await prisma.signature.create({
+        data: {
+          invoice_id: invoiceId,
+          signatory_role: step.role as any,
+          signatory_name: ocrMatch.signatory_name,
+          signature_type: SignatureType.DIGITAL as any,
+          signed_at: ocrMatch.signed_at,
+        },
+      });
+      createdSignatures.push(sig);
+      autoSignedRoles.push(step.role);
+      logger.info(`Auto-signed ${step.role} (${ocrMatch.signatory_name}) from OCR-detected signature on document`);
+    } else {
+      // Create unsigned signature record — needs manual approval
+      const sig = await prisma.signature.create({
         data: {
           invoice_id: invoiceId,
           signatory_role: step.role as any,
@@ -316,44 +351,134 @@ export async function createApprovalRequest(
           signature_type: SignatureType.DIGITAL as any,
           signed_at: null,
         },
-      })
-    )
-  );
+      });
+      createdSignatures.push(sig);
+    }
+  }
 
-  // Create StageTimestamp for the first stage (Coordinator)
-  if (approvalRoute.length > 0) {
+  // Find the first unsigned step — that's who needs to approve next
+  const firstUnsignedIndex = createdSignatures.findIndex((sig: any) => !sig.signed_at);
+  const allSigned = firstUnsignedIndex === -1;
+
+  if (allSigned) {
+    // All approvers already signed on the document — go straight to accounting
+    // Create stage timestamps for all auto-signed stages (exited immediately)
+    for (let i = 0; i < approvalRoute.length; i++) {
+      const step = approvalRoute[i];
+      const stageStatus = mapSignatoryRoleToPendingStatus(step.role);
+      await prisma.stageTimestamp.create({
+        data: {
+          invoice_id: invoiceId,
+          stage: stageStatus as any,
+          entered_at: now,
+          exited_at: now,
+          sla_hours: step.sla_days * 24,
+          is_breached: false,
+        },
+      });
+    }
+
+    await prisma.invoice.update({
+      where: { id: invoiceId },
+      data: {
+        status: InvoiceStatus.PENDING_ACCOUNTING as any,
+        approval_tier: tier,
+        current_approver_role: null,
+      },
+    });
+    await inAppNotificationService.notifyStageTransition(invoiceId, invoice.invoice_number, invoice.vendor?.name || 'Unknown', '', 'PENDING_ACCOUNTING');
+
+    // Enter Accounting stage
     await prisma.stageTimestamp.create({
       data: {
         invoice_id: invoiceId,
-        stage: InvoiceStatus.PENDING_COORDINATOR as any,
+        stage: InvoiceStatus.PENDING_ACCOUNTING as any,
         entered_at: new Date(),
-        sla_hours: approvalRoute[0].sla_days * 24,
+        sla_hours: SLA_LIMITS.ACCOUNTING_DAYS * 24,
+      },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        invoice_id: invoiceId,
+        action: 'APPROVAL_REQUESTED',
+        performed_by: userId,
+        note: `Approval requested. Tier ${tier}. All approvers auto-signed from document signatures: ${autoSignedRoles.join(', ')}. Skipped to Accounting.`,
+      },
+    });
+
+    return createdSignatures;
+  }
+
+  // There are unsigned steps — set invoice to the first unsigned approver's stage
+  const firstUnsignedStep = approvalRoute[firstUnsignedIndex];
+  const firstUnsignedStatus = mapSignatoryRoleToPendingStatus(firstUnsignedStep.role);
+
+  // Create stage timestamps for all auto-signed (skipped) stages
+  for (let i = 0; i < firstUnsignedIndex; i++) {
+    const step = approvalRoute[i];
+    const stageStatus = mapSignatoryRoleToPendingStatus(step.role);
+    await prisma.stageTimestamp.create({
+      data: {
+        invoice_id: invoiceId,
+        stage: stageStatus as any,
+        entered_at: now,
+        exited_at: now,
+        sla_hours: step.sla_days * 24,
+        is_breached: false,
       },
     });
   }
 
-  // Update invoice status to PENDING_COORDINATOR and set approval_tier
+  // Create stage timestamp for the current (first unsigned) stage
+  await prisma.stageTimestamp.create({
+    data: {
+      invoice_id: invoiceId,
+      stage: firstUnsignedStatus as any,
+      entered_at: new Date(),
+      sla_hours: firstUnsignedStep.sla_days * 24,
+    },
+  });
+
+  // Update invoice status to the first unsigned approver's stage
   await prisma.invoice.update({
     where: { id: invoiceId },
     data: {
-      status: InvoiceStatus.PENDING_COORDINATOR as any,
+      status: firstUnsignedStatus as any,
       approval_tier: tier,
-      current_approver_role: SignatoryRole.COORDINATOR,
+      current_approver_role: firstUnsignedStep.role,
     },
   });
-  await inAppNotificationService.notifyStageTransition(invoiceId, invoice.invoice_number, invoice.vendor?.name || 'Unknown', '', 'PENDING_COORDINATOR');
+  await inAppNotificationService.notifyStageTransition(invoiceId, invoice.invoice_number, invoice.vendor?.name || 'Unknown', '', firstUnsignedStatus as string, firstUnsignedStep.role);
 
-  // Create audit log entry
+  // Auto-notify the first unsigned approver
+  try {
+    const approverEmail = getEmailForRole(firstUnsignedStep.role);
+    if (approverEmail) {
+      await sendApprovalRequestNotification(
+        invoiceId,
+        invoice.invoice_number,
+        invoice.vendor?.name || 'Unknown',
+        Number(invoice.total_amount),
+        approverEmail
+      );
+      logger.info(`Auto-notified first unsigned approver (${firstUnsignedStep.role}) for invoice ${invoice.invoice_number}`);
+    }
+  } catch (notificationError) {
+    logger.error(`Failed to notify first unsigned approver:`, notificationError);
+  }
+
+  const skippedNames = autoSignedRoles.length > 0 ? ` Auto-skipped: ${autoSignedRoles.join(', ')}` : '';
   await prisma.auditLog.create({
     data: {
       invoice_id: invoiceId,
       action: 'APPROVAL_REQUESTED',
       performed_by: userId,
-      note: `Approval requested. Tier ${tier}. Route: ${approvalRoute.map(s => `${s.role}(${s.assignee_name})`).join(' -> ')}`,
+      note: `Approval requested. Tier ${tier}. Route: ${approvalRoute.map(s => `${s.role}(${s.assignee_name})`).join(' -> ')}.${skippedNames} Next approver: ${firstUnsignedStep.role}`,
     },
   });
 
-  return signatures;
+  return createdSignatures;
 }
 
 /**

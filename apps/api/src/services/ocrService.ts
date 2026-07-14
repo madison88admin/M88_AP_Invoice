@@ -511,76 +511,140 @@ export async function extractInvoiceFields(fileBuffer: Buffer) {
   return result;
 }
 
+/**
+ * Try AI fallback OCR engines in order: Gemini Vision → Ollama (Qwen) → Groq (Llama)
+ * Returns the first successful result with engine name, or null if all fail.
+ */
+async function tryAIFallbacks(
+  fileBuffer: Buffer,
+  rawText: string
+): Promise<{ engine: string; vendor_name?: string; invoice_number?: string; invoice_date?: string; total_amount?: number; currency?: string; po_number?: string; mpo_number?: string; brand_code?: string; payment_terms?: string; bank_info?: { swift_code?: string; account_number?: string } } | null> {
+  // 1st fallback: Gemini Vision (sends PDF as file directly — best for visual layout)
+  try {
+    const geminiOCR = (await import('./geminiOCRService')).geminiOCRService;
+    if (geminiOCR.isAvailable()) {
+      logger.info('[OCR] Trying Gemini Vision fallback...');
+      const geminiResult = await geminiOCR.extractFromPDF(fileBuffer);
+      if (geminiResult && (geminiResult.vendor_name || geminiResult.invoice_number)) {
+        logger.info('[OCR] Gemini Vision fallback succeeded');
+        return { engine: 'gemini', ...geminiResult };
+      }
+    }
+  } catch (e) {
+    logger.error('[OCR] Gemini Vision fallback failed:', e);
+  }
+
+  // 2nd fallback: Ollama (Qwen 2.5 VL — local, uses raw text from pdf2json)
+  if (rawText && rawText.length > 50) {
+    try {
+      const ollamaOCR = (await import('./ollamaOCRService')).ollamaOCRService;
+      if (ollamaOCR.isAvailable()) {
+        logger.info('[OCR] Trying Ollama (Qwen) fallback with raw text...');
+        const ollamaResult = await ollamaOCR.extractFromText(rawText, {});
+        if (ollamaResult && (ollamaResult.vendor_name || ollamaResult.invoice_number)) {
+          logger.info('[OCR] Ollama (Qwen) fallback succeeded');
+          return { engine: 'ollama', ...ollamaResult };
+        }
+      }
+    } catch (e) {
+      logger.error('[OCR] Ollama fallback failed:', e);
+    }
+  } else {
+    logger.warn('[OCR] Skipping Ollama/Groq — no raw text available from pdf2json');
+  }
+
+  // 3rd fallback: Groq (Llama 3.3 70B — uses raw text)
+  if (rawText && rawText.length > 50) {
+    try {
+      const groqOCR = (await import('./groqOCRService')).groqOCRService;
+      if (groqOCR.isAvailable()) {
+        logger.info('[OCR] Trying Groq (Llama) fallback with raw text...');
+        const groqResult = await groqOCR.extractFromText(rawText, undefined);
+        if (groqResult && (groqResult.vendor_name || groqResult.invoice_number)) {
+          logger.info('[OCR] Groq (Llama) fallback succeeded');
+          return { engine: 'groq', ...groqResult };
+        }
+      }
+    } catch (e) {
+      logger.error('[OCR] Groq fallback failed:', e);
+    }
+  }
+
+  return null;
+}
+
 export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
   let extracted: Awaited<ReturnType<typeof extractInvoiceFields>>;
   let usedGeminiVision = false;
+  let usedAIFallback = false;
+  let ocrEngine = 'pdf2json';
 
+  // Try pdf2json first
+  let pdf2jsonRawText = '';
   try {
     extracted = await extractInvoiceFields(fileBuffer);
+    // Also get raw text for AI fallbacks if needed
+    try {
+      pdf2jsonRawText = await extractTextFromPDF(fileBuffer);
+    } catch {
+      // If we can't get raw text separately, use the extracted fields as-is
+    }
+
+    // Quality check: are critical fields missing or invalid?
+    const criticalFieldsMissing =
+      !extracted.vendor_name ||
+      extracted.vendor_name.trim() === '' ||
+      extracted.vendor_name === 'Account No' ||
+      !extracted.invoice_number ||
+      extracted.invoice_number.trim() === '';
+
+    if (criticalFieldsMissing) {
+      logger.warn(`[OCR] pdf2json extracted but critical fields missing (vendor="${extracted.vendor_name}", invoice#="${extracted.invoice_number}"). Triggering AI fallback chain.`);
+
+      // Try AI fallbacks using the raw text from pdf2json
+      const fallbackResult = await tryAIFallbacks(fileBuffer, pdf2jsonRawText);
+
+      if (fallbackResult) {
+        usedAIFallback = true;
+        ocrEngine = fallbackResult.engine;
+        extracted = {
+          vendor_name: fallbackResult.vendor_name || '',
+          invoice_number: fallbackResult.invoice_number || '',
+          invoice_date: fallbackResult.invoice_date ? new Date(fallbackResult.invoice_date).toISOString().split('T')[0] : '',
+          due_date: '',
+          amount: fallbackResult.total_amount || 0,
+          grand_total: 0,
+          currency: fallbackResult.currency || 'USD',
+          po_reference: fallbackResult.po_number || '',
+          mpo_number: fallbackResult.mpo_number || '',
+          brand_code: fallbackResult.brand_code || '',
+          payment_terms: fallbackResult.payment_terms || '',
+          bank_swift: fallbackResult.bank_info?.swift_code || '',
+          bank_account: fallbackResult.bank_info?.account_number || '',
+          invoice_type: 'INVOICE',
+          tax_id: '',
+          company_reg: '',
+        };
+        logger.info(`[OCR] AI fallback succeeded with ${ocrEngine} — vendor: "${extracted.vendor_name}", invoice#: "${extracted.invoice_number}"`);
+      } else {
+        logger.warn('[OCR] All AI fallbacks failed — using pdf2json results as-is');
+      }
+    }
   } catch (pdfError) {
     console.error('[OCR] pdf2json failed, trying AI fallbacks:', pdfError);
     logger.error('[OCR] pdf2json parse failed, attempting AI fallback chain');
 
-    let fallbackResult: any = null;
-
-    // 1st fallback: Gemini Vision (sends PDF as file directly)
-    try {
-      const geminiOCR = (await import('./geminiOCRService')).geminiOCRService;
-      if (geminiOCR.isAvailable()) {
-        logger.info('[OCR] Trying Gemini Vision fallback...');
-        const geminiResult = await geminiOCR.extractFromPDF(fileBuffer);
-        if (geminiResult) {
-          logger.info('[OCR] Gemini Vision fallback succeeded');
-          usedGeminiVision = true;
-          fallbackResult = geminiResult;
-        }
-      }
-    } catch (e) {
-      logger.error('[OCR] Gemini Vision fallback failed:', e);
-    }
-
-    // 2nd fallback: Ollama (Qwen 2.5 VL — local, no API key needed)
-    if (!fallbackResult) {
-      try {
-        const ollamaOCR = (await import('./ollamaOCRService')).ollamaOCRService;
-        if (ollamaOCR.isAvailable()) {
-          logger.info('[OCR] Trying Ollama (Qwen) fallback...');
-          // Use pdf2json raw text if available, otherwise use file buffer as base64
-          const ollamaResult = await ollamaOCR.extractFromText(
-            fileBuffer.toString('base64').substring(0, 8000),
-            {}
-          );
-          if (ollamaResult) {
-            logger.info('[OCR] Ollama (Qwen) fallback succeeded');
-            fallbackResult = ollamaResult;
-          }
-        }
-      } catch (e) {
-        logger.error('[OCR] Ollama fallback failed:', e);
-      }
-    }
-
-    // 3rd fallback: Groq (Llama 3.3 70B)
-    if (!fallbackResult) {
-      try {
-        const groqOCR = (await import('./groqOCRService')).groqOCRService;
-        if (groqOCR.isAvailable()) {
-          logger.info('[OCR] Trying Groq (Llama) fallback...');
-          const groqResult = await groqOCR.extractFromText(
-            fileBuffer.toString('base64').substring(0, 8000),
-            undefined
-          );
-          if (groqResult) {
-            logger.info('[OCR] Groq (Llama) fallback succeeded');
-            fallbackResult = groqResult;
-          }
-        }
-      } catch (e) {
-        logger.error('[OCR] Groq fallback failed:', e);
-      }
-    }
+    // pdf2json completely failed — try to get raw text for AI services
+    // If pdf2json can't parse at all, AI text-based services won't have text either
+    // Gemini Vision can still read the PDF directly
+    const fallbackResult = await tryAIFallbacks(fileBuffer, '');
 
     if (fallbackResult) {
+      usedAIFallback = true;
+      ocrEngine = fallbackResult.engine;
+      if (fallbackResult.engine === 'gemini') {
+        usedGeminiVision = true;
+      }
       extracted = {
         vendor_name: fallbackResult.vendor_name || '',
         invoice_number: fallbackResult.invoice_number || '',
@@ -592,17 +656,20 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
         po_reference: fallbackResult.po_number || '',
         mpo_number: fallbackResult.mpo_number || '',
         brand_code: fallbackResult.brand_code || '',
-        payment_terms: '',
-        bank_swift: '',
-        bank_account: '',
+        payment_terms: fallbackResult.payment_terms || '',
+        bank_swift: fallbackResult.bank_info?.swift_code || '',
+        bank_account: fallbackResult.bank_info?.account_number || '',
         invoice_type: 'INVOICE',
         tax_id: '',
         company_reg: '',
       };
+      logger.info(`[OCR] AI fallback succeeded with ${ocrEngine} after pdf2json failure`);
     } else {
       throw pdfError; // All fallbacks failed, rethrow original error
     }
   }
+
+  logger.info(`[OCR] Final extraction — engine: ${ocrEngine}, vendor: "${extracted.vendor_name}", invoice#: "${extracted.invoice_number}", amount: ${extracted.amount}`);
 
   const poParsed = extracted.po_reference ? parsePOReference(extracted.po_reference) : {};
 
@@ -637,7 +704,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
     is_handwritten: false,
     is_urgent: false,
     priority_pay_date: undefined,
-    ocr_confidence_score: 0.9,
+    ocr_confidence_score: usedAIFallback ? 0.95 : (extracted.vendor_name && extracted.invoice_number ? 0.9 : 0.5),
     qb_memo: undefined,
     qb_account_class: undefined,
     bank_info: {
@@ -645,6 +712,6 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
       account_usd: extracted.bank_account,
     },
     signatures: [] as SignatureInfo[],
-    raw_data: extracted,
+    raw_data: { ...extracted, ocr_engine: ocrEngine, used_gemini_vision: usedGeminiVision },
   };
 }

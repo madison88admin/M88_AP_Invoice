@@ -986,13 +986,34 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
     const differences: string[] = [];
 
     // Amount check (>5% variance = fail)
+    // Subtract all charges from invoice total to get the net goods amount for PO comparison
     const poAmount = Number(po.amount);
-    const invoiceAmount = Number(invoice.total_amount);
+    const invoiceTotal = Number(invoice.total_amount);
+    const bankCharges = Number(invoice.bank_charges || 0);
+    const ttCharge = Number((invoice as any).tt_charge || 0);
+    const freightCharges = Number(invoice.freight_charges || 0);
+    const courierCharges = Number((invoice as any).courier_charges || 0);
+    const handlingFee = Number((invoice as any).handling_fee || 0);
+    const financeSurcharge = Number((invoice as any).finance_surcharge || 0);
+    const setupCharge = Number((invoice as any).setup_charge || 0);
+    const sampleCharge = Number((invoice as any).sample_charge || 0);
+    const minOrderCharge = Number((invoice as any).min_order_charge || 0);
+    const additionalCharges = Number(invoice.additional_charges || 0);
+    const discountAmount = Number(invoice.discount_amount || 0);
+
+    const totalCharges = bankCharges + ttCharge + freightCharges + courierCharges + handlingFee
+      + financeSurcharge + setupCharge + sampleCharge + minOrderCharge + additionalCharges;
+    const netInvoiceAmount = invoiceTotal - totalCharges + discountAmount;
+
     if (poAmount > 0) {
-      const variance = Math.abs(invoiceAmount - poAmount) / poAmount;
+      // Compare net invoice amount (minus charges) against PO amount
+      const variance = Math.abs(netInvoiceAmount - poAmount) / poAmount;
       if (variance > 0.05) {
+        const chargeDetail = totalCharges > 0
+          ? ` (invoice $${invoiceTotal.toFixed(2)} minus charges $${totalCharges.toFixed(2)} = net $${netInvoiceAmount.toFixed(2)})`
+          : '';
         differences.push(
-          `Amount: invoice $${invoiceAmount.toFixed(2)} vs PO $${poAmount.toFixed(2)} (${(variance * 100).toFixed(1)}% variance)`
+          `Amount: invoice $${invoiceTotal.toFixed(2)} vs PO $${poAmount.toFixed(2)} (${(variance * 100).toFixed(1)}% variance)${chargeDetail}`
         );
       }
     }

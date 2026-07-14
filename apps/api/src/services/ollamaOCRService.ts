@@ -15,6 +15,7 @@ export interface ExtractedInvoiceData {
   invoice_date?: string;
   due_date?: string;
   payment_terms?: string;
+  subtotal?: number;
   total_amount?: number;
   currency?: string;
   po_number?: string;
@@ -29,6 +30,19 @@ export interface ExtractedInvoiceData {
   bank_name?: string;
   swift_code?: string;
   account_number?: string;
+  // Charges
+  bank_charges?: number;
+  tt_charge?: number;
+  freight_charges?: number;
+  courier_charges?: number;
+  handling_fee?: number;
+  finance_surcharge?: number;
+  tax_amount?: number;
+  discount_amount?: number;
+  setup_charge?: number;
+  sample_charge?: number;
+  min_order_charge?: number;
+  additional_charges?: number;
   line_items?: ExtractedLineItem[];
   raw_text?: string;
   extraction_method?: string;
@@ -61,6 +75,19 @@ Fields to extract:
 - bank_name: Bank name of the vendor's bank (e.g., "Standard Chartered Bank", "HSBC", "The Hongkong and Shanghai Banking Corporation Ltd")
 - swift_code: SWIFT/BIC code of the vendor's bank (e.g., "SCBLHKHHXXX", "HSBCHKHHHKH")
 - account_number: Bank account number of the vendor (e.g., "447-0-092572-7", "484-592449-838")
+- subtotal: Sub-total / Net Amount before charges and tax (number only)
+- bank_charges: Bank charge / Bank Charges / BANK CHARGE fee (number only, e.g., 30)
+- tt_charge: Telegraphic Transfer / TT Charge / T/T Charges fee (number only)
+- freight_charges: Freight / Freight Charge / Freight Cost / FREIGHT fee (number only)
+- courier_charges: Courier Charge / Express Fee / Delivery Charge fee (number only)
+- handling_fee: Handling Fee (number only)
+- finance_surcharge: Finance Surcharge / Finance Charge — late payment surcharge (number only)
+- tax_amount: VAT / Value Added Tax / GST / PPN / Tax / Sales Tax / Withholding Tax amount (number only)
+- discount_amount: Discount / DISCOUNT / Less: Discount amount (number only)
+- setup_charge: Setup Charge / Tooling Fee / Plate Charge (number only)
+- sample_charge: Sample Charge / Proto Sample Development Fee (number only)
+- min_order_charge: Minimum Charge / Min. Order Charge (number only)
+- additional_charges: Any other charge not covered above (number only)
 - line_items: Array of line items with:
   - description: item description
   - quantity: quantity as number
@@ -85,8 +112,23 @@ IMPORTANT RULES:
 5. For bank details: look for sections labeled "Bank Details", "Payment Information", "Remittance", "Beneficiary Bank", or similar. Extract bank_name, swift_code, and account_number from there.
 6. For qty_shipped: if there is a total quantity field, use that. Otherwise, sum the quantities from all line items.
 7. For document_type: check if the document says "INVOICE", "PROFORMA INVOICE", "COMMERCIAL INVOICE", "CREDIT NOTE", "STATEMENT", etc.
-8. If a field is not found, use null
-9. Return ONLY the JSON object, nothing else
+8. For charges: extract ALL charges separately. Look for lines labeled:
+   - "Bank Charge", "Bank Charges", "BANK CHARGE" → bank_charges
+   - "TT Charge", "T/T Charges", "Telegraphic Transfer Fee" → tt_charge
+   - "Freight", "Freight Charge", "Freight Cost", "FREIGHT" → freight_charges
+   - "Courier Charge", "Express Fee", "Delivery Charge" → courier_charges
+   - "Handling Fee" → handling_fee
+   - "Finance Surcharge", "Finance Charge" → finance_surcharge
+   - "VAT", "Value Added Tax", "GST", "PPN", "Tax", "Sales Tax", "Withholding Tax" → tax_amount
+   - "Discount", "DISCOUNT", "Less: Discount" → discount_amount
+   - "Setup Charge", "Tooling Fee", "Plate Charge" → setup_charge
+   - "Sample Charge", "Proto Sample Development Fee" → sample_charge
+   - "Minimum Charge", "Min. Order Charge" → min_order_charge
+   - Any other charge line → additional_charges
+   Each charge must be a NUMBER only (e.g., 30 not "$30"). If a charge is 0.00, still extract it as 0.
+9. For subtotal: extract the "Subtotal", "Sub-Total", "Sub Total", "Net Amount", or "NET INVOICE" line — this is the sum of line items BEFORE charges and tax.
+10. If a field is not found, use null
+11. Return ONLY the JSON object, nothing else
 
 Example output:
 {
@@ -109,6 +151,19 @@ Example output:
   "bank_name": "Standard Chartered Bank",
   "swift_code": "SCBLHKHHXXX",
   "account_number": "447-0-092572-7",
+  "subtotal": 32.94,
+  "bank_charges": 30.00,
+  "tt_charge": null,
+  "freight_charges": null,
+  "courier_charges": null,
+  "handling_fee": null,
+  "finance_surcharge": null,
+  "tax_amount": 0.00,
+  "discount_amount": null,
+  "setup_charge": null,
+  "sample_charge": null,
+  "min_order_charge": null,
+  "additional_charges": null,
   "line_items": [
     {
       "description": "TNF-INDO-HT(MDDC)",

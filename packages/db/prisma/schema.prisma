@@ -63,6 +63,13 @@ model Invoice {
   bank_charges          Decimal?
   freight_charges       Decimal?
   additional_charges    Decimal?
+  courier_charges       Decimal?
+  handling_fee          Decimal?
+  tt_charge             Decimal?
+  setup_charge          Decimal?
+  sample_charge         Decimal?
+  min_order_charge      Decimal?
+  finance_surcharge     Decimal?
   total_amount          Decimal
   currency              String        @default("USD")
   invoice_currency_original String?

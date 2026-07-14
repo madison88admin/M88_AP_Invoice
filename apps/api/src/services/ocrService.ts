@@ -570,7 +570,7 @@ function convertPDFToImage(fileBuffer: Buffer): string | null {
 async function tryAIFallbacks(
   fileBuffer: Buffer,
   rawText: string
-): Promise<{ engine: string; vendor_name?: string; invoice_number?: string; invoice_date?: string; due_date?: string; total_amount?: number; currency?: string; po_number?: string; mpo_number?: string; brand?: string; brand_code?: string; season?: string; payment_terms?: string; ship_to?: string; sold_to?: string; qty_shipped?: number; document_type?: string; bank_name?: string; swift_code?: string; account_number?: string; bank_info?: { swift_code?: string; account_number?: string }; line_items?: any[] } | null> {
+): Promise<{ engine: string; vendor_name?: string; invoice_number?: string; invoice_date?: string; due_date?: string; total_amount?: number; subtotal?: number; currency?: string; po_number?: string; mpo_number?: string; brand?: string; brand_code?: string; season?: string; payment_terms?: string; ship_to?: string; sold_to?: string; qty_shipped?: number; document_type?: string; bank_name?: string; swift_code?: string; account_number?: string; bank_info?: { swift_code?: string; account_number?: string }; line_items?: any[]; bank_charges?: number; tt_charge?: number; freight_charges?: number; courier_charges?: number; handling_fee?: number; finance_surcharge?: number; tax_amount?: number; discount_amount?: number; setup_charge?: number; sample_charge?: number; min_order_charge?: number; additional_charges?: number } | null> {
   // 1st fallback: Gemini Vision (sends PDF as file directly — best for visual layout)
   try {
     const geminiOCR = (await import('./geminiOCRService')).geminiOCRService;
@@ -702,6 +702,20 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
         (extracted as any).brand = fallbackResult.brand;
         (extracted as any).season = fallbackResult.season;
         (extracted as any).line_items = fallbackResult.line_items;
+        // Charges
+        (extracted as any).subtotal = fallbackResult.subtotal;
+        (extracted as any).bank_charges = fallbackResult.bank_charges;
+        (extracted as any).tt_charge = fallbackResult.tt_charge;
+        (extracted as any).freight_charges = fallbackResult.freight_charges;
+        (extracted as any).courier_charges = fallbackResult.courier_charges;
+        (extracted as any).handling_fee = fallbackResult.handling_fee;
+        (extracted as any).finance_surcharge = fallbackResult.finance_surcharge;
+        (extracted as any).tax_amount = fallbackResult.tax_amount;
+        (extracted as any).discount_amount = fallbackResult.discount_amount;
+        (extracted as any).setup_charge = fallbackResult.setup_charge;
+        (extracted as any).sample_charge = fallbackResult.sample_charge;
+        (extracted as any).min_order_charge = fallbackResult.min_order_charge;
+        (extracted as any).additional_charges = fallbackResult.additional_charges;
         logger.info(`[OCR] AI fallback succeeded with ${ocrEngine} — vendor: "${extracted.vendor_name}", invoice#: "${extracted.invoice_number}"`);
       } else {
         logger.warn('[OCR] All AI fallbacks failed — using pdf2json results as-is');
@@ -748,6 +762,20 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
       (extracted as any).brand = fallbackResult.brand;
       (extracted as any).season = fallbackResult.season;
       (extracted as any).line_items = fallbackResult.line_items;
+      // Charges
+      (extracted as any).subtotal = fallbackResult.subtotal;
+      (extracted as any).bank_charges = fallbackResult.bank_charges;
+      (extracted as any).tt_charge = fallbackResult.tt_charge;
+      (extracted as any).freight_charges = fallbackResult.freight_charges;
+      (extracted as any).courier_charges = fallbackResult.courier_charges;
+      (extracted as any).handling_fee = fallbackResult.handling_fee;
+      (extracted as any).finance_surcharge = fallbackResult.finance_surcharge;
+      (extracted as any).tax_amount = fallbackResult.tax_amount;
+      (extracted as any).discount_amount = fallbackResult.discount_amount;
+      (extracted as any).setup_charge = fallbackResult.setup_charge;
+      (extracted as any).sample_charge = fallbackResult.sample_charge;
+      (extracted as any).min_order_charge = fallbackResult.min_order_charge;
+      (extracted as any).additional_charges = fallbackResult.additional_charges;
       logger.info(`[OCR] AI fallback succeeded with ${ocrEngine} after pdf2json failure`);
     } else {
       throw pdfError; // All fallbacks failed, rethrow original error
@@ -766,7 +794,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
     vendor_name: extracted.vendor_name || '',
     total_amount: extracted.amount || 0,
     grand_total: extracted.grand_total || undefined,
-    subtotal: undefined,
+    subtotal: (extracted as any).subtotal || undefined,
     currency: extracted.currency || 'USD',
     invoice_currency_original: extracted.currency || 'USD',
     exchange_rate_to_usd: undefined,
@@ -774,9 +802,9 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
     date_range_end: undefined,
     payment_terms: extracted.payment_terms || PaymentTerms.NET_30,
     incoterm: undefined,
-    bank_charges: 0,
-    freight_charges: 0,
-    additional_charges: 0,
+    bank_charges: (extracted as any).bank_charges || 0,
+    freight_charges: (extracted as any).freight_charges || 0,
+    additional_charges: (extracted as any).additional_charges || 0,
     invoice_type: extracted.invoice_type as InvoiceType || InvoiceType.INVOICE,
     category: InvoiceCategory.TRIMS,
     order_type: poParsed.order_type as OrderType | undefined,
@@ -803,5 +831,15 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
     ship_to: (extracted as any).ship_to || undefined,
     sold_to: (extracted as any).sold_to || undefined,
     line_items: (extracted as any).line_items || undefined,
+    // Additional charges
+    tt_charge: (extracted as any).tt_charge || undefined,
+    courier_charges: (extracted as any).courier_charges || undefined,
+    handling_fee: (extracted as any).handling_fee || undefined,
+    finance_surcharge: (extracted as any).finance_surcharge || undefined,
+    tax_amount: (extracted as any).tax_amount || undefined,
+    discount_amount: (extracted as any).discount_amount || undefined,
+    setup_charge: (extracted as any).setup_charge || undefined,
+    sample_charge: (extracted as any).sample_charge || undefined,
+    min_order_charge: (extracted as any).min_order_charge || undefined,
   };
 }

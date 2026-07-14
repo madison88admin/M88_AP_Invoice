@@ -1,5 +1,5 @@
 import prisma from '../config/database';
-import { InvoiceStatus, InvoiceType, InvoiceCategory, BrandTier, InvoiceSource } from '@ap-invoice/shared';
+import { InvoiceStatus, InvoiceType, InvoiceCategory, BrandTier, InvoiceSource, PaymentTerms } from '@ap-invoice/shared';
 import { AppError } from '../middleware/errorHandler';
 import { isTop10Brand, TOP_10_BRANDS } from '@ap-invoice/shared';
 import { logAudit } from './auditLogService';
@@ -343,6 +343,37 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     if (value === undefined) continue;
     if (protectedFields.includes(key)) continue;
     data[key] = value;
+  }
+
+  // Validate enum fields — skip invalid values to prevent Prisma errors
+  const validCategories = Object.values(InvoiceCategory);
+  if (data.category && !validCategories.includes(data.category)) {
+    delete data.category;
+  }
+
+  const validInvoiceTypes = ['INVOICE', 'PROFORMA', 'COMMERCIAL_INVOICE', 'CREDIT_NOTE', 'STATEMENT', 'DEBIT_NOTE'];
+  if (data.invoice_type && !validInvoiceTypes.includes(data.invoice_type)) {
+    data.invoice_type = 'INVOICE';
+  }
+
+  const validOrderTypes = ['PO', 'MPO', 'BULK', 'SAMPLE', 'REORDER', 'URGENT'];
+  if (data.order_type && !validOrderTypes.includes(data.order_type)) {
+    delete data.order_type;
+  }
+
+  const validBrandTiers = ['TOP_10', 'OTHER'];
+  if (data.brand_tier && !validBrandTiers.includes(data.brand_tier)) {
+    delete data.brand_tier;
+  }
+
+  const validBillToEntities = ['MADISON_88_LTD', 'MADISON_LIMITED', 'MADISON_88_HK'];
+  if (data.bill_to_entity && !validBillToEntities.includes(data.bill_to_entity)) {
+    delete data.bill_to_entity;
+  }
+
+  const validPaymentTerms = Object.values(PaymentTerms);
+  if (data.payment_terms && !validPaymentTerms.includes(data.payment_terms)) {
+    delete data.payment_terms;
   }
 
   const dateFields = ['invoice_date', 'due_date', 'invoice_received_date', 'date_range_start', 'date_range_end', 'priority_pay_date'];

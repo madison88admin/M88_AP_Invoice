@@ -366,7 +366,7 @@ export default function PaymentBatchManager() {
                       <span className="text-sm ml-2" style={{ color: 'var(--text-muted)' }}>Total: ${selectedTotal.toLocaleString()}</span>
                     </div>
                   </div>
-                  {isSupervisor && (
+                  {isAssociate && (
                     <button
                       onClick={handleCreateBatch}
                       disabled={processing}
@@ -379,9 +379,9 @@ export default function PaymentBatchManager() {
                       Create Batch
                     </button>
                   )}
-                  {isAssociate && (
+                  {isSupervisor && (
                     <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                      Supervisor will create the batch
+                      View-only access — Associate manages batches
                     </div>
                   )}
                 </div>
@@ -535,7 +535,7 @@ export default function PaymentBatchManager() {
                 </div>
               </div>
 
-              {selectedBatch.status === 'DRAFT' && isSupervisor && (
+              {selectedBatch.status === 'DRAFT' && isAssociate && (
                 <div className="flex items-center space-x-3 mb-6">
                   <button onClick={() => handleProcessBatch(selectedBatch.id)} disabled={processing}
                     className="flex items-center px-4 py-2.5 rounded-xl transition-colors disabled:opacity-50 text-sm font-semibold"

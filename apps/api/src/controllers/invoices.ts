@@ -84,7 +84,8 @@ export const updateInvoice = async (
       req.params.id,
       req.body,
       req.user!.id,
-      req.user!.role
+      req.user!.role,
+      req.user!.name
     );
     res.json(invoice);
   } catch (error) {

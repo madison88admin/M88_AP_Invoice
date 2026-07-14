@@ -936,18 +936,32 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
   // Extract material_code and mpo_suffix from raw_data if available
   const rawData = (invoice as any).raw_data || {};
   const materialCode = rawData.material_code || (invoice as any).material_code;
+  const materialName = rawData.material_name || (invoice as any).material_name;
   const mpoSuffix = rawData.mpo_suffix || (invoice as any).mpo_suffix;
 
   try {
     // Fetch PO from NextGen (read-only)
     // Pass material_code as additional hint for fuzzy matching
-    const po = invoice.mpo_number
+    let po = invoice.mpo_number
       ? await nextGenService.fetchPOByMPO(invoice.mpo_number, {
           vendor_name: invoice.vendor?.name,
           amount: Number(invoice.total_amount),
           material_code: materialCode,
         })
       : await nextGenService.fetchPOByNumber(invoice.po_number);
+
+    // Fallback: If PO not found by MPO/PO number, try searching by material name
+    if (!po && materialName) {
+      console.log(`[Validation] PO not found by MPO/PO number, trying material name search: "${materialName}"`);
+      const materialMatches = await nextGenService.searchMPOByMaterialName(materialName, {
+        vendor_name: invoice.vendor?.name,
+        amount: Number(invoice.total_amount),
+      });
+      if (materialMatches.length > 0) {
+        po = materialMatches[0]; // Best match (highest score)
+        console.log(`[Validation] PO found via material name search: ${po.mpo_number} (amount: ${po.amount})`);
+      }
+    }
 
     // If PO not found, keep the invoice in a pending PO state instead of silently skipping.
     // The user can re-validate once the PO/MPO is added to NextGen.

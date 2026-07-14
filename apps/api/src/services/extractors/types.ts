@@ -87,6 +87,8 @@ export interface MadisonInvoiceExtraction {
   order_type: 'BULK' | 'SMS' | 'SAMPLE' | null;
   po_number: string | null;
   mpo_number: string | null;
+  material_code: string | null;
+  material_name: string | null;
 
   category: 'TRIMS' | 'YARN' | 'SAMPLE' | 'SHIPPING' | 'LAB' | null;
   qty_shipped: number | null;

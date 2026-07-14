@@ -322,6 +322,22 @@ export function parsePOReference(poRef: string): {
     }
   }
 
+  // Also try to extract material name from the full PO reference string
+  // This handles formats like "M4NP 32mm", "M4NP_32mm", "ZVCT0014 50mm" where the material
+  // name includes a measurement or descriptor separated by space/underscore
+  if (!result.material_code) {
+    // Look for material name pattern: 2-5 letters followed by optional alphanumeric, then optional measurement
+    // e.g., "M4NP 32mm", "M4NP_32mm", "ZVC 14mm"
+    const materialNameMatch = normalizedRef.match(/\b([A-Z]{2,5}[A-Z0-9]*[\-]?[A-Z0-9]*)[\s_]+(\d{1,4}\s?(?:mm|cm|inch|in|yd|m|g|kg|oz|lb|pcs|set|pack|lot))?\b/i);
+    if (materialNameMatch) {
+      const code = materialNameMatch[1].toUpperCase();
+      if (!knownKeywords.includes(code)) {
+        const measurement = materialNameMatch[2] ? materialNameMatch[2].replace(/\s+/g, '').toLowerCase() : '';
+        result.material_code = measurement ? `${code} ${measurement}` : code;
+      }
+    }
+  }
+
   // Detect order type - comprehensive mapping
   const upperTokens = tokens.map(t => t.toUpperCase());
   const orderTypeMapping: { [key: string]: string } = {

@@ -1253,6 +1253,84 @@ function extractTaxDiscountSubtotal(text: string): { subtotal: number | null; ta
 }
 
 /**
+ * Extract material name/description from invoice text.
+ * Searches for common patterns in invoice line items and PO references:
+ * - Material codes with measurements: "M4NP 32mm", "ZVCT0014 50mm"
+ * - Style/item descriptions near "Item Code", "Material", "Description" labels
+ * - PO reference strings containing material names
+ */
+function extractMaterialName(text: string): { material_code: string | null; material_name: string | null } {
+  const lines = text.split('\n');
+  
+  // Pattern 1: Look for material codes with measurements in line items
+  // e.g., "M4NP 32mm", "M4NP_32mm", "ZVCT0014 14mm"
+  const materialWithMeasurement = /\b([A-Z]{2,5}[A-Z0-9]*[\-]?[A-Z0-9]*)\s*[_\s]+(\d{1,4}\s?(?:mm|cm|inch|in|yd|m|g|kg|oz|lb))\b/i;
+  
+  // Pattern 2: Look for "Item Code" / "Material" / "Style" labels followed by a code
+  const itemCodePattern = /(?:Item\s*Code|Material\s*Code|Material\s*No|Style\s*(?:No|Code)|Item\s*No)[:\s]+([A-Z0-9][A-Z0-9\-]{1,20}(?:\s+\d{1,4}\s?(?:mm|cm|inch|in)?)?)/i;
+  
+  // Pattern 3: Look for "Material" / "Description" label followed by descriptive text
+  const materialDescPattern = /(?:Material\s*(?:Name|Description)|Description)[:\s]+([A-Z0-9][A-Z0-9\s\-]{2,50}?)(?:\s+(?:Qty|Quantity|UOM|Unit|Price|Amount|Total|Pcs|SET|EA|$))/i;
+  
+  // Check PO reference line first (usually contains material code)
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/PO\s*#|PO\s*Ref|Customer\s*PO|Reference/i.test(trimmed)) {
+      // Try material with measurement
+      const match = trimmed.match(materialWithMeasurement);
+      if (match) {
+        const code = match[1].toUpperCase();
+        const measurement = match[2].replace(/\s+/g, '').toLowerCase();
+        return { material_code: code, material_name: `${code} ${measurement}` };
+      }
+    }
+  }
+  
+  // Search all lines for material patterns
+  for (const line of lines) {
+    const trimmed = line.trim();
+    
+    // Skip header lines
+    if (/^(Item\s*Code|Description|Quantity|Unit\s*Price|Extended|Total|Amount|UOM|PO|Invoice|Date|Vendor|Ship\s*To|Sold\s*To|Bill\s*To)/i.test(trimmed)) {
+      continue;
+    }
+    
+    // Try item code pattern
+    const itemMatch = trimmed.match(itemCodePattern);
+    if (itemMatch) {
+      const fullCode = itemMatch[1].trim();
+      const parts = fullCode.split(/\s+/);
+      const code = parts[0].toUpperCase();
+      const measurement = parts.slice(1).join(' ').toLowerCase();
+      return { 
+        material_code: code, 
+        material_name: measurement ? `${code} ${measurement}` : code 
+      };
+    }
+    
+    // Try material with measurement
+    const matMatch = trimmed.match(materialWithMeasurement);
+    if (matMatch) {
+      const code = matMatch[1].toUpperCase();
+      const measurement = matMatch[2].replace(/\s+/g, '').toLowerCase();
+      return { material_code: code, material_name: `${code} ${measurement}` };
+    }
+  }
+  
+  // Try material description pattern as fallback
+  for (const line of lines) {
+    const descMatch = line.match(materialDescPattern);
+    if (descMatch) {
+      const name = descMatch[1].trim();
+      const code = name.split(/\s+/)[0].toUpperCase();
+      return { material_code: code, material_name: name };
+    }
+  }
+  
+  return { material_code: null, material_name: null };
+}
+
+/**
  * Extract digital signatures from common invoice signature blocks.
  * Handles three formats:
  * 1. "Digitally signed by Name Date Time Offset" / "Signed by: Name Date Time Offset"
@@ -3782,6 +3860,7 @@ export async function extractMadisonInvoiceFields(fileBuffer: Buffer): Promise<M
   const sold_to = extractSoldTo(normalizedText);
   const { text: bill_to_text, confirmed: bill_to_confirmed_madison88 } = extractBillTo(normalizedText);
   const document_type = extractDocumentType(normalizedText);
+  const { material_code: extractedMaterialCode, material_name: extractedMaterialName } = extractMaterialName(normalizedText);
   
   // DEBUG: Line items only (no amount/quantity OCR scans in zero-leak mode)
   const lineItems = extractLineItems(normalizedText, pageItems);
@@ -3999,6 +4078,8 @@ export async function extractMadisonInvoiceFields(fileBuffer: Buffer): Promise<M
     order_type: poData.order_type,
     po_number: poData.po_number,
     mpo_number,
+    material_code: extractedMaterialCode || (poData as any).material_code || null,
+    material_name: extractedMaterialName || null,
     category,
     qty_shipped,
     notes: null,

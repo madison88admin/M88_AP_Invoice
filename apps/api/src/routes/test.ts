@@ -249,4 +249,36 @@ router.post('/nextgen-mpo', async (req: Request, res: Response, next: NextFuncti
   }
 });
 
+/**
+ * POST /api/test/material-search
+ * Search NextGen MPOs by material name (e.g., "M4NP 32mm", "ZVCT0014")
+ */
+router.post('/material-search', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { material_name, vendor_name, amount } = req.body;
+    if (!material_name) {
+      return res.status(400).json({ error: 'material_name is required' });
+    }
+
+    const nextGenService = NextGenService.getInstance();
+    const results = await nextGenService.searchMPOByMaterialName(material_name, {
+      vendor_name,
+      amount: amount ? Number(amount) : undefined,
+    });
+
+    res.json({
+      material_name,
+      credentials_configured: !(nextGenService as any).useMock,
+      match_count: results.length,
+      results,
+    });
+  } catch (error: any) {
+    console.error('[test-material-search] Error:', error);
+    res.status(500).json({
+      error: error?.message || 'Material name search failed',
+      stack: error?.stack,
+    });
+  }
+});
+
 export default router;

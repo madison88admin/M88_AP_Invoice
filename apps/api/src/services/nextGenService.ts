@@ -812,6 +812,97 @@ export class NextGenService {
   }
 
   /**
+   * Search MPOs by material name or description.
+   * Fetches all MPO headers and searches reference fields (Comments, Description, SupplierDescription, Name)
+   * for the given material name keyword (e.g., "M4NP 32mm", "ZVCT0014").
+   * Returns matching MPOs with their line items.
+   */
+  async searchMPOByMaterialName(
+    materialName: string,
+    hint?: { vendor_name?: string; amount?: number }
+  ): Promise<NextGenPOData[]> {
+    try {
+      if (this.useMock) {
+        logger.warn('NextGen credentials not configured. Material name search not available.');
+        return [];
+      }
+
+      const searchKey = materialName.toUpperCase().trim();
+      logger.info(`[MaterialSearch] Searching MPOs for material name: "${searchKey}"`);
+
+      // Fetch all MPO headers (no MPO number to filter by — search all)
+      const allHeaders = await this.fetchAllMPOHeaders();
+      if (allHeaders.length === 0) {
+        logger.info(`[MaterialSearch] No MPO headers found`);
+        return [];
+      }
+
+      // Search reference fields for material name
+      // Also try the base code without measurement (e.g., "M4NP" from "M4NP 32mm")
+      const baseCode = searchKey.split(/\s+/)[0];
+      const matches: any[] = [];
+
+      for (const header of allHeaders) {
+        const refs = [
+          header.Comments,
+          header.Description,
+          header.SupplierDescription,
+          header.Name,
+        ].filter(Boolean).join(' ').toUpperCase();
+
+        // Full material name match (e.g., "M4NP 32MM")
+        if (refs.includes(searchKey)) {
+          matches.push({ item: header, score: 100, reason: 'full_name_match' });
+          continue;
+        }
+
+        // Base code match (e.g., "M4NP" matches even if "32mm" not in description)
+        if (baseCode.length >= 3 && refs.includes(baseCode)) {
+          let score = 70;
+          // Boost score if vendor name also matches
+          if (hint?.vendor_name) {
+            const vn = (header.SupplierName || '').toLowerCase();
+            const hv = hint.vendor_name.toLowerCase();
+            if (vn.includes(hv) || hv.includes(vn)) score += 20;
+          }
+          // Boost score if amount is close
+          if (hint?.amount && header.TotalCost) {
+            const diff = Math.abs(Number(header.TotalCost) - hint.amount) / hint.amount;
+            if (diff < 0.05) score += 15;
+          }
+          matches.push({ item: header, score, reason: 'base_code_match' });
+          continue;
+        }
+      }
+
+      if (matches.length === 0) {
+        logger.info(`[MaterialSearch] No MPOs found matching material name "${searchKey}"`);
+        return [];
+      }
+
+      // Sort by score descending
+      matches.sort((a, b) => b.score - a.score);
+
+      // Build full PO data for top matches (limit to 10 to avoid excessive API calls)
+      const results: NextGenPOData[] = [];
+      for (const match of matches.slice(0, 10)) {
+        try {
+          const poData = await this.buildMPOData(match.item, match.item.Name);
+          results.push(poData);
+          logger.info(`[MaterialSearch] Match: ${match.item.Name} (score: ${match.score}, reason: ${match.reason})`);
+        } catch (e) {
+          logger.warn(`[MaterialSearch] Failed to build MPO data for ${match.item.Name}:`, e);
+        }
+      }
+
+      return results;
+    } catch (error) {
+      logger.error(`[MaterialSearch] Error searching MPOs by material name "${materialName}":`, error);
+      return [];
+    }
+  }
+
+  /**
    * Fetch PO line items
    * Endpoint: POST /PurchaseOrder/Read?poId={poId} (Kendo grid)
    */

@@ -84,7 +84,7 @@ export default function AuditLogViewer({ invoiceId, performedBy, limit = 100, ti
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{log.action}</p>
                 {log.note && (
-                  <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>{log.note}</p>
+                  <p className="text-xs mt-1 whitespace-pre-wrap" style={{ color: 'var(--text-secondary)' }}>{log.note}</p>
                 )}
               </div>
               <span className="text-xs whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>

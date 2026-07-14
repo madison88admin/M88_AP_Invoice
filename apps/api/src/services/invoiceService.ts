@@ -316,7 +316,7 @@ export const updateInvoiceStatus = async (id: string, status: InvoiceStatus, use
   return invoice;
 };
 
-export const updateInvoice = async (id: string, invoiceData: any, userId: string, userRole: string) => {
+export const updateInvoice = async (id: string, invoiceData: any, userId: string, userRole: string, userName?: string) => {
   const existing = await prisma.invoice.findUnique({ where: { id } });
   if (!existing) {
     throw new AppError('Invoice not found', 404);
@@ -393,11 +393,30 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     },
   });
 
+  // Build detailed change log with old→new values
+  const displayName = userName || userId;
+
+  const changedFields: string[] = [];
+  for (const key of Object.keys(invoiceData)) {
+    if (invoiceData[key] === undefined) continue;
+    const oldVal = (existing as any)[key];
+    const newVal = invoiceData[key];
+    if (oldVal !== undefined && String(oldVal) !== String(newVal)) {
+      const oldDisplay = oldVal instanceof Date ? oldVal.toISOString().split('T')[0] : String(oldVal ?? '—');
+      const newDisplay = newVal instanceof Date ? new Date(newVal).toISOString().split('T')[0] : String(newVal ?? '—');
+      changedFields.push(`${key}: "${oldDisplay}" → "${newDisplay}"`);
+    }
+  }
+
+  const auditNote = changedFields.length > 0
+    ? `Invoice edited by ${displayName} (${userRole}). Changes:\n${changedFields.join('\n')}`
+    : `Invoice updated by ${displayName} (${userRole}). Fields submitted: ${Object.keys(invoiceData).join(', ')} (no values changed)`;
+
   await logAudit({
     invoice_id: invoice.id,
     performed_by: userId,
     action: 'INVOICE_UPDATED',
-    note: `Invoice updated by coordinator. Fields: ${Object.keys(invoiceData).join(', ')}`,
+    note: auditNote,
   });
 
   // Feed edits into AI learning system — compare original vs updated fields

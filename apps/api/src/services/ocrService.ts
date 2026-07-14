@@ -573,14 +573,15 @@ function convertPDFToImage(fileBuffer: Buffer): string | null {
  */
 async function tryAIFallbacks(
   fileBuffer: Buffer,
-  rawText: string
+  rawText: string,
+  vendorName?: string
 ): Promise<{ engine: string; vendor_name?: string; invoice_number?: string; invoice_date?: string; due_date?: string; total_amount?: number; subtotal?: number; currency?: string; po_number?: string; mpo_number?: string; brand?: string; brand_code?: string; season?: string; payment_terms?: string; ship_to?: string; sold_to?: string; qty_shipped?: number; document_type?: string; bank_name?: string; swift_code?: string; account_number?: string; bank_info?: { swift_code?: string; account_number?: string }; line_items?: any[]; signatures?: { signatory_name: string; signatory_role?: string; signed_date?: string }[]; bank_charges?: number; tt_charge?: number; freight_charges?: number; courier_charges?: number; handling_fee?: number; finance_surcharge?: number; tax_amount?: number; discount_amount?: number; setup_charge?: number; sample_charge?: number; min_order_charge?: number; additional_charges?: number } | null> {
   // 1st fallback: Gemini Vision (sends PDF as file directly — best for visual layout)
   try {
     const geminiOCR = (await import('./geminiOCRService')).geminiOCRService;
     if (geminiOCR.isAvailable()) {
       logger.info('[OCR] Trying Gemini Vision fallback...');
-      const geminiResult = await geminiOCR.extractFromPDF(fileBuffer);
+      const geminiResult = await geminiOCR.extractFromPDF(fileBuffer, vendorName);
       if (geminiResult && (geminiResult.vendor_name || geminiResult.invoice_number)) {
         logger.info('[OCR] Gemini Vision fallback succeeded');
         return { engine: 'gemini', ...geminiResult };
@@ -675,7 +676,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
       logger.warn(`[OCR] pdf2json extracted but critical fields missing (vendor="${extracted.vendor_name}", invoice#="${extracted.invoice_number}"). Triggering AI fallback chain.`);
 
       // Try AI fallbacks using the raw text from pdf2json
-      const fallbackResult = await tryAIFallbacks(fileBuffer, pdf2jsonRawText);
+      const fallbackResult = await tryAIFallbacks(fileBuffer, pdf2jsonRawText, extracted.vendor_name || undefined);
 
       if (fallbackResult) {
         usedAIFallback = true;
@@ -733,7 +734,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
     // pdf2json completely failed — try to get raw text for AI services
     // If pdf2json can't parse at all, AI text-based services won't have text either
     // Gemini Vision can still read the PDF directly
-    const fallbackResult = await tryAIFallbacks(fileBuffer, '');
+    const fallbackResult = await tryAIFallbacks(fileBuffer, '', undefined);
 
     if (fallbackResult) {
       usedAIFallback = true;

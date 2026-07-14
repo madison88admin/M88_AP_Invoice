@@ -331,7 +331,7 @@ export class GeminiOCRService {
     }
   }
 
-  async extractFromPDF(pdfBuffer: Buffer): Promise<ExtractedInvoiceData | null> {
+  async extractFromPDF(pdfBuffer: Buffer, vendorName?: string): Promise<ExtractedInvoiceData | null> {
     if (!this.isConfigured || !this.model) {
       return null;
     }
@@ -341,6 +341,19 @@ export class GeminiOCRService {
 
       const base64PDF = pdfBuffer.toString('base64');
 
+      // Fetch few-shot corrections to improve extraction accuracy
+      let fewShot = '';
+      try {
+        fewShot = await correctionLogService.getFewShotPrompt('', vendorName, undefined, 3);
+        if (fewShot) {
+          logger.info('Gemini Vision OCR — using few-shot corrections for better accuracy');
+        }
+      } catch {
+        // Non-critical, continue without few-shot
+      }
+
+      const prompt = (fewShot ? fewShot + '\n\n' : '') + EXTRACTION_PROMPT + '\n[PDF provided as file above — extract all invoice data]';
+
       const result = await this.model.generateContent([
         {
           inlineData: {
@@ -348,7 +361,7 @@ export class GeminiOCRService {
             mimeType: 'application/pdf',
           },
         },
-        EXTRACTION_PROMPT + '\n[PDF provided as file above — extract all invoice data]',
+        prompt,
       ]);
 
       const response = await result.response;

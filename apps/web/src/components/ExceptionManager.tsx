@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
-import { AlertTriangle, CheckCircle, XCircle, ArrowLeft, AlertCircle, Search } from 'lucide-react';
+import { AlertTriangle, CheckCircle, XCircle, ArrowLeft, AlertCircle, Search, ExternalLink } from 'lucide-react';
 import { MockException } from '../lib/mockData';
 import { exceptionApi } from '../lib/api';
 import { getStatusStyle } from '../lib/statusStyle';
@@ -12,6 +12,7 @@ type ExceptionFilter = 'OPEN' | 'RESOLVED' | 'WAIVED' | 'ALL';
 export default function ExceptionManager() {
   const { invoices, resolveException, refresh } = useMockData();
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<ExceptionFilter>('OPEN');
   const [selectedException, setSelectedException] = useState<MockException | null>(null);
@@ -277,7 +278,16 @@ export default function ExceptionManager() {
                     </div>
                     <div>
                       <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Invoice</label>
-                      <div className="text-sm" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.invoice_number}</div>
+                      <button
+                        onClick={() => navigate('/', { state: { selectedInvoiceId: selectedInvoice.id } })}
+                        className="text-sm font-medium transition-colors inline-flex items-center gap-1"
+                        style={{ color: 'var(--accent-blue)' }}
+                        onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.8'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
+                      >
+                        {selectedInvoice.invoice_number}
+                        <ExternalLink className="h-3 w-3" strokeWidth={2} />
+                      </button>
                     </div>
                     <div>
                       <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Vendor</label>
@@ -317,6 +327,16 @@ export default function ExceptionManager() {
                     )}
                     {selectedException.status === 'OPEN' && user && ['PURCHASING_COORDINATOR', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'].includes(user.role) && (
                       <div className="space-y-2 pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                        <button
+                          onClick={() => navigate('/', { state: { selectedInvoiceId: selectedInvoice.id } })}
+                          className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
+                          style={{ background: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', color: 'var(--accent-blue)', border: '1px solid color-mix(in srgb, var(--accent-blue) 20%, transparent)' }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-blue) 20%, transparent)'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-blue) 10%, transparent)'; }}
+                        >
+                          <ExternalLink className="h-4 w-4 mr-2" strokeWidth={1.75} />
+                          Go to Invoice
+                        </button>
                         <button
                           onClick={() => setShowResolveModal(true)}
                           className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-semibold text-sm"

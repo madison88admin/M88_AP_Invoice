@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { InvoiceStatus, InvoiceCategory, InvoiceType, calcWorkingHoursElapsed } from '@ap-invoice/shared';
 import { invoiceApi, notificationApi } from '../lib/api';
 import InvoiceTable from './InvoiceTable';
@@ -121,6 +121,7 @@ function calcTrend(invoiceList: { created_at?: string }[]): { trend: string; tre
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, logout } = useAuth();
   const { invoices, vendors, paymentBatches, refresh, loading: ctxLoading } = useMockData();
   const [selectedInvoice, setSelectedInvoice] = useState<MockInvoice | null>(null);
@@ -291,6 +292,19 @@ export default function Dashboard() {
       setTimeout(() => setCountUpStarted(true), 100);
     }
   }, [ctxLoading]);
+
+  // Auto-select invoice when navigated from Exception Manager with selectedInvoiceId
+  useEffect(() => {
+    const state = location.state as { selectedInvoiceId?: string } | null;
+    if (state?.selectedInvoiceId && invoices.length > 0) {
+      const target = invoices.find(inv => inv.id === state.selectedInvoiceId);
+      if (target) {
+        setSelectedInvoice(target);
+        // Clear the state so it doesn't re-trigger on refresh
+        navigate('/', { replace: true, state: {} });
+      }
+    }
+  }, [location.state, invoices, navigate]);
 
   // Compute PO audit summary dynamically from each invoice's NextGen validation result.
   useEffect(() => {

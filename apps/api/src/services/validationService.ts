@@ -962,12 +962,19 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
     };
   }
 
+  // Extract material_code and mpo_suffix from raw_data if available
+  const rawData = (invoice as any).raw_data || {};
+  const materialCode = rawData.material_code || (invoice as any).material_code;
+  const mpoSuffix = rawData.mpo_suffix || (invoice as any).mpo_suffix;
+
   try {
     // Fetch PO from NextGen (read-only)
+    // Pass material_code as additional hint for fuzzy matching
     const po = invoice.mpo_number
       ? await nextGenService.fetchPOByMPO(invoice.mpo_number, {
           vendor_name: invoice.vendor?.name,
           amount: Number(invoice.total_amount),
+          material_code: materialCode,
         })
       : await nextGenService.fetchPOByNumber(invoice.po_number);
 

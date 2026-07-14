@@ -826,7 +826,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
       account_usd: extracted.bank_account,
     },
     signatures: [] as SignatureInfo[],
-    raw_data: { ...extracted, ocr_engine: ocrEngine, used_gemini_vision: usedGeminiVision },
+    raw_data: { ...extracted, ocr_engine: ocrEngine, used_gemini_vision: usedGeminiVision, material_code: poParsed.material_code, mpo_suffix: poParsed.mpo_suffix },
     qty_shipped: (extracted as any).qty_shipped || undefined,
     ship_to: (extracted as any).ship_to || undefined,
     sold_to: (extracted as any).sold_to || undefined,

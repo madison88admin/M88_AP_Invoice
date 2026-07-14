@@ -199,6 +199,8 @@ export function parsePOReference(poRef: string): {
   order_type?: string;
   po_number?: string;
   mpo_number?: string;
+  mpo_suffix?: string;
+  material_code?: string;
   factory_location?: string;
 } {
   if (!poRef) return {};
@@ -212,6 +214,8 @@ export function parsePOReference(poRef: string): {
     order_type?: string;
     po_number?: string;
     mpo_number?: string;
+    mpo_suffix?: string;
+    material_code?: string;
     factory_location?: string;
   } = {};
 
@@ -257,15 +261,38 @@ export function parsePOReference(poRef: string): {
   }
 
   // Find MPO number (starts with MPO)
+  // Handle formats: MPO015554, MPO015554-3, MPO015554-3_ZVC
   const mpoIdx = tokens.findIndex(t => /^MPO/i.test(t));
   if (mpoIdx >= 0) {
-    result.mpo_number = tokens[mpoIdx];
+    const mpoToken = tokens[mpoIdx];
+    // Check for suffix like -3 in MPO015554-3
+    const suffixMatch = mpoToken.match(/^(MPO\d+)-(\d+)$/i);
+    if (suffixMatch) {
+      result.mpo_number = suffixMatch[1];
+      result.mpo_suffix = suffixMatch[2];
+    } else {
+      result.mpo_number = mpoToken;
+    }
   }
 
   // Find PO number (starts with PO)
   const poIdx = tokens.findIndex(t => /^PO/i.test(t) && !/^MPO/i.test(t));
   if (poIdx >= 0) {
     result.po_number = tokens[poIdx];
+  }
+
+  // Extract material code — typically a short alphanumeric code like ZVC, ZVCT0014, TLBLIN
+  // It appears as a token after the MPO number, or as a standalone token that's not a known keyword
+  const knownKeywords = ['BULK', 'SMS', 'SAMPLE', 'JAN', 'BUY', 'NOV', 'PROD', 'STOCK', 'R&D', 'PDS', 'PO', 'MPO'];
+  const remainingAfterMPO = mpoIdx >= 0 ? tokens.slice(mpoIdx + 1) : [];
+  for (const token of remainingAfterMPO) {
+    const upper = token.toUpperCase();
+    if (knownKeywords.includes(upper)) continue;
+    // Material codes are typically 2-10 alphanumeric chars (e.g., ZVC, ZVCT0014, TLBLIN-3318)
+    if (/^[A-Z]{2,5}[A-Z0-9\-]*$/i.test(token)) {
+      result.material_code = upper;
+      break;
+    }
   }
 
   // Detect order type - comprehensive mapping
@@ -295,7 +322,11 @@ export function parsePOReference(poRef: string): {
   if (mpoIdx >= 0 && mpoIdx + 1 < tokens.length) {
     const remaining = tokens.slice(mpoIdx + 1);
     const factoryTokens = remaining.filter(
-      t => !['BULK', 'SMS', 'SAMPLE', 'JAN', 'BUY', 'NOV BUY', 'PROD', 'STOCK', 'R&D', 'PDS'].includes(t.toUpperCase())
+      t => {
+        const upper = t.toUpperCase();
+        return !['BULK', 'SMS', 'SAMPLE', 'JAN', 'BUY', 'NOV BUY', 'PROD', 'STOCK', 'R&D', 'PDS'].includes(upper)
+          && upper !== (result.material_code || '').toUpperCase();
+      }
     );
     if (factoryTokens.length > 0) {
       result.factory_location = factoryTokens.join('_');

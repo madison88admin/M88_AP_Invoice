@@ -716,7 +716,7 @@ export class NextGenService {
    */
   async fetchPOByMPO(
     mpoNumber: string,
-    hint?: { vendor_name?: string; amount?: number }
+    hint?: { vendor_name?: string; amount?: number; material_code?: string }
   ): Promise<NextGenPOData | null> {
     try {
       if (this.useMock) return this.getMockPOData(mpoNumber);
@@ -755,8 +755,22 @@ export class NextGenService {
         return this.buildMPOData(refMatch, mpoNumber);
       }
 
-      // ── Tier 3: Supplier + amount fuzzy match (requires hint) ─────────────
-      if (hint?.vendor_name || hint?.amount) {
+      // ── Tier 2.5: Material code match — search reference fields for material code (e.g., ZVC, ZVCT0014) ──
+      if (hint?.material_code) {
+        const mc = hint.material_code.toUpperCase();
+        const materialMatch = allHeaders.find((i: any) => {
+          const refs = [i.Comments, i.Description, i.SupplierDescription, i.Name].filter(Boolean).join(' ').toUpperCase();
+          // Match material code as substring (ZVC matches ZVCT0014)
+          return refs.includes(mc);
+        });
+        if (materialMatch) {
+          logger.info(`MPO ${mpoNumber}: Tier-2.5 material code match (${mc}, OrderId ${materialMatch.Id}, Name ${materialMatch.Name})`);
+          return this.buildMPOData(materialMatch, mpoNumber);
+        }
+      }
+
+      // ── Tier 3: Supplier + amount + material code fuzzy match (requires hint) ─────────────
+      if (hint?.vendor_name || hint?.amount || hint?.material_code) {
         const scored = allHeaders.map((i: any) => {
           let score = 0;
           if (hint.vendor_name) {
@@ -769,12 +783,18 @@ export class NextGenService {
             if (diff < 0.01) score += 20;
             else if (diff < 0.05) score += 10;
           }
+          // Material code match adds significant score
+          if (hint.material_code) {
+            const mc = hint.material_code.toUpperCase();
+            const refs = [i.Comments, i.Description, i.SupplierDescription, i.Name].filter(Boolean).join(' ').toUpperCase();
+            if (refs.includes(mc)) score += 50;
+          }
           return { item: i, score };
         });
 
         scored.sort((a, b) => b.score - a.score);
         const best = scored[0];
-        if (best && best.score >= 70) {
+        if (best && best.score >= 50) {
           logger.info(`MPO ${mpoNumber}: Tier-3 fuzzy match (score ${best.score}, OrderId ${best.item.Id}, Name ${best.item.Name})`);
           return this.buildMPOData(best.item, mpoNumber);
         }

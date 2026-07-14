@@ -570,7 +570,7 @@ function convertPDFToImage(fileBuffer: Buffer): string | null {
 async function tryAIFallbacks(
   fileBuffer: Buffer,
   rawText: string
-): Promise<{ engine: string; vendor_name?: string; invoice_number?: string; invoice_date?: string; total_amount?: number; currency?: string; po_number?: string; mpo_number?: string; brand_code?: string; payment_terms?: string; bank_info?: { swift_code?: string; account_number?: string } } | null> {
+): Promise<{ engine: string; vendor_name?: string; invoice_number?: string; invoice_date?: string; due_date?: string; total_amount?: number; currency?: string; po_number?: string; mpo_number?: string; brand?: string; brand_code?: string; season?: string; payment_terms?: string; ship_to?: string; sold_to?: string; qty_shipped?: number; document_type?: string; bank_name?: string; swift_code?: string; account_number?: string; bank_info?: { swift_code?: string; account_number?: string }; line_items?: any[] } | null> {
   // 1st fallback: Gemini Vision (sends PDF as file directly — best for visual layout)
   try {
     const geminiOCR = (await import('./geminiOCRService')).geminiOCRService;
@@ -680,7 +680,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
           vendor_name: fallbackResult.vendor_name || '',
           invoice_number: fallbackResult.invoice_number || '',
           invoice_date: fallbackResult.invoice_date ? new Date(fallbackResult.invoice_date).toISOString().split('T')[0] : '',
-          due_date: '',
+          due_date: fallbackResult.due_date ? new Date(fallbackResult.due_date).toISOString().split('T')[0] : '',
           amount: fallbackResult.total_amount || 0,
           grand_total: 0,
           currency: fallbackResult.currency || 'USD',
@@ -688,12 +688,20 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
           mpo_number: fallbackResult.mpo_number || '',
           brand_code: fallbackResult.brand_code || '',
           payment_terms: fallbackResult.payment_terms || '',
-          bank_swift: fallbackResult.bank_info?.swift_code || '',
-          bank_account: fallbackResult.bank_info?.account_number || '',
-          invoice_type: 'INVOICE',
+          bank_swift: fallbackResult.swift_code || fallbackResult.bank_info?.swift_code || '',
+          bank_account: fallbackResult.account_number || fallbackResult.bank_info?.account_number || '',
+          invoice_type: (fallbackResult.document_type as any) || 'INVOICE',
           tax_id: '',
           company_reg: '',
         };
+        // Store extra AI-extracted fields for downstream use
+        (extracted as any).qty_shipped = fallbackResult.qty_shipped;
+        (extracted as any).bank_name = fallbackResult.bank_name;
+        (extracted as any).ship_to = fallbackResult.ship_to;
+        (extracted as any).sold_to = fallbackResult.sold_to;
+        (extracted as any).brand = fallbackResult.brand;
+        (extracted as any).season = fallbackResult.season;
+        (extracted as any).line_items = fallbackResult.line_items;
         logger.info(`[OCR] AI fallback succeeded with ${ocrEngine} — vendor: "${extracted.vendor_name}", invoice#: "${extracted.invoice_number}"`);
       } else {
         logger.warn('[OCR] All AI fallbacks failed — using pdf2json results as-is');
@@ -718,7 +726,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
         vendor_name: fallbackResult.vendor_name || '',
         invoice_number: fallbackResult.invoice_number || '',
         invoice_date: fallbackResult.invoice_date ? new Date(fallbackResult.invoice_date).toISOString().split('T')[0] : '',
-        due_date: '',
+        due_date: fallbackResult.due_date ? new Date(fallbackResult.due_date).toISOString().split('T')[0] : '',
         amount: fallbackResult.total_amount || 0,
         grand_total: 0,
         currency: fallbackResult.currency || 'USD',
@@ -726,12 +734,20 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
         mpo_number: fallbackResult.mpo_number || '',
         brand_code: fallbackResult.brand_code || '',
         payment_terms: fallbackResult.payment_terms || '',
-        bank_swift: fallbackResult.bank_info?.swift_code || '',
-        bank_account: fallbackResult.bank_info?.account_number || '',
-        invoice_type: 'INVOICE',
+        bank_swift: fallbackResult.swift_code || fallbackResult.bank_info?.swift_code || '',
+        bank_account: fallbackResult.account_number || fallbackResult.bank_info?.account_number || '',
+        invoice_type: (fallbackResult.document_type as any) || 'INVOICE',
         tax_id: '',
         company_reg: '',
       };
+      // Store extra AI-extracted fields for downstream use
+      (extracted as any).qty_shipped = fallbackResult.qty_shipped;
+      (extracted as any).bank_name = fallbackResult.bank_name;
+      (extracted as any).ship_to = fallbackResult.ship_to;
+      (extracted as any).sold_to = fallbackResult.sold_to;
+      (extracted as any).brand = fallbackResult.brand;
+      (extracted as any).season = fallbackResult.season;
+      (extracted as any).line_items = fallbackResult.line_items;
       logger.info(`[OCR] AI fallback succeeded with ${ocrEngine} after pdf2json failure`);
     } else {
       throw pdfError; // All fallbacks failed, rethrow original error
@@ -764,9 +780,9 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
     invoice_type: extracted.invoice_type as InvoiceType || InvoiceType.INVOICE,
     category: InvoiceCategory.TRIMS,
     order_type: poParsed.order_type as OrderType | undefined,
-    brand: poParsed.brand_code ? (TOP_10_BRANDS[poParsed.brand_code] || poParsed.brand_code) : undefined,
-    brand_code: poParsed.brand_code,
-    season: poParsed.season,
+    brand: poParsed.brand_code ? (TOP_10_BRANDS[poParsed.brand_code] || poParsed.brand_code) : (extracted as any).brand || undefined,
+    brand_code: poParsed.brand_code || extracted.brand_code || undefined,
+    season: poParsed.season || (extracted as any).season || undefined,
     mpo_number: poParsed.mpo_number || extracted.mpo_number,
     customer_po_number: poParsed.po_number,
     bill_to_entity: BillToEntity.MADISON_88_LTD,
@@ -777,10 +793,15 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
     qb_memo: undefined,
     qb_account_class: undefined,
     bank_info: {
+      bank_name: (extracted as any).bank_name || undefined,
       swift_code: extracted.bank_swift,
       account_usd: extracted.bank_account,
     },
     signatures: [] as SignatureInfo[],
     raw_data: { ...extracted, ocr_engine: ocrEngine, used_gemini_vision: usedGeminiVision },
+    qty_shipped: (extracted as any).qty_shipped || undefined,
+    ship_to: (extracted as any).ship_to || undefined,
+    sold_to: (extracted as any).sold_to || undefined,
+    line_items: (extracted as any).line_items || undefined,
   };
 }

@@ -816,9 +816,25 @@ function getEmailForRole(signerRole: string): string | null {
   return emailMapping[signerRole] || null;
 }
 
+// Minimum invoice amount threshold per role (0 = no threshold)
+const ROLE_TIER_THRESHOLD: Record<string, number> = {
+  PURCHASING_COORDINATOR: 0,
+  PURCHASING_MANAGER: 0,
+  MLO_ACCOUNT_HOLDER: 2000,
+  PLANNING_MANAGER: 2000,
+  SR_MANAGER_GLOBAL_PRODUCTION: 2000,
+  MS_POLLY: 100000,
+  ACCOUNTING_ASSOCIATE: 0,
+  ACCOUNTING_SUPERVISOR: 0,
+  CFO: 0,
+  PRESIDENT: 0,
+  IT_ADMIN: 0,
+};
+
 /**
  * Get pending approvals for a specific user role
  * Only returns invoices where it's actually this role's turn to approve
+ * Also filters by tier threshold so roles only see invoices in their tier
  */
 export async function getPendingApprovals(userRole: string) {
   const signatoryRoles = mapUserRoleToSignatoryRoles(userRole);
@@ -846,9 +862,12 @@ export async function getPendingApprovals(userRole: string) {
     return [];
   }
 
+  const threshold = ROLE_TIER_THRESHOLD[userRole] || 0;
+
   const pendingApprovals = await prisma.invoice.findMany({
     where: {
       status: { in: pendingStatuses as any[] },
+      ...(threshold > 0 ? { total_amount: { gt: threshold } } : {}),
       signatures: {
         some: {
           signatory_role: { in: signatoryRoles as any[] },

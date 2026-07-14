@@ -11,6 +11,25 @@ const PENDING_APPROVAL_STATUSES = [
   InvoiceStatus.PENDING_POLLY,
 ];
 
+// Minimum invoice amount threshold per role (0 = no threshold)
+// Tier 1: ≤$2,000 (Coordinator + PM)
+// Tier 2: $2,001–$99,999 (+ MLO Account Holder + MLO Planning Manager + Sr. Manager)
+// Tier 3: ≥$100,000 (+ Ms. Polly)
+const ROLE_TIER_THRESHOLD: Record<string, number> = {
+  PURCHASING_COORDINATOR: 0,
+  PURCHASING_MANAGER: 0,
+  MLO_ACCOUNT_HOLDER: 2000,
+  PLANNING_MANAGER: 2000,
+  SR_MANAGER_GLOBAL_PRODUCTION: 2000,
+  MS_POLLY: 100000,
+  ACCOUNTING_ASSOCIATE: 0,
+  ACCOUNTING_SUPERVISOR: 0,
+  CFO: 0,
+  PRESIDENT: 0,
+  IT_ADMIN: 0,
+  SUPERADMIN: 0,
+};
+
 /**
  * Get pending approvals for a specific user role
  */
@@ -20,9 +39,12 @@ export async function getApproverInbox(userRole: UserRole) {
     return [];
   }
 
+  const threshold = ROLE_TIER_THRESHOLD[userRole] || 0;
+
   const pendingApprovals = await prisma.invoice.findMany({
     where: {
       status: { in: PENDING_APPROVAL_STATUSES as any[] },
+      ...(threshold > 0 ? { total_amount: { gt: threshold } } : {}),
       signatures: {
         some: {
           signatory_role: { in: signatoryRoles as any[] },
@@ -59,9 +81,12 @@ export async function getApproverStatistics(userRole: UserRole) {
     };
   }
 
+  const threshold = ROLE_TIER_THRESHOLD[userRole] || 0;
+
   const pending = await prisma.invoice.count({
     where: {
       status: { in: PENDING_APPROVAL_STATUSES as any[] },
+      ...(threshold > 0 ? { total_amount: { gt: threshold } } : {}),
       signatures: {
         some: {
           signatory_role: { in: signatoryRoles as any[] },

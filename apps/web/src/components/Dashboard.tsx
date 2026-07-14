@@ -15,7 +15,7 @@ import { ThemeToggle } from './ThemeToggle';
 import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { MockInvoice } from '../lib/mockData';
-import { hasPermission, filterInvoicesByRole, canUserApproveStatus } from '../lib/roleAccess';
+import { hasPermission, filterInvoicesByRole, canUserApproveStatus, isWithinRoleThreshold } from '../lib/roleAccess';
 import { cn } from '../lib/utils';
 import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, LogOut, Edit, Unlock, Users, Loader2 } from 'lucide-react';
 import { Skeleton, SkeletonBar } from './ui/Skeleton';
@@ -178,24 +178,36 @@ export default function Dashboard() {
 
     const role = user.role;
 
-    // Planning Manager brand scope filter
-    if (role === 'PLANNING_MANAGER' && user.brand_scope) {
-      const top10Brands = ['TNF', 'UA', 'VNS', 'ARC', 'CSC', 'HH', 'BUR', 'TM', 'FR', 'ON'];
-      if (user.brand_scope === 'TOP_10') {
-        return allInvoices.filter(i => top10Brands.includes(i.brand_code || ''));
-      } else {
-        return allInvoices.filter(i => !top10Brands.includes(i.brand_code || ''));
+    // Planning Manager brand scope filter + Tier 2+ threshold
+    if (role === 'PLANNING_MANAGER') {
+      let filtered = allInvoices.filter(i => isWithinRoleThreshold(role, Number(i.total_amount)));
+      if (user.brand_scope) {
+        const top10Brands = ['TNF', 'UA', 'VNS', 'ARC', 'CSC', 'HH', 'BUR', 'TM', 'FR', 'ON'];
+        if (user.brand_scope === 'TOP_10') {
+          filtered = filtered.filter(i => top10Brands.includes(i.brand_code || ''));
+        } else {
+          filtered = filtered.filter(i => !top10Brands.includes(i.brand_code || ''));
+        }
       }
+      return filterInvoicesByRole(filtered, role);
     }
 
-    // SR_MANAGER_GLOBAL_PRODUCTION - only production invoices $2K+
+    // MLO_ACCOUNT_HOLDER - Tier 2+ only
+    if (role === 'MLO_ACCOUNT_HOLDER') {
+      const tierFiltered = allInvoices.filter(i => isWithinRoleThreshold(role, Number(i.total_amount)));
+      return filterInvoicesByRole(tierFiltered, role);
+    }
+
+    // SR_MANAGER_GLOBAL_PRODUCTION - only Tier 2+ invoices
     if (role === 'SR_MANAGER_GLOBAL_PRODUCTION') {
-      return allInvoices.filter(i => i.total_amount > 2000);
+      const tierFiltered = allInvoices.filter(i => isWithinRoleThreshold(role, Number(i.total_amount)));
+      return filterInvoicesByRole(tierFiltered, role);
     }
 
-    // MS_POLLY - only high-value invoices (>$100K)
+    // MS_POLLY - only Tier 3 invoices (≥$100K)
     if (role === 'MS_POLLY') {
-      return allInvoices.filter(i => i.total_amount >= 100000);
+      const tierFiltered = allInvoices.filter(i => isWithinRoleThreshold(role, Number(i.total_amount)));
+      return filterInvoicesByRole(tierFiltered, role);
     }
 
     // IT_ADMIN - all invoices (read-only for debugging)

@@ -222,6 +222,31 @@ export const ROLE_STAGE_ACCESS: Record<string, string[]> = {
   IT_ADMIN: [], // System maintenance only; cannot approve/reject/hold
 };
 
+// Minimum invoice amount threshold per role (0 = no threshold, sees all tiers)
+// Tier 1: ≤$2,000 (Coordinator + PM)
+// Tier 2: $2,001–$99,999 (+ MLO Account Holder + MLO Planning Manager + Sr. Manager)
+// Tier 3: ≥$100,000 (+ Ms. Polly)
+export const ROLE_TIER_THRESHOLD: Record<string, number> = {
+  SUPERADMIN: 0,
+  IT_ADMIN: 0,
+  PURCHASING_COORDINATOR: 0,        // All tiers (on all routes)
+  PURCHASING_MANAGER: 0,            // All tiers (on all routes)
+  MLO_ACCOUNT_HOLDER: 2000,         // Tier 2+ only
+  PLANNING_MANAGER: 2000,           // Tier 2+ only
+  SR_MANAGER_GLOBAL_PRODUCTION: 2000, // Tier 2+ only
+  MS_POLLY: 100000,                 // Tier 3 only
+  ACCOUNTING_ASSOCIATE: 0,          // All tiers (all go through accounting)
+  ACCOUNTING_SUPERVISOR: 0,         // All tiers
+  PRESIDENT: 0,                     // All tiers
+};
+
+// Check if an invoice amount is within a role's tier threshold
+export function isWithinRoleThreshold(role: string, amount: number): boolean {
+  const threshold = ROLE_TIER_THRESHOLD[role];
+  if (!threshold || threshold === 0) return true;
+  return amount > threshold;
+}
+
 // Check if a role has a specific permission
 export function hasPermission(role: string, permission: string): boolean {
   const rolePermissions = ROLE_PERMISSIONS[role as keyof typeof ROLE_PERMISSIONS];
@@ -244,11 +269,15 @@ export function canUserApproveStatus(role: string, status: string): boolean {
   return canAccessStage(role, status);
 }
 
-// Get invoices filtered by role's accessible stages
+// Get invoices filtered by role's accessible stages AND tier threshold
 export function filterInvoicesByRole(invoices: any[], role: string): any[] {
   if (role === 'SUPERADMIN') return []; // No invoice visibility
   if (role === 'IT_ADMIN') return invoices; // Read-only all invoices
   const accessibleStages = ROLE_STAGE_ACCESS[role];
   if (!accessibleStages || accessibleStages.length === 0) return invoices;
-  return invoices.filter(inv => accessibleStages.includes(inv.status) || accessibleStages.includes(inv.current_stage));
+  const threshold = ROLE_TIER_THRESHOLD[role] || 0;
+  return invoices.filter(inv =>
+    (accessibleStages.includes(inv.status) || accessibleStages.includes(inv.current_stage)) &&
+    (threshold === 0 || Number(inv.total_amount) > threshold)
+  );
 }

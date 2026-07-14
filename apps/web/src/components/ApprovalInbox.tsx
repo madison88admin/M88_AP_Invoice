@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { CheckCircle, XCircle, Clock, ArrowLeft, Loader2 } from 'lucide-react';
 import { MockInvoice } from '../lib/mockData';
 import { Skeleton } from './ui/Skeleton';
+import { isWithinRoleThreshold } from '../lib/roleAccess';
 
 const mapUserRoleToSignatoryRoles = (role: string): string[] => {
   const mapping: Record<string, string[]> = {
@@ -47,6 +48,8 @@ export default function ApprovalInbox() {
     // Exclude invoices not in an active approval workflow
     const status = String(invoice.status || '');
     if (!status.startsWith('PENDING_') || status === 'PENDING_ACCOUNTING') return false;
+    // Exclude invoices below the user's tier threshold
+    if (user && !isWithinRoleThreshold(user.role, Number(invoice.total_amount))) return false;
     // Find the first unsigned signature (sequential enforcement — signatures are in route order)
     const firstPending = invoice.signatures.find(s => !s.signed_at);
     if (!firstPending) return false;

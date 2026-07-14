@@ -181,7 +181,7 @@ Invoice text to extract from:
 export class OllamaOCRService {
   private static instance: OllamaOCRService;
   private baseUrl: string | null = null;
-  private model: string = 'qwen2.5vl:latest';
+  private model: string = 'qwen3:14b';
   private timeout: number = 60000;
   private isConfigured: boolean = false;
 
@@ -193,7 +193,7 @@ export class OllamaOCRService {
     }
 
     this.baseUrl = baseUrl.replace(/\/$/, '');
-    this.model = process.env.OLLAMA_MODEL || 'qwen2.5vl:latest';
+    this.model = process.env.OLLAMA_MODEL || 'qwen3:14b';
     this.timeout = Number(process.env.OLLAMA_TIMEOUT) || 120000;
     this.isConfigured = true;
     logger.info(`Ollama OCR service initialized at ${this.baseUrl} with model ${this.model}`);

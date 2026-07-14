@@ -1,5 +1,5 @@
 import prisma, { isDbEnabled } from '../config/database';
-import { ExceptionReason, InvoiceStatus, InvoiceType, BillToEntity, SignatoryRole, APPROVAL_THRESHOLDS, determineApprovalTier } from '@ap-invoice/shared';
+import { ExceptionReason, InvoiceStatus, InvoiceType, BillToEntity, SignatoryRole, APPROVAL_THRESHOLDS, determineApprovalTier, VENDOR_THRESHOLD_CONFIG, BATCH_THRESHOLD_CONFIG, getRequiredSignatoryRoles } from '@ap-invoice/shared';
 import { createApprovalRequest } from './approvalService';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils/logger';
@@ -64,6 +64,9 @@ export async function validateInvoiceWithData(
     results.push(result);
     if (!result.passed) {
       exceptions.push({ reason: result.reason || rule.reason, detail: result.detail || '' });
+    } else if (result.reason) {
+      // Warning-only result (e.g., vendor threshold): create exception for visibility but don't block
+      exceptions.push({ reason: result.reason, detail: result.detail || '' });
     }
   }
 
@@ -253,11 +256,14 @@ export async function validateInvoice(invoiceId: string): Promise<InvoiceValidat
     exceptions.push({ reason: poResult.reason || ExceptionReason.PO_NOT_FOUND, detail: poResult.detail || '' });
   }
 
-  // RULE 18 — Vendor threshold exceeded
+  // RULE 18 — Vendor threshold exceeded (WARNING ONLY — does not block)
   const vendorThresholdResult = await validateVendorThreshold(invoice);
   results.push(vendorThresholdResult);
   if (!vendorThresholdResult.passed) {
     exceptions.push({ reason: ExceptionReason.VENDOR_THRESHOLD_EXCEEDED, detail: vendorThresholdResult.detail || '' });
+  } else if (vendorThresholdResult.reason) {
+    // Warning-only result: create exception for visibility but don't block
+    exceptions.push({ reason: vendorThresholdResult.reason, detail: vendorThresholdResult.detail || '' });
   }
 
   const passed = results.every(r => r.passed);
@@ -668,6 +674,7 @@ async function validateBankDetails(invoice: any): Promise<ValidationResult> {
 }
 
 // RULE 10 — Signature validation (3-tier per new flow)
+// Uses centralized SIGNATURE_REQUIREMENTS from validation-rules.ts as single source of truth.
 function validateSignatures(amount: number, signatures: any[]): ValidationResult {
   // Check for "Computer-generated, no signature required" exemption
   if (signatures && signatures.some((sig: any) =>
@@ -704,65 +711,29 @@ function validateSignatures(amount: number, signatures: any[]): ValidationResult
   const signedRoles = signedSignatures.map((sig: any) => sig.signatory_role as string);
 
   const tier = determineApprovalTier(amount);
+  const requiredRoles = getRequiredSignatoryRoles(tier);
 
-  // Planning Tier: Coordinator required for all invoices
-  if (!signedRoles.includes(SignatoryRole.COORDINATOR)) {
-    return {
-      passed: false,
-      reason: ExceptionReason.MISSING_SIGNATURE,
-      message: 'Missing Coordinator signature',
-      detail: 'A Purchasing Coordinator signature is required for all invoices',
-    };
-  }
-
-  // Tier 2+: Purchasing Manager
-  if (tier >= 2) {
-    if (!signedRoles.includes(SignatoryRole.PURCHASING_MANAGER)) {
-      return {
-        passed: false,
-        reason: ExceptionReason.MISSING_SIGNATURE,
-        message: 'Missing Purchasing Manager signature',
-        detail: 'A Purchasing Manager signature is required for invoices above $2,000',
+  // Check each required role from the centralized config
+  for (const role of requiredRoles) {
+    if (!signedRoles.includes(role)) {
+      const roleLabels: Record<string, string> = {
+        [SignatoryRole.COORDINATOR]: 'Coordinator',
+        [SignatoryRole.PURCHASING_MANAGER]: 'Purchasing Manager',
+        [SignatoryRole.MLO_ACCOUNT_HOLDER]: 'MLO Account Holder',
+        [SignatoryRole.MLO_PLANNING_MANAGER]: 'MLO Planning Manager',
+        [SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION]: 'Sr. Manager Global Production',
+        [SignatoryRole.MS_POLLY]: 'Ms. Polly',
       };
-    }
-  }
-
-  // Tier 2+ ($2,001+): MLO Account Holder + MLO Planning Manager + Sr. Manager Global Production
-  if (tier >= 2) {
-    if (!signedRoles.includes(SignatoryRole.MLO_ACCOUNT_HOLDER)) {
-      return {
-        passed: false,
-        reason: ExceptionReason.MISSING_SIGNATURE,
-        message: 'Missing MLO Account Holder signature',
-        detail: 'An MLO Account Holder signature is required for invoices above $2,000',
+      const tierLabels: Record<number, string> = {
+        1: 'all invoices',
+        2: 'invoices above $2,000',
+        3: 'invoices above $100,000',
       };
-    }
-    if (!signedRoles.includes(SignatoryRole.MLO_PLANNING_MANAGER)) {
       return {
         passed: false,
         reason: ExceptionReason.MISSING_SIGNATURE,
-        message: 'Missing MLO Planning Manager signature',
-        detail: 'An MLO Planning Manager signature is required for invoices above $2,000',
-      };
-    }
-    if (!signedRoles.includes(SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION)) {
-      return {
-        passed: false,
-        reason: ExceptionReason.MISSING_SIGNATURE,
-        message: 'Missing Sr. Manager Global Production signature',
-        detail: 'Sr. Manager of Global Production Operations signature required for invoices above $2,000',
-      };
-    }
-  }
-
-  // Tier 3: Ms. Polly
-  if (tier >= 3) {
-    if (!signedRoles.includes(SignatoryRole.MS_POLLY)) {
-      return {
-        passed: false,
-        reason: ExceptionReason.MISSING_SIGNATURE,
-        message: 'Missing Ms. Polly signature',
-        detail: 'Invoices over $100,000 require Ms. Polly signature',
+        message: `Missing ${roleLabels[role] || role} signature`,
+        detail: `A ${roleLabels[role] || role} signature is required for ${tierLabels[tier] || 'this tier'}`,
       };
     }
   }
@@ -1064,7 +1035,9 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
   }
 }
 
-// RULE 18 — Vendor cumulative threshold
+// RULE 18 — Vendor cumulative threshold (WARNING ONLY — does not block approval)
+// Per business confirmation: threshold exception is created for visibility/reporting
+// but the invoice proceeds through the normal workflow.
 async function validateVendorThreshold(invoice: any): Promise<ValidationResult> {
   if (!invoice.vendor_id || !invoice.total_amount) {
     return {
@@ -1074,9 +1047,8 @@ async function validateVendorThreshold(invoice: any): Promise<ValidationResult> 
   }
 
   try {
-    // Configuration: 90-day lookback window and $500,000 threshold
-    const THRESHOLD_AMOUNT = 500000; // $500,000
-    const THRESHOLD_DAYS = 90; // 90-day cumulative window
+    const THRESHOLD_AMOUNT = VENDOR_THRESHOLD_CONFIG.AMOUNT;
+    const THRESHOLD_DAYS = VENDOR_THRESHOLD_CONFIG.LOOKBACK_DAYS;
 
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - THRESHOLD_DAYS);
@@ -1096,11 +1068,12 @@ async function validateVendorThreshold(invoice: any): Promise<ValidationResult> 
     const currentTotal = existingTotal + Number(invoice.total_amount);
 
     if (currentTotal > THRESHOLD_AMOUNT) {
+      // WARNING ONLY — always passes. Exception is created for visibility but does not block.
       return {
-        passed: false,
+        passed: true,
         reason: ExceptionReason.VENDOR_THRESHOLD_EXCEEDED,
-        message: `Vendor cumulative threshold exceeded`,
-        detail: `Vendor cumulative total $${currentTotal.toFixed(2)} exceeds $${THRESHOLD_AMOUNT.toLocaleString()} threshold for the last ${THRESHOLD_DAYS} days. Route to Purchasing Coordinator for approval. Existing: $${existingTotal.toFixed(2)}, Current invoice: $${Number(invoice.total_amount).toFixed(2)}`,
+        message: `Vendor cumulative threshold exceeded (warning)`,
+        detail: `Vendor cumulative total $${currentTotal.toFixed(2)} exceeds $${THRESHOLD_AMOUNT.toLocaleString()} threshold for the last ${THRESHOLD_DAYS} days. This is a warning only and does not block approval. Existing: $${existingTotal.toFixed(2)}, Current invoice: $${Number(invoice.total_amount).toFixed(2)}`,
       };
     }
 
@@ -1124,7 +1097,7 @@ async function validateVendorThreshold(invoice: any): Promise<ValidationResult> 
  * Once reached, the vendor is "approved" and invoices proceed through the workflow.
  */
 export async function checkBatchThreshold(invoiceId: string): Promise<{ held: boolean; cumulative: number; released: number }> {
-  const BATCH_THRESHOLD = 100;
+  const BATCH_THRESHOLD = BATCH_THRESHOLD_CONFIG.AMOUNT;
 
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },

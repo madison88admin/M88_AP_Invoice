@@ -5,6 +5,7 @@ import {
   getVendorSpendingReport,
   getExceptionRateReport,
   getKPIMetrics,
+  getForecastReport,
 } from '../services/reportService';
 
 export async function getInvoiceVolume(req: Request, res: Response) {
@@ -75,5 +76,15 @@ export async function getKPI(req: Request, res: Response) {
   } catch (error) {
     console.error('Error getting KPI metrics:', error);
     res.status(500).json({ error: 'Failed to get KPI metrics' });
+  }
+}
+
+export async function getForecast(req: Request, res: Response) {
+  try {
+    const report = await getForecastReport();
+    res.json(report);
+  } catch (error) {
+    console.error('Error getting forecast report:', error);
+    res.status(500).json({ error: 'Failed to get forecast report' });
   }
 }

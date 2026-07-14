@@ -535,7 +535,7 @@ export function buildInvoiceAST(
   const maxPageIndex = pageTexts.length - 1;
 
   // Explicit pattern for G&F-style invoices: "TOTALUSD : 4,693.10" or "TOTAL USD : 4,693.10"
-  const explicitTotalMatch = normalizedText.match(/TOTAL\s*USD\s*[:：]\s*([0-9,]+\.[0-9]{2,3})/i);
+  const explicitTotalMatch = normalizedText.match(/TOTAL\s*USD\s*[:：]\s*([0-9,]+\.[0-9]{2,4})/i);
   if (explicitTotalMatch) {
     const amount = parseFloat(explicitTotalMatch[1].replace(/,/g, ''));
     if (amount > 0 && amount < 10_000_000) {
@@ -564,7 +564,7 @@ export function buildInvoiceAST(
   );
 
   // Currency context regex: symbol/label immediately before or after the number
-  const currencyCtxPattern = /(?:USD|HKD|IDR|EUR|PHP|JPY|US\$|HK\$|\$|€|¥)\s*([0-9,]+\.[0-9]{2,3})|([0-9,]+\.[0-9]{2,3})\s*(?:USD|HKD|IDR|EUR|PHP|JPY)/gi;
+  const currencyCtxPattern = /(?:USD|HKD|IDR|EUR|PHP|JPY|US\$|HK\$|\$|€|¥)\s*([0-9,]+\.[0-9]{2,4})|([0-9,]+\.[0-9]{2,4})\s*(?:USD|HKD|IDR|EUR|PHP|JPY)/gi;
 
   for (let pageIndex = 0; pageIndex <= maxPageIndex; pageIndex++) {
     const pageText = pageTexts[pageIndex];
@@ -596,7 +596,7 @@ export function buildInvoiceAST(
       // The total label is on this line. The amount may be on this line OR the next line
       // (e.g., label "總 : Total" and amount "USD63.60" on separate lines due to OCR).
       const sourceLines = [line, nextLine].join(' ');
-      const lineNumbers = sourceLines.match(/([0-9,]+\.[0-9]{2,3})/g);
+      const lineNumbers = sourceLines.match(/([0-9,]+\.[0-9]{2,4})/g);
       if (!lineNumbers || lineNumbers.length === 0) continue;
 
       const parsedAmounts = lineNumbers
@@ -714,11 +714,11 @@ export function buildInvoiceAST(
   // Add PROSE_CURRENCY nodes for USD settlement phrasing (e.g. "settle in USD @7.70").
   // This is the AST equivalent of the legacy prose-currency fallback.
   const proseCurrencyPatterns = [
-    { pattern: /settle\s+in\s+USD\s+([\d,]+\.\d{2})/i, label: 'SETTLE_IN_USD' },
-    { pattern: /For\s+settlement\s+in\s+USD.*USD\s+([\d,]+\.\d{2})/i, label: 'FOR_SETTLEMENT_USD' },
-    { pattern: /@[\d.]+.*USD\s+([\d,]+\.\d{2})/i, label: 'AT_RATE_USD' },
-    { pattern: /Please\s+settle\s+in\s+USD\s+([\d,]+\.\d{2})/i, label: 'PLEASE_SETTLE_USD' },
-    { pattern: /USD\s+([\d,]+\.\d{2})\s+for\s+settlement/i, label: 'USD_FOR_SETTLEMENT' }
+    { pattern: /settle\s+in\s+USD\s+([\d,]+\.\d{2,4})/i, label: 'SETTLE_IN_USD' },
+    { pattern: /For\s+settlement\s+in\s+USD.*USD\s+([\d,]+\.\d{2,4})/i, label: 'FOR_SETTLEMENT_USD' },
+    { pattern: /@[\d.]+.*USD\s+([\d,]+\.\d{2,4})/i, label: 'AT_RATE_USD' },
+    { pattern: /Please\s+settle\s+in\s+USD\s+([\d,]+\.\d{2,4})/i, label: 'PLEASE_SETTLE_USD' },
+    { pattern: /USD\s+([\d,]+\.\d{2,4})\s+for\s+settlement/i, label: 'USD_FOR_SETTLEMENT' }
   ];
 
   for (const { pattern, label } of proseCurrencyPatterns) {

@@ -260,11 +260,11 @@ export default function Dashboard() {
   // Count how many filters are currently active (for the "Clear" affordance)
   const activeFilterCount = Object.values(filters).filter(v => v !== undefined && v !== '').length;
 
-  // Sort invoices by invoice date (newest first) to show those approaching due dates first
+  // Sort invoices by created_at/received date (newest first)
   const sortedInvoices = [...filteredInvoices].sort((a, b) => {
-    const dateA = new Date(a.invoice_date);
-    const dateB = new Date(b.invoice_date);
-    return dateA.getTime() - dateB.getTime(); // Ascending order (oldest first = closer to due)
+    const dateA = new Date(a.created_at || a.invoice_received_date || a.invoice_date);
+    const dateB = new Date(b.created_at || b.invoice_received_date || b.invoice_date);
+    return dateB.getTime() - dateA.getTime(); // Descending order (newest first)
   });
 
   // Pagination: show 4 invoices per page

@@ -124,6 +124,9 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
             <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
               Category
             </th>
+            <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '100px', color: 'var(--text-muted)' }}>
+              Type
+            </th>
             <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
               Status
             </th>
@@ -220,7 +223,37 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
                 </div>
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--text-secondary)' }}>
-                {(invoice.category || invoice.invoice_type).replace(/_/g, ' ')}
+                {(invoice.category || '').replace(/_/g, ' ')}
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap" style={{ width: '100px' }}>
+                {invoice.invoice_type && (
+                  <span
+                    className="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full"
+                    style={{
+                      background: invoice.invoice_type === 'PROFORMA'
+                        ? 'color-mix(in srgb, var(--accent-violet) 10%, transparent)'
+                        : invoice.invoice_type === 'STATEMENT'
+                        ? 'color-mix(in srgb, var(--accent-amber) 10%, transparent)'
+                        : invoice.invoice_type === 'SALES'
+                        ? 'color-mix(in srgb, var(--accent-blue) 10%, transparent)'
+                        : invoice.invoice_type === 'COMMERCIAL'
+                        ? 'color-mix(in srgb, var(--accent-green) 10%, transparent)'
+                        : 'color-mix(in srgb, var(--text-muted) 10%, transparent)',
+                      color: invoice.invoice_type === 'PROFORMA'
+                        ? 'var(--accent-violet)'
+                        : invoice.invoice_type === 'STATEMENT'
+                        ? 'var(--accent-amber)'
+                        : invoice.invoice_type === 'SALES'
+                        ? 'var(--accent-blue)'
+                        : invoice.invoice_type === 'COMMERCIAL'
+                        ? 'var(--accent-green)'
+                        : 'var(--text-secondary)',
+                      border: '1px solid var(--border-color)',
+                    }}
+                  >
+                    {invoice.invoice_type}
+                  </span>
+                )}
               </td>
               <td className="px-6 py-4 whitespace-nowrap">
                 <div className="flex flex-col gap-1">
@@ -304,7 +337,7 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
           ))}
           {sortedInvoices.length === 0 && (
             <tr>
-              <td colSpan={17} className="px-6 py-12 text-center">
+              <td colSpan={18} className="px-6 py-12 text-center">
                 <div className="flex flex-col items-center justify-center">
                   <div className="p-4 rounded-2xl mb-4" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
                     <FileText className="h-12 w-12" style={{ color: 'var(--text-muted)', animation: 'pulse-soft 2.5s ease-in-out infinite' }} />

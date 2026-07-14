@@ -139,8 +139,34 @@ export const APPROVAL_THRESHOLDS = {
   // Above TIER_2 = Tier 3 ($100,000+)
 };
 
+// ─── VENDOR THRESHOLD CONFIG ───
+// Warning only — does NOT block approval. Exception is created for visibility/reporting
+// but the invoice proceeds through the normal workflow.
+export const VENDOR_THRESHOLD_CONFIG = {
+  AMOUNT: 500000,       // $500,000 cumulative threshold
+  LOOKBACK_DAYS: 90,    // 90-day rolling window
+  BLOCKING: false,      // WARNING ONLY — confirmed by business
+};
+
+// ─── BATCH THRESHOLD CONFIG ───
+// Invoices for a vendor are held ON_HOLD until cumulative reaches $100
+export const BATCH_THRESHOLD_CONFIG = {
+  AMOUNT: 100,          // $100 cumulative per vendor
+};
+
+// ─── CITIBUSINESS EXPORT CONFIG ───
+// Manual export — Accounting Associate downloads file and imports into CitiBusiness
+export const CITIBUSINESS_EXPORT_CONFIG = {
+  FILE_FORMAT: 'CSV',   // CitiBusiness accepts CSV format
+  DELIMITER: ',',
+  INCLUDE_HEADER: true,
+  DATE_FORMAT: 'YYYY-MM-DD',
+};
+
 export const SIGNATURE_REQUIREMENTS = {
+  // Planning Tier (≤$2,000): Coordinator + Purchasing Manager (shared 7-day SLA)
   TIER_1: [SignatoryRole.COORDINATOR, SignatoryRole.PURCHASING_MANAGER],
+  // Tier 2 ($2,001–$99,999): + MLO Account Holder + MLO Planning Manager + Sr. Manager Global Production
   TIER_2: [
     SignatoryRole.COORDINATOR,
     SignatoryRole.PURCHASING_MANAGER,
@@ -148,6 +174,7 @@ export const SIGNATURE_REQUIREMENTS = {
     SignatoryRole.MLO_PLANNING_MANAGER,
     SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION,
   ],
+  // Tier 3 (≥$100,000): + Ms. Polly
   TIER_3: [
     SignatoryRole.COORDINATOR,
     SignatoryRole.PURCHASING_MANAGER,
@@ -199,7 +226,7 @@ export function parsePOReference(poRef: string): {
   order_type?: string;
   po_number?: string;
   mpo_number?: string;
-  mpo_suffix?: string;
+  mpo_revision?: string;
   material_code?: string;
   factory_location?: string;
 } {
@@ -214,7 +241,7 @@ export function parsePOReference(poRef: string): {
     order_type?: string;
     po_number?: string;
     mpo_number?: string;
-    mpo_suffix?: string;
+    mpo_revision?: string;
     material_code?: string;
     factory_location?: string;
   } = {};
@@ -265,11 +292,11 @@ export function parsePOReference(poRef: string): {
   const mpoIdx = tokens.findIndex(t => /^MPO/i.test(t));
   if (mpoIdx >= 0) {
     const mpoToken = tokens[mpoIdx];
-    // Check for suffix like -3 in MPO015554-3
-    const suffixMatch = mpoToken.match(/^(MPO\d+)-(\d+)$/i);
-    if (suffixMatch) {
-      result.mpo_number = suffixMatch[1];
-      result.mpo_suffix = suffixMatch[2];
+    // Check for revision like -3 in MPO015554-3 (number of times MPO was updated)
+    const revisionMatch = mpoToken.match(/^(MPO\d+)-(\d+)$/i);
+    if (revisionMatch) {
+      result.mpo_number = revisionMatch[1];
+      result.mpo_revision = revisionMatch[2];
     } else {
       result.mpo_number = mpoToken;
     }
@@ -451,9 +478,19 @@ export function matchSignerToRole(signerName: string): SignatoryRole | null {
  * Determine the approval tier for a given invoice amount
  */
 export function determineApprovalTier(amount: number): number {
-  if (amount <= APPROVAL_THRESHOLDS.TIER_1) return 1;
-  if (amount <= APPROVAL_THRESHOLDS.TIER_2) return 2;
-  return 3;
+  if (amount <= APPROVAL_THRESHOLDS.TIER_1) return 1;  // Planning Tier: ≤$2,000
+  if (amount <= APPROVAL_THRESHOLDS.TIER_2) return 2;  // Tier 2: $2,001–$99,999
+  return 3;                                            // Tier 3: ≥$100,000
+}
+
+/**
+ * Get the list of required signatory roles for a given approval tier.
+ * Uses SIGNATURE_REQUIREMENTS config as single source of truth.
+ */
+export function getRequiredSignatoryRoles(tier: number): SignatoryRole[] {
+  if (tier <= 1) return SIGNATURE_REQUIREMENTS.TIER_1;
+  if (tier === 2) return SIGNATURE_REQUIREMENTS.TIER_2;
+  return SIGNATURE_REQUIREMENTS.TIER_3;
 }
 
 /**

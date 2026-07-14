@@ -1,5 +1,5 @@
 import prisma from '../config/database';
-import { InvoiceStatus, InvoiceType, InvoiceCategory, BrandTier, InvoiceSource, PaymentTerms } from '@ap-invoice/shared';
+import { InvoiceStatus, InvoiceType, InvoiceCategory, BrandTier, InvoiceSource } from '@ap-invoice/shared';
 import { AppError } from '../middleware/errorHandler';
 import { isTop10Brand, TOP_10_BRANDS } from '@ap-invoice/shared';
 import { logAudit } from './auditLogService';
@@ -351,12 +351,12 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     delete data.category;
   }
 
-  const validInvoiceTypes = ['INVOICE', 'PROFORMA', 'COMMERCIAL_INVOICE', 'CREDIT_NOTE', 'STATEMENT', 'DEBIT_NOTE'];
+  const validInvoiceTypes = ['INVOICE', 'PROFORMA', 'COMMERCIAL', 'SALES', 'STATEMENT', 'PREPAID', 'PROTO_SAMPLE'];
   if (data.invoice_type && !validInvoiceTypes.includes(data.invoice_type)) {
-    data.invoice_type = 'INVOICE';
+    delete data.invoice_type;
   }
 
-  const validOrderTypes = ['PO', 'MPO', 'BULK', 'SAMPLE', 'REORDER', 'URGENT'];
+  const validOrderTypes = ['BULK', 'SMS', 'SAMPLE'];
   if (data.order_type && !validOrderTypes.includes(data.order_type)) {
     delete data.order_type;
   }
@@ -366,15 +366,12 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     delete data.brand_tier;
   }
 
-  const validBillToEntities = ['MADISON_88_LTD', 'MADISON_LIMITED', 'MADISON_88_HK'];
+  const validBillToEntities = ['MADISON_88_LTD', 'MADISON_88_HK_LIMITED'];
   if (data.bill_to_entity && !validBillToEntities.includes(data.bill_to_entity)) {
     delete data.bill_to_entity;
   }
 
-  const validPaymentTerms = Object.values(PaymentTerms);
-  if (data.payment_terms && !validPaymentTerms.includes(data.payment_terms)) {
-    delete data.payment_terms;
-  }
+  // payment_terms is a free-text String field, not an enum — no validation needed
 
   const dateFields = ['invoice_date', 'due_date', 'invoice_received_date', 'date_range_start', 'date_range_end', 'priority_pay_date'];
   for (const field of dateFields) {

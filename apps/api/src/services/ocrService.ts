@@ -243,27 +243,27 @@ export async function extractInvoiceFields(fileBuffer: Buffer) {
 
   // amount — multiple patterns for different layouts and brands
   const amountPatterns = [
-    /TOTAL\s*\(USD\)\s*([\d,]+\.\d{2})/i,
-    /TOTAL\s*USD\s*([\d,]+\.\d{2})/i,
-    /TOTAL\s*USD[\s\S]{0,150}([\d,]+\.\d{2})/i, // TOTAL USD followed by amount within 150 chars (handles different cells)
+    /TOTAL\s*\(USD\)\s*([\d,]+\.\d{2,4})/i,
+    /TOTAL\s*USD\s*([\d,]+\.\d{2,4})/i,
+    /TOTAL\s*USD[\s\S]{0,150}([\d,]+\.\d{2,4})/i, // TOTAL USD followed by amount within 150 chars (handles different cells)
     /TOTAL\s*USD/i, // Match TOTAL USD, then find amount nearby
-    /TOTAL\s*(?:AMOUNT)?[:\s]*([\d,]+\.\d{2})/i,
-    /Grand\s*Total[:\s]*([\d,]+\.\d{2})/i,
-    /GrandTotal[:\s]*([\d,]+\.\d{2})/i,
-    /Net\s*Amount[:\s]*([\d,]+\.\d{2})/i,
-    /Net\s*Total[:\s]*([\d,]+\.\d{2})/i,
-    /Amount[:\s]*([\d,]+\.\d{2})/i,
-    /Balance\s*Due[:\s]*([\d,]+\.\d{2})/i,
-    /Subtotal[:\s]*([\d,]+\.\d{2})/i,
-    /Total[:\s]*([\d,]+\.\d{2})/i,
-    /USD\s*([\d,]+\.\d{2})/i, // Just USD followed by amount
-    /([\d,]+\.\d{2})\s*USD/i, // Amount followed by USD
+    /TOTAL\s*(?:AMOUNT)?[:\s]*([\d,]+\.\d{2,4})/i,
+    /Grand\s*Total[:\s]*([\d,]+\.\d{2,4})/i,
+    /GrandTotal[:\s]*([\d,]+\.\d{2,4})/i,
+    /Net\s*Amount[:\s]*([\d,]+\.\d{2,4})/i,
+    /Net\s*Total[:\s]*([\d,]+\.\d{2,4})/i,
+    /Amount[:\s]*([\d,]+\.\d{2,4})/i,
+    /Balance\s*Due[:\s]*([\d,]+\.\d{2,4})/i,
+    /Subtotal[:\s]*([\d,]+\.\d{2,4})/i,
+    /Total[:\s]*([\d,]+\.\d{2,4})/i,
+    /USD\s*([\d,]+\.\d{2,4})/i, // Just USD followed by amount
+    /([\d,]+\.\d{2,4})\s*USD/i, // Amount followed by USD
   ];
 
   const grandTotalPatterns = [
-    /Grand\s*Total\s*(?:USD|HKD|EUR|GBP|PHP|JPY|IDR)?\s*[:\s]*([\d,]+\.\d{2})/i,
-    /GrandTotal\s*[:\s]*([\d,]+\.\d{2})/i,
-    /Grand\s*Total\s*[:\s]*([\d,]+\.\d{2})/i,
+    /Grand\s*Total\s*(?:USD|HKD|EUR|GBP|PHP|JPY|IDR)?\s*[:\s]*([\d,]+\.\d{2,4})/i,
+    /GrandTotal\s*[:\s]*([\d,]+\.\d{2,4})/i,
+    /Grand\s*Total\s*[:\s]*([\d,]+\.\d{2,4})/i,
   ];
 
   let amount = 0;
@@ -271,10 +271,10 @@ export async function extractInvoiceFields(fileBuffer: Buffer) {
 
   // Prose-based currency extraction (e.g., "settle in USD 96.68")
   const prosePatterns = [
-    /settle\s+in\s+(?:USD|HKD|EUR|GBP|PHP|JPY|IDR|VND|CNY|SGD|AUD|CAD|CHF|MYR|THB|KRW|TWD)\s+([\d,]+\.\d{2})/i,
-    /payment\s+in\s+(?:USD|HKD|EUR|GBP|PHP|JPY|IDR|VND|CNY|SGD|AUD|CAD|CHF|MYR|THB|KRW|TWD)\s+([\d,]+\.\d{2})/i,
-    /for\s+settlement\s+in\s+(?:USD|HKD|EUR|GBP|PHP|JPY|IDR|VND|CNY|SGD|AUD|CAD|CHF|MYR|THB|KRW|TWD)[^0-9]*([\d,]+\.\d{2})/i,
-    /please\s+settle\s+in\s+(?:USD|HKD|EUR|GBP|PHP|JPY|IDR|VND|CNY|SGD|AUD|CAD|CHF|MYR|THB|KRW|TWD)\s+([\d,]+\.\d{2})/i,
+    /settle\s+in\s+(?:USD|HKD|EUR|GBP|PHP|JPY|IDR|VND|CNY|SGD|AUD|CAD|CHF|MYR|THB|KRW|TWD)\s+([\d,]+\.\d{2,4})/i,
+    /payment\s+in\s+(?:USD|HKD|EUR|GBP|PHP|JPY|IDR|VND|CNY|SGD|AUD|CAD|CHF|MYR|THB|KRW|TWD)\s+([\d,]+\.\d{2,4})/i,
+    /for\s+settlement\s+in\s+(?:USD|HKD|EUR|GBP|PHP|JPY|IDR|VND|CNY|SGD|AUD|CAD|CHF|MYR|THB|KRW|TWD)[^0-9]*([\d,]+\.\d{2,4})/i,
+    /please\s+settle\s+in\s+(?:USD|HKD|EUR|GBP|PHP|JPY|IDR|VND|CNY|SGD|AUD|CAD|CHF|MYR|THB|KRW|TWD)\s+([\d,]+\.\d{2,4})/i,
   ];
 
   // Try standard patterns first
@@ -323,7 +323,7 @@ export async function extractInvoiceFields(fileBuffer: Buffer) {
       // Search in a wider range (500 chars) to handle different cell layouts
       const searchRange = text.substring(totalUsdIndex, totalUsdIndex + 500);
       logger.info(`[OCR] Search range: ${searchRange.substring(0, 100)}`);
-      const amountMatch = searchRange.match(/([\d,]+\.\d{2})/);
+      const amountMatch = searchRange.match(/([\d,]+\.\d{2,4})/);
       logger.info(`[OCR] Amount match in range: ${amountMatch ? amountMatch[1] : 'NONE'}`);
       if (amountMatch) {
         amount = parseFloat(amountMatch[1].replace(/,/g, ''));
@@ -335,7 +335,7 @@ export async function extractInvoiceFields(fileBuffer: Buffer) {
   // FIX: Better fallback using weighted scoring by label proximity
   // Don't use last decimal - could be tax, discount, or vendor balance
   if (amount === 0) {
-    const allAmounts = text.match(/[\d,]+\.\d{2}/g);
+    const allAmounts = text.match(/[\d,]+\.\d{2,4}/g);
     logger.info(`[OCR] All decimal amounts found: ${JSON.stringify(allAmounts)}`);
     
     if (allAmounts && allAmounts.length > 0) {
@@ -826,7 +826,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
       account_usd: extracted.bank_account,
     },
     signatures: [] as SignatureInfo[],
-    raw_data: { ...extracted, ocr_engine: ocrEngine, used_gemini_vision: usedGeminiVision, material_code: poParsed.material_code, mpo_suffix: poParsed.mpo_suffix },
+    raw_data: { ...extracted, ocr_engine: ocrEngine, used_gemini_vision: usedGeminiVision, material_code: poParsed.material_code, mpo_revision: poParsed.mpo_revision },
     qty_shipped: (extracted as any).qty_shipped || undefined,
     ship_to: (extracted as any).ship_to || undefined,
     sold_to: (extracted as any).sold_to || undefined,

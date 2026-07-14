@@ -472,7 +472,7 @@ function debugExtractAllNumbers(text: string): Array<{ value: number; index: num
  * Debug: Extract all monetary amounts specifically
  */
 function debugExtractAllAmounts(text: string): Array<{ value: number; index: number; context: string }> {
-  const regex = /([0-9,]+\.[0-9]{2,3})/g;
+  const regex = /([0-9,]+\.[0-9]{2,4})/g;
   const matches = [...text.matchAll(regex)];
   
   return matches.map((m, idx) => {
@@ -543,9 +543,9 @@ function debugAccountNumberExtraction(text: string): Array<{ pattern: string; ma
  */
 export function extractGrandTotal(text: string): number | null {
   const patterns = [
-    /Grand\s*Total\s*(?:USD|HKD|EUR|GBP|PHP|JPY|IDR)?\s*[:\s]*([\d,]+\.\d{2})/i,
-    /GrandTotal\s*[:\s]*([\d,]+\.\d{2})/i,
-    /Grand\s*Total\s*[:\s]*([\d,]+\.\d{2})/i,
+    /Grand\s*Total\s*(?:USD|HKD|EUR|GBP|PHP|JPY|IDR)?\s*[:\s]*([\d,]+\.\d{2,4})/i,
+    /GrandTotal\s*[:\s]*([\d,]+\.\d{2,4})/i,
+    /Grand\s*Total\s*[:\s]*([\d,]+\.\d{2,4})/i,
   ];
   for (const pattern of patterns) {
     const match = text.match(pattern);
@@ -591,7 +591,7 @@ export function extractAmount(text: string): {
     const upperLine = line.toUpperCase();
     if (totalKeywords.some(keyword => upperLine.includes(keyword))) {
       // Extract numbers from this line
-      const lineNumbers = line.match(/([0-9,]+\.[0-9]{2,3})/g);
+      const lineNumbers = line.match(/([0-9,]+\.[0-9]{2,4})/g);
       if (lineNumbers && lineNumbers.length > 0) {
         const parsedAmounts = lineNumbers.map(n => parseFloat(n.replace(/,/g, ''))).filter(n => n > 0 && n < 10000000);
         if (parsedAmounts.length > 0) {
@@ -610,7 +610,7 @@ export function extractAmount(text: string): {
 
   // PRIORITY 1: Sum heuristic - check if any amount equals sum of other amounts (strongest signal)
   const allAmounts: { amount: number; index: number; context: string }[] = [];
-  const amountPattern = /([0-9,]+\.[0-9]{2,3})/g;  // Allow 2-3 decimal places
+  const amountPattern = /([0-9,]+\.[0-9]{2,4})/g;  // Allow 2-3 decimal places
   let match;
   while ((match = amountPattern.exec(text)) !== null) {
     const parsedAmount = parseFloat(match[1].replace(/,/g, ''));
@@ -871,9 +871,9 @@ export function extractAmount(text: string): {
     ) {
       // Prefer amount on the same line as the TOTAL label (e.g., "Total (USD): 5,250.00");
       // only fall back to the next line if the current line has no amount.
-      let match = totalLines[j].match(/([0-9,]+\.[0-9]{2,3})/g);
+      let match = totalLines[j].match(/([0-9,]+\.[0-9]{2,4})/g);
       if (!match && totalLines[j + 1]) {
-        match = totalLines[j + 1].match(/([0-9,]+\.[0-9]{2,3})/g);
+        match = totalLines[j + 1].match(/([0-9,]+\.[0-9]{2,4})/g);
       }
       if (match && match.length > 0) {
         const parsedAmount = parseFloat(match[match.length - 1].replace(/,/g, ''));
@@ -932,7 +932,7 @@ export function extractAmount(text: string): {
   // Pattern: (TOTAL|GRAND TOTAL|AMOUNT DUE|TOTAL USD)[^\d]{0,20}([\d,]+\.\d{2})
   // FIX 1: Right-side value capture - extract numeric value even if it appears on far right or after spacing
   if (!amount) {
-    const rightSidePattern = /(TOTAL|GRAND TOTAL|AMOUNT DUE|TOTAL USD|TOTAL HKD|TOTAL EUR|TOTAL PHP|TOTAL JPY|TOTAL IDR)[^\d]{0,20}([\d,]+\.\d{2})/gi;
+    const rightSidePattern = /(TOTAL|GRAND TOTAL|AMOUNT DUE|TOTAL USD|TOTAL HKD|TOTAL EUR|TOTAL PHP|TOTAL JPY|TOTAL IDR)[^\d]{0,20}([\d,]+\.\d{2,4})/gi;
     const rightSideMatch = text.match(rightSidePattern);
     if (rightSideMatch && rightSideMatch[2]) {
       const parsedAmount = parseFloat(rightSideMatch[2].replace(/,/g, ''));
@@ -951,7 +951,7 @@ export function extractAmount(text: string): {
       return line.replace(/\s{2,}/g, ' ');
     }).join('\n');
     
-    const normalizedPattern = /(TOTAL|GRAND TOTAL|AMOUNT DUE|TOTAL USD|TOTAL HKD|TOTAL EUR|TOTAL PHP|TOTAL JPY|TOTAL IDR)\s+([\d,]+\.\d{2})/gi;
+    const normalizedPattern = /(TOTAL|GRAND TOTAL|AMOUNT DUE|TOTAL USD|TOTAL HKD|TOTAL EUR|TOTAL PHP|TOTAL JPY|TOTAL IDR)\s+([\d,]+\.\d{2,4})/gi;
     const normalizedMatch = normalizedLines.match(normalizedPattern);
     if (normalizedMatch && normalizedMatch[2]) {
       const parsedAmount = parseFloat(normalizedMatch[2].replace(/,/g, ''));
@@ -984,11 +984,11 @@ export function extractAmount(text: string): {
   // This prevents grabbing wrong HKD total which overstates amount by 7-8x
   if (!amount) {
     const prosePatterns = [
-      /settle in USD\s+([\d,]+\.\d{2})/i,
-      /For settlement in USD.*USD\s+([\d,]+\.\d{2})/i,
-      /@[\d.]+.*USD\s+([\d,]+\.\d{2})/i,
-      /Please settle in USD\s+([\d,]+\.\d{2})/i,
-      /USD\s+([\d,]+\.\d{2})\s+for settlement/i,
+      /settle in USD\s+([\d,]+\.\d{2,4})/i,
+      /For settlement in USD.*USD\s+([\d,]+\.\d{2,4})/i,
+      /@[\d.]+.*USD\s+([\d,]+\.\d{2,4})/i,
+      /Please settle in USD\s+([\d,]+\.\d{2,4})/i,
+      /USD\s+([\d,]+\.\d{2,4})\s+for settlement/i,
     ];
     
     for (const pattern of prosePatterns) {
@@ -1210,19 +1210,19 @@ function extractAdditionalCharges(text: string): number | null {
  */
 function extractTaxDiscountSubtotal(text: string): { subtotal: number | null; tax_amount: number | null; discount_amount: number | null } {
   const result = { subtotal: null as number | null, tax_amount: null as number | null, discount_amount: null as number | null };
-  const amountRegex = '([\\-]?[\\d,]+\\.\\d{2})';
+  const amountRegex = '([\\-]?[\\d,]+\\.\\d{2,4})';
 
   const subtotalPatterns = [
-    /\b(?:SUB(?:\s*[-])?\s*TOTAL|SALE\s*AMOUNT|NET\s*AMOUNT|AMOUNT\s*EXCL\S*|AMOUNT\s*EX\.?\s*VAT|GOODS\s*AMOUNT|ITEM\s*TOTAL)\b[:\s]*([\-]?[\d,]+\.\d{2})/i,
-    /\b(?:SUBTOTAL|SUB\sTOTAL)\b[:\s]*([\-]?[\d,]+\.\d{2})/i,
+    /\b(?:SUB(?:\s*[-])?\s*TOTAL|SALE\s*AMOUNT|NET\s*AMOUNT|AMOUNT\s*EXCL\S*|AMOUNT\s*EX\.?\s*VAT|GOODS\s*AMOUNT|ITEM\s*TOTAL)\b[:\s]*([\-]?[\d,]+\.\d{2,4})/i,
+    /\b(?:SUBTOTAL|SUB\sTOTAL)\b[:\s]*([\-]?[\d,]+\.\d{2,4})/i,
   ];
   const taxPatterns = [
-    /\b(?:VAT|GST|SALES?\s*TAX|TAX|IVA|HST|PST)\b[:\s]*([\-]?[\d,]+\.\d{2})/i,
-    /\b(?:TAX\s*AMOUNT|VAT\s*AMOUNT|GST\s*AMOUNT)\b[:\s]*([\-]?[\d,]+\.\d{2})/i,
+    /\b(?:VAT|GST|SALES?\s*TAX|TAX|IVA|HST|PST)\b[:\s]*([\-]?[\d,]+\.\d{2,4})/i,
+    /\b(?:TAX\s*AMOUNT|VAT\s*AMOUNT|GST\s*AMOUNT)\b[:\s]*([\-]?[\d,]+\.\d{2,4})/i,
   ];
   const discountPatterns = [
-    /\b(?:DISCOUNT|DISC\.?|LESS|DEDUCTION|REBATE|ALLOWANCE|DOWN\s*PAYMENT|DEPOSIT)\b[:\s]*([\-]?[\d,]+\.\d{2})/i,
-    /\b(?:DISCOUNT\s*AMOUNT)\b[:\s]*([\-]?[\d,]+\.\d{2})/i,
+    /\b(?:DISCOUNT|DISC\.?|LESS|DEDUCTION|REBATE|ALLOWANCE|DOWN\s*PAYMENT|DEPOSIT)\b[:\s]*([\-]?[\d,]+\.\d{2,4})/i,
+    /\b(?:DISCOUNT\s*AMOUNT)\b[:\s]*([\-]?[\d,]+\.\d{2,4})/i,
   ];
 
   for (const pattern of subtotalPatterns) {
@@ -2434,7 +2434,7 @@ function extractLineItemsFromCoordinates(
       }
 
       // Amounts are decimals with 2 places
-      const amountPattern = /\b([\d,]+\.\d{2})\b/g;
+      const amountPattern = /\b([\d,]+\.\d{2,4})\b/g;
       while ((m = amountPattern.exec(rowText)) !== null) {
         const a = parseFloat(m[1].replace(/,/g, ''));
         if (a > 0) amounts.push(a);
@@ -2656,7 +2656,7 @@ export function extractLineItems(
     console.log('[extractLineItems] Processing SKU', sku, 'row window:', windowText.substring(0, 100));
     
     // Extract all numbers from the row window
-    const numberPattern = /([0-9,]+\.[0-9]{2,3})/g;
+    const numberPattern = /([0-9,]+\.[0-9]{2,4})/g;
     const numbers: number[] = [];
     let match;
     while ((match = numberPattern.exec(windowText)) !== null) {
@@ -3266,7 +3266,7 @@ function buildInvoiceTruthGraph(
   for (const line of textLines) {
     const upperLine = line.toUpperCase();
     if (totalKeywords.some(keyword => upperLine.includes(keyword))) {
-      const lineNumbers = line.match(/([0-9,]+\.[0-9]{2,3})/g);
+      const lineNumbers = line.match(/([0-9,]+\.[0-9]{2,4})/g);
       if (lineNumbers && lineNumbers.length > 0) {
         const parsedAmounts = lineNumbers.map(n => parseFloat(n.replace(/,/g, ''))).filter(n => n > 0 && n < 10000000);
         if (parsedAmounts.length > 0) {

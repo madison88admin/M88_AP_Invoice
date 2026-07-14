@@ -1,5 +1,14 @@
 import { logger } from '../utils/logger';
 
+// Timeout helper for fetch calls — prevents indefinite hangs
+const FETCH_TIMEOUT_MS = 30000; // 30 seconds
+function fetchWithTimeout(url: string, options: RequestInit = {}): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  return fetch(url, { ...options, signal: controller.signal })
+    .finally(() => clearTimeout(timeoutId));
+}
+
 // ─── NextGen API Types ──────────────────────────────────────────────────────
 // Based on actual endpoints at https://nextgen.madison88.com
 
@@ -110,7 +119,7 @@ export class NextGenService {
       };
 
       // Step 1: GET /Account/Login to get anti-forgery token + cookie
-      const getPage = await fetch(`${this.baseUrl}/Account/Login`);
+      const getPage = await fetchWithTimeout(`${this.baseUrl}/Account/Login`);
       const html = await getPage.text();
       const pageCookies = extractCookies(getPage);
 
@@ -135,7 +144,7 @@ export class NextGenService {
         'Password': this.password,
       });
 
-      const loginRes = await fetch(`${this.baseUrl}/Account/Login`, {
+      const loginRes = await fetchWithTimeout(`${this.baseUrl}/Account/Login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -237,7 +246,7 @@ export class NextGenService {
       headers['Cookie'] = this.sessionCookie!;
     }
 
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    const response = await fetchWithTimeout(`${this.baseUrl}${path}`, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
@@ -256,7 +265,7 @@ export class NextGenService {
         headers['Cookie'] = this.sessionCookie!;
       }
 
-      const retryResponse = await fetch(`${this.baseUrl}${path}`, {
+      const retryResponse = await fetchWithTimeout(`${this.baseUrl}${path}`, {
         method: 'POST',
         headers,
         body: JSON.stringify(body),
@@ -294,11 +303,16 @@ export class NextGenService {
         headers['Cookie'] = this.sessionCookie!;
       }
 
-      const retryResponse = await fetch(`${this.baseUrl}${path}`, {
+      const retryResponse = await fetchWithTimeout(`${this.baseUrl}${path}`, {
         method: 'POST',
         headers,
         body: JSON.stringify(body),
       });
+
+      if (!retryResponse.ok) {
+        logger.error(`NextGen ${path} returned ${retryResponse.status} after re-login (HTML retry)`);
+        return null;
+      }
 
       const retryText = await retryResponse.text();
       if (retryText.includes('Log In - VisionPLM') || retryText.includes('<!doctype html>')) {
@@ -337,7 +351,7 @@ export class NextGenService {
       headers['Cookie'] = this.sessionCookie!;
     }
 
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    const response = await fetchWithTimeout(`${this.baseUrl}${path}`, {
       method: 'GET',
       headers,
     });
@@ -355,7 +369,7 @@ export class NextGenService {
         headers['Cookie'] = this.sessionCookie!;
       }
 
-      const retryResponse = await fetch(`${this.baseUrl}${path}`, {
+      const retryResponse = await fetchWithTimeout(`${this.baseUrl}${path}`, {
         method: 'GET',
         headers,
       });
@@ -392,10 +406,15 @@ export class NextGenService {
         headers['Cookie'] = this.sessionCookie!;
       }
 
-      const retryResponse = await fetch(`${this.baseUrl}${path}`, {
+      const retryResponse = await fetchWithTimeout(`${this.baseUrl}${path}`, {
         method: 'GET',
         headers,
       });
+
+      if (!retryResponse.ok) {
+        logger.error(`NextGen ${path} returned ${retryResponse.status} after re-login (HTML retry)`);
+        return null;
+      }
 
       const retryText = await retryResponse.text();
       if (retryText.includes('Log In - VisionPLM') || retryText.includes('<!doctype html>')) {
@@ -418,7 +437,7 @@ export class NextGenService {
       if (!loggedIn) return null;
     }
 
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    const response = await fetchWithTimeout(`${this.baseUrl}${path}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -430,7 +449,7 @@ export class NextGenService {
     if (response.status === 401 || response.status === 403) {
       const loggedIn = await this.login();
       if (!loggedIn) return null;
-      const retry = await fetch(`${this.baseUrl}${path}`, {
+      const retry = await fetchWithTimeout(`${this.baseUrl}${path}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -454,7 +473,7 @@ export class NextGenService {
       logger.warn(`NextGen postForm ${path} returned login page, re-logging in...`);
       const loggedIn = await this.login();
       if (!loggedIn) return null;
-      const retry = await fetch(`${this.baseUrl}${path}`, {
+      const retry = await fetchWithTimeout(`${this.baseUrl}${path}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -462,6 +481,7 @@ export class NextGenService {
         },
         body: body.toString(),
       });
+      if (!retry.ok) return null;
       const retryText = await retry.text();
       if (retryText.includes('Log In - VisionPLM') || retryText.includes('<!doctype html>')) return null;
       try { return JSON.parse(retryText) as T; } catch { return null; }

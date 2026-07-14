@@ -585,6 +585,62 @@ export class NextGenService {
   private async fetchAllMPOHeaders(mpoNumber?: string): Promise<any[]> {
     const PAGE_SIZE = 500;
 
+    // If we have a specific MPO number, try a direct filtered search first
+    // This is much more reliable than pagination estimation
+    if (mpoNumber) {
+      const normalizedMPO = mpoNumber.replace(/^MPO/i, '').replace(/^0+/, '');
+      const mpoWithPrefix = `MPO${normalizedMPO.padStart(6, '0')}`;
+      const mpoWithPrefixShort = `MPO${normalizedMPO}`;
+
+      // Try 1: Direct API endpoints (GetById, GetHeader) using numeric ID
+      const numericId = parseInt(normalizedMPO);
+      if (!isNaN(numericId)) {
+        for (const endpoint of ['/MaterialPurchaseOrder/GetById', '/MaterialPurchaseOrder/GetHeader']) {
+          try {
+            const result = await this.get<any>(`${endpoint}?id=${numericId}`);
+            if (result && (result.Id || result.Name)) {
+              logger.info(`MPO ${mpoNumber}: Direct ${endpoint} found result (Name: ${result.Name})`);
+              return [result];
+            }
+          } catch (e) {
+            // Try next endpoint
+          }
+        }
+      }
+
+      // Try 2: Kendo grid filter search (this is how NextGen UI search works)
+      const filterFormats = [mpoNumber, mpoWithPrefix, mpoWithPrefixShort, normalizedMPO];
+      for (const fmt of filterFormats) {
+        try {
+          const filtered = await this.post<any>('/MaterialPurchaseOrder/MPOGridRead', {
+            page: 1,
+            pageSize: 50,
+            sort: [{ field: 'Name', dir: 'desc' }],
+            filter: {
+              logic: 'or',
+              filters: [
+                { field: 'Name', operator: 'eq', value: fmt },
+                { field: 'Name', operator: 'contains', value: fmt },
+                { field: 'Comments', operator: 'contains', value: fmt },
+                { field: 'Description', operator: 'contains', value: fmt },
+                { field: 'SupplierDescription', operator: 'contains', value: fmt },
+              ],
+            },
+          });
+          const filteredItems: any[] = filtered?.Data || filtered?.data || [];
+          if (filteredItems.length > 0) {
+            logger.info(`MPO ${mpoNumber}: Direct filter search found ${filteredItems.length} results using format "${fmt}"`);
+            return filteredItems;
+          }
+        } catch (e) {
+          logger.warn(`MPO ${mpoNumber}: Filter search failed for format "${fmt}":`, e);
+        }
+      }
+
+      // If filtered search found nothing, fall through to pagination approach
+      logger.info(`MPO ${mpoNumber}: Direct filter search found no results, falling back to pagination`);
+    }
+
     // Page 1 to get total count
     const first = await this.post<any>('/MaterialPurchaseOrder/MPOGridRead', {
       page: 1,

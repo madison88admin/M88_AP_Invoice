@@ -427,6 +427,23 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     console.error('[AI Learning] Failed to log correction from edit:', learnError);
   }
 
+  // Re-validate if charge-related fields or amount were changed — PO amount comparison depends on net amount
+  const chargeFields = ['total_amount', 'bank_charges', 'freight_charges', 'additional_charges',
+    'tt_charge', 'courier_charges', 'handling_fee', 'finance_surcharge', 'setup_charge',
+    'sample_charge', 'min_order_charge', 'discount_amount', 'mpo_number', 'customer_po_number'];
+  const shouldRevalidate = chargeFields.some(f => invoiceData[f] !== undefined);
+  if (shouldRevalidate && invoice.status === 'EXCEPTION_FLAGGED') {
+    setImmediate(async () => {
+      try {
+        const { validateInvoice } = await import('./validationService');
+        await validateInvoice(invoice.id);
+        console.log('[AutoRevalidation] Completed after edit for invoice:', invoice.id);
+      } catch (error) {
+        console.error('[AutoRevalidation] Failed after edit:', error);
+      }
+    });
+  }
+
   return invoice;
 };
 

@@ -87,6 +87,11 @@ export const invoiceApi = {
   },
   schedulePayment: (id: string, paymentDate: string) => api.post(`/api/invoices/${id}/schedule-payment`, { paymentDate }),
   sendPaymentConfirmation: (id: string) => api.post(`/api/invoices/${id}/send-payment-confirmation`),
+  reExtract: async (id: string) => {
+    const res = await api.post(`/api/reprocess/${id}/re-extract`, {}, { timeout: 300000 });
+    return res;
+  },
+  reExtractBulk: (invoiceIds: string[]) => api.post('/api/reprocess/bulk-re-extract', { invoiceIds }, { timeout: 600000 }),
 };
 
 export const approvalApi = {

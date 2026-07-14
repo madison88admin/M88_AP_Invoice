@@ -1,4 +1,8 @@
 import PDFParser from 'pdf2json';
+import { execSync } from 'child_process';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { InvoiceType, InvoiceCategory, PaymentTerms, BillToEntity, OrderType, SignatoryRole, SignatureType } from '@ap-invoice/shared';
 import { parsePOReference, matchSignerToRole, TOP_10_BRANDS, isTop10Brand } from '@ap-invoice/shared';
 import { logger } from '../utils/logger';
@@ -512,6 +516,54 @@ export async function extractInvoiceFields(fileBuffer: Buffer) {
 }
 
 /**
+ * Convert PDF to PNG image using pdftoppm (poppler-utils).
+ * Returns base64-encoded image string, or null if conversion fails.
+ */
+function convertPDFToImage(fileBuffer: Buffer): string | null {
+  const tmpDir = os.tmpdir();
+  const tmpPdf = path.join(tmpDir, `invoice_${Date.now()}.pdf`);
+  const tmpImgPrefix = path.join(tmpDir, `invoice_${Date.now()}`);
+
+  try {
+    fs.writeFileSync(tmpPdf, fileBuffer);
+    logger.info(`[OCR] Converting PDF to image using pdftoppm...`);
+
+    // Convert first page to PNG at 200 DPI
+    execSync(`pdftoppm -png -r 200 -f 1 -l 1 "${tmpPdf}" "${tmpImgPrefix}"`, {
+      timeout: 30000,
+      stdio: 'pipe',
+    });
+
+    // Find the generated image file
+    const imgFile = `${tmpImgPrefix}-1.png`;
+    if (!fs.existsSync(imgFile)) {
+      // Try alternative naming
+      const files = fs.readdirSync(tmpDir).filter(f => f.startsWith(path.basename(tmpImgPrefix)));
+      if (files.length === 0) {
+        logger.error('[OCR] PDF-to-image conversion produced no output files');
+        return null;
+      }
+      const imgPath = path.join(tmpDir, files[0]);
+      const imgBuffer = fs.readFileSync(imgPath);
+      const base64 = imgBuffer.toString('base64');
+      fs.unlinkSync(imgPath);
+      return base64;
+    }
+
+    const imgBuffer = fs.readFileSync(imgFile);
+    const base64 = imgBuffer.toString('base64');
+    fs.unlinkSync(imgFile);
+    logger.info(`[OCR] PDF-to-image conversion succeeded (${(base64.length / 1024).toFixed(0)}KB base64)`);
+    return base64;
+  } catch (error) {
+    logger.error('[OCR] PDF-to-image conversion failed:', error);
+    return null;
+  } finally {
+    try { fs.unlinkSync(tmpPdf); } catch {}
+  }
+}
+
+/**
  * Try AI fallback OCR engines in order: Gemini Vision → Ollama (Qwen) → Groq (Llama)
  * Returns the first successful result with engine name, or null if all fail.
  */
@@ -542,15 +594,32 @@ async function tryAIFallbacks(
         logger.info('[OCR] Trying Ollama (Qwen) fallback with raw text...');
         const ollamaResult = await ollamaOCR.extractFromText(rawText, {});
         if (ollamaResult && (ollamaResult.vendor_name || ollamaResult.invoice_number)) {
-          logger.info('[OCR] Ollama (Qwen) fallback succeeded');
+          logger.info('[OCR] Ollama (Qwen) text fallback succeeded');
           return { engine: 'ollama', ...ollamaResult };
         }
       }
     } catch (e) {
-      logger.error('[OCR] Ollama fallback failed:', e);
+      logger.error('[OCR] Ollama text fallback failed:', e);
     }
   } else {
-    logger.warn('[OCR] Skipping Ollama/Groq — no raw text available from pdf2json');
+    logger.warn('[OCR] No raw text from pdf2json — trying PDF-to-image conversion for Ollama vision...');
+    // Convert PDF to image and try Ollama vision model
+    const imageBase64 = convertPDFToImage(fileBuffer);
+    if (imageBase64) {
+      try {
+        const ollamaOCR = (await import('./ollamaOCRService')).ollamaOCRService;
+        if (ollamaOCR.isAvailable()) {
+          logger.info('[OCR] Trying Ollama (Qwen) vision fallback with PDF image...');
+          const ollamaResult = await ollamaOCR.extractFromImage(imageBase64, {});
+          if (ollamaResult && (ollamaResult.vendor_name || ollamaResult.invoice_number)) {
+            logger.info('[OCR] Ollama (Qwen) vision fallback succeeded');
+            return { engine: 'ollama-vision', ...ollamaResult };
+          }
+        }
+      } catch (e) {
+        logger.error('[OCR] Ollama vision fallback failed:', e);
+      }
+    }
   }
 
   // 3rd fallback: Groq (Llama 3.3 70B — uses raw text)

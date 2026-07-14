@@ -253,6 +253,94 @@ export class OllamaOCRService {
     if (result.line_items && result.line_items.length > 0) score += 5;
     return score;
   }
+
+  async extractFromImage(
+    imageBase64: string,
+    options?: { vendorName?: string; invoiceTemplateType?: string }
+  ): Promise<ExtractedInvoiceData | null> {
+    if (!this.isConfigured || !this.baseUrl) {
+      logger.warn('Ollama OCR not configured — skipping image fallback');
+      return null;
+    }
+
+    try {
+      logger.info('Ollama OCR image fallback triggered — sending image to vision model');
+
+      const fewShot = options
+        ? await correctionLogService.getFewShotPrompt('', options.vendorName, options.invoiceTemplateType)
+        : '';
+
+      const prompt = (fewShot ? fewShot + '\n\n' : '') + EXTRACTION_PROMPT + '\n[Invoice image provided below — extract all fields from the image]';
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+
+      const response = await fetch(`${this.baseUrl}/api/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: this.model,
+          prompt,
+          images: [imageBase64],
+          stream: false,
+          options: {
+            temperature: 0.1,
+            num_ctx: 4096,
+            num_predict: 1024,
+          },
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        logger.error(`Ollama returned ${response.status}: ${response.statusText}`);
+        return null;
+      }
+
+      const data = await response.json() as any;
+      const text = data.response || '';
+
+      if (!text) {
+        logger.warn('Ollama OCR image returned empty content');
+        return null;
+      }
+
+      const cleaned = text
+        .replace(/```json\n?/g, '')
+        .replace(/```\n?/g, '')
+        .trim();
+
+      const extracted = JSON.parse(cleaned) as ExtractedInvoiceData;
+
+      if (extracted.total_amount) {
+        extracted.total_amount = Number(extracted.total_amount);
+        if (isNaN(extracted.total_amount)) extracted.total_amount = undefined;
+      }
+
+      if (extracted.line_items) {
+        extracted.line_items = extracted.line_items.map(li => ({
+          ...li,
+          quantity: Number(li.quantity) || 0,
+          unit_price: Number(li.unit_price) || 0,
+          total_amount: Number(li.total_amount) || 0,
+        }));
+      }
+
+      extracted.extraction_method = 'ollama-vision';
+      extracted.engine_name = 'ollama';
+      extracted.confidence = this.calculateConfidence(extracted);
+
+      logger.info(`Ollama OCR image extracted: vendor=${extracted.vendor_name}, amount=${extracted.total_amount}, confidence=${extracted.confidence}`);
+
+      return extracted;
+    } catch (error) {
+      logger.error('Ollama OCR image extraction failed:', error);
+      console.error('[OllamaOCRService] extractFromImage failed:', error);
+      return null;
+    }
+  }
 }
 
 export const ollamaOCRService = OllamaOCRService.getInstance();

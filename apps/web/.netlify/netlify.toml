@@ -1,0 +1,96 @@
+functionsDirectory = "C:\\Users\\JC\\OneDrive - Madison88\\AP Invoice\\netlify\\functions"
+functionsDirectoryOrigin = "default"
+headersOrigin = "config"
+redirectsOrigin = "config"
+plugins = []
+
+[build]
+publish = "C:\\Users\\JC\\OneDrive - Madison88\\AP Invoice\\apps\\web\\dist"
+publishOrigin = "config"
+commandOrigin = "config"
+base = "C:\\Users\\JC\\OneDrive - Madison88\\AP Invoice"
+command = "pnpm install --frozen-lockfile && pnpm build --filter @ap-invoice/web"
+functions = "C:\\Users\\JC\\OneDrive - Madison88\\AP Invoice\\netlify\\functions"
+
+[build.environment]
+NODE_VERSION = "20"
+NPM_FLAGS = "--version"
+
+[build.processing]
+
+[build.processing.css]
+
+[build.processing.html]
+
+[build.processing.images]
+
+[build.processing.js]
+
+[build.services]
+
+[functions]
+
+[functions."*"]
+
+[[headers]]
+for = "/assets/*"
+
+[headers.values]
+Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+for = "/*"
+
+[headers.values]
+X-Frame-Options = "DENY"
+X-Content-Type-Options = "nosniff"
+Referrer-Policy = "strict-origin-when-cross-origin"
+
+[[redirects]]
+from = "/api/invoices/upload*"
+to = "http://5.223.78.194/api/invoices/upload:splat"
+status = 200.0
+force = true
+
+[redirects.query]
+
+[redirects.conditions]
+
+[redirects.headers]
+X-Netlify-Timeout = "300"
+
+[[redirects]]
+from = "/api/*"
+to = "http://5.223.78.194/api/:splat"
+status = 200.0
+force = true
+
+[redirects.query]
+
+[redirects.conditions]
+
+[redirects.headers]
+
+[[redirects]]
+from = "/health/*"
+to = "http://5.223.78.194/health/:splat"
+status = 200.0
+force = true
+
+[redirects.query]
+
+[redirects.conditions]
+
+[redirects.headers]
+
+[[redirects]]
+from = "/*"
+to = "/index.html"
+status = 200.0
+force = false
+
+[redirects.query]
+
+[redirects.conditions]
+
+[redirects.headers]

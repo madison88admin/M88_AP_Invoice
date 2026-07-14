@@ -77,12 +77,16 @@ async function extractTextFromPDF(fileBuffer: Buffer): Promise<string> {
   return new Promise((resolve, reject) => {
     const pdfParser = new (PDFParser as any)(null, 1);
     
+    const safeDecode = (str: string): string => {
+      try { return decodeURIComponent(str); } catch { return str; }
+    };
+    
     pdfParser.on('pdfParser_dataReady', (pdfData: any) => {
       try {
         const text = pdfData.Pages
           .map((page: any) => 
             page.Texts
-              .map((t: any) => decodeURIComponent(t.R[0].T))
+              .map((t: any) => safeDecode(t.R[0].T))
               .join(' ')
           )
           .join('\n');
@@ -570,7 +574,7 @@ function convertPDFToImage(fileBuffer: Buffer): string | null {
 async function tryAIFallbacks(
   fileBuffer: Buffer,
   rawText: string
-): Promise<{ engine: string; vendor_name?: string; invoice_number?: string; invoice_date?: string; due_date?: string; total_amount?: number; subtotal?: number; currency?: string; po_number?: string; mpo_number?: string; brand?: string; brand_code?: string; season?: string; payment_terms?: string; ship_to?: string; sold_to?: string; qty_shipped?: number; document_type?: string; bank_name?: string; swift_code?: string; account_number?: string; bank_info?: { swift_code?: string; account_number?: string }; line_items?: any[]; bank_charges?: number; tt_charge?: number; freight_charges?: number; courier_charges?: number; handling_fee?: number; finance_surcharge?: number; tax_amount?: number; discount_amount?: number; setup_charge?: number; sample_charge?: number; min_order_charge?: number; additional_charges?: number } | null> {
+): Promise<{ engine: string; vendor_name?: string; invoice_number?: string; invoice_date?: string; due_date?: string; total_amount?: number; subtotal?: number; currency?: string; po_number?: string; mpo_number?: string; brand?: string; brand_code?: string; season?: string; payment_terms?: string; ship_to?: string; sold_to?: string; qty_shipped?: number; document_type?: string; bank_name?: string; swift_code?: string; account_number?: string; bank_info?: { swift_code?: string; account_number?: string }; line_items?: any[]; signatures?: { signatory_name: string; signatory_role?: string; signed_date?: string }[]; bank_charges?: number; tt_charge?: number; freight_charges?: number; courier_charges?: number; handling_fee?: number; finance_surcharge?: number; tax_amount?: number; discount_amount?: number; setup_charge?: number; sample_charge?: number; min_order_charge?: number; additional_charges?: number } | null> {
   // 1st fallback: Gemini Vision (sends PDF as file directly — best for visual layout)
   try {
     const geminiOCR = (await import('./geminiOCRService')).geminiOCRService;
@@ -702,6 +706,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
         (extracted as any).brand = fallbackResult.brand;
         (extracted as any).season = fallbackResult.season;
         (extracted as any).line_items = fallbackResult.line_items;
+        (extracted as any).signatures = fallbackResult.signatures;
         // Charges
         (extracted as any).subtotal = fallbackResult.subtotal;
         (extracted as any).bank_charges = fallbackResult.bank_charges;
@@ -762,6 +767,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
       (extracted as any).brand = fallbackResult.brand;
       (extracted as any).season = fallbackResult.season;
       (extracted as any).line_items = fallbackResult.line_items;
+      (extracted as any).signatures = fallbackResult.signatures;
       // Charges
       (extracted as any).subtotal = fallbackResult.subtotal;
       (extracted as any).bank_charges = fallbackResult.bank_charges;
@@ -825,7 +831,19 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
       swift_code: extracted.bank_swift,
       account_usd: extracted.bank_account,
     },
-    signatures: [] as SignatureInfo[],
+    signatures: ((extracted as any).signatures || []).map((sig: any) => {
+      const role = matchSignerToRole(sig.signatory_name) ||
+        (sig.signatory_role && Object.values(SignatoryRole).includes(sig.signatory_role.toUpperCase().replace(/ /g, '_') as any)
+          ? (sig.signatory_role.toUpperCase().replace(/ /g, '_') as SignatoryRole)
+          : SignatoryRole.COORDINATOR);
+      return {
+        signatory_name: sig.signatory_name,
+        signed_at: sig.signed_date ? new Date(sig.signed_date) : new Date(),
+        signatory_role: role,
+        signature_type: SignatureType.DIGITAL,
+        ocr_detected: true,
+      } as SignatureInfo;
+    }) as SignatureInfo[],
     raw_data: { ...extracted, ocr_engine: ocrEngine, used_gemini_vision: usedGeminiVision, material_code: poParsed.material_code, mpo_revision: poParsed.mpo_revision },
     qty_shipped: (extracted as any).qty_shipped || undefined,
     ship_to: (extracted as any).ship_to || undefined,

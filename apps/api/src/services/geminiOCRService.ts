@@ -11,6 +11,12 @@ interface ExtractedLineItem {
   item_code?: string;
 }
 
+export interface ExtractedSignature {
+  signatory_name: string;
+  signatory_role?: string;
+  signed_date?: string;
+}
+
 export interface ExtractedInvoiceData {
   vendor_name?: string;
   invoice_number?: string;
@@ -46,6 +52,7 @@ export interface ExtractedInvoiceData {
   min_order_charge?: number;
   additional_charges?: number;
   line_items?: ExtractedLineItem[];
+  signatures?: ExtractedSignature[];
   raw_text?: string;
   extraction_method?: string;
   engine_name?: string;
@@ -96,6 +103,15 @@ Fields to extract:
   - unit_price: unit price as number
   - total_amount: line total as number
   - item_code: item code if present
+- signatures: Array of signatures/stamps found on the document. Look for:
+  - Printed or handwritten names near "Signature", "Signed by", "Authorized by", "Approved by", "Prepared by", "For and on behalf of" sections
+  - Stamped names or company stamps
+  - Any name that appears to be a signatory/approver
+  Each signature should have:
+  - signatory_name: The person's name as printed/signed on the document
+  - signatory_role: Their role if stated (e.g., "Coordinator", "Purchasing Manager", "Account Holder", "Sr. Manager", "Planning Manager")
+  - signed_date: Date next to the signature if present (format: YYYY-MM-DD), null if not found
+  Extract ALL signatures visible on the document, even if only partially readable.
 
 IMPORTANT RULES:
 1. vendor_name is the SENDER of the invoice, NOT Madison 88
@@ -173,6 +189,13 @@ Example output:
       "unit_price": 0.06656,
       "total_amount": 7.99,
       "item_code": "1-292738-000-02"
+    }
+  ],
+  "signatures": [
+    {
+      "signatory_name": "Jane Doe",
+      "signatory_role": "Coordinator",
+      "signed_date": "2026-05-07"
     }
   ]
 }

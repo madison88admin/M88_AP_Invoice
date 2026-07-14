@@ -654,7 +654,7 @@ async function tryAIFallbacks(
       const ollamaOCR = (await import('./ollamaOCRService')).ollamaOCRService;
       if (ollamaOCR.isAvailable()) {
         logger.info('[OCR] Trying Ollama (Qwen) fallback with raw text...');
-        const ollamaResult = await ollamaOCR.extractFromText(rawText, {});
+        const ollamaResult = await ollamaOCR.extractFromText(rawText, { vendorName });
         if (ollamaResult && (ollamaResult.vendor_name || ollamaResult.invoice_number)) {
           logger.info('[OCR] Ollama (Qwen) text fallback succeeded');
           return { engine: 'ollama', ...ollamaResult };
@@ -672,7 +672,7 @@ async function tryAIFallbacks(
         const ollamaOCR = (await import('./ollamaOCRService')).ollamaOCRService;
         if (ollamaOCR.isAvailable()) {
           logger.info('[OCR] Trying Ollama (Qwen) vision fallback with PDF image...');
-          const ollamaResult = await ollamaOCR.extractFromImage(imageBase64, {});
+          const ollamaResult = await ollamaOCR.extractFromImage(imageBase64, { vendorName });
           if (ollamaResult && (ollamaResult.vendor_name || ollamaResult.invoice_number)) {
             logger.info('[OCR] Ollama (Qwen) vision fallback succeeded');
             return { engine: 'ollama-vision', ...ollamaResult };
@@ -690,7 +690,7 @@ async function tryAIFallbacks(
       const groqOCR = (await import('./groqOCRService')).groqOCRService;
       if (groqOCR.isAvailable()) {
         logger.info('[OCR] Trying Groq (Llama) fallback with raw text...');
-        const groqResult = await groqOCR.extractFromText(rawText, undefined);
+        const groqResult = await groqOCR.extractFromText(rawText, { vendorName } as any);
         if (groqResult && (groqResult.vendor_name || groqResult.invoice_number)) {
           logger.info('[OCR] Groq (Llama) fallback succeeded');
           return { engine: 'groq', ...groqResult };

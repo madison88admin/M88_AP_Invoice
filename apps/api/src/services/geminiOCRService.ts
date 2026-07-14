@@ -53,6 +53,11 @@ export interface ExtractedInvoiceData {
   additional_charges?: number;
   line_items?: ExtractedLineItem[];
   signatures?: ExtractedSignature[];
+  incoterm?: string;
+  exchange_rate?: number;
+  invoice_currency_original?: string;
+  is_handwritten?: boolean;
+  is_statement?: boolean;
   raw_text?: string;
   extraction_method?: string;
   engine_name?: string;
@@ -107,11 +112,18 @@ Fields to extract:
   - Printed or handwritten names near "Signature", "Signed by", "Authorized by", "Approved by", "Prepared by", "For and on behalf of" sections
   - Stamped names or company stamps
   - Any name that appears to be a signatory/approver
+  - Known signatory names: Sarah Jane Cariquitan, MJ Santiago, Maricon Alvarez, April Joy Diasanta, Pamela Amor Caoili, Mariane Eusebio, Mary Joy Yco, Maricar Tanaleon, Mary Ann Del Monte, Edwin Garcia, Glecie Yumena, Lindsey Schindler
+  - "Computer generated invoice, no signature required" → no signatures needed, skip
   Each signature should have:
   - signatory_name: The person's name as printed/signed on the document
   - signatory_role: Their role if stated (e.g., "Coordinator", "Purchasing Manager", "Account Holder", "Sr. Manager", "Planning Manager")
   - signed_date: Date next to the signature if present (format: YYYY-MM-DD), null if not found
   Extract ALL signatures visible on the document, even if only partially readable.
+- incoterm: International trade term (EXW, DAP, FOB, CIF, DDP, CFR, FCA, CPT, CIP). Look for "Incoterm", "Trade Terms" labels or standalone 3-letter codes.
+- exchange_rate: Exchange rate if mentioned (e.g., "@7.70" or "Exchange Rate: 7.70" or "settle in USD @7.70"). Number only.
+- invoice_currency_original: Original currency if different from settlement currency (e.g., invoice in HKD but settle in USD).
+- is_handwritten: true if the invoice appears to be handwritten or has very low text density (less than 200 characters). Common for small suppliers like "Kabuhayan Namin".
+- is_statement: true if the document is a statement/account statement/aging report rather than an invoice (e.g., SF Express statements). These have "STATEMENT", "Account Statement", "Aging", "Outstanding Balance", "Current Charges" labels.
 
 IMPORTANT RULES:
 1. vendor_name is the SENDER of the invoice, NOT Madison 88
@@ -197,7 +209,12 @@ Example output:
       "signatory_role": "Coordinator",
       "signed_date": "2026-05-07"
     }
-  ]
+  ],
+  "incoterm": "EXW",
+  "exchange_rate": null,
+  "invoice_currency_original": null,
+  "is_handwritten": false,
+  "is_statement": false
 }
 
 Invoice text to extract from:

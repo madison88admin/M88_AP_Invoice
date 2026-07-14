@@ -7,19 +7,29 @@
 export const AST_SINGLE_SOURCE_MODE = true;
 
 // Shared date capture regex: matches DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY, DD-MMM-YYYY,
-// DD-MMM-YY, DD MMM YYYY, DD MMM YY, YYYY-MM-DD, YYYY/MM/DD
+// DD-MMM-YY, DD MMM YYYY, DD MMM YY, YYYY-MM-DD, YYYY/MM/DD, YYYY.MM.DD, DD-MM-YYYY,
+// YYMMDD (260114), Month DD,YY
 export const DATE_CAPTURE_PATTERN =
-  `(?:\\d{1,2}[\\/\\-.]\\s*\\d{1,2}[\\/\\-.]\\s*\\d{2,4}|\\d{1,2}[\\/\\-.]\\s*[A-Za-z]{3}\\s*[\\/\\-.]\\s*\\d{2,4}|\\d{1,2}\\s+[A-Za-z]{3}\\s*,?\\s*\\d{2,4}|\\d{4}[\\/\\-.]\\d{1,2}[\\/\\-.]\\d{1,2})`;
+  `(?:\\d{1,2}[\\/\\-.]\\s*\\d{1,2}[\\/\\-.]\\s*\\d{2,4}|\\d{1,2}[\\/\\-.]\\s*[A-Za-z]{3}\\s*[\\/\\-.]\\s*\\d{2,4}|\\d{1,2}\\s+[A-Za-z]{3}\\s*,?\\s*\\d{2,4}|[A-Za-z]+\\s+\\d{1,2},?\\s*\\d{2,4}|\\d{4}[\\/\\-.]\\d{1,2}[\\/\\-.]\\d{1,2}|\\d{6}\\b)`;
 
 export const FIELD_ALIASES = {
   invoice_number: [
     'invoice no',
+    'invoice no.',
     'invoice number',
     'invoice #',
+    'invoice no',  // handles INVOICE NO: and INVOICE NO：
     'document no',
     'reference no',
     'i/v no',
+    'i/v no.',
     'pi no',
+    'pi#',
+    'p/i no',
+    'si no',
+    'd/n no',
+    'd/n no.',
+    'bill no',
     'order #',
     'ref',
     'g & f no',
@@ -51,9 +61,13 @@ export const FIELD_ALIASES = {
   due_date: [
     'due date',
     'invoice due',
+    'invoice due date',
     'payment due',
     'payment due date',
     'due by',
+    'payment due',
+    'settle',
+    'pay before',
     // Chinese labels
     '到期日期',
     '付款期限',
@@ -63,6 +77,7 @@ export const FIELD_ALIASES = {
     'credit term',
     'terms',
     'payment terms',
+    'terms of payment',
     'credit terms',
     'term',
     // Chinese labels
@@ -79,6 +94,10 @@ export const FIELD_ALIASES = {
     'amount due',
     'balance due',
     'total due',
+    'net invoice',
+    'net amount',
+    'total (usd)',
+    'total (hkd)',
     // Chinese labels
     '总计',
     '合计',
@@ -96,6 +115,9 @@ export const FIELD_ALIASES = {
     'total quantity',
     'qty shipped',
     'quantity shipped',
+    'total pcs',
+    'total pieces',
+    'total units',
     'total q',
     // Chinese labels
     '总数量',
@@ -107,10 +129,14 @@ export const FIELD_ALIASES = {
     'mpo',
     'mpo no',
     'master po',
+    'buy_mpo',
+    'rbuy_mpo',
   ],
   po_number: [
     'po',
     'po no',
+    'po#',
+    'p/o no',
     'purchase order',
     'customer po',
     // Chinese labels
@@ -118,7 +144,20 @@ export const FIELD_ALIASES = {
     '採購訂單',
     '客户订单',
     '客戶訂單',
-  ]
+  ],
+  incoterm: [
+    'exw',
+    'dap',
+    'fob',
+    'cif',
+    'ddp',
+    'cfr',
+    'fca',
+    'cpt',
+    'cip',
+    'incoterm',
+    'trade terms',
+  ],
 };
 
 export interface VendorRule {

@@ -162,15 +162,23 @@ export async function extractInvoiceFields(fileBuffer: Buffer) {
   // invoice_number — multiple patterns, prioritized by specificity
   // Must contain at least one digit to avoid matching words like "signature"
   const invoiceNumberPatterns = [
-    /INVOICE\s*NO[:\s#]*([A-Z0-9\-\/]+)/i,
-    /INVOICE\s*NUMBER[:\s#]*([A-Z0-9\-\/]+)/i,
-    /INV(?:OICE)?\s*#[:\s]*([A-Z0-9\-\/]+)/i,
-    /Invoice\s*#[:\s]*([A-Z0-9\-\/]+)/i,
-    /Bill\s*No[:\s]*([A-Z0-9\-\/]+)/i,
-    /Bill\s*Number[:\s]*([A-Z0-9\-\/]+)/i,
+    /INVOICE\s*NO[:\s#]*([A-Z0-9\-\/*]+)/i,
+    /INVOICE\s*NO[.]*[:\s#]*([A-Z0-9\-\/*]+)/i,
+    /INVOICE\s*NUMBER[:\s#]*([A-Z0-9\-\/*]+)/i,
+    /INV(?:OICE)?\s*#[:\s]*([A-Z0-9\-\/*]+)/i,
+    /Invoice\s*#[:\s]*([A-Z0-9\-\/*]+)/i,
+    /I\/V\s*NO[.]*[:\s]*([A-Z0-9\-\/*]+)/i,
+    /PI\s*No[.]*[:\s]*([A-Z0-9\-\/*]+)/i,
+    /PI#[:\s]*([A-Z0-9\-\/*]+)/i,
+    /P\/I\s*NO[:\s]*([A-Z0-9\-\/*]+)/i,
+    /SI\s*No[:\s]*([A-Z0-9\-\/*]+)/i,
+    /D\/N\s*No[.]*[:\s]*([A-Z0-9\-\/*]+)/i,
+    /Bill\s*No[:\s]*([A-Z0-9\-\/*]+)/i,
+    /Bill\s*Number[:\s]*([A-Z0-9\-\/*]+)/i,
+    /Order\s*#[:\s]*([A-Z0-9\-\/*]+)/i,
     /BILL\s*TO[:\s\.:]*[\s\n]*([A-Z]{2,4}[-\s]*\d{4,10})/i, // Invoice number after BILL TO (e.g., PCI-26018341)
-    /Ref[:\s#]*([A-Z0-9\-\/]+)/i,
-    /Reference[:\s#]*([A-Z0-9\-\/]+)/i,
+    /Ref[:\s#]*([A-Z0-9\-\/*]+)/i,
+    /Reference[:\s#]*([A-Z0-9\-\/*]+)/i,
   ];
   
   let invoice_number = '';
@@ -217,11 +225,15 @@ export async function extractInvoiceFields(fileBuffer: Buffer) {
     /INVOICE\s*DATE[:\s]*(\d{2}-[A-Z]{3}-\d{4})/i,
     /INVOICE\s*DATE[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
     /INVOICE\s*DATE[:\s]*(\d{4}-\d{2}-\d{2})/i,
+    /INVOICE\s*DATE[:\s]*(\d{4}\.\d{2}\.\d{2})/i,
+    /INVOICE\s*DATE[:\s]*(\d{2}\.\d{2}\.\d{4})/i,
+    /INVOICE\s*DATE[:\s]*([A-Z][a-z]+\s+\d{1,2},?\s*\d{2,4})/i, // Month DD,YY
     /Date[:\s]*(\d{2}-[A-Z]{3}-\d{4})/i,
     /Date[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
     /Date[:\s]*(\d{4}-\d{2}-\d{2})/i,
     /Issued\s*Date[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
     /Billing\s*Date[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
+    /(\d{6})\b/, // YYMMDD format (260114 → 2026-01-14)
     /(\d{2}-[A-Z]{3}-\d{4})/, // Fallback: find any DD-MMM-YYYY
     /(\d{1,2}\/\d{1,2}\/\d{2,4})/, // Fallback: find any DD/MM/YYYY
   ];
@@ -236,8 +248,13 @@ export async function extractInvoiceFields(fileBuffer: Buffer) {
     /DUE\s*DATE[:\s]*(\d{2}-[A-Z]{3}-\d{4})/i,
     /DUE\s*DATE[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
     /DUE\s*DATE[:\s]*(\d{4}-\d{2}-\d{2})/i,
+    /INVOICE\s*DUE\s*DATE[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
+    /INVOICE\s*DUE[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
+    /PAYMENT\s*DUE\s*DATE[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
     /Due\s*by[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
     /Payment\s*Due[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
+    /Pay\s*Before[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
+    /Settle[:\s]*(?:on|before)?[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
   ];
   let due_date = '';
   for (const pattern of dueDatePatterns) {
@@ -441,8 +458,12 @@ export async function extractInvoiceFields(fileBuffer: Buffer) {
   // bank account — multiple patterns
   const accountPatterns = [
     /A\/C#\s*([\d\-]+)\s*\(USD\)/i,
+    /A\/C\s*No[.]*[:\s]*([\d\-]+)/i,
+    /Our\s*A\/C\s*No[.]*[:\s]*([\d\-]+)/i,
     /Account\s*#[:\s]*([\d\-]+)/i,
-    /A\/C\s*No[:\s]*([\d\-]+)/i,
+    /Account\s*No[:\s]*([\d\-]+)/i,
+    /Account\s*Number[:\s]*([\d\-]+)/i,
+    /Beneficiary\s*Account[:\s]*([\d\-]+)/i,
   ];
   let bank_account = '';
   for (const pattern of accountPatterns) {
@@ -490,11 +511,43 @@ export async function extractInvoiceFields(fileBuffer: Buffer) {
   }
 
   let invoiceType = 'INVOICE';
-  if (/proforma|pro-forma|pro forma/i.test(text)) invoiceType = 'PROFORMA';
+  if (/proforma|pro-forma|pro\s*forma/i.test(text)) invoiceType = 'PROFORMA';
   else if (/commercial\s*invoice/i.test(text)) invoiceType = 'COMMERCIAL';
   else if (/sales\s*invoice/i.test(text)) invoiceType = 'SALES';
+  else if (/debit\s*note/i.test(text)) invoiceType = 'DEBIT_NOTE';
   else if (/credit\s*note/i.test(text)) invoiceType = 'CREDIT_NOTE';
-  else if (/statement|account\s*statement|aging|aged\s*balance/i.test(text)) invoiceType = 'STATEMENT';
+  else if (/account\s*statement|statement|aging|aged\s*balance/i.test(text)) invoiceType = 'STATEMENT';
+
+  // incoterm — multiple patterns
+  const incotermPatterns = [
+    /\b(EXW|DAP|FOB|CIF|DDP|CFR|FCA|CPT|CIP)\b/i,
+    /Incoterm[:\s]*([A-Z]{3})/i,
+    /Trade\s*Terms[:\s]*([A-Z]{3})/i,
+  ];
+  let incoterm = '';
+  for (const pattern of incotermPatterns) {
+    const m = text.match(pattern);
+    if (m) { incoterm = m[1].toUpperCase(); break; }
+  }
+
+  // exchange_rate — prose-based patterns (e.g., "settle in USD @7.70")
+  const exchangeRatePatterns = [
+    /@\s*([\d]+\.\d+)/i, // @7.70
+    /Exchange\s*Rate[:\s]*([\d]+\.\d+)/i,
+    /FX\s*Rate[:\s]*([\d]+\.\d+)/i,
+    /Rate[:\s]*([\d]+\.\d{3,})/i, // Rate: 7.70 (require 3+ decimals to avoid matching amounts)
+  ];
+  let exchange_rate: number | undefined;
+  for (const pattern of exchangeRatePatterns) {
+    const m = text.match(pattern);
+    if (m) { exchange_rate = parseFloat(m[1]); break; }
+  }
+
+  // is_handwritten — low text density detection
+  const is_handwritten = text.length < 200;
+
+  // is_statement — statement/aging detection
+  const is_statement = /account\s*statement|aging|aged\s*balance|outstanding\s*balance|current\s*charges/i.test(text);
 
   const result = {
     vendor_name: vendor_name,
@@ -512,7 +565,11 @@ export async function extractInvoiceFields(fileBuffer: Buffer) {
     bank_account: bank_account,
     invoice_type: invoiceType,
     tax_id: tax_id,
-    company_reg: company_reg
+    company_reg: company_reg,
+    incoterm: incoterm || undefined,
+    exchange_rate: exchange_rate,
+    is_handwritten: is_handwritten || undefined,
+    is_statement: is_statement || undefined,
   };
 
   console.log('[DEBUG] Extracted fields:', JSON.stringify(result, null, 2));
@@ -838,6 +895,10 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
           invoice_type: (fallbackResult.document_type as any) || 'INVOICE',
           tax_id: '',
           company_reg: '',
+          incoterm: (fallbackResult as any).incoterm || undefined,
+          exchange_rate: (fallbackResult as any).exchange_rate,
+          is_handwritten: (fallbackResult as any).is_handwritten || undefined,
+          is_statement: (fallbackResult as any).is_statement || undefined,
         };
         // Store extra AI-extracted fields for downstream use
         (extracted as any).qty_shipped = fallbackResult.qty_shipped;
@@ -899,6 +960,10 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
         invoice_type: (fallbackResult.document_type as any) || 'INVOICE',
         tax_id: '',
         company_reg: '',
+        incoterm: (fallbackResult as any).incoterm || undefined,
+        exchange_rate: (fallbackResult as any).exchange_rate,
+        is_handwritten: (fallbackResult as any).is_handwritten || undefined,
+        is_statement: (fallbackResult as any).is_statement || undefined,
       };
       // Store extra AI-extracted fields for downstream use
       (extracted as any).qty_shipped = fallbackResult.qty_shipped;

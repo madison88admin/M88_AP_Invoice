@@ -16,8 +16,10 @@ import {
   BrandTier,
   isTop10Brand,
   TOP_10_BRANDS,
+  UserRole,
 } from '@ap-invoice/shared';
 import prisma from '../config/database';
+import { inAppNotificationService } from './inAppNotificationService';
 
 const INCOMING_DIR = process.env.WATCHER_INCOMING_DIR || '/incoming-invoices';
 const PROCESSING_DIR = process.env.WATCHER_PROCESSING_DIR || '/incoming-invoices/processing';
@@ -116,6 +118,14 @@ async function processFile(filePath: string, fileName: string): Promise<void> {
     vendorId = undefined;
   }
 
+  // Fallback: use UNKNOWN VENDOR if no match (vendor_id is required in DB schema)
+  const UNKNOWN_VENDOR_ID = '00000000-0000-0000-0000-000000000000';
+  const effectiveVendorId = vendorId || UNKNOWN_VENDOR_ID;
+  const isVendorUnknown = !vendorId;
+
+  // Fix: ensure invoice_number is not empty (unique constraint in DB)
+  const effectiveInvoiceNumber = ocrResult.invoice_number || `SFTP-${Date.now()}`;
+
   // Step 6: Build invoice data
   const tier = determineApprovalTier(ocrResult.total_amount || 0);
   const memoParts = [
@@ -138,13 +148,12 @@ async function processFile(filePath: string, fileName: string): Promise<void> {
   // Step 7: Save to database
   let invoiceId: string | null = null;
   try {
-    const invoice = await prisma.invoice.create({
-      data: {
-        invoice_number: ocrResult.invoice_number,
+    const baseData: any = {
+        invoice_number: effectiveInvoiceNumber,
         invoice_date: ocrResult.invoice_date,
         due_date: ocrResult.due_date ? new Date(ocrResult.due_date) : null,
         invoice_received_date: new Date(),
-        vendor_id: vendorId as any,
+        vendor_id: effectiveVendorId,
         vendor_name_raw: ocrResult.vendor_name,
         total_amount: ocrResult.total_amount,
         currency: ocrResult.currency,
@@ -190,7 +199,9 @@ async function processFile(filePath: string, fileName: string): Promise<void> {
         payment_terms: ocrResult.payment_terms,
         ...(ocrResult.date_range_start ? { date_range_start: new Date(ocrResult.date_range_start) } : {}),
         ...(ocrResult.date_range_end ? { date_range_end: new Date(ocrResult.date_range_end) } : {}),
-      },
+    };
+    const invoice = await prisma.invoice.create({
+      data: baseData,
       include: { vendor: true },
     });
     invoiceId = invoice.id;
@@ -222,7 +233,7 @@ async function processFile(filePath: string, fileName: string): Promise<void> {
     });
 
     // Create exception if vendor not matched
-    if (!vendorId) {
+    if (isVendorUnknown) {
       await prisma.exception.create({
         data: {
           invoice_id: invoice.id,
@@ -231,6 +242,21 @@ async function processFile(filePath: string, fileName: string): Promise<void> {
         },
       });
     }
+
+    // Notify coordinator about new invoice
+    await inAppNotificationService.create({
+      invoice_id: invoice.id,
+      invoice_number: invoice.invoice_number,
+      vendor_name: ocrResult.vendor_name || 'Unknown',
+      title: isVendorUnknown ? 'New Invoice Needs Review' : 'New Invoice Received',
+      message: isVendorUnknown
+        ? `Invoice ${invoice.invoice_number} from "${ocrResult.vendor_name}" was auto-processed via SFTP but vendor could not be matched. Please review and assign the correct vendor.`
+        : `Invoice ${invoice.invoice_number} from ${ocrResult.vendor_name} ($${ocrResult.total_amount?.toFixed(2) || '0.00'} ${ocrResult.currency || 'USD'}) was auto-processed via SFTP and is ready for validation.`,
+      type: isVendorUnknown ? 'warning' : 'info',
+      category: 'upload',
+      target_role: UserRole.PURCHASING_COORDINATOR,
+    });
+    logger.info(`[File Watcher] Notification sent to coordinator for ${invoice.invoice_number}`);
 
     // Step 8: Auto-trigger validation
     if (vendorId && invoice.status === InvoiceStatus.RECEIVED as any) {
@@ -253,10 +279,10 @@ async function processFile(filePath: string, fileName: string): Promise<void> {
       }
     }
 
-    // No vendor match → ManualReview
-    if (!vendorId) {
+    // No vendor match → ManualReview (but invoice is saved in DB with EXCEPTION_FLAGGED)
+    if (isVendorUnknown) {
       safeMove(processingPath, MANUAL_REVIEW_DIR);
-      logger.info(`[File Watcher] ${fileName} → ManualReview (vendor not found)`);
+      logger.info(`[File Watcher] ${fileName} → ManualReview (vendor not found, invoice saved as EXCEPTION_FLAGGED)`);
       return;
     }
 

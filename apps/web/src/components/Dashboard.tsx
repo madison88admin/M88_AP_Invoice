@@ -2624,11 +2624,29 @@ export default function Dashboard() {
                   { label: 'Due Date', field: 'due_date', type: 'date' },
                   { label: 'Amount', field: 'total_amount', type: 'number' },
                   { label: 'Currency', field: 'currency', type: 'text' },
-                  { label: 'Document Type', field: 'invoice_type', type: 'text' },
+                  { label: 'Document Type', field: 'invoice_type', type: 'select', options: [
+                    { value: '', label: '— Select —' },
+                    { value: 'INVOICE', label: 'Invoice' },
+                    { value: 'PROFORMA', label: 'Proforma' },
+                    { value: 'COMMERCIAL', label: 'Commercial Invoice' },
+                    { value: 'SALES', label: 'Sales Invoice' },
+                    { value: 'STATEMENT', label: 'Statement' },
+                    { value: 'PREPAID', label: 'Prepaid' },
+                    { value: 'PROTO_SAMPLE', label: 'Proto Sample' },
+                  ] },
                   { label: 'Brand', field: 'brand', type: 'text' },
-                  { label: 'Brand Tier', field: 'brand_tier', type: 'text' },
+                  { label: 'Brand Tier', field: 'brand_tier', type: 'select', options: [
+                    { value: '', label: '— Select —' },
+                    { value: 'TOP_10', label: 'Top 10' },
+                    { value: 'OTHER', label: 'Other' },
+                  ] },
                   { label: 'Season', field: 'season', type: 'text' },
-                  { label: 'Order Type', field: 'order_type', type: 'text' },
+                  { label: 'Order Type', field: 'order_type', type: 'select', options: [
+                    { value: '', label: '— Select —' },
+                    { value: 'BULK', label: 'Bulk' },
+                    { value: 'SMS', label: 'SMS' },
+                    { value: 'SAMPLE', label: 'Sample' },
+                  ] },
                   { label: 'PO Number', field: 'customer_po_number', type: 'text' },
                   { label: 'MPO Number', field: 'mpo_number', type: 'text' },
                   { label: 'QTY SHIPPED', field: 'qty_shipped', type: 'number' },
@@ -2647,23 +2665,53 @@ export default function Dashboard() {
                   { label: 'Exchange Rate', field: 'exchange_rate_to_usd', type: 'number' },
                   { label: 'Original Currency', field: 'invoice_currency_original', type: 'text' },
                   { label: 'Incoterm', field: 'incoterm', type: 'text' },
-                  { label: 'Category', field: 'category', type: 'text' },
-                  { label: 'Bill To Entity', field: 'bill_to_entity', type: 'text' },
+                  { label: 'Category', field: 'category', type: 'select', options: [
+                    { value: '', label: '— Select —' },
+                    { value: 'TRIMS', label: 'Trims' },
+                    { value: 'YARN', label: 'Yarn' },
+                    { value: 'SAMPLE_CHARGES', label: 'Sample Charges' },
+                    { value: 'SHIPPING_FREIGHT', label: 'Shipping / Freight' },
+                    { value: 'LAB_TESTING', label: 'Lab Testing' },
+                    { value: 'FACTORY', label: 'Factory' },
+                    { value: 'FACTORY_AUDIT', label: 'Factory Audit' },
+                    { value: 'PROFESSIONAL_FEE', label: 'Professional Fee' },
+                    { value: 'SMS', label: 'SMS' },
+                    { value: 'CONSULTATION', label: 'Consultation' },
+                    { value: 'OTHER', label: 'Other' },
+                  ] },
+                  { label: 'Bill To Entity', field: 'bill_to_entity', type: 'select', options: [
+                    { value: '', label: '— Select —' },
+                    { value: 'MADISON_88_LTD', label: 'Madison 88 Ltd' },
+                    { value: 'MADISON_88_HK_LIMITED', label: 'Madison 88 HK Limited' },
+                  ] },
                   { label: 'Date Range Start', field: 'date_range_start', type: 'date' },
                   { label: 'Date Range End', field: 'date_range_end', type: 'date' },
                   { label: 'Priority Pay Date', field: 'priority_pay_date', type: 'date' },
-                ].map(({ label, field, type }) => (
+                ].map(({ label, field, type, options }: any) => (
                   <div key={field}>
                     <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
                       {label}
                     </label>
-                    <input
-                      type={type}
-                      value={editFormData[field] || ''}
-                      onChange={(e) => handleEditChange(field, e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
-                      style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
-                    />
+                    {type === 'select' ? (
+                      <select
+                        value={editFormData[field] || ''}
+                        onChange={(e) => handleEditChange(field, e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                        style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                      >
+                        {options.map((opt: any) => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type={type}
+                        value={editFormData[field] || ''}
+                        onChange={(e) => handleEditChange(field, e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                        style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                      />
+                    )}
                   </div>
                 ))}
 

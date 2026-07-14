@@ -96,10 +96,23 @@ export class NextGenService {
   /** Login to NextGen via ASP.NET Forms Auth and store session cookies */
   private async login(): Promise<boolean> {
     try {
+      // Helper: extract cookies from a Response object (with fallback for older Node.js)
+      const extractCookies = (res: Response): string[] => {
+        // Preferred: getSetCookie() (Node.js v20+)
+        if (typeof res.headers.getSetCookie === 'function') {
+          return res.headers.getSetCookie() || [];
+        }
+        // Fallback: parse raw 'set-cookie' header (splits on comma, but careful with expires dates)
+        const raw = res.headers.get('set-cookie');
+        if (!raw) return [];
+        // Split on comma followed by a known cookie attribute pattern
+        return raw.split(/,(?=[^;]+=[^;]+)/g).map(c => c.trim());
+      };
+
       // Step 1: GET /Account/Login to get anti-forgery token + cookie
       const getPage = await fetch(`${this.baseUrl}/Account/Login`);
       const html = await getPage.text();
-      const pageCookies = getPage.headers.getSetCookie?.() || [];
+      const pageCookies = extractCookies(getPage);
 
       // Extract __RequestVerificationToken from HTML
       const tokenRegex = /name="__RequestVerificationToken"[^>]*value="([^"]+)"/;
@@ -132,7 +145,7 @@ export class NextGenService {
         redirect: 'manual',
       });
 
-      const loginCookies = loginRes.headers.getSetCookie?.() || [];
+      const loginCookies = extractCookies(loginRes);
 
       // Combine anti-forgery + auth cookies (both needed for API calls)
       const allCookies = [
@@ -232,7 +245,7 @@ export class NextGenService {
 
     // If 401/403, session expired — re-login and retry once
     if (response.status === 401 || response.status === 403) {
-      logger.warn(`NextGen session expired for ${path}, re-logging in...`);
+      logger.warn(`NextGen session expired for ${path} (status ${response.status}), re-logging in...`);
       const loggedIn = await this.login();
       if (!loggedIn) return null;
 
@@ -254,7 +267,12 @@ export class NextGenService {
         return null;
       }
 
-      return retryResponse.json() as Promise<T>;
+      const retryText = await retryResponse.text();
+      if (retryText.includes('Log In - VisionPLM') || retryText.includes('<!doctype html>')) {
+        logger.error(`NextGen ${path} still returning login page after re-login`);
+        return null;
+      }
+      try { return JSON.parse(retryText) as T; } catch { return null; }
     }
 
     if (!response.ok) {
@@ -262,7 +280,35 @@ export class NextGenService {
       return null;
     }
 
-    return response.json() as Promise<T>;
+    // Detect login page redirect (200 with HTML instead of JSON)
+    const responseText = await response.text();
+    if (responseText.includes('Log In - VisionPLM') || responseText.includes('<!doctype html>')) {
+      logger.warn(`NextGen ${path} returned login page (session invalid), re-logging in...`);
+      const loggedIn = await this.login();
+      if (!loggedIn) return null;
+
+      if (this.sessionCookie!.startsWith('Bearer ') || this.sessionCookie!.startsWith('Basic ')) {
+        headers['Authorization'] = this.sessionCookie!;
+        delete headers['Cookie'];
+      } else {
+        headers['Cookie'] = this.sessionCookie!;
+      }
+
+      const retryResponse = await fetch(`${this.baseUrl}${path}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      });
+
+      const retryText = await retryResponse.text();
+      if (retryText.includes('Log In - VisionPLM') || retryText.includes('<!doctype html>')) {
+        logger.error(`NextGen ${path} still returning login page after re-login`);
+        return null;
+      }
+      try { return JSON.parse(retryText) as T; } catch { return null; }
+    }
+
+    try { return JSON.parse(responseText) as T; } catch { return null; }
   }
 
   /** GET from NextGen direct read endpoints */
@@ -319,7 +365,12 @@ export class NextGenService {
         return null;
       }
 
-      return retryResponse.json() as Promise<T>;
+      const retryText = await retryResponse.text();
+      if (retryText.includes('Log In - VisionPLM') || retryText.includes('<!doctype html>')) {
+        logger.error(`NextGen ${path} still returning login page after re-login`);
+        return null;
+      }
+      try { return JSON.parse(retryText) as T; } catch { return null; }
     }
 
     if (!response.ok) {
@@ -327,7 +378,34 @@ export class NextGenService {
       return null;
     }
 
-    return response.json() as Promise<T>;
+    // Detect login page redirect (200 with HTML instead of JSON)
+    const responseText = await response.text();
+    if (responseText.includes('Log In - VisionPLM') || responseText.includes('<!doctype html>')) {
+      logger.warn(`NextGen ${path} returned login page (session invalid), re-logging in...`);
+      const loggedIn = await this.login();
+      if (!loggedIn) return null;
+
+      if (this.sessionCookie!.startsWith('Bearer ') || this.sessionCookie!.startsWith('Basic ')) {
+        headers['Authorization'] = this.sessionCookie!;
+        delete headers['Cookie'];
+      } else {
+        headers['Cookie'] = this.sessionCookie!;
+      }
+
+      const retryResponse = await fetch(`${this.baseUrl}${path}`, {
+        method: 'GET',
+        headers,
+      });
+
+      const retryText = await retryResponse.text();
+      if (retryText.includes('Log In - VisionPLM') || retryText.includes('<!doctype html>')) {
+        logger.error(`NextGen ${path} still returning login page after re-login`);
+        return null;
+      }
+      try { return JSON.parse(retryText) as T; } catch { return null; }
+    }
+
+    try { return JSON.parse(responseText) as T; } catch { return null; }
   }
 
   /** POST form-encoded data to NextGen endpoints */
@@ -361,7 +439,9 @@ export class NextGenService {
         body: body.toString(),
       });
       if (!retry.ok) return null;
-      return retry.json() as Promise<T>;
+      const retryText = await retry.text();
+      if (retryText.includes('Log In - VisionPLM') || retryText.includes('<!doctype html>')) return null;
+      try { return JSON.parse(retryText) as T; } catch { return null; }
     }
 
     if (!response.ok) {
@@ -369,7 +449,25 @@ export class NextGenService {
       return null;
     }
 
-    return response.json() as Promise<T>;
+    const responseText = await response.text();
+    if (responseText.includes('Log In - VisionPLM') || responseText.includes('<!doctype html>')) {
+      logger.warn(`NextGen postForm ${path} returned login page, re-logging in...`);
+      const loggedIn = await this.login();
+      if (!loggedIn) return null;
+      const retry = await fetch(`${this.baseUrl}${path}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Cookie': this.sessionCookie!,
+        },
+        body: body.toString(),
+      });
+      const retryText = await retry.text();
+      if (retryText.includes('Log In - VisionPLM') || retryText.includes('<!doctype html>')) return null;
+      try { return JSON.parse(retryText) as T; } catch { return null; }
+    }
+
+    try { return JSON.parse(responseText) as T; } catch { return null; }
   }
 
   // ─── PO Mapping ─────────────────────────────────────────────────────────────
@@ -586,29 +684,14 @@ export class NextGenService {
     const PAGE_SIZE = 500;
 
     // If we have a specific MPO number, try a direct filtered search first
-    // This is much more reliable than pagination estimation
+    // Note: NextGen's MPOGridRead ignores Kendo filters server-side, so this may not work
+    // but it's worth trying as it would be much faster than pagination
     if (mpoNumber) {
       const normalizedMPO = mpoNumber.replace(/^MPO/i, '').replace(/^0+/, '');
       const mpoWithPrefix = `MPO${normalizedMPO.padStart(6, '0')}`;
       const mpoWithPrefixShort = `MPO${normalizedMPO}`;
 
-      // Try 1: Direct API endpoints (GetById, GetHeader) using numeric ID
-      const numericId = parseInt(normalizedMPO);
-      if (!isNaN(numericId)) {
-        for (const endpoint of ['/MaterialPurchaseOrder/GetById', '/MaterialPurchaseOrder/GetHeader']) {
-          try {
-            const result = await this.get<any>(`${endpoint}?id=${numericId}`);
-            if (result && (result.Id || result.Name)) {
-              logger.info(`MPO ${mpoNumber}: Direct ${endpoint} found result (Name: ${result.Name})`);
-              return [result];
-            }
-          } catch (e) {
-            // Try next endpoint
-          }
-        }
-      }
-
-      // Try 2: Kendo grid filter search (this is how NextGen UI search works)
+      // Try: Kendo grid filter search (may work on some NextGen versions)
       const filterFormats = [mpoNumber, mpoWithPrefix, mpoWithPrefixShort, normalizedMPO];
       for (const fmt of filterFormats) {
         try {
@@ -627,18 +710,25 @@ export class NextGenService {
               ],
             },
           });
+          // Verify the filter actually worked (server may ignore filters)
           const filteredItems: any[] = filtered?.Data || filtered?.data || [];
-          if (filteredItems.length > 0) {
-            logger.info(`MPO ${mpoNumber}: Direct filter search found ${filteredItems.length} results using format "${fmt}"`);
-            return filteredItems;
+          if (filteredItems.length > 0 && filteredItems.length < 500) {
+            // Check if results actually match (filter wasn't ignored)
+            const hasMatch = filteredItems.some((i: any) =>
+              i.Name === mpoNumber || i.Name === mpoWithPrefix ||
+              i.Name === mpoWithPrefixShort || i.Name?.includes(normalizedMPO)
+            );
+            if (hasMatch) {
+              logger.info(`MPO ${mpoNumber}: Filter search found ${filteredItems.length} results using "${fmt}"`);
+              return filteredItems;
+            }
           }
         } catch (e) {
-          logger.warn(`MPO ${mpoNumber}: Filter search failed for format "${fmt}":`, e);
+          // Fall through to pagination
         }
       }
 
-      // If filtered search found nothing, fall through to pagination approach
-      logger.info(`MPO ${mpoNumber}: Direct filter search found no results, falling back to pagination`);
+      logger.info(`MPO ${mpoNumber}: Filter search ineffective, using pagination`);
     }
 
     // Page 1 to get total count
@@ -689,9 +779,9 @@ export class NextGenService {
 
     logger.info(`MPO pagination: total=${total}, totalPages=${totalPages}, mpoNum=${mpoNum}, startPage=${startPage}, firstItem=${firstItems[0]?.Name}`);
 
-    // Fetch more pages around estimated position for safety (expand to 10 pages)
+    // Fetch more pages around estimated position for safety (expand to 15 pages)
     const pages = new Set<number>();
-    for (let p = Math.max(1, startPage - 3); p <= Math.min(totalPages, startPage + 6); p++) pages.add(p);
+    for (let p = Math.max(1, startPage - 5); p <= Math.min(totalPages, startPage + 10); p++) pages.add(p);
 
     const results: any[] = [];
     for (const p of pages) {

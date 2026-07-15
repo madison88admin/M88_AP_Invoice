@@ -104,7 +104,7 @@ export class OllamaFineTuneService {
       '--learning-rate', String(learningRate),
     ];
 
-    const python = process.env.PYTHON_PATH || 'python';
+    const python = process.env.PYTHON_PATH || 'python3';
     logger.info(`Starting fine-tuning job ${jobId}: ${python} ${args.join(' ')}`);
 
     const child = spawn(python, args, {

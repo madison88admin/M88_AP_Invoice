@@ -433,9 +433,13 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
       }
     }
     if (Object.keys(correctedFields).length > 0) {
+      const rawTextForLearning = existing.ocr_raw_data
+        ? JSON.stringify(existing.ocr_raw_data)
+        : undefined;
       await fieldDecisionEngine.saveCorrection({
         invoice_id: invoice.id,
         vendor_name: existing.vendor_name_raw || invoice.vendor_name_raw || undefined,
+        raw_text: rawTextForLearning,
         original_fields: originalFields,
         corrected_fields: correctedFields,
         note: 'Auto-logged from dashboard edit',

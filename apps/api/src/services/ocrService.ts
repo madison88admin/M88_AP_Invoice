@@ -918,7 +918,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
       brand_code: aiResult.brand_code || '',
       payment_terms: aiResult.payment_terms || '',
       bank_swift: aiResult.swift_code || aiResult.bank_info?.swift_code || '',
-      bank_account: aiResult.account_number || aiResult.bank_info?.account_number || '',
+      bank_account: aiResult.account_number || (aiResult.bank_info as any)?.account_usd || aiResult.bank_info?.account_number || '',
       invoice_type: mapDocumentType((aiResult as any).document_type) as any,
       tax_id: '',
       company_reg: '',

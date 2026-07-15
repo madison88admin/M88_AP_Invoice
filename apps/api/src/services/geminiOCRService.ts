@@ -127,10 +127,13 @@ Fields to extract:
 
 IMPORTANT RULES:
 1. vendor_name is the SENDER of the invoice, NOT Madison 88
-2. For mpo_number: look in "Customer PO" or "CUSTOMER PO" field
+2. For mpo_number: look in "Customer PO", "CUSTOMER PO", "PO Number", "Customer PO No", or "Order No" field
    - Pattern: "TNF F26 JAN BUY_MPO15371_MDDC_..." → extract "MPO15371"
    - Pattern: "MPO015713" → extract "MPO015713"
-   - Regex: /MPO(\d+)/i
+   - Pattern: "MPO15767" → extract "MPO15767"
+   - Pattern: just "15767" in Customer PO field → extract "MPO15767"
+   - Regex: /MPO(\d+)/i or if only digits found, prefix with "MPO"
+   - If no MPO number is found, return null (do NOT make one up)
 3. total_amount must be a NUMBER only (e.g. 37.94 not "$37.94")
 4. For line_items: extract EVERY line item row from the invoice table. Each row has:
    - description (item description text)
@@ -140,7 +143,7 @@ IMPORTANT RULES:
    - item_code (item code if present, e.g., "SA10047935", "M5PG*")
    Do not skip line items. If quantity looks like a unit price, re-check the column.
 5. For bank details: look for sections labeled "Bank Details", "Payment Information", "Remittance", "Beneficiary Bank", or similar. Extract bank_name, swift_code, and account_number from there.
-6. For qty_shipped: if there is a total quantity field, use that. Otherwise, sum the quantities from all line items.
+6. For qty_shipped: if there is a total quantity field (e.g., "Total Qty", "Total Quantity", "Total PCS"), use that. Otherwise, sum the quantities from all line items. Always return as a number, never null if any quantity info exists.
 7. For document_type: check if the document says "INVOICE", "PROFORMA INVOICE", "COMMERCIAL INVOICE", "CREDIT NOTE", "STATEMENT", etc.
 8. For charges: extract ALL charges separately. Look for lines labeled:
    - "Bank Charge", "Bank Charges", "BANK CHARGE" → bank_charges

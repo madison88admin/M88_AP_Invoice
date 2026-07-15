@@ -221,7 +221,7 @@ async function processFile(filePath: string, fileName: string): Promise<void> {
         ocr_raw_data: ocrResult as any,
         bank_name: (ocrResult as any).bank_info?.bank_name || (ocrResult as any).bank_name || undefined,
         swift_code: (ocrResult as any).bank_info?.swift_code || (ocrResult as any).swift_code || undefined,
-        account_number: (ocrResult as any).bank_info?.account_number || (ocrResult as any).account_number || undefined,
+        account_number: (ocrResult as any).bank_info?.account_usd || (ocrResult as any).bank_info?.account_number || (ocrResult as any).account_number || (ocrResult as any).bank_account || undefined,
         qb_memo: qbMemo,
         qb_account_class: ocrResult.qb_account_class,
         status: (vendorId ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,

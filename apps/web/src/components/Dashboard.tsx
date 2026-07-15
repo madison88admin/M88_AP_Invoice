@@ -145,6 +145,7 @@ export default function Dashboard() {
     search: undefined as string | undefined,
     dateFrom: undefined as string | undefined,
     dateTo: undefined as string | undefined,
+    agingBucket: undefined as 'current' | '1-30' | '31-60' | '60+' | undefined,
   });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -266,6 +267,30 @@ export default function Dashboard() {
       const invDate = new Date(inv.invoice_date);
       if (filters.dateFrom && invDate < new Date(filters.dateFrom)) return false;
       if (filters.dateTo && invDate > new Date(filters.dateTo)) return false;
+    }
+    if (filters.agingBucket) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const unpaidStatuses: InvoiceStatus[] = [
+        InvoiceStatus.PENDING_COORDINATOR, InvoiceStatus.PENDING_MANAGER,
+        InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER, InvoiceStatus.PENDING_MLO_PLANNING_MANAGER,
+        InvoiceStatus.PENDING_SR_MANAGER, InvoiceStatus.PENDING_POLLY,
+        InvoiceStatus.PENDING_ACCOUNTING, InvoiceStatus.APPROVED,
+        InvoiceStatus.POSTED_TO_QB, InvoiceStatus.PAYMENT_SCHEDULED,
+        InvoiceStatus.VALIDATION_PENDING, InvoiceStatus.ON_HOLD, InvoiceStatus.EXCEPTION_FLAGGED,
+      ];
+      if (!unpaidStatuses.includes(inv.status as InvoiceStatus)) return false;
+      if (!inv.due_date) {
+        if (filters.agingBucket !== 'current') return false;
+      } else {
+        const dueDate = new Date(inv.due_date);
+        dueDate.setHours(0, 0, 0, 0);
+        const diffDays = Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
+        if (filters.agingBucket === 'current' && diffDays > 0) return false;
+        if (filters.agingBucket === '1-30' && (diffDays <= 0 || diffDays > 30)) return false;
+        if (filters.agingBucket === '31-60' && (diffDays <= 30 || diffDays > 60)) return false;
+        if (filters.agingBucket === '60+' && diffDays <= 60) return false;
+      }
     }
     return true;
   });
@@ -1803,7 +1828,7 @@ export default function Dashboard() {
                   />
                 </div>
                 <button
-                  onClick={() => setFilters({ status: undefined, category: undefined, type: undefined, brand: undefined, brand_code: undefined, search: undefined, dateFrom: undefined, dateTo: undefined })}
+                  onClick={() => setFilters({ status: undefined, category: undefined, type: undefined, brand: undefined, brand_code: undefined, search: undefined, dateFrom: undefined, dateTo: undefined, agingBucket: undefined })}
                   disabled={activeFilterCount === 0}
                   className="h-9 w-full md:w-auto px-4 rounded-full transition-colors text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed"
                   style={activeFilterCount > 0
@@ -1820,9 +1845,16 @@ export default function Dashboard() {
 
           {/* Invoice Table — hidden from SUPERADMIN (system maintenance only) */}
           {user?.role !== 'SUPERADMIN' && (
-          <div className="rounded-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.25)]" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+          <div id="invoice-list-section" className="rounded-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.25)]" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
             <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
-              <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Invoices</h2>
+              <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
+                Invoices
+                {filters.agingBucket && (
+                  <span className="ml-2 text-xs font-normal" style={{ color: 'var(--accent-purple)' }}>
+                    · {filters.agingBucket === 'current' ? 'Current (not yet due)' : filters.agingBucket === '1-30' ? '1–30 days overdue' : filters.agingBucket === '31-60' ? '31–60 days overdue' : '60+ days overdue'}
+                  </span>
+                )}
+              </h2>
               <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{displayedInvoices.length} records</span>
             </div>
             <InvoiceTable
@@ -1983,7 +2015,11 @@ export default function Dashboard() {
                         style={{ color: 'var(--accent-purple)' }}
                         onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-lime)'; }}
                         onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--accent-purple)'; }}
-                        onClick={() => setFilters({ ...filters, status: undefined })}
+                        onClick={() => {
+                          const bucketMap = ['current', '1-30', '31-60', '60+'] as const;
+                          setFilters({ ...filters, agingBucket: bucketMap[i] });
+                          document.getElementById('invoice-list-section')?.scrollIntoView({ behavior: 'smooth' });
+                        }}
                       >
                         View →
                       </button>

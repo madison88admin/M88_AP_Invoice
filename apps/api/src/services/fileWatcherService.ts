@@ -108,6 +108,20 @@ async function processFile(filePath: string, fileName: string): Promise<void> {
     return;
   }
 
+  // Also check DB directly for existing invoice_number to prevent unique constraint errors
+  if (ocrResult.invoice_number) {
+    const existing = await prisma.invoice.findFirst({
+      where: { invoice_number: ocrResult.invoice_number },
+      select: { id: true },
+    });
+    if (existing) {
+      logger.info(`[File Watcher] Duplicate invoice_number "${ocrResult.invoice_number}" already in DB: ${fileName}`);
+      safeMove(processingPath, DUPLICATES_DIR);
+      await createAuditLog(existing.id, 'WATCHER_DUPLICATE', `Duplicate invoice_number ${ocrResult.invoice_number} for ${fileName}`);
+      return;
+    }
+  }
+
   // Step 5: Vendor matching (with auto-create)
   let vendorId: string | undefined;
   let autoCreatedVendor = false;

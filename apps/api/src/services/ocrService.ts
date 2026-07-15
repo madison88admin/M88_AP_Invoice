@@ -27,6 +27,28 @@ export interface BankInfo {
   intermediary_bank_swift?: string;
 }
 
+// Map AI-returned document_type strings to valid InvoiceType enum values
+const DOCUMENT_TYPE_MAP: Record<string, string> = {
+  INVOICE: 'INVOICE',
+  COMMERCIAL_INVOICE: 'COMMERCIAL',
+  COMMERCIAL: 'COMMERCIAL',
+  PROFORMA: 'PROFORMA',
+  PRO_FORMA: 'PROFORMA',
+  SALES: 'SALES',
+  SALES_INVOICE: 'SALES',
+  STATEMENT: 'STATEMENT',
+  DEBIT_NOTE: 'INVOICE',
+  CREDIT_NOTE: 'INVOICE',
+  PREPAID: 'PREPAID',
+  PROTO_SAMPLE: 'PROTO_SAMPLE',
+};
+
+function mapDocumentType(docType: string | undefined): string {
+  if (!docType) return 'INVOICE';
+  const normalized = docType.toUpperCase().trim();
+  return DOCUMENT_TYPE_MAP[normalized] || 'INVOICE';
+}
+
 export interface SignatureInfo {
   signatory_name: string;
   signed_at?: Date;
@@ -897,7 +919,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
       payment_terms: aiResult.payment_terms || '',
       bank_swift: aiResult.swift_code || aiResult.bank_info?.swift_code || '',
       bank_account: aiResult.account_number || aiResult.bank_info?.account_number || '',
-      invoice_type: (aiResult as any).document_type || 'INVOICE',
+      invoice_type: mapDocumentType((aiResult as any).document_type) as any,
       tax_id: '',
       company_reg: '',
       incoterm: (aiResult as any).incoterm || undefined,

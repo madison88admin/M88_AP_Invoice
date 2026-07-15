@@ -19,6 +19,7 @@ import { smartRetry } from '../services/smartRetry';
 import { runSelfValidation } from '../services/selfValidation';
 import { validateAgainstVendorHistory } from '../services/vendorHistoryValidator';
 import { activeLearningService, vendorTemplateService } from '../services/continuousLearningService';
+import { detectMultiInvoice, splitPdfByPageRanges } from '../services/multiInvoiceDetector';
 import crypto from 'crypto';
 import { createChildLogger } from '../utils/logger';
 
@@ -194,16 +195,18 @@ export const uploadInvoice = async (
   }
 };
 
-export const uploadMadisonInvoice = async (
+// Internal: process a single invoice PDF (called directly for multi-invoice splits)
+async function processSingleInvoice(
   req: Request,
   res: Response,
-  next: NextFunction
-) => {
+  next: NextFunction,
+  requestId?: string
+) {
   // FIX: Add request correlation ID for debugging
-  const requestId = crypto.randomUUID();
-  const logger = createChildLogger(`extraction:${requestId}`);
+  const reqId = requestId || crypto.randomUUID();
+  const logger = createChildLogger(`extraction:${reqId}`);
 
-  logger.info(`[${requestId}] Upload endpoint started`, {
+  logger.info(`[${reqId}] Upload endpoint started`, {
     fileName: req.file?.originalname,
     contentType: req.headers['content-type'],
   });
@@ -213,14 +216,14 @@ export const uploadMadisonInvoice = async (
 
   try {
     if (!req.file) {
-      logger.error(`[${requestId}] No file uploaded`);
+      logger.error(`[${reqId}] No file uploaded`);
       throw new AppError('No file uploaded', 400);
     }
 
     const fileBuffer = req.file.buffer;
     const mimeType = req.file.mimetype;
 
-    logger.info(`[${requestId}] File received`, {
+    logger.info(`[${reqId}] File received`, {
       fileSize: fileBuffer.length,
       mimeType: mimeType,
     });
@@ -232,7 +235,7 @@ export const uploadMadisonInvoice = async (
     const startTime = Date.now();
     const madisonRawResult = await extractMadisonInvoiceFields(fileBuffer);
 
-    logger.info(`[${requestId}] Madison extraction completed`, {
+    logger.info(`[${reqId}] Madison extraction completed`, {
       status: madisonRawResult.status || 'unknown',
       duration_ms: Date.now() - startTime,
     });
@@ -872,7 +875,98 @@ export const uploadMadisonInvoice = async (
       debug: debugLogs,
     });
   } catch (error) {
-    console.error('[DEBUG] uploadMadisonInvoice error:', error);
+    console.error('[DEBUG] processSingleInvoice error:', error);
+    next(error);
+  }
+}
+
+// ─── Public upload endpoint with multi-invoice detection ───
+export const uploadMadisonInvoice = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  const requestId = crypto.randomUUID();
+  const logger = createChildLogger(`extraction:${requestId}`);
+
+  try {
+    if (!req.file) {
+      throw new AppError('No file uploaded', 400);
+    }
+
+    const fileBuffer = req.file.buffer;
+    const mimeType = req.file.mimetype;
+
+    // ─── Multi-invoice detection ───
+    if (mimeType === 'application/pdf' || req.file.originalname.toLowerCase().endsWith('.pdf')) {
+      try {
+        const detection = await detectMultiInvoice(fileBuffer);
+        if (detection.isMultiInvoice && detection.invoiceCount > 1) {
+          console.log(`[MultiInvoice] Detected ${detection.invoiceCount} invoices in PDF — splitting...`);
+          logger.info(`[${requestId}] Multi-invoice PDF detected: ${detection.invoiceCount} invoices`);
+
+          const splitBuffers = await splitPdfByPageRanges(fileBuffer, detection.pageRanges);
+          const allResults: any[] = [];
+
+          for (let i = 0; i < splitBuffers.length; i++) {
+            console.log(`[MultiInvoice] Processing invoice ${i + 1}/${splitBuffers.length}...`);
+            try {
+              const mockReq = {
+                file: { buffer: splitBuffers[i], originalname: `split_${i + 1}.pdf`, mimetype: mimeType },
+                user: (req as any).user,
+                headers: req.headers,
+                body: req.body,
+              } as any;
+
+              let splitResultData: any = null;
+              let splitResultError: string | null = null;
+
+              const mockRes = {
+                status: () => mockRes,
+                json: (data: any) => { splitResultData = data; return mockRes; },
+              } as any;
+
+              const mockNext = (err?: any) => {
+                if (err) splitResultError = err.message || String(err);
+              };
+
+              await processSingleInvoice(mockReq, mockRes, mockNext, `${requestId}_split${i + 1}`);
+
+              if (splitResultError) {
+                allResults.push({ success: false, error: splitResultError, split_index: i });
+              } else if (splitResultData) {
+                allResults.push({ success: true, split_index: i, ...splitResultData });
+              }
+            } catch (splitErr: any) {
+              console.error(`[MultiInvoice] Error processing split ${i + 1}:`, splitErr);
+              allResults.push({ success: false, error: splitErr.message || String(splitErr), split_index: i });
+            }
+          }
+
+          return res.status(200).json({
+            success: true,
+            is_multi_invoice: true,
+            invoice_count: allResults.length,
+            multi_invoice_detection: {
+              invoice_count: detection.invoiceCount,
+              page_ranges: detection.pageRanges.map(r => ({
+                pages: `${r.startPage + 1}-${r.endPage + 1}`,
+                invoice_number: r.invoiceNumber,
+                vendor_name: r.vendorName,
+                amount: r.amount,
+              })),
+            },
+            results: allResults,
+          });
+        }
+      } catch (detectErr) {
+        console.warn('[MultiInvoice] Detection failed, processing as single invoice:', detectErr);
+      }
+    }
+
+    // Single invoice — process normally
+    return processSingleInvoice(req, res, next, requestId);
+  } catch (error) {
     next(error);
   }
 };

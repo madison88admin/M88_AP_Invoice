@@ -4,6 +4,7 @@ import { analyzeInvoice } from './ocrService';
 import { matchVendor } from './vendorMatchingService';
 import { validateInvoice } from './validationService';
 import { uploadInvoiceToStructuredFolder } from './sharePointService';
+import { detectMultiInvoice, splitPdfByPageRanges } from './multiInvoiceDetector';
 import { InvoiceStatus, InvoiceType, InvoiceSource, SignatureType, ExceptionReason, determineApprovalTier, BrandTier } from '@ap-invoice/shared';
 import { isTop10Brand, TOP_10_BRANDS } from '@ap-invoice/shared';
 import prisma from '../config/database';
@@ -118,8 +119,58 @@ async function processAttachment(attachment: any, message: any): Promise<void> {
     const contentBytes = attachment.contentBytes;
     const buffer = Buffer.from(contentBytes, 'base64');
     
+    // ─── Multi-invoice detection for PDFs ───
+    const isPdf = attachment.contentType === 'application/pdf' || 
+                  (attachment.name || '').toLowerCase().endsWith('.pdf');
+    
+    if (isPdf) {
+      try {
+        const detection = await detectMultiInvoice(buffer);
+        if (detection.isMultiInvoice && detection.invoiceCount > 1) {
+          logger.info(`[EmailIntake] Multi-invoice PDF detected: ${detection.invoiceCount} invoices in ${attachment.name}. Splitting...`);
+          
+          const splitBuffers = await splitPdfByPageRanges(buffer, detection.pageRanges);
+          
+          for (let i = 0; i < splitBuffers.length; i++) {
+            logger.info(`[EmailIntake] Processing split invoice ${i + 1}/${splitBuffers.length} from ${attachment.name}`);
+            try {
+              await processSingleInvoiceAttachment(
+                splitBuffers[i],
+                attachment.contentType,
+                `${attachment.name}_part${i + 1}`,
+                message,
+                i
+              );
+            } catch (splitErr) {
+              logger.error(`[EmailIntake] Error processing split ${i + 1} of ${attachment.name}:`, splitErr);
+            }
+          }
+          return; // Done — all splits processed
+        }
+      } catch (detectErr) {
+        logger.warn(`[EmailIntake] Multi-invoice detection failed for ${attachment.name}, processing as single:`, detectErr);
+      }
+    }
+    
+    // Single invoice — process normally
+    await processSingleInvoiceAttachment(buffer, attachment.contentType, attachment.name, message);
+    
+  } catch (error) {
+    logger.error(`Error processing attachment ${attachment.name}:`, error);
+  }
+}
+
+// Internal: process a single invoice buffer (used for both single and multi-invoice PDFs)
+async function processSingleInvoiceAttachment(
+  buffer: Buffer,
+  contentType: string,
+  fileName: string,
+  message: any,
+  splitIndex?: number
+): Promise<void> {
+  try {
     // Analyze invoice using OCR
-    const ocrResult = await analyzeInvoice(buffer, attachment.contentType);
+    const ocrResult = await analyzeInvoice(buffer, contentType);
     
     // Match vendor
     let vendorId: string | undefined;
@@ -152,7 +203,7 @@ async function processAttachment(attachment: any, message: any): Promise<void> {
           ocrResult.invoice_number,
           ocrResult.invoice_date || new Date(),
           buffer,
-          attachment.name
+          fileName
         );
         if (uploadResult.success && uploadResult.webUrl) {
           sharepointUrl = uploadResult.webUrl;
@@ -255,7 +306,7 @@ async function processAttachment(attachment: any, message: any): Promise<void> {
         invoice_id: invoice.id,
         action: 'EMAIL_INTAKE',
         performed_by: 'email_poller',
-        note: `Email intake from ${message.from?.emailAddress?.address}: ${attachment.name}${sharepointUrl ? `. Uploaded to SharePoint: ${sharepointUrl}` : ''}`,
+        note: `Email intake from ${message.from?.emailAddress?.address}: ${fileName}${splitIndex !== undefined ? ` (part ${splitIndex + 1})` : ''}${sharepointUrl ? `. Uploaded to SharePoint: ${sharepointUrl}` : ''}`,
       },
     });
     
@@ -284,10 +335,10 @@ async function processAttachment(attachment: any, message: any): Promise<void> {
       }
     }
 
-    logger.info(`Successfully processed invoice ${invoice.invoice_number} from email`);
+    logger.info(`Successfully processed invoice ${invoice.invoice_number} from email${splitIndex !== undefined ? ` (part ${splitIndex + 1})` : ''}`);
     
   } catch (error) {
-    logger.error(`Error processing attachment ${attachment.name}:`, error);
+    logger.error(`Error processing attachment ${fileName}:`, error);
   }
 }
 

@@ -382,6 +382,20 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     }
   }
 
+  // Check for duplicate invoice_number if it's being changed
+  if (data.invoice_number && data.invoice_number !== existing.invoice_number) {
+    const duplicate = await prisma.invoice.findFirst({
+      where: {
+        invoice_number: data.invoice_number,
+        id: { not: id },
+      },
+      select: { id: true },
+    });
+    if (duplicate) {
+      throw new AppError(`Invoice number "${data.invoice_number}" already exists`, 400);
+    }
+  }
+
   const invoice = await prisma.invoice.update({
     where: { id },
     data,

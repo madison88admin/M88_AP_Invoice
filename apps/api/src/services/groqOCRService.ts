@@ -27,6 +27,9 @@ export interface ExtractedInvoiceData {
   ship_to?: string;
   sold_to?: string;
   line_items?: ExtractedLineItem[];
+  bank_name?: string;
+  swift_code?: string;
+  account_number?: string;
   raw_text?: string;
   extraction_method?: string;
   engine_name?: string;
@@ -108,7 +111,7 @@ IMPORTANT RULES:
    - total_amount (number from Amount/Total column)
    - item_code (item code if present, e.g., "SA10047935", "M5PG*")
    Do not skip line items. If quantity looks like a unit price, re-check the column.
-5. For bank details: look for sections labeled "Bank Details", "Payment Information", "Remittance", "Beneficiary Bank", or similar. Extract bank_name, swift_code, and account_number from there.
+5. For bank details: CRITICAL — look carefully for ANY bank-related information anywhere in the invoice. Check sections labeled "Bank Details", "Payment Information", "Remittance", "Beneficiary Bank", "Bank Account", "SWIFT", "Payment Instructions", or similar. Also check the footer, bottom of page, or any small text sections. Extract bank_name, swift_code, and account_number. Even if bank info appears in an image or small text, report what you can find.
 6. For qty_shipped: if there is a total quantity field, use that. Otherwise, sum the quantities from all line items.
 7. For document_type: check if the document says "INVOICE", "PROFORMA INVOICE", "COMMERCIAL INVOICE", "CREDIT NOTE", "STATEMENT", etc.
 8. For charges: extract ALL charges separately. Look for lines labeled:
@@ -321,6 +324,7 @@ export class GroqOCRService {
       extracted.confidence = this.calculateConfidence(extracted);
 
       logger.info(`Groq OCR extracted: vendor=${extracted.vendor_name}, amount=${extracted.total_amount}, confidence=${extracted.confidence}`);
+      logger.info(`Groq OCR bank fields: bank_name="${extracted.bank_name || ''}", swift_code="${extracted.swift_code || ''}", account_number="${extracted.account_number || ''}"`);
 
       return extracted;
     } catch (error) {

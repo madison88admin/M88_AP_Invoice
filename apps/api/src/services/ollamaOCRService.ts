@@ -181,8 +181,8 @@ Invoice text to extract from:
 export class OllamaOCRService {
   private static instance: OllamaOCRService;
   private baseUrl: string | null = null;
-  private model: string = 'qwen3:14b';
-  private timeout: number = 60000;
+  private model: string = 'qwen3:4b';
+  private timeout: number = 300000;
   private isConfigured: boolean = false;
 
   private constructor() {
@@ -193,8 +193,8 @@ export class OllamaOCRService {
     }
 
     this.baseUrl = baseUrl.replace(/\/$/, '');
-    this.model = process.env.OLLAMA_MODEL || 'qwen3:14b';
-    this.timeout = Number(process.env.OLLAMA_TIMEOUT) || 120000;
+    this.model = process.env.OLLAMA_MODEL || 'qwen3:4b';
+    this.timeout = Number(process.env.OLLAMA_TIMEOUT) || 300000;
     this.isConfigured = true;
     logger.info(`Ollama OCR service initialized at ${this.baseUrl} with model ${this.model}`);
   }
@@ -236,7 +236,7 @@ export class OllamaOCRService {
     try {
       logger.info('Ollama OCR fallback triggered — extracting invoice data');
 
-      const MAX_OLLAMA_TEXT_LENGTH = Number(process.env.OLLAMA_MAX_TEXT_LENGTH) || 3000;
+      const MAX_OLLAMA_TEXT_LENGTH = Number(process.env.OLLAMA_MAX_TEXT_LENGTH) || 4000;
       const truncatedText = rawText.length > MAX_OLLAMA_TEXT_LENGTH
         ? rawText.substring(0, MAX_OLLAMA_TEXT_LENGTH) + '\n[TEXT TRUNCATED]'
         : rawText;
@@ -245,22 +245,26 @@ export class OllamaOCRService {
         ? await correctionLogService.getFewShotPrompt(rawText, options.vendorName, options.invoiceTemplateType)
         : '';
 
-      const prompt = (fewShot ? fewShot + '\n\n' : '') + EXTRACTION_PROMPT + truncatedText;
+      const userPrompt = (fewShot ? fewShot + '\n\n' : '') + 'Extract invoice fields from this text. Return ONLY valid JSON:\n' + truncatedText;
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
-      const response = await fetch(`${this.baseUrl}/api/generate`, {
+      const response = await fetch(`${this.baseUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: this.model,
-          prompt,
+          messages: [
+            { role: 'system', content: 'You are an invoice data extractor. Return ONLY valid JSON, no explanation.' },
+            { role: 'user', content: EXTRACTION_PROMPT + userPrompt },
+          ],
           stream: false,
+          think: false,
           options: {
             temperature: 0.1,
-            num_ctx: 8192,
-            num_predict: 4096,
+            num_ctx: 4096,
+            num_predict: 2048,
           },
         }),
         signal: controller.signal,
@@ -274,7 +278,7 @@ export class OllamaOCRService {
       }
 
       const data = await response.json() as any;
-      const text = data.response || '';
+      const text = data.message?.content || data.response || '';
 
       if (!text) {
         logger.warn('Ollama OCR returned empty content');
@@ -343,23 +347,26 @@ export class OllamaOCRService {
         ? await correctionLogService.getFewShotPrompt('', options.vendorName, options.invoiceTemplateType)
         : '';
 
-      const prompt = (fewShot ? fewShot + '\n\n' : '') + EXTRACTION_PROMPT + '\n[Invoice image provided below — extract all fields from the image]';
+      const userPrompt = (fewShot ? fewShot + '\n\n' : '') + 'Extract all invoice fields from the image below. Return ONLY valid JSON.';
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
-      const response = await fetch(`${this.baseUrl}/api/generate`, {
+      const response = await fetch(`${this.baseUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: this.model,
-          prompt,
-          images: [imageBase64],
+          messages: [
+            { role: 'system', content: 'You are an invoice data extractor. Return ONLY valid JSON, no explanation.' },
+            { role: 'user', content: EXTRACTION_PROMPT + userPrompt, images: [imageBase64] },
+          ],
           stream: false,
+          think: false,
           options: {
             temperature: 0.1,
-            num_ctx: 8192,
-            num_predict: 4096,
+            num_ctx: 4096,
+            num_predict: 2048,
           },
         }),
         signal: controller.signal,
@@ -373,7 +380,7 @@ export class OllamaOCRService {
       }
 
       const data = await response.json() as any;
-      const text = data.response || '';
+      const text = data.message?.content || data.response || '';
 
       if (!text) {
         logger.warn('Ollama OCR image returned empty content');

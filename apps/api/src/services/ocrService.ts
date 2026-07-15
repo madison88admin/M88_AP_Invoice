@@ -930,6 +930,44 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
 
     logger.info(`[OCR] AI-first extraction succeeded with ${ocrEngine} — vendor: "${extracted.vendor_name}", invoice#: "${extracted.invoice_number}", amount: ${extracted.amount}`);
 
+    // 2b. Vision-based bank info fallback — if bank fields are empty, the info may be in an image in the PDF
+    const hasBankInfo = (extracted as any).bank_name || extracted.bank_swift || extracted.bank_account;
+    if (!hasBankInfo) {
+      logger.info('[OCR] Bank info missing from text extraction — trying vision-based extraction for bank details...');
+      try {
+        const geminiOCR = (await import('./geminiOCRService')).geminiOCRService;
+        if (geminiOCR.isAvailable()) {
+          // Use a focused prompt for bank info only
+          const bankResult = await geminiOCR.extractFromPDF(fileBuffer, extracted.vendor_name);
+          if (bankResult && (bankResult.bank_name || bankResult.swift_code || bankResult.account_number)) {
+            logger.info(`[OCR] Vision bank fallback succeeded — bank_name: "${bankResult.bank_name}", swift: "${bankResult.swift_code}", account: "${bankResult.account_number}"`);
+            (extracted as any).bank_name = bankResult.bank_name || (extracted as any).bank_name;
+            extracted.bank_swift = bankResult.swift_code || extracted.bank_swift;
+            extracted.bank_account = bankResult.account_number || extracted.bank_account;
+          } else {
+            logger.info('[OCR] Vision bank fallback: Gemini did not return bank info');
+          }
+        } else {
+          // Try Ollama vision as alternative
+          const ollamaOCR = (await import('./ollamaOCRService')).ollamaOCRService;
+          if (ollamaOCR.isAvailable()) {
+            const imageBase64 = convertPDFToImage(fileBuffer);
+            if (imageBase64) {
+              const ollamaBankResult = await ollamaOCR.extractFromImage(imageBase64, { vendorName: extracted.vendor_name });
+              if (ollamaBankResult && (ollamaBankResult.bank_name || ollamaBankResult.swift_code || ollamaBankResult.account_number)) {
+                logger.info(`[OCR] Ollama vision bank fallback succeeded — bank_name: "${ollamaBankResult.bank_name}", swift: "${ollamaBankResult.swift_code}", account: "${ollamaBankResult.account_number}"`);
+                (extracted as any).bank_name = ollamaBankResult.bank_name || (extracted as any).bank_name;
+                extracted.bank_swift = ollamaBankResult.swift_code || extracted.bank_swift;
+                extracted.bank_account = ollamaBankResult.account_number || extracted.bank_account;
+              }
+            }
+          }
+        }
+      } catch (visionErr) {
+        logger.warn('[OCR] Vision-based bank info fallback failed:', visionErr instanceof Error ? visionErr.message : String(visionErr));
+      }
+    }
+
     // 3. Cross-validate with regex (pdf2json) for critical fields
     if (pdf2jsonRawText && pdf2jsonRawText.length > 50) {
       try {

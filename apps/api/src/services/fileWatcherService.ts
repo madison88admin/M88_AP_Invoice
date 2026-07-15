@@ -110,6 +110,7 @@ async function processFile(filePath: string, fileName: string): Promise<void> {
 
   // Step 5: Vendor matching
   let vendorId: string | undefined;
+  let autoCreatedVendor = false;
   try {
     const vendorMatch = await matchVendor(ocrResult.vendor_name);
     vendorId = vendorMatch?.vendor_id;
@@ -118,7 +119,30 @@ async function processFile(filePath: string, fileName: string): Promise<void> {
     vendorId = undefined;
   }
 
-  // Fallback: use UNKNOWN VENDOR if no match (vendor_id is required in DB schema)
+  // Auto-create vendor if no match found and we have a valid vendor name
+  if (!vendorId && ocrResult.vendor_name && ocrResult.vendor_name.trim().length > 2) {
+    try {
+      const bankInfo = (ocrResult as any).bank_info || {};
+      const newVendor = await prisma.vendor.create({
+        data: {
+          name: ocrResult.vendor_name.trim(),
+          name_aliases: [],
+          invoice_template_type: 'INVOICE',
+          bank_name: bankInfo.bank_name || (ocrResult as any).bank_name || null,
+          swift_code: bankInfo.swift_code || (ocrResult as any).bank_swift || null,
+          account_number: bankInfo.account_usd || bankInfo.account_number || (ocrResult as any).bank_account || null,
+          is_active: true,
+        },
+      });
+      vendorId = newVendor.id;
+      autoCreatedVendor = true;
+      logger.info(`[File Watcher] Auto-created vendor: "${ocrResult.vendor_name}" (id: ${newVendor.id}) with bank info: ${bankInfo.bank_name || 'none'}`);
+    } catch (vendorErr) {
+      logger.warn(`[File Watcher] Failed to auto-create vendor "${ocrResult.vendor_name}":`, vendorErr instanceof Error ? vendorErr.message : String(vendorErr));
+    }
+  }
+
+  // Fallback: use UNKNOWN VENDOR if no match and auto-create failed (vendor_id is required in DB schema)
   const UNKNOWN_VENDOR_ID = '00000000-0000-0000-0000-000000000000';
   const effectiveVendorId = vendorId || UNKNOWN_VENDOR_ID;
   const isVendorUnknown = !vendorId;
@@ -239,13 +263,22 @@ async function processFile(filePath: string, fileName: string): Promise<void> {
       },
     });
 
-    // Create exception if vendor not matched
-    if (isVendorUnknown) {
+    // Create exception if vendor not matched AND not auto-created
+    if (isVendorUnknown && !autoCreatedVendor) {
       await prisma.exception.create({
         data: {
           invoice_id: invoice.id,
           reason: ExceptionReason.VENDOR_NOT_FOUND as any,
           detail: `No vendor match found for "${ocrResult.vendor_name}". Manual vendor assignment required.`,
+        },
+      });
+    } else if (autoCreatedVendor) {
+      // Log auto-created vendor as an exception for review (bank info may need verification)
+      await prisma.exception.create({
+        data: {
+          invoice_id: invoice.id,
+          reason: ExceptionReason.VENDOR_NOT_FOUND as any,
+          detail: `Auto-created vendor "${ocrResult.vendor_name}" from OCR extraction. Please verify vendor details and bank information.`,
         },
       });
     }

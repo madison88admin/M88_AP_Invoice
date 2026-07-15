@@ -450,12 +450,31 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     console.error('[AI Learning] Failed to log correction from edit:', learnError);
   }
 
-  // Re-validate if charge-related fields or amount were changed — PO amount comparison depends on net amount
-  const chargeFields = ['total_amount', 'bank_charges', 'freight_charges', 'additional_charges',
-    'tt_charge', 'courier_charges', 'handling_fee', 'finance_surcharge', 'setup_charge',
-    'sample_charge', 'min_order_charge', 'discount_amount', 'mpo_number', 'customer_po_number'];
-  const shouldRevalidate = chargeFields.some(f => invoiceData[f] !== undefined);
-  if (shouldRevalidate && invoice.status === 'EXCEPTION_FLAGGED') {
+  // Re-validate when any validation-relevant field is edited — clears fixed exceptions automatically
+  const validationFields = [
+    // Amount & charges
+    'total_amount', 'subtotal', 'tax_amount', 'discount_amount',
+    'bank_charges', 'freight_charges', 'additional_charges', 'courier_charges',
+    'handling_fee', 'tt_charge', 'setup_charge', 'sample_charge',
+    'min_order_charge', 'finance_surcharge',
+    // Bank info
+    'bank_name', 'swift_code', 'account_number',
+    // Dates
+    'invoice_date', 'due_date', 'invoice_received_date',
+    // PO & order refs
+    'mpo_number', 'customer_po_number', 'po_number',
+    // Classification
+    'currency', 'invoice_currency_original', 'exchange_rate_to_usd',
+    'payment_terms', 'incoterm', 'invoice_type', 'invoice_template_type',
+    'vendor_name_raw', 'vendor_id',
+    // Shipping
+    'ship_to', 'sold_to', 'qty_shipped',
+    // Brand
+    'brand', 'brand_code', 'brand_tier', 'season',
+  ];
+  const shouldRevalidate = validationFields.some(f => invoiceData[f] !== undefined);
+  const revalidateStatuses = ['EXCEPTION_FLAGGED', 'RECEIVED', 'VALIDATION_PENDING'];
+  if (shouldRevalidate && revalidateStatuses.includes(invoice.status)) {
     setImmediate(async () => {
       try {
         const { validateInvoice } = await import('./validationService');

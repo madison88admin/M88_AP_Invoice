@@ -1044,7 +1044,9 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
     bank_charges: (extracted as any).bank_charges || 0,
     freight_charges: (extracted as any).freight_charges || 0,
     additional_charges: (extracted as any).additional_charges || 0,
-    invoice_type: extracted.invoice_type as InvoiceType || InvoiceType.INVOICE,
+    invoice_type: ((extracted as any).is_statement && extracted.invoice_type !== 'STATEMENT')
+      ? InvoiceType.STATEMENT as any
+      : (extracted.invoice_type as InvoiceType || InvoiceType.INVOICE),
     category: InvoiceCategory.TRIMS,
     order_type: poParsed.order_type as OrderType | undefined,
     brand: poParsed.brand_code ? (TOP_10_BRANDS[poParsed.brand_code] || poParsed.brand_code) : (extracted as any).brand || undefined,
@@ -1053,7 +1055,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
     mpo_number: poParsed.mpo_number || extracted.mpo_number,
     customer_po_number: poParsed.po_number,
     bill_to_entity: BillToEntity.MADISON_88_LTD,
-    is_handwritten: false,
+    is_handwritten: (extracted as any).is_handwritten || false,
     is_urgent: false,
     priority_pay_date: undefined,
     ocr_confidence_score: calculatedConfidence,

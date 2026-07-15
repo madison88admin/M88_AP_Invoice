@@ -32,6 +32,7 @@ import slaAnalyticsRoutes from './routes/slaAnalytics';
 import onHoldQueueRoutes from './routes/onHoldQueue';
 import citibusinessExportRoutes from './routes/citibusinessExport';
 import reprocessRoutes from './routes/reprocess';
+import soaReconciliationRoutes from './routes/soaReconciliation';
 import testRoutes from './routes/test';
 import { errorHandler } from './middleware/errorHandler';
 import { logger } from './utils/logger';
@@ -108,6 +109,7 @@ app.use('/api/sla-analytics', slaAnalyticsRoutes);
 app.use('/api/on-hold-queue', onHoldQueueRoutes);
 app.use('/api/citibusiness-export', citibusinessExportRoutes);
 app.use('/api/reprocess', reprocessRoutes);
+app.use('/api/soa-reconciliation', soaReconciliationRoutes);
 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_TEST_ROUTES === 'true') {
   app.use('/api/test', testRoutes);
 }

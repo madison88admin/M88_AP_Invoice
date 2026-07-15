@@ -1284,7 +1284,7 @@ export default function Dashboard() {
               onClick={() => navigate('/exceptions')}
             />
           )}
-          {user && ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
+          {user && ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE'].includes(user.role) && (
             <SidebarItem
               icon={Building2}
               label="Vendors"
@@ -1868,8 +1868,8 @@ export default function Dashboard() {
           </div>
           )}
 
-          {/* Supplier Balance Analysis - Only for ACCOUNTING_SUPERVISOR */}
-          {user && user.role === 'ACCOUNTING_SUPERVISOR' && (
+          {/* Supplier Balance Analysis - For ACCOUNTING roles */}
+          {user && (user.role === 'ACCOUNTING_SUPERVISOR' || user.role === 'ACCOUNTING_ASSOCIATE') && (
             <div className="mt-6 rounded-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.25)]" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
               <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
                 <div>
@@ -1952,8 +1952,8 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Payables Aging - Only for ACCOUNTING_SUPERVISOR */}
-          {user && user.role === 'ACCOUNTING_SUPERVISOR' && (
+          {/* Payables Aging - For ACCOUNTING roles */}
+          {user && (user.role === 'ACCOUNTING_SUPERVISOR' || user.role === 'ACCOUNTING_ASSOCIATE') && (
             <div className="mt-6 rounded-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.25)]" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
               <div className="px-6 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
                 <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Payables aging</h2>
@@ -1994,8 +1994,8 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Processing Time per Stage - Only for ACCOUNTING_SUPERVISOR and PURCHASING_MANAGER */}
-          {user && (user.role === 'ACCOUNTING_SUPERVISOR' || user.role === 'PURCHASING_MANAGER') && (
+          {/* Processing Time per Stage - For ACCOUNTING and PURCHASING_MANAGER roles */}
+          {user && (user.role === 'ACCOUNTING_SUPERVISOR' || user.role === 'ACCOUNTING_ASSOCIATE' || user.role === 'PURCHASING_MANAGER') && (
             <div className="mt-6 rounded-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.25)]" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
               <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
                 <div>

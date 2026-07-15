@@ -164,25 +164,10 @@ export const CITIBUSINESS_EXPORT_CONFIG = {
 };
 
 export const SIGNATURE_REQUIREMENTS = {
-  // Planning Tier (≤$2,000): Coordinator + Purchasing Manager (shared 7-day SLA)
+  // Simplified flow: Coordinator (auto-signed on entry) + Purchasing Manager for ALL amounts
   TIER_1: [SignatoryRole.COORDINATOR, SignatoryRole.PURCHASING_MANAGER],
-  // Tier 2 ($2,001–$99,999): + MLO Account Holder + MLO Planning Manager + Sr. Manager Global Production
-  TIER_2: [
-    SignatoryRole.COORDINATOR,
-    SignatoryRole.PURCHASING_MANAGER,
-    SignatoryRole.MLO_ACCOUNT_HOLDER,
-    SignatoryRole.MLO_PLANNING_MANAGER,
-    SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION,
-  ],
-  // Tier 3 (≥$100,000): + Ms. Polly
-  TIER_3: [
-    SignatoryRole.COORDINATOR,
-    SignatoryRole.PURCHASING_MANAGER,
-    SignatoryRole.MLO_ACCOUNT_HOLDER,
-    SignatoryRole.MLO_PLANNING_MANAGER,
-    SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION,
-    SignatoryRole.MS_POLLY,
-  ],
+  TIER_2: [SignatoryRole.COORDINATOR, SignatoryRole.PURCHASING_MANAGER],
+  TIER_3: [SignatoryRole.COORDINATOR, SignatoryRole.PURCHASING_MANAGER],
 };
 
 export const SLA_LIMITS = {

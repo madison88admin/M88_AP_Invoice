@@ -64,47 +64,23 @@ function validateBrandForApproval(brandCode: string | null | undefined): BrandVa
 }
 
 /**
- * Determine the approval route based on invoice amount and brand
- * 3-tier system per new flow:
- * - Planning Tier (<=2000): Coordinator + Purchasing Manager (shared 7-day SLA)
- * - Tier 2 (2001-99999): + MLO Account Holder + MLO Planning Manager + Sr. Manager GPO
- * - Tier 3 (>=100000): + Ms. Polly
+ * Determine the approval route based on invoice amount
+ * Simplified flow: Coordinator (auto-signed on entry) + Purchasing Manager for ALL amounts
+ * - Coordinator enters invoice → auto-signed
+ * - Purchasing Manager approves → straight to Accounting for posting
  */
 export function determineApprovalRoute(
   amount: number,
   brandName?: string,
   brandCode?: string
 ): ApprovalRouteStep[] {
-  const tier = determineApprovalTier(amount);
   const route: ApprovalRouteStep[] = [];
 
-  // Planning Tier: amount <= $2,000 → Coordinator + Purchasing Manager (shared 7-day SLA)
+  // Coordinator: auto-signed (they entered the invoice into the system)
   route.push({ role: SignatoryRole.COORDINATOR, assignee_name: 'Any Coordinator', sla_days: SLA_LIMITS.COORDINATOR_DAYS });
+
+  // Purchasing Manager: single manual approval for ALL amounts
   route.push({ role: SignatoryRole.PURCHASING_MANAGER, assignee_name: 'Any Purchasing Manager', sla_days: SLA_LIMITS.PURCHASING_MANAGER_DAYS });
-
-  if (tier >= 2) {
-    const brandValidation = validateBrandForApproval(brandCode);
-    if (brandValidation.needsException) {
-      throw new AppError(brandValidation.exceptionDetail!, 400);
-    }
-
-    // MLO Account Holder — brand-dependent: Edwin for TOP_10, Glecie for OTHER
-    const mloAccountHolder = brandValidation.tier === BrandTier.TOP_10
-      ? MLO_ACCOUNT_HOLDER_EDWIN
-      : MLO_ACCOUNT_HOLDER_GLECIE;
-
-    // MLO Account Holder approval step
-    route.push({ role: SignatoryRole.MLO_ACCOUNT_HOLDER, assignee_name: mloAccountHolder, sla_days: SLA_LIMITS.MLO_ACCOUNT_HOLDER_DAYS });
-
-    // MLO Planning Manager approval step
-    route.push({ role: SignatoryRole.MLO_PLANNING_MANAGER, assignee_name: mloAccountHolder, sla_days: SLA_LIMITS.MLO_PLANNING_MANAGER_DAYS });
-
-    route.push({ role: SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION, assignee_name: SR_MANAGER_NAME, sla_days: SLA_LIMITS.SR_MANAGER_DAYS });
-  }
-
-  if (tier >= 3) {
-    route.push({ role: SignatoryRole.MS_POLLY, assignee_name: MS_POLLY_NAME, sla_days: SLA_LIMITS.MS_POLLY_DAYS });
-  }
 
   return route;
 }

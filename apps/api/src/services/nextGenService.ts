@@ -9,6 +9,15 @@ function fetchWithTimeout(url: string, options: RequestInit = {}): Promise<Respo
     .finally(() => clearTimeout(timeoutId));
 }
 
+// ─── MPO Header Cache ──────────────────────────────────────────────────────
+// Caches all MPO headers to avoid re-fetching 15,000+ records for every invoice
+// TTL: 10 minutes (MPOs don't change frequently during processing)
+const MPO_CACHE_TTL_MS = 10 * 60 * 1000;
+let mpoHeaderCache: any[] | null = null;
+let mpoCacheTimestamp = 0;
+let mpoCacheFetchPromise: Promise<any[]> | null = null;
+let entityBrowserListBroken = false; // Skip GetEntityBrowserList after first 500 error
+
 // ─── NextGen API Types ──────────────────────────────────────────────────────
 // Based on actual endpoints at https://nextgen.madison88.com
 
@@ -645,6 +654,11 @@ export class NextGenService {
    * e.g. "MPO15371" → 73
    */
   private async getMPOOrderId(mpoNumber: string): Promise<number | null> {
+    // Skip if EntityBrowserList is known to be broken (returns 500)
+    if (entityBrowserListBroken) {
+      logger.info(`MPO ${mpoNumber}: Skipping EntityBrowserList (known broken)`);
+      return null;
+    }
     try {
       const result = await this.get<any>(
         `/MaterialPurchaseOrder/GetEntityBrowserList` 
@@ -666,7 +680,11 @@ export class NextGenService {
 
       logger.info(`MPO ${mpoNumber} resolved to OrderId ${orderId}`);
       return Number(orderId);
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.message?.includes('500') || error?.status === 500) {
+        entityBrowserListBroken = true;
+        logger.warn(`MPO ${mpoNumber}: EntityBrowserList returned 500 — will skip on future calls`);
+      }
       logger.error(`Error resolving MPO ${mpoNumber} to OrderId:`, error);
       return null;
     }
@@ -701,6 +719,37 @@ export class NextGenService {
    * Falls back to scanning all pages if estimation fails.
    */
   private async fetchAllMPOHeaders(mpoNumber?: string): Promise<any[]> {
+    const PAGE_SIZE = 500;
+
+    // ── Check cache first ──
+    const now = Date.now();
+    if (mpoHeaderCache && (now - mpoCacheTimestamp) < MPO_CACHE_TTL_MS) {
+      logger.info(`MPO cache hit: ${mpoHeaderCache.length} headers cached (age: ${Math.round((now - mpoCacheTimestamp) / 1000)}s)`);
+      return mpoHeaderCache;
+    }
+
+    // If a fetch is already in progress, wait for it instead of starting another
+    if (mpoCacheFetchPromise) {
+      logger.info('MPO cache: waiting for in-progress fetch');
+      return mpoCacheFetchPromise;
+    }
+
+    // Start a fresh fetch (with cache wrapper)
+    mpoCacheFetchPromise = this._fetchAllMPOHeadersUncached(mpoNumber).then(headers => {
+      mpoHeaderCache = headers;
+      mpoCacheTimestamp = Date.now();
+      mpoCacheFetchPromise = null;
+      logger.info(`MPO cache: populated with ${headers.length} headers`);
+      return headers;
+    }).catch(err => {
+      mpoCacheFetchPromise = null;
+      throw err;
+    });
+
+    return mpoCacheFetchPromise;
+  }
+
+  private async _fetchAllMPOHeadersUncached(mpoNumber?: string): Promise<any[]> {
     const PAGE_SIZE = 500;
 
     // If we have a specific MPO number, try a direct filtered search first
@@ -888,6 +937,7 @@ export class NextGenService {
       if (this.useMock) return this.getMockPOData(mpoNumber);
 
       // ── Fast path: Try GetEntityBrowserList to find OrderId, then GetById ──
+      // Skip if EntityBrowserList is known to be broken (500 errors)
       try {
         const orderId = await this.getMPOOrderId(mpoNumber);
         if (orderId) {

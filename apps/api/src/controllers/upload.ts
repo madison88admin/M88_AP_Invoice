@@ -3,7 +3,7 @@ import { AuthRequest } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
 import { analyzeInvoice } from '../services/ocrService';
 import { extractMadisonInvoiceFields, AST_SINGLE_SOURCE_MODE } from '../services/madisonInvoiceExtractor';
-import { matchVendor } from '../services/vendorMatchingService';
+import { matchVendor, matchOrCreateVendor } from '../services/vendorMatchingService';
 import { InvoiceStatus, SignatureType } from '@ap-invoice/shared';
 import { NextGenService } from '../services/nextGenService';
 import { validateInvoiceAgainstPO } from '../services/invoiceValidationAgent';
@@ -174,28 +174,16 @@ export const uploadInvoice = async (
         requiresManualVendorAssignment = false;
       } else {
         // Auto-create vendor if no match and we have a valid vendor name
-        if (ocrResult.vendor_name && ocrResult.vendor_name.trim().length > 2) {
-          try {
-            const db = await import('../config/database');
-            const bankInfo = (ocrResult as any).bank_info || {};
-            const newVendor = await db.default.vendor.create({
-              data: {
-                name: ocrResult.vendor_name.trim(),
-                name_aliases: [],
-                invoice_template_type: 'INVOICE',
-                bank_name: bankInfo.bank_name || (ocrResult as any).bank_name || null,
-                swift_code: bankInfo.swift_code || (ocrResult as any).bank_swift || null,
-                account_number: bankInfo.account_usd || bankInfo.account_number || (ocrResult as any).bank_account || null,
-                is_active: true,
-              },
-            });
-            vendorId = newVendor.id;
-            requiresManualVendorAssignment = false;
-            console.log('[DEBUG] Auto-created vendor:', ocrResult.vendor_name, 'id:', newVendor.id);
-          } catch (vendorErr) {
-            console.log('[DEBUG] Failed to auto-create vendor:', vendorErr instanceof Error ? vendorErr.message : String(vendorErr));
-            requiresManualVendorAssignment = false;
-          }
+        const bankInfo = (ocrResult as any).bank_info || {};
+        const vendorResult = await matchOrCreateVendor(ocrResult.vendor_name, {
+          bank_name: bankInfo.bank_name || (ocrResult as any).bank_name,
+          swift_code: bankInfo.swift_code || (ocrResult as any).bank_swift,
+          account_number: bankInfo.account_usd || bankInfo.account_number || (ocrResult as any).bank_account,
+        });
+        if (vendorResult) {
+          vendorId = vendorResult.vendor_id;
+          requiresManualVendorAssignment = false;
+          console.log('[DEBUG] Auto-created vendor:', ocrResult.vendor_name, 'id:', vendorId);
         } else {
           console.log('[DEBUG] Vendor not found in DB or DB unavailable, skipping vendor assignment');
           requiresManualVendorAssignment = false;
@@ -857,28 +845,16 @@ async function processSingleInvoice(
         console.log('[DEBUG] Vendor matched via DB:', vendorMatch.vendor_name);
       } else {
         // Auto-create vendor if no match and we have a valid vendor name
-        if (madisonResult.vendor_name.trim().length > 2) {
-          try {
-            const db = await import('../config/database');
-            const bankDetails = madisonResult.bank_details || {};
-            const newVendor = await db.default.vendor.create({
-              data: {
-                name: madisonResult.vendor_name.trim(),
-                name_aliases: [],
-                invoice_template_type: 'INVOICE',
-                bank_name: bankDetails.bank_name || null,
-                swift_code: bankDetails.swift_code || null,
-                account_number: bankDetails.account_number || null,
-                is_active: true,
-              },
-            });
-            vendorId = newVendor.id;
-            requiresManualVendorAssignment = false;
-            console.log('[DEBUG] Auto-created vendor:', madisonResult.vendor_name, 'id:', newVendor.id);
-          } catch (vendorErr) {
-            console.log('[DEBUG] Failed to auto-create vendor:', vendorErr instanceof Error ? vendorErr.message : String(vendorErr));
-            requiresManualVendorAssignment = false;
-          }
+        const bankDetails = madisonResult.bank_details || {};
+        const vendorResult = await matchOrCreateVendor(madisonResult.vendor_name, {
+          bank_name: bankDetails.bank_name,
+          swift_code: bankDetails.swift_code,
+          account_number: bankDetails.account_number,
+        });
+        if (vendorResult) {
+          vendorId = vendorResult.vendor_id;
+          requiresManualVendorAssignment = false;
+          console.log('[DEBUG] Auto-created vendor:', madisonResult.vendor_name, 'id:', vendorId);
         } else {
           console.log('[DEBUG] Vendor not found in DB or DB unavailable, skipping vendor assignment');
           requiresManualVendorAssignment = false;

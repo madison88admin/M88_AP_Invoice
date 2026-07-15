@@ -3,7 +3,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { logger } from '../utils/logger';
 import { analyzeInvoice } from './ocrService';
-import { matchVendor } from './vendorMatchingService';
+import { matchVendor, matchOrCreateVendor } from './vendorMatchingService';
 import { validateInvoice } from './validationService';
 import { checkEmailDuplicate, generateFileHash } from './emailDuplicateService';
 import {
@@ -108,38 +108,24 @@ async function processFile(filePath: string, fileName: string): Promise<void> {
     return;
   }
 
-  // Step 5: Vendor matching
+  // Step 5: Vendor matching (with auto-create)
   let vendorId: string | undefined;
   let autoCreatedVendor = false;
   try {
-    const vendorMatch = await matchVendor(ocrResult.vendor_name);
-    vendorId = vendorMatch?.vendor_id;
+    const bankInfo = (ocrResult as any).bank_info || {};
+    const vendorResult = await matchOrCreateVendor(ocrResult.vendor_name, {
+      bank_name: bankInfo.bank_name || (ocrResult as any).bank_name,
+      swift_code: bankInfo.swift_code || (ocrResult as any).bank_swift,
+      account_number: bankInfo.account_usd || bankInfo.account_number || (ocrResult as any).bank_account,
+    });
+    vendorId = vendorResult?.vendor_id;
+    autoCreatedVendor = vendorResult?.auto_created || false;
+    if (autoCreatedVendor) {
+      logger.info(`[File Watcher] Auto-created vendor: "${ocrResult.vendor_name}" (id: ${vendorId})`);
+    }
   } catch {
     logger.warn(`[File Watcher] No vendor match for "${ocrResult.vendor_name}"`);
     vendorId = undefined;
-  }
-
-  // Auto-create vendor if no match found and we have a valid vendor name
-  if (!vendorId && ocrResult.vendor_name && ocrResult.vendor_name.trim().length > 2) {
-    try {
-      const bankInfo = (ocrResult as any).bank_info || {};
-      const newVendor = await prisma.vendor.create({
-        data: {
-          name: ocrResult.vendor_name.trim(),
-          name_aliases: [],
-          invoice_template_type: 'INVOICE',
-          bank_name: bankInfo.bank_name || (ocrResult as any).bank_name || null,
-          swift_code: bankInfo.swift_code || (ocrResult as any).bank_swift || null,
-          account_number: bankInfo.account_usd || bankInfo.account_number || (ocrResult as any).bank_account || null,
-          is_active: true,
-        },
-      });
-      vendorId = newVendor.id;
-      autoCreatedVendor = true;
-      logger.info(`[File Watcher] Auto-created vendor: "${ocrResult.vendor_name}" (id: ${newVendor.id}) with bank info: ${bankInfo.bank_name || 'none'}`);
-    } catch (vendorErr) {
-      logger.warn(`[File Watcher] Failed to auto-create vendor "${ocrResult.vendor_name}":`, vendorErr instanceof Error ? vendorErr.message : String(vendorErr));
-    }
   }
 
   // Fallback: use UNKNOWN VENDOR if no match and auto-create failed (vendor_id is required in DB schema)

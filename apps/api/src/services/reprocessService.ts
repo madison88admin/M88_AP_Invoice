@@ -7,7 +7,7 @@ import { logger } from '../utils/logger';
 import { getGraphClient } from './sharePointService';
 import { extractMadisonInvoiceFields, AST_SINGLE_SOURCE_MODE } from './madisonInvoiceExtractor';
 import { analyzeInvoice } from './ocrService';
-import { matchVendor } from './vendorMatchingService';
+import { matchVendor, matchOrCreateVendor } from './vendorMatchingService';
 import { fieldDecisionEngine } from './fieldDecisionEngine';
 import { geminiOCRService } from './geminiOCRService';
 import { qwenOCRService } from './qwenOCRService';
@@ -544,12 +544,17 @@ export async function reExtractInvoice(
     updateData.ocr_confidence_score = fieldDecision.overall_confidence;
   }
 
-  // 8. Re-match vendor
+  // 8. Re-match vendor (with auto-create)
   if (decisionFinal.vendor_name) {
     try {
-      const vendorMatch = await matchVendor(decisionFinal.vendor_name);
-      if (vendorMatch) {
-        updateData.vendor_id = vendorMatch.vendor_id;
+      const bankInfo = (decisionFinal as any).bank_info || {};
+      const vendorResult = await matchOrCreateVendor(decisionFinal.vendor_name, {
+        bank_name: bankInfo.bank_name || (decisionFinal as any).bank_name,
+        swift_code: bankInfo.swift_code || (decisionFinal as any).swift_code,
+        account_number: bankInfo.account_usd || bankInfo.account_number || (decisionFinal as any).account_number,
+      });
+      if (vendorResult) {
+        updateData.vendor_id = vendorResult.vendor_id;
       }
     } catch (e) {
       // Keep existing vendor if re-match fails

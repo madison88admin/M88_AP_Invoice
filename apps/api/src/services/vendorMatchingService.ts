@@ -114,6 +114,57 @@ export async function matchVendor(vendorName: string): Promise<VendorMatchResult
   }
 }
 
+/**
+ * Try to match a vendor by name. If no match found and the name is valid,
+ * auto-create a new vendor record with optional bank info from OCR.
+ * Returns { vendor_id, vendor_name, auto_created } or null if DB unavailable.
+ */
+export async function matchOrCreateVendor(
+  vendorName: string,
+  bankInfo?: { bank_name?: string; swift_code?: string; account_number?: string }
+): Promise<{ vendor_id: string; vendor_name: string; auto_created: boolean } | null> {
+  if (!isDbEnabled()) {
+    return null;
+  }
+
+  // Try matching first
+  const match = await matchVendor(vendorName);
+  if (match) {
+    return { vendor_id: match.vendor_id, vendor_name: match.vendor_name, auto_created: false };
+  }
+
+  // Auto-create if name is valid
+  const trimmedName = (vendorName || '').trim();
+  if (!trimmedName || trimmedName.length <= 2) {
+    return null;
+  }
+
+  // Skip garbage OCR names
+  const GARBAGE_PATTERNS = /^(invoice\s+invoice|account\s+no|invoice\s+no|no\s+vendor|unknown|n\/a)$/i;
+  if (GARBAGE_PATTERNS.test(trimmedName)) {
+    return null;
+  }
+
+  try {
+    const newVendor = await prisma.vendor.create({
+      data: {
+        name: trimmedName,
+        name_aliases: [],
+        invoice_template_type: 'INVOICE',
+        bank_name: bankInfo?.bank_name || null,
+        swift_code: bankInfo?.swift_code || null,
+        account_number: bankInfo?.account_number || null,
+        is_active: true,
+      },
+    });
+    console.log(`[VendorMatch] Auto-created vendor: "${trimmedName}" (id: ${newVendor.id})`);
+    return { vendor_id: newVendor.id, vendor_name: trimmedName, auto_created: true };
+  } catch (err) {
+    console.warn(`[VendorMatch] Failed to auto-create vendor "${trimmedName}":`, err);
+    return null;
+  }
+}
+
 function levenshteinDistance(str1: string, str2: string): number {
   const matrix = [];
 

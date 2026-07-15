@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { logger } from '../utils/logger';
 import { analyzeInvoice } from './ocrService';
-import { matchVendor } from './vendorMatchingService';
+import { matchVendor, matchOrCreateVendor } from './vendorMatchingService';
 import { validateInvoice } from './validationService';
 import { checkEmailDuplicate, generateFileHash } from './emailDuplicateService';
 import { uploadInvoiceToStructuredFolder } from './sharePointService';
@@ -105,11 +105,16 @@ async function processIncomingFile(file: { id: string; name: string; size: numbe
     return;
   }
 
-  // Step 5: Vendor matching
+  // Step 5: Vendor matching (with auto-create)
   let vendorId: string | undefined;
   try {
-    const vendorMatch = await matchVendor(ocrResult.vendor_name);
-    vendorId = vendorMatch?.vendor_id;
+    const bankInfo = (ocrResult as any).bank_info || {};
+    const vendorResult = await matchOrCreateVendor(ocrResult.vendor_name, {
+      bank_name: bankInfo.bank_name || (ocrResult as any).bank_name,
+      swift_code: bankInfo.swift_code || (ocrResult as any).swift_code,
+      account_number: bankInfo.account_usd || bankInfo.account_number || (ocrResult as any).account_number,
+    });
+    vendorId = vendorResult?.vendor_id;
   } catch {
     logger.warn(`[SharePoint Watcher] No vendor match for "${ocrResult.vendor_name}"`);
     vendorId = undefined;

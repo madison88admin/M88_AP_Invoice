@@ -1,7 +1,7 @@
 import { Client } from '@microsoft/microsoft-graph-client';
 import { ClientSecretCredential } from '@azure/identity';
 import { analyzeInvoice } from './ocrService';
-import { matchVendor } from './vendorMatchingService';
+import { matchVendor, matchOrCreateVendor } from './vendorMatchingService';
 import { validateInvoice } from './validationService';
 import { uploadInvoiceToStructuredFolder } from './sharePointService';
 import { detectMultiInvoice, splitPdfByPageRanges } from './multiInvoiceDetector';
@@ -172,11 +172,16 @@ async function processSingleInvoiceAttachment(
     // Analyze invoice using OCR
     const ocrResult = await analyzeInvoice(buffer, contentType);
     
-    // Match vendor
+    // Match vendor (with auto-create)
     let vendorId: string | undefined;
     try {
-      const vendorMatch = await matchVendor(ocrResult.vendor_name);
-      vendorId = vendorMatch?.vendor_id;
+      const bankInfo = (ocrResult as any).bank_info || {};
+      const vendorResult = await matchOrCreateVendor(ocrResult.vendor_name, {
+        bank_name: bankInfo.bank_name || (ocrResult as any).bank_name,
+        swift_code: bankInfo.swift_code || (ocrResult as any).swift_code,
+        account_number: bankInfo.account_usd || bankInfo.account_number || (ocrResult as any).account_number,
+      });
+      vendorId = vendorResult?.vendor_id;
     } catch (error) {
       logger.warn(`No vendor match found for ${ocrResult.vendor_name}, creating exception`);
       vendorId = undefined;
@@ -393,11 +398,16 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
     // Analyze invoice using OCR
     const ocrResult = await analyzeInvoice(buffer, 'application/pdf');
 
-    // Match vendor
+    // Match vendor (with auto-create)
     let vendorId: string | undefined;
     try {
-      const vendorMatch = await matchVendor(ocrResult.vendor_name);
-      vendorId = vendorMatch?.vendor_id;
+      const bankInfo = (ocrResult as any).bank_info || {};
+      const vendorResult = await matchOrCreateVendor(ocrResult.vendor_name, {
+        bank_name: bankInfo.bank_name || (ocrResult as any).bank_name,
+        swift_code: bankInfo.swift_code || (ocrResult as any).swift_code,
+        account_number: bankInfo.account_usd || bankInfo.account_number || (ocrResult as any).account_number,
+      });
+      vendorId = vendorResult?.vendor_id;
     } catch (error) {
       logger.warn(`No vendor match found for ${ocrResult.vendor_name}, creating exception`);
       vendorId = undefined;
@@ -455,6 +465,10 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
         priority_pay_date: ocrResult.priority_pay_date ? new Date(ocrResult.priority_pay_date) : null,
         is_duplicate: false,
         ocr_confidence_score: ocrResult.ocr_confidence_score || undefined,
+        ocr_raw_data: ocrResult as any,
+        bank_name: (ocrResult as any).bank_info?.bank_name || (ocrResult as any).bank_name || undefined,
+        swift_code: (ocrResult as any).bank_info?.swift_code || (ocrResult as any).swift_code || undefined,
+        account_number: (ocrResult as any).bank_info?.account_number || (ocrResult as any).account_number || undefined,
         qb_memo: qbMemo,
         qb_account_class: ocrResult.qb_account_class,
         status: (vendorId ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,
@@ -570,11 +584,16 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
     // Analyze invoice using OCR
     const ocrResult = await analyzeInvoice(buffer, data.contentType);
 
-    // Match vendor
+    // Match vendor (with auto-create)
     let vendorId: string | undefined;
     try {
-      const vendorMatch = await matchVendor(ocrResult.vendor_name);
-      vendorId = vendorMatch?.vendor_id;
+      const bankInfo = (ocrResult as any).bank_info || {};
+      const vendorResult = await matchOrCreateVendor(ocrResult.vendor_name, {
+        bank_name: bankInfo.bank_name || (ocrResult as any).bank_name,
+        swift_code: bankInfo.swift_code || (ocrResult as any).swift_code,
+        account_number: bankInfo.account_usd || bankInfo.account_number || (ocrResult as any).account_number,
+      });
+      vendorId = vendorResult?.vendor_id;
     } catch (error) {
       logger.warn(`No vendor match found for ${ocrResult.vendor_name}, creating exception`);
       vendorId = undefined;
@@ -651,6 +670,10 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
         priority_pay_date: ocrResult.priority_pay_date ? new Date(ocrResult.priority_pay_date) : null,
         is_duplicate: false,
         ocr_confidence_score: ocrResult.ocr_confidence_score || undefined,
+        ocr_raw_data: ocrResult as any,
+        bank_name: (ocrResult as any).bank_info?.bank_name || (ocrResult as any).bank_name || undefined,
+        swift_code: (ocrResult as any).bank_info?.swift_code || (ocrResult as any).swift_code || undefined,
+        account_number: (ocrResult as any).bank_info?.account_number || (ocrResult as any).account_number || undefined,
         qb_memo: qbMemo,
         qb_account_class: ocrResult.qb_account_class,
         status: (vendorId ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,

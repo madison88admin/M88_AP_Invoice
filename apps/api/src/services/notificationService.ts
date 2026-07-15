@@ -1,4 +1,5 @@
 import { Client } from '@microsoft/microsoft-graph-client';
+import { ClientSecretCredential } from '@azure/identity';
 import { InvoiceStatus, ExceptionReason } from '@ap-invoice/shared';
 import { logger } from '../utils/logger';
 
@@ -23,11 +24,13 @@ export async function getGraphClient(): Promise<Client> {
     throw new Error('Microsoft Graph API credentials not configured');
   }
 
+  const credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
+
   const client = Client.init({
     authProvider: async (done) => {
       try {
-        // In production, implement proper token acquisition
-        done(new Error('Implement proper OAuth2 token acquisition'), null);
+        const token = await credential.getToken('https://graph.microsoft.com/.default');
+        done(null, token.token);
       } catch (error) {
         done(error as Error, null);
       }

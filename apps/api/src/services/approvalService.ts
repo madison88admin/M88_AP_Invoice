@@ -514,7 +514,7 @@ export async function approveInvoice(
   );
 
   if (!pendingSignature) {
-    throw new AppError('No pending approval found for this role', 404);
+    throw new AppError('No pending approval found for this role', 400);
   }
 
   // Enforce sequential signing: all signatures created before this one must be signed
@@ -713,7 +713,7 @@ export async function rejectInvoice(
   );
 
   if (!pendingSignature) {
-    throw new AppError('No pending approval found for this role', 404);
+    throw new AppError('No pending approval found for this role', 400);
   }
 
   // Enforce sequential signing: all signatures created before this one must be signed

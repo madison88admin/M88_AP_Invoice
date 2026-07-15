@@ -845,152 +845,125 @@ function calculateRealConfidence(
 }
 
 export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
-  let extracted: Awaited<ReturnType<typeof extractInvoiceFields>>;
+  let extracted: any;
   let usedGeminiVision = false;
   let usedAIFallback = false;
-  let ocrEngine = 'pdf2json';
+  let ocrEngine = 'ai-first';
 
-  // Try pdf2json first
+  // ─── AI-FIRST APPROACH ───
+  // 1. Extract raw text from PDF (fast, free — needed for AI text engines)
   let pdf2jsonRawText = '';
   try {
-    extracted = await extractInvoiceFields(fileBuffer);
-    // Also get raw text for AI fallbacks if needed
+    pdf2jsonRawText = await extractTextFromPDF(fileBuffer);
+  } catch {
+    // pdf2json text extraction failed — Gemini Vision can still read the PDF directly
+  }
+
+  // 2. Try AI extraction FIRST (Gemini Vision → Ollama → Groq)
+  logger.info('[OCR] AI-first mode: attempting AI extraction before regex');
+  const aiResult = await tryAIFallbacks(fileBuffer, pdf2jsonRawText, undefined);
+
+  if (aiResult && (aiResult.vendor_name || aiResult.invoice_number)) {
+    usedAIFallback = true;
+    ocrEngine = aiResult.engine;
+    if (aiResult.engine === 'gemini') {
+      usedGeminiVision = true;
+    }
+
+    extracted = {
+      vendor_name: aiResult.vendor_name || '',
+      invoice_number: aiResult.invoice_number || '',
+      invoice_date: aiResult.invoice_date ? new Date(aiResult.invoice_date).toISOString().split('T')[0] : '',
+      due_date: aiResult.due_date ? new Date(aiResult.due_date).toISOString().split('T')[0] : '',
+      amount: aiResult.total_amount || 0,
+      grand_total: 0,
+      currency: aiResult.currency || 'USD',
+      po_reference: aiResult.po_number || '',
+      mpo_number: aiResult.mpo_number || '',
+      brand_code: aiResult.brand_code || '',
+      payment_terms: aiResult.payment_terms || '',
+      bank_swift: aiResult.swift_code || aiResult.bank_info?.swift_code || '',
+      bank_account: aiResult.account_number || aiResult.bank_info?.account_number || '',
+      invoice_type: (aiResult as any).document_type || 'INVOICE',
+      tax_id: '',
+      company_reg: '',
+      incoterm: (aiResult as any).incoterm || undefined,
+      exchange_rate: (aiResult as any).exchange_rate,
+      is_handwritten: (aiResult as any).is_handwritten || undefined,
+      is_statement: (aiResult as any).is_statement || undefined,
+    };
+    // Store extra AI-extracted fields
+    (extracted as any).qty_shipped = aiResult.qty_shipped;
+    (extracted as any).bank_name = aiResult.bank_name;
+    (extracted as any).ship_to = aiResult.ship_to;
+    (extracted as any).sold_to = aiResult.sold_to;
+    (extracted as any).brand = aiResult.brand;
+    (extracted as any).season = aiResult.season;
+    (extracted as any).line_items = aiResult.line_items;
+    (extracted as any).signatures = aiResult.signatures;
+    (extracted as any).subtotal = aiResult.subtotal;
+    (extracted as any).bank_charges = aiResult.bank_charges;
+    (extracted as any).tt_charge = aiResult.tt_charge;
+    (extracted as any).freight_charges = aiResult.freight_charges;
+    (extracted as any).courier_charges = aiResult.courier_charges;
+    (extracted as any).handling_fee = aiResult.handling_fee;
+    (extracted as any).finance_surcharge = aiResult.finance_surcharge;
+    (extracted as any).tax_amount = aiResult.tax_amount;
+    (extracted as any).discount_amount = aiResult.discount_amount;
+    (extracted as any).setup_charge = aiResult.setup_charge;
+    (extracted as any).sample_charge = aiResult.sample_charge;
+    (extracted as any).min_order_charge = aiResult.min_order_charge;
+    (extracted as any).additional_charges = aiResult.additional_charges;
+
+    logger.info(`[OCR] AI-first extraction succeeded with ${ocrEngine} — vendor: "${extracted.vendor_name}", invoice#: "${extracted.invoice_number}", amount: ${extracted.amount}`);
+
+    // 3. Cross-validate with regex (pdf2json) for critical fields
+    if (pdf2jsonRawText && pdf2jsonRawText.length > 50) {
+      try {
+        const regexResult = await extractInvoiceFields(fileBuffer);
+        if (regexResult) {
+          // Cross-check amount — if regex found a significantly different amount, log warning
+          if (regexResult.amount && extracted.amount &&
+              Math.abs(regexResult.amount - extracted.amount) > 0.01 &&
+              regexResult.amount > 0) {
+            const diff = Math.abs(regexResult.amount - extracted.amount) / Math.max(regexResult.amount, extracted.amount);
+            if (diff > 0.05) {
+              logger.warn(`[OCR] Amount mismatch: AI=${extracted.amount}, regex=${regexResult.amount} (diff: ${(diff * 100).toFixed(1)}%) — using AI value`);
+            }
+          }
+          // Cross-check invoice_number — if AI missed it but regex found it
+          if ((!extracted.invoice_number || extracted.invoice_number.trim() === '') && regexResult.invoice_number) {
+            logger.info(`[OCR] AI missed invoice_number, regex found: "${regexResult.invoice_number}" — using regex value`);
+            extracted.invoice_number = regexResult.invoice_number;
+          }
+          // Cross-check vendor_name — if AI missed it but regex found it
+          if ((!extracted.vendor_name || extracted.vendor_name.trim() === '') && regexResult.vendor_name) {
+            logger.info(`[OCR] AI missed vendor_name, regex found: "${regexResult.vendor_name}" — using regex value`);
+            extracted.vendor_name = regexResult.vendor_name;
+          }
+          // Cross-check dates — if AI missed but regex found
+          if ((!extracted.invoice_date || extracted.invoice_date === '') && regexResult.invoice_date) {
+            logger.info(`[OCR] AI missed invoice_date, regex found: "${regexResult.invoice_date}" — using regex value`);
+            extracted.invoice_date = regexResult.invoice_date;
+          }
+          if ((!extracted.due_date || extracted.due_date === '') && regexResult.due_date) {
+            extracted.due_date = regexResult.due_date;
+          }
+        }
+      } catch (regexErr) {
+        logger.warn('[OCR] Regex cross-validation skipped (pdf2json failed):', regexErr);
+      }
+    }
+  } else {
+    // 4. AI failed — fall back to regex (pdf2json) as last resort
+    logger.warn('[OCR] AI-first extraction failed — falling back to pdf2json regex');
+    ocrEngine = 'pdf2json';
     try {
-      pdf2jsonRawText = await extractTextFromPDF(fileBuffer);
-    } catch {
-      // If we can't get raw text separately, use the extracted fields as-is
-    }
-
-    // Quality check: are critical fields missing or invalid?
-    const criticalFieldsMissing =
-      !extracted.vendor_name ||
-      extracted.vendor_name.trim() === '' ||
-      extracted.vendor_name === 'Account No' ||
-      !extracted.invoice_number ||
-      extracted.invoice_number.trim() === '';
-
-    if (criticalFieldsMissing) {
-      logger.warn(`[OCR] pdf2json extracted but critical fields missing (vendor="${extracted.vendor_name}", invoice#="${extracted.invoice_number}"). Triggering AI fallback chain.`);
-
-      // Try AI fallbacks using the raw text from pdf2json
-      const fallbackResult = await tryAIFallbacks(fileBuffer, pdf2jsonRawText, extracted.vendor_name || undefined);
-
-      if (fallbackResult) {
-        usedAIFallback = true;
-        ocrEngine = fallbackResult.engine;
-        extracted = {
-          vendor_name: fallbackResult.vendor_name || '',
-          invoice_number: fallbackResult.invoice_number || '',
-          invoice_date: fallbackResult.invoice_date ? new Date(fallbackResult.invoice_date).toISOString().split('T')[0] : '',
-          due_date: fallbackResult.due_date ? new Date(fallbackResult.due_date).toISOString().split('T')[0] : '',
-          amount: fallbackResult.total_amount || 0,
-          grand_total: 0,
-          currency: fallbackResult.currency || 'USD',
-          po_reference: fallbackResult.po_number || '',
-          mpo_number: fallbackResult.mpo_number || '',
-          brand_code: fallbackResult.brand_code || '',
-          payment_terms: fallbackResult.payment_terms || '',
-          bank_swift: fallbackResult.swift_code || fallbackResult.bank_info?.swift_code || '',
-          bank_account: fallbackResult.account_number || fallbackResult.bank_info?.account_number || '',
-          invoice_type: (fallbackResult.document_type as any) || 'INVOICE',
-          tax_id: '',
-          company_reg: '',
-          incoterm: (fallbackResult as any).incoterm || undefined,
-          exchange_rate: (fallbackResult as any).exchange_rate,
-          is_handwritten: (fallbackResult as any).is_handwritten || undefined,
-          is_statement: (fallbackResult as any).is_statement || undefined,
-        };
-        // Store extra AI-extracted fields for downstream use
-        (extracted as any).qty_shipped = fallbackResult.qty_shipped;
-        (extracted as any).bank_name = fallbackResult.bank_name;
-        (extracted as any).ship_to = fallbackResult.ship_to;
-        (extracted as any).sold_to = fallbackResult.sold_to;
-        (extracted as any).brand = fallbackResult.brand;
-        (extracted as any).season = fallbackResult.season;
-        (extracted as any).line_items = fallbackResult.line_items;
-        (extracted as any).signatures = fallbackResult.signatures;
-        // Charges
-        (extracted as any).subtotal = fallbackResult.subtotal;
-        (extracted as any).bank_charges = fallbackResult.bank_charges;
-        (extracted as any).tt_charge = fallbackResult.tt_charge;
-        (extracted as any).freight_charges = fallbackResult.freight_charges;
-        (extracted as any).courier_charges = fallbackResult.courier_charges;
-        (extracted as any).handling_fee = fallbackResult.handling_fee;
-        (extracted as any).finance_surcharge = fallbackResult.finance_surcharge;
-        (extracted as any).tax_amount = fallbackResult.tax_amount;
-        (extracted as any).discount_amount = fallbackResult.discount_amount;
-        (extracted as any).setup_charge = fallbackResult.setup_charge;
-        (extracted as any).sample_charge = fallbackResult.sample_charge;
-        (extracted as any).min_order_charge = fallbackResult.min_order_charge;
-        (extracted as any).additional_charges = fallbackResult.additional_charges;
-        logger.info(`[OCR] AI fallback succeeded with ${ocrEngine} — vendor: "${extracted.vendor_name}", invoice#: "${extracted.invoice_number}"`);
-      } else {
-        logger.warn('[OCR] All AI fallbacks failed — using pdf2json results as-is');
-      }
-    }
-  } catch (pdfError) {
-    console.error('[OCR] pdf2json failed, trying AI fallbacks:', pdfError);
-    logger.error('[OCR] pdf2json parse failed, attempting AI fallback chain');
-
-    // pdf2json completely failed — try to get raw text for AI services
-    // If pdf2json can't parse at all, AI text-based services won't have text either
-    // Gemini Vision can still read the PDF directly
-    const fallbackResult = await tryAIFallbacks(fileBuffer, '', undefined);
-
-    if (fallbackResult) {
-      usedAIFallback = true;
-      ocrEngine = fallbackResult.engine;
-      if (fallbackResult.engine === 'gemini') {
-        usedGeminiVision = true;
-      }
-      extracted = {
-        vendor_name: fallbackResult.vendor_name || '',
-        invoice_number: fallbackResult.invoice_number || '',
-        invoice_date: fallbackResult.invoice_date ? new Date(fallbackResult.invoice_date).toISOString().split('T')[0] : '',
-        due_date: fallbackResult.due_date ? new Date(fallbackResult.due_date).toISOString().split('T')[0] : '',
-        amount: fallbackResult.total_amount || 0,
-        grand_total: 0,
-        currency: fallbackResult.currency || 'USD',
-        po_reference: fallbackResult.po_number || '',
-        mpo_number: fallbackResult.mpo_number || '',
-        brand_code: fallbackResult.brand_code || '',
-        payment_terms: fallbackResult.payment_terms || '',
-        bank_swift: fallbackResult.swift_code || fallbackResult.bank_info?.swift_code || '',
-        bank_account: fallbackResult.account_number || fallbackResult.bank_info?.account_number || '',
-        invoice_type: (fallbackResult.document_type as any) || 'INVOICE',
-        tax_id: '',
-        company_reg: '',
-        incoterm: (fallbackResult as any).incoterm || undefined,
-        exchange_rate: (fallbackResult as any).exchange_rate,
-        is_handwritten: (fallbackResult as any).is_handwritten || undefined,
-        is_statement: (fallbackResult as any).is_statement || undefined,
-      };
-      // Store extra AI-extracted fields for downstream use
-      (extracted as any).qty_shipped = fallbackResult.qty_shipped;
-      (extracted as any).bank_name = fallbackResult.bank_name;
-      (extracted as any).ship_to = fallbackResult.ship_to;
-      (extracted as any).sold_to = fallbackResult.sold_to;
-      (extracted as any).brand = fallbackResult.brand;
-      (extracted as any).season = fallbackResult.season;
-      (extracted as any).line_items = fallbackResult.line_items;
-      (extracted as any).signatures = fallbackResult.signatures;
-      // Charges
-      (extracted as any).subtotal = fallbackResult.subtotal;
-      (extracted as any).bank_charges = fallbackResult.bank_charges;
-      (extracted as any).tt_charge = fallbackResult.tt_charge;
-      (extracted as any).freight_charges = fallbackResult.freight_charges;
-      (extracted as any).courier_charges = fallbackResult.courier_charges;
-      (extracted as any).handling_fee = fallbackResult.handling_fee;
-      (extracted as any).finance_surcharge = fallbackResult.finance_surcharge;
-      (extracted as any).tax_amount = fallbackResult.tax_amount;
-      (extracted as any).discount_amount = fallbackResult.discount_amount;
-      (extracted as any).setup_charge = fallbackResult.setup_charge;
-      (extracted as any).sample_charge = fallbackResult.sample_charge;
-      (extracted as any).min_order_charge = fallbackResult.min_order_charge;
-      (extracted as any).additional_charges = fallbackResult.additional_charges;
-      logger.info(`[OCR] AI fallback succeeded with ${ocrEngine} after pdf2json failure`);
-    } else {
-      throw pdfError; // All fallbacks failed, rethrow original error
+      extracted = await extractInvoiceFields(fileBuffer);
+    } catch (pdfError) {
+      console.error('[OCR] Both AI and pdf2json failed:', pdfError);
+      logger.error('[OCR] All extraction methods failed');
+      throw pdfError;
     }
   }
 

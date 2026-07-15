@@ -6,6 +6,7 @@ import { createApprovalRequest } from './approvalService';
 import { logger } from '../utils/logger';
 import { getGraphClient } from './sharePointService';
 import { extractMadisonInvoiceFields, AST_SINGLE_SOURCE_MODE } from './madisonInvoiceExtractor';
+import { analyzeInvoice } from './ocrService';
 import { matchVendor } from './vendorMatchingService';
 import { fieldDecisionEngine } from './fieldDecisionEngine';
 import { geminiOCRService } from './geminiOCRService';
@@ -262,13 +263,18 @@ export async function reExtractInvoice(
     );
   }
 
-  // 2. Re-run Madison extraction (Engine 1)
-  logger.info(`[ReExtract] Running Madison extraction for ${invoice.invoice_number}...`);
+  // 2. Run AI-first extraction (analyzeInvoice — tries Gemini/Ollama/Groq first, regex cross-validates)
+  logger.info(`[ReExtract] Running AI-first extraction (analyzeInvoice) for ${invoice.invoice_number}...`);
+  const ocrResult = await analyzeInvoice(fileBuffer, 'application/pdf');
+
+  logger.info(`[ReExtract] AI-first extraction completed — vendor: "${ocrResult.vendor_name}", invoice#: "${ocrResult.invoice_number}", amount: ${ocrResult.total_amount}, confidence: ${ocrResult.ocr_confidence_score}`);
+
+  // 3. Also run Madison extractor for vendor-specific rules and PO parsing
   const madisonResult = await extractMadisonInvoiceFields(fileBuffer);
 
-  // 3. Run AI engines in parallel (same as upload controller)
+  // 4. Build decision engines list for field decision engine
   const extractionContext = {
-    vendorName: madisonResult.vendor_name || undefined,
+    vendorName: ocrResult.vendor_name || madisonResult.vendor_name || undefined,
   };
 
   let geminiResult: any = null;
@@ -306,8 +312,48 @@ export async function reExtractInvoice(
     }
   }
 
-  // 4. Field Decision Engine
+  // 5. Field Decision Engine — include AI-first result as highest priority engine
   const decisionEngines: Array<{ engine_name: any; data: Record<string, any>; confidence: number }> = [
+    {
+      engine_name: 'ai-first',
+      data: {
+        vendor_name: ocrResult.vendor_name,
+        invoice_number: ocrResult.invoice_number,
+        invoice_date: ocrResult.invoice_date ? new Date(ocrResult.invoice_date).toISOString().split('T')[0] : '',
+        due_date: ocrResult.due_date ? new Date(ocrResult.due_date).toISOString().split('T')[0] : null,
+        payment_terms: ocrResult.payment_terms,
+        total_amount: ocrResult.total_amount,
+        currency: ocrResult.currency,
+        po_number: ocrResult.customer_po_number,
+        mpo_number: ocrResult.mpo_number,
+        brand: ocrResult.brand,
+        brand_code: ocrResult.brand_code,
+        season: ocrResult.season,
+        qty_shipped: ocrResult.qty_shipped,
+        ship_to: ocrResult.ship_to,
+        sold_to: ocrResult.sold_to,
+        line_items: ocrResult.line_items,
+        bank_name: ocrResult.bank_info?.bank_name,
+        swift_code: ocrResult.bank_info?.swift_code,
+        account_number: ocrResult.bank_info?.account_usd,
+        signatures: ocrResult.signatures,
+        subtotal: ocrResult.subtotal,
+        bank_charges: ocrResult.bank_charges,
+        freight_charges: ocrResult.freight_charges,
+        courier_charges: ocrResult.courier_charges,
+        handling_fee: ocrResult.handling_fee,
+        tt_charge: ocrResult.tt_charge,
+        tax_amount: ocrResult.tax_amount,
+        discount_amount: ocrResult.discount_amount,
+        setup_charge: ocrResult.setup_charge,
+        sample_charge: ocrResult.sample_charge,
+        min_order_charge: ocrResult.min_order_charge,
+        additional_charges: ocrResult.additional_charges,
+        incoterm: ocrResult.incoterm,
+        invoice_type: ocrResult.invoice_type,
+      },
+      confidence: Math.round((ocrResult.ocr_confidence_score || 0.75) * 100),
+    },
     {
       engine_name: 'madison',
       data: {
@@ -440,31 +486,53 @@ export async function reExtractInvoice(
     updateData.invoice_type = madisonResult.document_type;
   }
 
-  // Update charges if extracted
-  if (madisonResult.bank_charge != null) updateData.bank_charges = madisonResult.bank_charge;
-  if (madisonResult.freight_charges != null) updateData.freight_charges = madisonResult.freight_charges;
-  if (madisonResult.additional_charges != null) updateData.additional_charges = madisonResult.additional_charges;
-  if (madisonResult.discount_amount != null) updateData.discount_amount = madisonResult.discount_amount;
+  // Update charges — prefer AI-first result, fall back to Madison
+  const aiFirstCharges = (decisionEngines[0] as any).data;
+  if (aiFirstCharges.bank_charges != null) updateData.bank_charges = aiFirstCharges.bank_charges;
+  else if (madisonResult.bank_charge != null) updateData.bank_charges = madisonResult.bank_charge;
+  if (aiFirstCharges.freight_charges != null) updateData.freight_charges = aiFirstCharges.freight_charges;
+  else if (madisonResult.freight_charges != null) updateData.freight_charges = madisonResult.freight_charges;
+  if (aiFirstCharges.additional_charges != null) updateData.additional_charges = aiFirstCharges.additional_charges;
+  else if (madisonResult.additional_charges != null) updateData.additional_charges = madisonResult.additional_charges;
+  if (aiFirstCharges.discount_amount != null) updateData.discount_amount = aiFirstCharges.discount_amount;
+  else if (madisonResult.discount_amount != null) updateData.discount_amount = madisonResult.discount_amount;
+  if (aiFirstCharges.tt_charge != null) updateData.tt_charge = aiFirstCharges.tt_charge;
+  if (aiFirstCharges.courier_charges != null) updateData.courier_charges = aiFirstCharges.courier_charges;
+  if (aiFirstCharges.handling_fee != null) updateData.handling_fee = aiFirstCharges.handling_fee;
+  if (aiFirstCharges.tax_amount != null) updateData.tax_amount = aiFirstCharges.tax_amount;
+  if (aiFirstCharges.setup_charge != null) updateData.setup_charge = aiFirstCharges.setup_charge;
+  if (aiFirstCharges.sample_charge != null) updateData.sample_charge = aiFirstCharges.sample_charge;
+  if (aiFirstCharges.min_order_charge != null) updateData.min_order_charge = aiFirstCharges.min_order_charge;
 
-  // Update bank details
-  if (madisonResult.bank_details?.bank_name) updateData.bank_name = madisonResult.bank_details.bank_name;
-  if (madisonResult.bank_details?.swift_code) updateData.swift_code = madisonResult.bank_details.swift_code;
-  if (madisonResult.bank_details?.account_number) updateData.account_number = madisonResult.bank_details.account_number;
+  // Update bank details — prefer AI-first, fall back to Madison
+  if (aiFirstCharges.bank_name) updateData.bank_name = aiFirstCharges.bank_name;
+  else if (madisonResult.bank_details?.bank_name) updateData.bank_name = madisonResult.bank_details.bank_name;
+  if (aiFirstCharges.swift_code) updateData.swift_code = aiFirstCharges.swift_code;
+  else if (madisonResult.bank_details?.swift_code) updateData.swift_code = madisonResult.bank_details.swift_code;
+  if (aiFirstCharges.account_number) updateData.account_number = aiFirstCharges.account_number;
+  else if (madisonResult.bank_details?.account_number) updateData.account_number = madisonResult.bank_details.account_number;
 
-  // Update ship_to/sold_to
-  if (madisonResult.ship_to) updateData.ship_to = madisonResult.ship_to;
-  if (madisonResult.sold_to) updateData.sold_to = madisonResult.sold_to;
+  // Update ship_to/sold_to — prefer AI-first
+  if (aiFirstCharges.ship_to) updateData.ship_to = aiFirstCharges.ship_to;
+  else if (madisonResult.ship_to) updateData.ship_to = madisonResult.ship_to;
+  if (aiFirstCharges.sold_to) updateData.sold_to = aiFirstCharges.sold_to;
+  else if (madisonResult.sold_to) updateData.sold_to = madisonResult.sold_to;
 
   // Update PO number
   const newPoNumber = cleanPONumber(decisionFinal.po_number || madisonResult.po_number || null);
   if (newPoNumber) updateData.customer_po_number = newPoNumber;
 
-  // Update qty_shipped
-  if (madisonResult.qty_shipped) updateData.qty_shipped = madisonResult.qty_shipped;
+  // Update qty_shipped — prefer AI-first
+  if (aiFirstCharges.qty_shipped) updateData.qty_shipped = aiFirstCharges.qty_shipped;
+  else if (madisonResult.qty_shipped) updateData.qty_shipped = madisonResult.qty_shipped;
+
+  // Update incoterm
+  if (aiFirstCharges.incoterm) updateData.incoterm = aiFirstCharges.incoterm;
 
   // Update OCR raw data with new extraction results
   updateData.ocr_raw_data = {
-    ...madisonResult,
+    ai_first_result: ocrResult,
+    madison_result: madisonResult,
     decision: fieldDecision,
     re_extracted_at: new Date().toISOString(),
     re_extracted_by: userId,

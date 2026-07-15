@@ -88,19 +88,45 @@ export class CorrectionLogService {
     limit: number = 3
   ) {
     try {
-      const where: any = {};
-      if (vendorName) where.vendor_name = { contains: vendorName, mode: 'insensitive' };
-      if (invoiceTemplateType) where.invoice_template_type = invoiceTemplateType;
+      let corrections: any[] = [];
 
-      if (Object.keys(where).length === 0) {
-        return [];
+      // Strategy 1: Match by exact vendor name (contains, case-insensitive)
+      if (vendorName) {
+        corrections = await prisma.correctionLog.findMany({
+          where: { vendor_name: { contains: vendorName, mode: 'insensitive' } },
+          orderBy: [{ use_count: 'desc' }, { created_at: 'desc' }],
+          take: limit,
+        });
       }
 
-      const corrections = await prisma.correctionLog.findMany({
-        where,
-        orderBy: [{ use_count: 'desc' }, { created_at: 'desc' }],
-        take: limit,
-      });
+      // Strategy 2: Match by first word of vendor name (broader match)
+      if (corrections.length === 0 && vendorName) {
+        const firstWord = vendorName.split(/[\s\-,.]+/)[0];
+        if (firstWord && firstWord.length > 2) {
+          corrections = await prisma.correctionLog.findMany({
+            where: { vendor_name: { contains: firstWord, mode: 'insensitive' } },
+            orderBy: [{ use_count: 'desc' }, { created_at: 'desc' }],
+            take: limit,
+          });
+        }
+      }
+
+      // Strategy 3: Match by invoice template type
+      if (corrections.length === 0 && invoiceTemplateType) {
+        corrections = await prisma.correctionLog.findMany({
+          where: { invoice_template_type: invoiceTemplateType },
+          orderBy: [{ use_count: 'desc' }, { created_at: 'desc' }],
+          take: limit,
+        });
+      }
+
+      // Strategy 4: Fall back to most recent corrections (any vendor)
+      if (corrections.length === 0) {
+        corrections = await prisma.correctionLog.findMany({
+          orderBy: [{ use_count: 'desc' }, { created_at: 'desc' }],
+          take: limit,
+        });
+      }
 
       if (corrections.length > 0) {
         await prisma.correctionLog.updateMany({

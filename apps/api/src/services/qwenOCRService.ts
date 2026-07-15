@@ -42,7 +42,7 @@ Fields to extract:
 - invoice_number: Invoice number or reference
 - invoice_date: Date of invoice (format: YYYY-MM-DD)
 - due_date: Due date / payment due date (format: YYYY-MM-DD). Look for phrases like "Please pay on May 7", "Payment due May 7", or "Due date: May 7" and convert to YYYY-MM-DD using the invoice year if no year is given.
-- payment_terms: Payment terms text (e.g., "30 Days", "Net 30", "T/T 100% before shipment")
+- payment_terms: Payment terms text (e.g., "30 Days", "Net 30", "T/T 100% before shipment", "DUE DATE")
 - total_amount: Final total amount (number only, no currency symbol)
 - currency: Currency code (USD, HKD, EUR, etc.)
 - po_number: Purchase Order number if present (format like PO000002_KEY or extract PO#2924)
@@ -52,12 +52,46 @@ Fields to extract:
 - season: Season code (like F26, S26, F25, etc.)
 - ship_to: Ship to / delivery / consignee company and address. If the invoice shows two columns (e.g., "Delivery address" and "Invoice address"), extract ONLY the delivery address column, NOT the invoice address column.
 - sold_to: Sold to / invoice / buyer company and address. If the invoice shows two columns (e.g., "Delivery address" and "Invoice address"), extract ONLY the invoice address column, NOT the delivery address column.
+- qty_shipped: Total quantity shipped (sum of all line item quantities, or the total quantity field if explicitly stated)
+- document_type: Type of document (INVOICE, PROFORMA, COMMERCIAL_INVOICE, CREDIT_NOTE, STATEMENT, DEBIT_NOTE). Default to INVOICE if not clear.
+- bank_name: Bank name of the vendor's bank (e.g., "Standard Chartered Bank", "HSBC", "The Hongkong and Shanghai Banking Corporation Ltd")
+- swift_code: SWIFT/BIC code of the vendor's bank (e.g., "SCBLHKHHXXX", "HSBCHKHHHKH")
+- account_number: Bank account number of the vendor (e.g., "447-0-092572-7", "484-592449-838")
+- subtotal: Sub-total / Net Amount before charges and tax (number only)
+- bank_charges: Bank charge / Bank Charges / BANK CHARGE fee (number only, e.g., 30)
+- tt_charge: Telegraphic Transfer / TT Charge / T/T Charges fee (number only)
+- freight_charges: Freight / Freight Charge / Freight Cost / FREIGHT fee (number only)
+- courier_charges: Courier Charge / Express Fee / Delivery Charge fee (number only)
+- handling_fee: Handling Fee (number only)
+- finance_surcharge: Finance Surcharge / Finance Charge — late payment surcharge (number only)
+- tax_amount: VAT / Value Added Tax / GST / PPN / Tax / Sales Tax / Withholding Tax amount (number only)
+- discount_amount: Discount / DISCOUNT / Less: Discount amount (number only)
+- setup_charge: Setup Charge / Tooling Fee / Plate Charge (number only)
+- sample_charge: Sample Charge / Proto Sample Development Fee (number only)
+- min_order_charge: Minimum Charge / Min. Order Charge (number only)
+- additional_charges: Any other charge not covered above (number only)
 - line_items: Array of line items with:
   - description: item description
   - quantity: quantity as number
   - unit_price: unit price as number
   - total_amount: line total as number
   - item_code: item code if present
+- signatures: Array of signatures/stamps found on the document. Look for:
+  - Printed or handwritten names near "Signature", "Signed by", "Authorized by", "Approved by", "Prepared by", "For and on behalf of" sections
+  - Stamped names or company stamps
+  - Any name that appears to be a signatory/approver
+  - Known signatory names: Sarah Jane Cariquitan, MJ Santiago, Maricon Alvarez, April Joy Diasanta, Pamela Amor Caoili, Mariane Eusebio, Mary Joy Yco, Maricar Tanaleon, Mary Ann Del Monte, Edwin Garcia, Glecie Yumena, Lindsey Schindler
+  - "Computer generated invoice, no signature required" → no signatures needed, skip
+  Each signature should have:
+  - signatory_name: The person's name as printed/signed on the document
+  - signatory_role: Their role if stated (e.g., "Coordinator", "Purchasing Manager", "Account Holder", "Sr. Manager", "Planning Manager")
+  - signed_date: Date next to the signature if present (format: YYYY-MM-DD), null if not found
+  Extract ALL signatures visible on the document, even if only partially readable.
+- incoterm: International trade term (EXW, DAP, FOB, CIF, DDP, CFR, FCA, CPT, CIP). Look for "Incoterm", "Trade Terms" labels or standalone 3-letter codes.
+- exchange_rate: Exchange rate if mentioned (e.g., "@7.70" or "Exchange Rate: 7.70" or "settle in USD @7.70"). Number only.
+- invoice_currency_original: Original currency if different from settlement currency (e.g., invoice in HKD but settle in USD).
+- is_handwritten: true if the invoice appears to be handwritten or has very low text density (less than 200 characters). Common for small suppliers like "Kabuhayan Namin".
+- is_statement: true if the document is a statement/account statement/aging report rather than an invoice (e.g., SF Express statements). These have "STATEMENT", "Account Statement", "Aging", "Outstanding Balance", "Current Charges" labels.
 
 IMPORTANT RULES:
 1. vendor_name is the SENDER of the invoice, NOT Madison 88
@@ -73,9 +107,27 @@ IMPORTANT RULES:
    - total_amount (number from Amount/Total column)
    - item_code (item code if present, e.g., "SA10047935", "M5PG*")
    Do not skip line items. If quantity looks like a unit price, re-check the column.
-5. If a field is not found, use null
-6. Return ONLY the JSON object, nothing else
-7. This invoice may be bilingual (English + Chinese). Extract from both languages if present.
+5. For bank details: look for sections labeled "Bank Details", "Payment Information", "Remittance", "Beneficiary Bank", or similar. Extract bank_name, swift_code, and account_number from there.
+6. For qty_shipped: if there is a total quantity field, use that. Otherwise, sum the quantities from all line items.
+7. For document_type: check if the document says "INVOICE", "PROFORMA INVOICE", "COMMERCIAL INVOICE", "CREDIT NOTE", "STATEMENT", etc.
+8. For charges: extract ALL charges separately. Look for lines labeled:
+   - "Bank Charge", "Bank Charges", "BANK CHARGE" → bank_charges
+   - "TT Charge", "T/T Charges", "Telegraphic Transfer Fee" → tt_charge
+   - "Freight", "Freight Charge", "Freight Cost", "FREIGHT" → freight_charges
+   - "Courier Charge", "Express Fee", "Delivery Charge" → courier_charges
+   - "Handling Fee" → handling_fee
+   - "Finance Surcharge", "Finance Charge" → finance_surcharge
+   - "VAT", "Value Added Tax", "GST", "PPN", "Tax", "Sales Tax", "Withholding Tax" → tax_amount
+   - "Discount", "DISCOUNT", "Less: Discount" → discount_amount
+   - "Setup Charge", "Tooling Fee", "Plate Charge" → setup_charge
+   - "Sample Charge", "Proto Sample Development Fee" → sample_charge
+   - "Minimum Charge", "Min. Order Charge" → min_order_charge
+   - Any other charge line → additional_charges
+   Each charge must be a NUMBER only (e.g., 30 not "$30"). If a charge is 0.00, still extract it as 0.
+9. For subtotal: extract the "Subtotal", "Sub-Total", "Sub Total", "Net Amount", or "NET INVOICE" line — this is the sum of line items BEFORE charges and tax.
+10. If a field is not found, use null
+11. Return ONLY the JSON object, nothing else
+12. This invoice may be bilingual (English + Chinese). Extract from both languages if present.
    - Chinese labels: 发票号码 (invoice number), 发票日期 (invoice date), 总计/合计 (total), 付款条件 (payment terms)
 
 Example output:
@@ -94,6 +146,24 @@ Example output:
   "season": "F26",
   "ship_to": "PT UWU JUMP INDONESIA",
   "sold_to": "256086 / THE NORTH FACE",
+  "qty_shipped": 120,
+  "document_type": "INVOICE",
+  "bank_name": "Standard Chartered Bank",
+  "swift_code": "SCBLHKHHXXX",
+  "account_number": "447-0-092572-7",
+  "subtotal": 32.94,
+  "bank_charges": 30.00,
+  "tt_charge": null,
+  "freight_charges": null,
+  "courier_charges": null,
+  "handling_fee": null,
+  "finance_surcharge": null,
+  "tax_amount": 0.00,
+  "discount_amount": null,
+  "setup_charge": null,
+  "sample_charge": null,
+  "min_order_charge": null,
+  "additional_charges": null,
   "line_items": [
     {
       "description": "TNF-INDO-HT(MDDC)",
@@ -102,7 +172,19 @@ Example output:
       "total_amount": 7.99,
       "item_code": "1-292738-000-02"
     }
-  ]
+  ],
+  "signatures": [
+    {
+      "signatory_name": "Jane Doe",
+      "signatory_role": "Coordinator",
+      "signed_date": "2026-05-07"
+    }
+  ],
+  "incoterm": "EXW",
+  "exchange_rate": null,
+  "invoice_currency_original": null,
+  "is_handwritten": false,
+  "is_statement": false
 }
 
 Invoice text to extract from:

@@ -259,8 +259,8 @@ export class OllamaOCRService {
           stream: false,
           options: {
             temperature: 0.1,
-            num_ctx: 2048,
-            num_predict: 512,
+            num_ctx: 8192,
+            num_predict: 4096,
           },
         }),
         signal: controller.signal,
@@ -358,8 +358,8 @@ export class OllamaOCRService {
           stream: false,
           options: {
             temperature: 0.1,
-            num_ctx: 4096,
-            num_predict: 1024,
+            num_ctx: 8192,
+            num_predict: 4096,
           },
         }),
         signal: controller.signal,

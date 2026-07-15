@@ -75,7 +75,7 @@ export class OllamaFineTuneService {
       throw new Error('Fine-tuning already in progress');
     }
 
-    const baseModel = options?.baseModel || process.env.HF_BASE_MODEL || 'Qwen/Qwen2.5-0.5B-Instruct';
+    const baseModel = options?.baseModel || process.env.HF_BASE_MODEL || 'Qwen/Qwen2.5-1.5B-Instruct';
     const ollamaModel = process.env.OLLAMA_MODEL || 'qwen2.5vl:latest';
     const minCorrections = options?.minCorrections || 5;
     const epochs = options?.epochs || 3;

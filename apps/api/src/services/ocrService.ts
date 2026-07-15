@@ -6,6 +6,7 @@ import path from 'path';
 import { InvoiceType, InvoiceCategory, PaymentTerms, BillToEntity, OrderType, SignatoryRole, SignatureType } from '@ap-invoice/shared';
 import { parsePOReference, matchSignerToRole, TOP_10_BRANDS, isTop10Brand } from '@ap-invoice/shared';
 import { logger } from '../utils/logger';
+import { extractTextWithOpenDataLoader } from './openDataLoaderService';
 
 export interface BankInfo {
   bank_name?: string;
@@ -74,6 +75,18 @@ export interface OCRResult {
 }
 
 async function extractTextFromPDF(fileBuffer: Buffer): Promise<string> {
+  // Try OpenDataLoader first — ranked #1 in extraction benchmarks
+  try {
+    const text = await extractTextWithOpenDataLoader(fileBuffer);
+    if (text && text.length > 20) {
+      logger.info(`[OCR] OpenDataLoader extraction succeeded — ${text.length} chars`);
+      return text;
+    }
+  } catch (e) {
+    logger.warn('[OCR] OpenDataLoader extraction failed, falling back to pdf2json:', e instanceof Error ? e.message : String(e));
+  }
+
+  // Fallback: pdf2json
   return new Promise((resolve, reject) => {
     const pdfParser = new (PDFParser as any)(null, 1);
     

@@ -29,6 +29,11 @@ export default function ExceptionManager() {
     return [...acc, ...invoice.exceptions];
   }, []);
 
+  // Get invoice for an exception (must be defined before filteredExceptions)
+  const getInvoiceForException = (exception: MockException) => {
+    return invoices.find(inv => inv.id === exception.invoice_id);
+  };
+
   // Sort by creation time (FIFO) and apply status + search filter
   const filteredExceptions = exceptions
     .filter(exc => filter === 'ALL' || exc.status === filter)
@@ -105,11 +110,6 @@ export default function ExceptionManager() {
   };
 
   // getStatusStyle is imported from lib/statusStyle.ts
-
-  // Get invoice for an exception
-  const getInvoiceForException = (exception: MockException) => {
-    return invoices.find(inv => inv.id === exception.invoice_id);
-  };
 
   // Get invoice for selected exception
   const selectedInvoice = selectedException ? getInvoiceForException(selectedException) : null;

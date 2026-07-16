@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { AlertTriangle, CheckCircle, XCircle, ArrowLeft, AlertCircle, Search, ExternalLink } from 'lucide-react';
@@ -13,6 +13,7 @@ export default function ExceptionManager() {
   const { invoices, resolveException, refresh } = useMockData();
   const { user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<ExceptionFilter>('OPEN');
   const [selectedException, setSelectedException] = useState<MockException | null>(null);
@@ -49,6 +50,26 @@ export default function ExceptionManager() {
   useEffect(() => {
     setLoading(false);
   }, [invoices]);
+
+  // Auto-select first exception when navigated from Dashboard with selectedInvoiceId
+  useEffect(() => {
+    const state = location.state as { selectedInvoiceId?: string } | null;
+    if (state?.selectedInvoiceId && invoices.length > 0) {
+      const invoiceExceptions = exceptions.filter(
+        exc => exc.invoice_id === state.selectedInvoiceId && exc.status === 'OPEN'
+      );
+      if (invoiceExceptions.length > 0) {
+        setSelectedException(invoiceExceptions[0]);
+      }
+      // Also filter search to show only this invoice's exceptions
+      const invoice = invoices.find(inv => inv.id === state.selectedInvoiceId);
+      if (invoice) {
+        setSearchQuery(invoice.invoice_number);
+      }
+      // Clear the state so it doesn't re-trigger
+      navigate('/exceptions', { replace: true, state: {} });
+    }
+  }, [location.state, invoices, exceptions, navigate]);
 
   const handleResolve = async () => {
     if (!selectedException || !resolution.trim() || !user) return;

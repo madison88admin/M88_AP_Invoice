@@ -2259,7 +2259,7 @@ export default function Dashboard() {
               {/* Resolve Exceptions Button */}
               {selectedInvoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any) && user && ['PURCHASING_COORDINATOR', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'].includes(user.role) && (
                 <button
-                  onClick={() => navigate('/exceptions')}
+                  onClick={() => navigate('/exceptions', { state: { selectedInvoiceId: selectedInvoice.id } })}
                   className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl hover:opacity-80 transition-all font-medium text-sm"
                   style={{
                     background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)',

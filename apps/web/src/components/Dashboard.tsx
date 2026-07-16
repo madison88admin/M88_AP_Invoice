@@ -17,7 +17,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { MockInvoice } from '../lib/mockData';
 import { hasPermission, filterInvoicesByRole, canUserApproveStatus, isWithinRoleThreshold } from '../lib/roleAccess';
 import { cn } from '../lib/utils';
-import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, LogOut, Edit, Unlock, Users, Loader2 } from 'lucide-react';
+import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, LogOut, Edit, Unlock, Users, Loader2, Menu, X } from 'lucide-react';
 import { Skeleton, SkeletonBar } from './ui/Skeleton';
 
 // Custom hook for number count-up animation
@@ -148,6 +148,7 @@ export default function Dashboard() {
     agingBucket: undefined as 'current' | '1-30' | '31-60' | '60+' | undefined,
   });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [toasts, setToasts] = useState<{ id: string; message: string; type: 'success' | 'error' | 'warning' | 'info' }[]>([]);
   const [countUpStarted, setCountUpStarted] = useState(false);
@@ -1388,22 +1389,73 @@ export default function Dashboard() {
         </div>
       </aside>
 
+      {/* Mobile Sidebar Drawer */}
+      {mobileSidebarOpen && (
+        <div className="md:hidden fixed inset-0 z-50">
+          <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.5)' }} onClick={() => setMobileSidebarOpen(false)} />
+          <aside className="absolute left-0 top-0 bottom-0 w-64 flex flex-col animate-slide-in-left" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}>
+            <div className="p-5 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
+              <img src="/madison-logo.png" alt="Madison 88" className="h-10 w-auto flex-shrink-0" />
+              <button onClick={() => setMobileSidebarOpen(false)} className="p-2 rounded-lg" style={{ color: 'var(--text-muted)' }}>
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+              <SidebarItem icon={LayoutDashboard} label="Dashboard" active collapsed={false} onClick={() => setMobileSidebarOpen(false)} />
+              {user && ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'PLANNING_MANAGER', 'SR_MANAGER_GLOBAL_PRODUCTION', 'MS_POLLY', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
+                <SidebarItem icon={CheckSquare} label="Approvals" badge={awaitingApprovalCount.count} collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/approvals'); }} />
+              )}
+              {user && ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN'].includes(user.role) && (
+                <SidebarItem icon={AlertTriangle} label="Exceptions" badge={exceptionsCount.count} collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/exceptions'); }} />
+              )}
+              {user && ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE'].includes(user.role) && (
+                <SidebarItem icon={Building2} label="Vendors" badge={vendorsPendingVerification} collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/vendors'); }} />
+              )}
+              {user && ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
+                <SidebarItem icon={Package} label="Batches" badge={draftBatchCount} collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/payment-batches'); }} />
+              )}
+              {user && ['PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
+                <SidebarItem icon={BarChart3} label="Reports" collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/reports'); }} />
+              )}
+              {user && ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
+                <SidebarItem icon={FileSearch} label="Review" badge={reviewPendingCount} collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/accounting-review'); }} />
+              )}
+              {user && (user.role === 'IT_ADMIN' || user.role === 'SUPERADMIN') && (
+                <SidebarItem icon={Users} label="User Management" collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/users'); }} />
+              )}
+              {user && (user.role === 'IT_ADMIN' || user.role === 'SUPERADMIN') && (
+                <SidebarItem icon={Settings} label="System Configuration" collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/settings'); }} />
+              )}
+            </nav>
+          </aside>
+        </div>
+      )}
+
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden z-10">
         {/* Top Header */}
-        <header className="px-6 py-4">
+        <header className="px-4 md:px-6 py-4">
           <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
-                {user ? `Welcome, ${user.name.split(' ')[0]}` : 'Dashboard'}
-              </h1>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setMobileSidebarOpen(true)}
+                className="md:hidden p-2 rounded-xl transition-colors"
+                style={{ color: 'var(--text-muted)', background: 'var(--bg-card)' }}
+              >
+                <Menu className="h-5 w-5" strokeWidth={1.75} />
+              </button>
+              <div>
+                <h1 className="text-xl md:text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
+                  {user ? `Welcome, ${user.name.split(' ')[0]}` : 'Dashboard'}
+                </h1>
               {user && (
                 <span className="inline-block mt-1 px-3 py-1 text-xs font-medium rounded-full" style={{ background: 'var(--bg-card-hover)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>
                   {user.role.replace(/_/g, ' ')}
                 </span>
               )}
+              </div>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 md:gap-3">
               {/* Notification Bell */}
               <div className="relative">
                 <button
@@ -1419,7 +1471,7 @@ export default function Dashboard() {
                   )}
                 </button>
                 {showNotifications && (
-                  <div className="absolute right-0 top-full mt-2 w-96 rounded-2xl z-50 overflow-hidden" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+                  <div className="absolute right-0 top-full mt-2 w-[calc(100vw-2rem)] max-w-96 rounded-2xl z-50 overflow-hidden" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
                     <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
                       <div className="flex items-center gap-2">
                         <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Notifications</h3>
@@ -1506,14 +1558,14 @@ export default function Dashboard() {
               <ThemeToggle />
               {/* User Info */}
               {user && (
-                <div className="flex items-center gap-3 px-3 py-2 rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+                <div className="flex items-center gap-2 md:gap-3 px-2 md:px-3 py-2 rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
                   <div className="flex items-center gap-2">
                     <div className="p-2 rounded-xl flex-shrink-0" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}>
                       <span className="text-sm font-semibold" style={{ color: 'var(--text-inverse)' }}>
                         {user.name.split(' ').map(n => n[0]).join('')}
                       </span>
                     </div>
-                    <div className="text-left">
+                    <div className="text-left hidden sm:block">
                       <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{user.name}</p>
                       <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{user.title || user.role.replace(/_/g, ' ')}</p>
                     </div>
@@ -1538,7 +1590,7 @@ export default function Dashboard() {
         </header>
 
         {/* Main Content Area */}
-        <main className="flex-1 overflow-auto p-6 pb-24 md:pb-6">
+        <main className="flex-1 overflow-auto p-4 md:p-6 pb-24 md:pb-6">
           {/* Primary Action Bar */}
           <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
@@ -2130,7 +2182,7 @@ export default function Dashboard() {
 
       {/* Invoice Detail Panel */}
       {selectedInvoice && (
-        <div className="fixed right-0 top-0 h-full w-96 overflow-y-auto z-50" style={{ background: 'var(--bg-card)', borderLeft: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+        <div className="fixed right-0 top-0 h-full w-full sm:w-96 overflow-y-auto z-50" style={{ background: 'var(--bg-card)', borderLeft: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
           <div className="p-6">
             <div className="flex items-center justify-between mb-6">
               <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Invoice Details</h3>
@@ -2535,7 +2587,7 @@ export default function Dashboard() {
       {/* Reject Modal */}
       {showRejectModal && (
         <div className="fixed inset-0 flex items-center justify-center z-50 animate-backdrop" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
-          <div className="max-w-md w-full mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+          <div className="max-w-md w-full mx-2 sm:mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div className="p-6">
               <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
                 Reject Invoice
@@ -2578,7 +2630,7 @@ export default function Dashboard() {
       {/* Schedule Payment Modal */}
       {showSchedulePaymentModal && (
         <div className="fixed inset-0 flex items-center justify-center z-50 animate-backdrop" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
-          <div className="max-w-md w-full mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+          <div className="max-w-md w-full mx-2 sm:mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div className="p-6">
               <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
                 Schedule Payment
@@ -2625,7 +2677,7 @@ export default function Dashboard() {
       {/* Send Payment Confirmation Modal */}
       {showConfirmSendModal && selectedInvoice && (
         <div className="fixed inset-0 flex items-center justify-center z-50 animate-backdrop" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
-          <div className="max-w-md w-full mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+          <div className="max-w-md w-full mx-2 sm:mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div className="p-6">
               <h3 className="text-lg font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
                 Send Payment Confirmation
@@ -2676,7 +2728,7 @@ export default function Dashboard() {
       {/* Edit Invoice Modal */}
       {showEditModal && selectedInvoice && (
         <div className="fixed inset-0 flex items-center justify-center z-50 animate-backdrop" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
-          <div className="max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+          <div className="max-w-2xl w-full mx-2 sm:mx-4 max-h-[90vh] overflow-y-auto rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div className="p-6">
               <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
                 Edit Invoice

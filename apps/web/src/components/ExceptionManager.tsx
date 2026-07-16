@@ -136,24 +136,24 @@ export default function ExceptionManager() {
   return (
     <div className="min-h-screen animate-page-in" style={{ background: 'var(--bg-base)' }}>
       <div className="relative z-10">
-        <div className="px-6 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
+        <div className="px-4 md:px-6 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
           <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-2 md:space-x-4">
               <Link to="/" className="transition-colors" style={{ color: 'var(--text-muted)' }}
                 onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
                 onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
               >
                 <ArrowLeft className="h-5 w-5" strokeWidth={1.75} />
               </Link>
-              <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Exception Manager</h1>
+              <h1 className="text-lg md:text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Exception Manager</h1>
             </div>
-            <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+            <div className="text-xs md:text-sm" style={{ color: 'var(--text-muted)' }}>
               {exceptions.filter(exc => exc.status === 'OPEN').length} active / {exceptions.length} total
             </div>
           </div>
         </div>
 
-        <div className="px-6 py-6">
+        <div className="px-4 md:px-6 py-6">
           {/* Approval warning banner */}
           {approvalWarning && (
             <div className="mb-4 p-4 rounded-xl flex items-start gap-3" style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}>

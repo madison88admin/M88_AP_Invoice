@@ -110,31 +110,31 @@ export default function ApprovalInbox() {
   return (
     <div className="min-h-screen animate-page-in" style={{ background: 'var(--bg-base)' }}>
       <div className="relative z-10">
-        <header className="px-6 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
+        <header className="px-4 md:px-6 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
           <div className="flex items-center">
-            <Link to="/" className="mr-4 transition-colors" style={{ color: 'var(--text-muted)' }}
+            <Link to="/" className="mr-2 md:mr-4 transition-colors" style={{ color: 'var(--text-muted)' }}
               onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
               onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
             >
               <ArrowLeft className="h-5 w-5" strokeWidth={1.75} />
             </Link>
-            <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Approval Inbox</h1>
+            <h1 className="text-lg md:text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Approval Inbox</h1>
           </div>
         </header>
 
-        <main className="px-6 py-8">
+        <main className="px-4 md:px-6 py-6 md:py-8">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Invoice List */}
             <div className="lg:col-span-2">
               <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
-                <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
+                <div className="px-4 md:px-6 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
                   <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
                     Pending Approvals
                   </h2>
                   <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{pendingApprovals.length} items</span>
                 </div>
                 {loading ? (
-                  <div className="px-6 py-4 space-y-4">
+                  <div className="px-4 md:px-6 py-4 space-y-4">
                     {[...Array(3)].map((_, i) => (
                       <div key={i} className="flex items-center gap-4 p-4 rounded-xl" style={{ background: 'var(--bg-elevated)' }}>
                         <Skeleton className="h-10 w-10 rounded-xl" />
@@ -160,7 +160,7 @@ export default function ApprovalInbox() {
                       <div
                         key={invoice.id}
                         onClick={() => setSelectedInvoice(invoice)}
-                        className="px-6 py-4 cursor-pointer transition-colors"
+                        className="px-4 md:px-6 py-4 cursor-pointer transition-colors"
                         style={{
                           borderTop: idx > 0 ? '1px solid var(--border-subtle)' : 'none',
                           background: selectedInvoice?.id === invoice.id ? 'var(--bg-card-hover)' : undefined,
@@ -195,7 +195,7 @@ export default function ApprovalInbox() {
                     ))}
                   </div>
                   {/* Pagination Controls */}
-                  <div className="px-6 py-4 flex items-center justify-between" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                  <div className="px-4 md:px-6 py-4 flex items-center justify-between" style={{ borderTop: '1px solid var(--border-subtle)' }}>
                     <button
                       onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
                       disabled={currentPage === 1}
@@ -229,7 +229,7 @@ export default function ApprovalInbox() {
             {selectedInvoice && (
               <div className="lg:col-span-1">
                 <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
-                  <div className="px-6 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
+                  <div className="px-4 md:px-6 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
                     <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
                       Invoice Details
                     </h3>

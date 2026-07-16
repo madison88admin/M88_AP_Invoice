@@ -20,6 +20,7 @@ import {
 } from '@ap-invoice/shared';
 import prisma from '../config/database';
 import { inAppNotificationService } from './inAppNotificationService';
+import { detectMultiInvoice, splitPdfByPageRanges } from './multiInvoiceDetector';
 
 const INCOMING_DIR = process.env.WATCHER_INCOMING_DIR || '/incoming-invoices';
 const PROCESSING_DIR = process.env.WATCHER_PROCESSING_DIR || '/incoming-invoices/processing';
@@ -48,12 +49,13 @@ function ensureDirectories(): void {
 /**
  * Process a single PDF file:
  * 1. Move to Processing
- * 2. OCR extraction
- * 3. Vendor matching
- * 4. Duplicate detection (3 levels)
- * 5. NextGen validation
- * 6. Save to database
- * 7. Move to final folder
+ * 2. Multi-invoice detection (split if needed)
+ * 3. OCR extraction
+ * 4. Vendor matching
+ * 5. Duplicate detection (3 levels)
+ * 6. NextGen validation
+ * 7. Save to database
+ * 8. Move to final folder
  */
 async function processFile(filePath: string, fileName: string): Promise<void> {
   logger.info(`[File Watcher] Processing: ${fileName}`);
@@ -77,14 +79,57 @@ async function processFile(filePath: string, fileName: string): Promise<void> {
     return;
   }
 
+  // Step 2b: Multi-invoice detection
+  try {
+    const detection = await detectMultiInvoice(fileBuffer);
+    if (detection.isMultiInvoice && detection.invoiceCount > 1) {
+      logger.info(`[File Watcher] Multi-invoice PDF detected: ${detection.invoiceCount} invoices in ${fileName}. Splitting...`);
+
+      const splitBuffers = await splitPdfByPageRanges(fileBuffer, detection.pageRanges);
+
+      for (let i = 0; i < splitBuffers.length; i++) {
+        const partName = `${fileName}_part${i + 1}`;
+        logger.info(`[File Watcher] Processing split invoice ${i + 1}/${splitBuffers.length} from ${fileName}`);
+        try {
+          await processSingleInvoiceBuffer(splitBuffers[i], partName, processingPath, i);
+        } catch (splitErr) {
+          logger.error(`[File Watcher] Error processing split ${i + 1} of ${fileName}:`, splitErr);
+        }
+      }
+
+      // Move original to processed after all splits are done
+      safeMove(processingPath, PROCESSED_DIR);
+      logger.info(`[File Watcher] ${fileName} → Processed (${detection.invoiceCount} invoices extracted) ✅`);
+      return;
+    }
+  } catch (detectErr) {
+    logger.warn(`[File Watcher] Multi-invoice detection failed for ${fileName}, processing as single:`, detectErr);
+  }
+
+  // Single invoice — process normally
+  await processSingleInvoiceBuffer(fileBuffer, fileName, processingPath);
+}
+
+/**
+ * Process a single invoice buffer (used for both single and multi-invoice PDFs).
+ * Steps: OCR → Duplicate detection → Vendor matching → DB save → Validation → Move to final folder
+ */
+async function processSingleInvoiceBuffer(
+  fileBuffer: Buffer,
+  fileName: string,
+  processingPath: string,
+  splitIndex?: number
+): Promise<void> {
+  const partLabel = splitIndex !== undefined ? ` [part ${splitIndex + 1}]` : '';
+
   // Step 3: OCR extraction
   let ocrResult: any;
   try {
     ocrResult = await analyzeInvoice(fileBuffer, 'application/pdf');
   } catch (err) {
-    logger.error(`[File Watcher] OCR failed for ${fileName}:`, err);
-    safeMove(processingPath, FAILED_DIR);
-    await createAuditLog(null, 'WATCHER_OCR_FAILED', `OCR extraction failed for ${fileName}: ${err}`);
+    logger.error(`[File Watcher] OCR failed for ${fileName}${partLabel}:`, err);
+    if (splitIndex === undefined) safeMove(processingPath, FAILED_DIR);
+    await createAuditLog(null, 'WATCHER_OCR_FAILED', `OCR extraction failed for ${fileName}${partLabel}: ${err}`);
     return;
   }
 
@@ -98,8 +143,8 @@ async function processFile(filePath: string, fileName: string): Promise<void> {
   });
 
   if (dupResult.isDuplicate) {
-    logger.info(`[File Watcher] Duplicate: ${fileName} → ${dupResult.existingInvoiceNumber} (${dupResult.level})`);
-    safeMove(processingPath, DUPLICATES_DIR);
+    logger.info(`[File Watcher] Duplicate: ${fileName}${partLabel} → ${dupResult.existingInvoiceNumber} (${dupResult.level})`);
+    if (splitIndex === undefined) safeMove(processingPath, DUPLICATES_DIR);
     await createAuditLog(
       dupResult.existingInvoiceId || null,
       'WATCHER_DUPLICATE',
@@ -115,8 +160,8 @@ async function processFile(filePath: string, fileName: string): Promise<void> {
       select: { id: true },
     });
     if (existing) {
-      logger.info(`[File Watcher] Duplicate invoice_number "${ocrResult.invoice_number}" already in DB: ${fileName}`);
-      safeMove(processingPath, DUPLICATES_DIR);
+      logger.info(`[File Watcher] Duplicate invoice_number "${ocrResult.invoice_number}" already in DB: ${fileName}${partLabel}`);
+      if (splitIndex === undefined) safeMove(processingPath, DUPLICATES_DIR);
       await createAuditLog(existing.id, 'WATCHER_DUPLICATE', `Duplicate invoice_number ${ocrResult.invoice_number} for ${fileName}`);
       return;
     }
@@ -308,30 +353,30 @@ async function processFile(filePath: string, fileName: string): Promise<void> {
         );
 
         if (!validationResult.passed && validationResult.exceptions.length > 0) {
-          safeMove(processingPath, MANUAL_REVIEW_DIR);
-          logger.info(`[File Watcher] ${fileName} → ManualReview (validation exceptions)`);
+          if (splitIndex === undefined) safeMove(processingPath, MANUAL_REVIEW_DIR);
+          logger.info(`[File Watcher] ${fileName}${partLabel} → ManualReview (validation exceptions)`);
           return;
         }
       } catch (validationError) {
-        logger.error(`[File Watcher] Validation failed for ${invoice.invoice_number}:`, validationError);
-        safeMove(processingPath, MANUAL_REVIEW_DIR);
+        logger.error(`[File Watcher] Validation failed for ${invoice.invoice_number}${partLabel}:`, validationError);
+        if (splitIndex === undefined) safeMove(processingPath, MANUAL_REVIEW_DIR);
         return;
       }
     }
 
     // No vendor match → ManualReview (but invoice is saved in DB with EXCEPTION_FLAGGED)
     if (isVendorUnknown) {
-      safeMove(processingPath, MANUAL_REVIEW_DIR);
-      logger.info(`[File Watcher] ${fileName} → ManualReview (vendor not found, invoice saved as EXCEPTION_FLAGGED)`);
+      if (splitIndex === undefined) safeMove(processingPath, MANUAL_REVIEW_DIR);
+      logger.info(`[File Watcher] ${fileName}${partLabel} → ManualReview (vendor not found, invoice saved as EXCEPTION_FLAGGED)`);
       return;
     }
 
-    // Step 9: Move to Processed
-    safeMove(processingPath, PROCESSED_DIR);
-    logger.info(`[File Watcher] ${fileName} → Processed ✅`);
+    // Step 9: Move to Processed (only for single invoice — multi-invoice moves original in processFile)
+    if (splitIndex === undefined) safeMove(processingPath, PROCESSED_DIR);
+    logger.info(`[File Watcher] ${fileName}${partLabel} → Processed ✅`);
   } catch (err) {
-    logger.error(`[File Watcher] DB save failed for ${fileName}:`, err);
-    safeMove(processingPath, FAILED_DIR);
+    logger.error(`[File Watcher] DB save failed for ${fileName}${partLabel}:`, err);
+    if (splitIndex === undefined) safeMove(processingPath, FAILED_DIR);
     if (invoiceId) {
       await createAuditLog(invoiceId, 'WATCHER_DB_FAILED', `Database save failed for ${fileName}: ${err}`);
     }

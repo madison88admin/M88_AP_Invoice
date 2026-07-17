@@ -34,6 +34,7 @@ import citibusinessExportRoutes from './routes/citibusinessExport';
 import reprocessRoutes from './routes/reprocess';
 import soaReconciliationRoutes from './routes/soaReconciliation';
 import testRoutes from './routes/test';
+import workbenchRoutes from './routes/workbench';
 import { errorHandler } from './middleware/errorHandler';
 import { logger } from './utils/logger';
 import { connectDatabase, disconnectDatabase, isDbConnected } from './config/database';
@@ -83,6 +84,7 @@ app.use((req, res, next) => {
 });
 
 app.use('/api/invoices', invoiceRoutes);
+app.use('/api/workbench', workbenchRoutes);
 app.use('/api/vendors', vendorRoutes);
 app.use('/api/email-intake', emailIntakeRoutes);
 app.use('/api/email', emailInvoiceRoutes);

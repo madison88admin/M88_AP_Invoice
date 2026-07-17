@@ -19,7 +19,9 @@ interface ScheduledPayment {
     vendor: {
       id?: string;
       name: string;
+      account_number?: string;
     };
+    bill_to_entity?: string;
   };
 }
 
@@ -119,7 +121,8 @@ export default function PaymentBatchManager() {
         invoice: {
           id: p.invoice?.id || p.invoice_id,
           invoice_number: p.invoice?.invoice_number || '',
-          vendor: { id: p.invoice?.vendor?.id || p.invoice?.vendor_id, name: p.invoice?.vendor?.name || '' },
+          vendor: { id: p.invoice?.vendor?.id || p.invoice?.vendor_id, name: p.invoice?.vendor?.name || '', account_number: p.invoice?.vendor?.account_number || '' },
+          bill_to_entity: p.invoice?.bill_to_entity || '',
         },
       }));
       setScheduledPayments(mapped);
@@ -302,6 +305,11 @@ export default function PaymentBatchManager() {
   const selectedTotal = scheduledPayments
     .filter(p => selectedPaymentIds.has(p.id))
     .reduce((sum, p) => sum + p.amount, 0);
+  const previewGroups = Array.from(scheduledPayments.filter(p => selectedPaymentIds.has(p.id)).reduce((groups, payment) => {
+    const key = [payment.invoice.vendor.id, payment.currency, payment.invoice.vendor.account_number, payment.invoice.bill_to_entity].join('|');
+    const current = groups.get(key) || { vendor: payment.invoice.vendor.name, currency: payment.currency, account: payment.invoice.vendor.account_number || 'Missing account', entity: payment.invoice.bill_to_entity || 'Missing entity', count: 0, total: 0 };
+    current.count++; current.total += payment.amount; groups.set(key, current); return groups;
+  }, new Map<string, {vendor:string;currency:string;account:string;entity:string;count:number;total:number}>()).values());
 
   return (
     <div className="min-h-screen animate-page-in" style={{ background: 'var(--bg-base)' }}>
@@ -450,7 +458,7 @@ export default function PaymentBatchManager() {
                       onMouseLeave={(e) => { if (!processing) e.currentTarget.style.background = 'var(--accent-lime)'; }}
                     >
                       {processing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Package className="h-4 w-4 mr-2" />}
-                      Create Batch
+                      Create {previewGroups.length} Batch{previewGroups.length === 1 ? '' : 'es'}
                     </button>
                   )}
                   {isSupervisor && (
@@ -460,6 +468,7 @@ export default function PaymentBatchManager() {
                   )}
                 </div>
               )}
+              {selectedPaymentIds.size > 0 && <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-2 mb-4">{previewGroups.map((group, index) => <div key={`${group.vendor}-${index}`} className="p-3 rounded-lg text-xs" style={{background:'var(--bg-card)',border:'1px solid var(--border-color)'}}><div className="font-semibold">Batch {index + 1}: {group.vendor}</div><div>{group.count} invoice{group.count === 1 ? '' : 's'} · {group.currency} {group.total.toLocaleString()}</div><div style={{color:'var(--text-muted)'}}>{group.entity} · Account {group.account}</div></div>)}</div>}
 
               {scheduledPayments.length === 0 ? (
                 <div className="text-center py-12">

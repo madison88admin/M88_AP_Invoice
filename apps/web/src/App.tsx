@@ -19,6 +19,7 @@ import OnHoldQueue from './components/OnHoldQueue';
 import UserManagement from './components/UserManagement';
 import SettingsPage from './components/SettingsPage';
 import InvoiceRepository from './components/InvoiceRepository';
+import PurchasingWorkbench from './components/PurchasingWorkbench';
 import ProtectedRoute from './components/ProtectedRoute';
 import NotFound from './components/NotFound';
 
@@ -111,6 +112,7 @@ function App() {
                     <InvoiceRepository />
                   </ProtectedRoute>
                 } />
+                <Route path="/purchasing-workbench" element={<ProtectedRoute><PurchasingWorkbench /></ProtectedRoute>} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </Router>

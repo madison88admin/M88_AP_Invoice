@@ -33,6 +33,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { label: 'Dashboard', path: '/', icon: LayoutDashboard },
   { label: 'Invoice Repository', path: '/repository', icon: ClipboardList },
+  { label: 'Purchasing Workbench', path: '/purchasing-workbench', icon: ScanSearch, roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN'] },
   { label: 'Approvals', path: '/approvals', icon: CheckSquare, badgeKey: 'approvals' },
   { label: 'Exceptions', path: '/exceptions', icon: AlertTriangle, badgeKey: 'exceptions' },
   { label: 'On-Hold Queue', path: '/on-hold-queue', icon: Pause, roles: ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'] },

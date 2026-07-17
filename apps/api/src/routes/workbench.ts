@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { authenticate, authorize } from '../middleware/auth';
 import { UserRole } from '@ap-invoice/shared';
 import * as c from '../controllers/workbench';
-const r = Router();
+const r = Router() as Router;
 r.use(authenticate);
 const purchasing = authorize(UserRole.PURCHASING_COORDINATOR, UserRole.PURCHASING_MANAGER, UserRole.IT_ADMIN);
 r.get('/queue', purchasing, c.queue);

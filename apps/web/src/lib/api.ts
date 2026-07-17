@@ -71,6 +71,7 @@ export const invoiceApi = {
   requestApproval: (id: string) => api.post(`/api/invoices/${id}/request-approval`),
   approve: (id: string, signerName: string) => api.post(`/api/invoices/${id}/approve`, { signerName }),
   reject: (id: string, reason: string) => api.post(`/api/invoices/${id}/reject`, { reason }),
+  returnForCorrection: (id: string, reason: string, targetRole?: string) => api.post(`/api/invoices/${id}/return`, { reason, targetRole }),
   post: (id: string, bypassVarianceCheck: boolean = false) => api.post(`/api/invoices/${id}/post`, { bypassVarianceCheck }),
   releaseHold: (id: string) => api.post(`/api/invoices/${id}/release-hold`),
   checkNextGen: async (id: string) => {
@@ -114,9 +115,13 @@ export const paymentBatchApi = {
   getAll: () => api.get('/api/payment-batches'),
   getById: (batchId: string) => api.get(`/api/payment-batches/${batchId}`),
   create: (paymentIds: string[]) => api.post('/api/payment-batches', { paymentIds }),
+  submit: (batchId: string) => api.post(`/api/payment-batches/${batchId}/submit`),
+  review: (batchId: string, note?: string) => api.post(`/api/payment-batches/${batchId}/review`, { note }),
+  returnForCorrection: (batchId: string, reason: string) => api.post(`/api/payment-batches/${batchId}/return`, { reason }),
+  markExported: (batchId: string) => api.post(`/api/payment-batches/${batchId}/export`),
   process: (batchId: string) => api.post(`/api/payment-batches/${batchId}/process`),
   cancel: (batchId: string, reason: string) => api.post(`/api/payment-batches/${batchId}/cancel`, { reason }),
-  getScheduledPayments: () => api.get('/api/payment-batches/scheduled-payments'),
+  getScheduledPayments: (filters?: any) => api.get('/api/payment-batches/scheduled-payments', { params: filters }),
   selectPayments: (paymentIds: string[]) => api.post('/api/payment-batches/select', { paymentIds }),
   deselectPayments: (paymentIds: string[]) => api.post('/api/payment-batches/deselect', { paymentIds }),
 };

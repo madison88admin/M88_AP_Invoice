@@ -9,6 +9,10 @@ import {
   cancelPaymentBatch,
   selectPaymentsForBatch,
   deselectPaymentsForBatch,
+  submitPaymentBatchForReview,
+  reviewPaymentBatch,
+  returnPaymentBatch,
+  markPaymentBatchExported,
 } from '../services/paymentBatchService';
 
 export const createPaymentBatchController = async (
@@ -31,11 +35,33 @@ export const getScheduledPaymentsForBatchController = async (
   next: NextFunction
 ) => {
   try {
-    const payments = await getScheduledPaymentsForBatch();
+    const payments = await getScheduledPaymentsForBatch({
+      vendorId: req.query.vendorId as string | undefined,
+      currency: req.query.currency as string | undefined,
+      dateFrom: req.query.dateFrom as string | undefined,
+      dateTo: req.query.dateTo as string | undefined,
+      search: req.query.search as string | undefined,
+    });
     res.json(payments);
   } catch (error) {
     next(error);
   }
+};
+
+export const submitPaymentBatchController = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try { res.json(await submitPaymentBatchForReview(req.params.batchId, req.user!.id)); } catch (error) { next(error); }
+};
+
+export const reviewPaymentBatchController = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try { res.json(await reviewPaymentBatch(req.params.batchId, req.user!.id, req.body.note)); } catch (error) { next(error); }
+};
+
+export const returnPaymentBatchController = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try { res.json(await returnPaymentBatch(req.params.batchId, req.user!.id, req.body.reason)); } catch (error) { next(error); }
+};
+
+export const exportPaymentBatchController = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try { res.json(await markPaymentBatchExported(req.params.batchId, req.user!.id)); } catch (error) { next(error); }
 };
 
 export const getPaymentBatchesController = async (

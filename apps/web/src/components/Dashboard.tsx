@@ -222,20 +222,14 @@ export default function Dashboard() {
       return [];
     }
 
-    // PURCHASING_COORDINATOR - pending their approval, validation, or batch hold (they upload first)
+    // Purchasing retains read visibility through accounting and payment stages.
     if (role === 'PURCHASING_COORDINATOR') {
-      return allInvoices.filter(i =>
-        i.status === 'RECEIVED' ||
-        i.status === 'PENDING_COORDINATOR' ||
-        i.status === 'VALIDATION_PENDING' ||
-        i.status === 'EXCEPTION_FLAGGED' ||
-        i.status === 'ON_HOLD'
-      );
+      return allInvoices;
     }
 
-    // PURCHASING_MANAGER - pending their approval
+    // Managers can follow every invoice through payment; action buttons remain stage-controlled.
     if (role === 'PURCHASING_MANAGER') {
-      return allInvoices.filter(i => i.status === 'PENDING_MANAGER');
+      return allInvoices;
     }
 
     // Default: use existing role-based filter
@@ -540,6 +534,11 @@ export default function Dashboard() {
       brand_code: invoice.brand_code || '',
       brand_tier: invoice.brand_tier || '',
       mpo_number: invoice.mpo_number || '',
+      mpo_base_number: invoice.mpo_base_number || '',
+      mpo_order_sequence: invoice.mpo_order_sequence || '',
+      material_code: invoice.material_code || '',
+      material_name: invoice.material_name || '',
+      edit_reason: '',
       customer_po_number: invoice.customer_po_number || '',
       season: invoice.season || '',
       order_type: invoice.order_type || '',
@@ -598,6 +597,11 @@ export default function Dashboard() {
         order_type: parseString(editFormData.order_type),
         customer_po_number: parseString(editFormData.customer_po_number),
         mpo_number: parseString(editFormData.mpo_number),
+        mpo_base_number: parseString(editFormData.mpo_base_number),
+        mpo_order_sequence: parseString(editFormData.mpo_order_sequence),
+        material_code: parseString(editFormData.material_code),
+        material_name: parseString(editFormData.material_name),
+        edit_reason: parseString(editFormData.edit_reason),
         qty_shipped: parseNum(editFormData.qty_shipped),
         payment_terms: parseString(editFormData.payment_terms),
         bank_name: parseString(editFormData.bank_name),
@@ -649,6 +653,20 @@ export default function Dashboard() {
     } catch (error) {
       console.error('Failed to reject invoice:', error);
       showToast('Failed to reject invoice', 'error');
+    }
+  };
+
+  const handleReturnForCorrection = async () => {
+    if (!selectedInvoice) return;
+    const reason = window.prompt('Reason for returning this invoice to the previous approver:');
+    if (!reason?.trim()) return;
+    try {
+      await invoiceApi.returnForCorrection(selectedInvoice.id, reason.trim());
+      showToast('Invoice returned to the previous approver', 'success');
+      await refresh();
+      setSelectedInvoice(null);
+    } catch (error: any) {
+      showToast(error?.response?.data?.error?.message || 'Failed to return invoice', 'error');
     }
   };
 
@@ -1900,7 +1918,7 @@ export default function Dashboard() {
           <div id="invoice-list-section" className="rounded-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.25)]" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
             <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
               <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
-                Invoices
+                Invoice Repository
                 {filters.agingBucket && (
                   <span className="ml-2 text-xs font-normal" style={{ color: 'var(--accent-purple)' }}>
                     · {filters.agingBucket === 'current' ? 'Current (not yet due)' : filters.agingBucket === '1-30' ? '1–30 days overdue' : filters.agingBucket === '31-60' ? '31–60 days overdue' : '60+ days overdue'}
@@ -2380,6 +2398,11 @@ export default function Dashboard() {
                       Reject
                     </button>
                   )}
+                  {user.role !== 'PURCHASING_COORDINATOR' && (
+                    <button onClick={handleReturnForCorrection} className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl font-medium text-sm" style={{ background: 'color-mix(in srgb, var(--accent-amber) 12%, transparent)', color: 'var(--accent-amber)', border: '1px solid var(--accent-amber)' }}>
+                      Return to Previous Approver
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -2766,6 +2789,10 @@ export default function Dashboard() {
                   ] },
                   { label: 'PO Number', field: 'customer_po_number', type: 'text' },
                   { label: 'MPO Number', field: 'mpo_number', type: 'text' },
+                  { label: 'Base MPO', field: 'mpo_base_number', type: 'text' },
+                  { label: 'Order Sequence', field: 'mpo_order_sequence', type: 'text' },
+                  { label: 'Material Code', field: 'material_code', type: 'text' },
+                  { label: 'Material Name', field: 'material_name', type: 'text' },
                   { label: 'QTY SHIPPED', field: 'qty_shipped', type: 'number' },
                   { label: 'Payment Terms', field: 'payment_terms', type: 'text' },
                   { label: 'Bank Name', field: 'bank_name', type: 'text' },
@@ -2848,6 +2875,11 @@ export default function Dashboard() {
                       {label}
                     </label>
                   ))}
+                </div>
+
+                <div className="col-span-full">
+                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Reason for edit</label>
+                  <textarea value={editFormData.edit_reason || ''} onChange={(e) => handleEditChange('edit_reason', e.target.value)} rows={2} placeholder="Required for material or financial changes" className="w-full px-3 py-2 rounded-xl text-sm" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }} />
                 </div>
 
               </div>

@@ -271,6 +271,8 @@ export async function createApprovalRequest(
         signatory_name: 'AUTO-APPROVED',
         signature_type: SignatureType.COMPUTER_GENERATED as any,
         signed_at: now,
+        invoice_revision: invoice.revision,
+        approval_status: 'APPROVED',
       },
     });
 
@@ -281,6 +283,8 @@ export async function createApprovalRequest(
         signatory_name: 'AUTO-APPROVED',
         signature_type: SignatureType.COMPUTER_GENERATED as any,
         signed_at: now,
+        invoice_revision: invoice.revision,
+        approval_status: 'APPROVED',
       },
     });
 
@@ -336,6 +340,8 @@ export async function createApprovalRequest(
           signatory_name: ocrMatch.signatory_name,
           signature_type: SignatureType.DIGITAL as any,
           signed_at: ocrMatch.signed_at,
+          invoice_revision: invoice.revision,
+          approval_status: 'APPROVED',
         },
       });
       createdSignatures.push(sig);
@@ -350,6 +356,8 @@ export async function createApprovalRequest(
           signatory_name: '',
           signature_type: SignatureType.DIGITAL as any,
           signed_at: null,
+          invoice_revision: invoice.revision,
+          approval_status: 'PENDING',
         },
       });
       createdSignatures.push(sig);
@@ -538,6 +546,8 @@ export async function approveInvoice(
       signatory_name: signerName,
       signed_at: new Date(),
       signature_type: 'DIGITAL',
+      approval_status: 'APPROVED',
+      invoice_revision: invoice.revision,
     },
   });
 
@@ -763,6 +773,91 @@ export async function rejectInvoice(
   });
 
   return { message: 'Invoice rejected successfully' };
+}
+
+/** Return an invoice to a prior purchasing approver without destroying history. */
+export async function returnInvoice(
+  invoiceId: string,
+  userId: string,
+  userRole: string,
+  reason: string,
+  targetRole?: string
+) {
+  if (!reason?.trim()) throw new AppError('Return reason is required', 400);
+
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    include: { signatures: { orderBy: { created_at: 'asc' } }, vendor: true },
+  });
+  if (!invoice) throw new AppError('Invoice not found', 404);
+
+  const allowedRoles = mapUserRoleToSignatoryRoles(userRole);
+  const current = invoice.signatures.find((sig: any) =>
+    allowedRoles.includes(sig.signatory_role) && !sig.signed_at && sig.approval_status !== 'SUPERSEDED'
+  );
+  if (!current) throw new AppError('No active approval is assigned to this user', 403);
+
+  const currentIndex = invoice.signatures.findIndex((sig: any) => sig.id === current.id);
+  let target = targetRole
+    ? invoice.signatures.find((sig: any) => sig.signatory_role === targetRole)
+    : [...invoice.signatures.slice(0, currentIndex)].reverse().find((sig: any) => sig.signed_at);
+  if (!target && userRole !== 'PURCHASING_COORDINATOR') {
+    target = invoice.signatures.find((sig: any) => sig.signatory_role === SignatoryRole.COORDINATOR);
+  }
+  if (!target) throw new AppError('No prior approver is available for return', 400);
+
+  const targetIndex = invoice.signatures.findIndex((sig: any) => sig.id === target!.id);
+  const affectedIds = invoice.signatures.slice(targetIndex).map((sig: any) => sig.id);
+  await prisma.signature.updateMany({
+    where: { id: { in: affectedIds } },
+    data: {
+      signed_at: null,
+      approval_status: 'RECONFIRMATION_REQUIRED',
+      invalidated_at: new Date(),
+      invalidation_reason: reason.trim(),
+    },
+  });
+
+  const targetStatus = mapSignatoryRoleToPendingStatus(target.signatory_role as SignatoryRole);
+  await prisma.stageTimestamp.updateMany({
+    where: { invoice_id: invoiceId, exited_at: null },
+    data: { exited_at: new Date() },
+  });
+  await prisma.invoice.update({
+    where: { id: invoiceId },
+    data: { status: targetStatus as any, current_approver_role: target.signatory_role },
+  });
+  await prisma.stageTimestamp.create({
+    data: {
+      invoice_id: invoiceId,
+      stage: targetStatus as any,
+      sla_hours: getSLAForRole(target.signatory_role) * 24,
+    },
+  });
+  await prisma.invoiceWorkflowAction.create({
+    data: {
+      invoice_id: invoiceId,
+      invoice_revision: invoice.revision,
+      action: 'RETURNED_FOR_CORRECTION',
+      from_stage: invoice.status,
+      to_stage: targetStatus,
+      reason: reason.trim(),
+      performed_by: userId,
+      performed_by_role: userRole,
+    },
+  });
+  await prisma.auditLog.create({
+    data: {
+      invoice_id: invoiceId,
+      action: 'RETURNED_FOR_CORRECTION',
+      performed_by: userId,
+      note: `Returned by ${userRole} to ${target.signatory_role}. Reason: ${reason.trim()}`,
+    },
+  });
+  await inAppNotificationService.notifyStageTransition(
+    invoiceId, invoice.invoice_number, invoice.vendor?.name || 'Unknown', invoice.status, targetStatus, target.signatory_role
+  );
+  return { message: 'Invoice returned for correction', status: targetStatus, target_role: target.signatory_role };
 }
 
 /**

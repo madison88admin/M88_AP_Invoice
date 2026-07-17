@@ -757,7 +757,13 @@ async function checkDuplicateInvoice(invoice: any): Promise<ValidationResult> {
       invoice.vendor_id || '',
       Number(invoice.total_amount),
       invoiceDate,
-      invoice.id
+      invoice.id,
+      {
+        invoice_type: invoice.invoice_type,
+        mpo_base_number: invoice.mpo_base_number,
+        mpo_order_sequence: invoice.mpo_order_sequence,
+        material_code: invoice.material_code,
+      }
     );
 
     if (result.is_duplicate) {
@@ -974,12 +980,37 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
       };
     }
 
-    // MPO matches — compare amount, vendor, and quantity
+    // Compare the most specific target available. A material invoice must not
+    // be compared against the total of every line under the MPO.
     const differences: string[] = [];
+    const requestedMaterialCode = String(invoice.material_code || rawData.material_code || '').trim().toUpperCase();
+    const requestedMaterialName = String(invoice.material_name || rawData.material_name || '').trim().toUpperCase();
+    let targetLines = po.line_items || [];
+    let matchLevel = 'MPO_HEADER';
+    if (requestedMaterialCode || requestedMaterialName) {
+      const matchedLines = targetLines.filter((line: any) => {
+        const code = String(line.item_code || '').toUpperCase();
+        const description = String(line.description || '').toUpperCase();
+        return (requestedMaterialCode && (code === requestedMaterialCode || description.includes(requestedMaterialCode))) ||
+          (requestedMaterialName && (description.includes(requestedMaterialName) || requestedMaterialName.includes(description)));
+      });
+      if (matchedLines.length === 0) {
+        return {
+          passed: false,
+          reason: ExceptionReason.PO_NOT_FOUND,
+          message: `Material ${requestedMaterialCode || requestedMaterialName} not found under ${poRef}`,
+          detail: 'The MPO exists, but no matching material line was found. Manual line selection is required.',
+        };
+      }
+      targetLines = matchedLines;
+      matchLevel = 'MATERIAL_LINE';
+    }
 
     // Amount check (>5% variance = fail)
     // Subtract all charges from invoice total to get the net goods amount for PO comparison
-    const poAmount = Number(po.amount);
+    const poAmount = matchLevel === 'MATERIAL_LINE'
+      ? targetLines.reduce((sum: number, li: any) => sum + Number(li.total_amount || 0), 0)
+      : Number(po.amount);
     const invoiceTotal = Number(invoice.total_amount);
     const bankCharges = Number(invoice.bank_charges || 0);
     const ttCharge = Number((invoice as any).tt_charge || 0);
@@ -1012,7 +1043,7 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
 
     // Quantity check (if invoice has qty_shipped and PO has line items)
     const invoiceQty = Number(invoice.qty_shipped || 0);
-    const poQty = (po.line_items || []).reduce((sum: number, li: any) => sum + Number(li.quantity || 0), 0);
+    const poQty = targetLines.reduce((sum: number, li: any) => sum + Number(li.quantity || 0), 0);
     if (invoiceQty > 0 && poQty > 0 && invoiceQty !== poQty) {
       differences.push(`Quantity: invoice ${invoiceQty} vs PO ${poQty}`);
     }
@@ -1037,7 +1068,7 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
 
     return {
       passed: true,
-      message: `PO ${poRef} verified in NextGen — amount, quantity, and vendor match`,
+      message: `${matchLevel === 'MATERIAL_LINE' ? `Material ${requestedMaterialCode || requestedMaterialName}` : `PO ${poRef}`} verified in NextGen — amount, quantity, and vendor match`,
     };
   } catch (error) {
     // NextGen unavailable — log warning but don't block validation
@@ -1307,4 +1338,3 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
 
   return { hasChanges, hasCriticalChanges, changes, criticalChanges, currentData: currentNextGen };
 }
-

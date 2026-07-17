@@ -27,8 +27,8 @@ export async function exportBatchToCitiBusiness(batchId: string): Promise<{ csv:
     throw new AppError('Payment batch not found', 404);
   }
 
-  if (batch.status !== PaymentBatchStatus.APPROVED && batch.status !== PaymentBatchStatus.PROCESSED) {
-    throw new AppError('Batch must be APPROVED or PROCESSED to export for CitiBusiness', 400);
+  if (![PaymentBatchStatus.REVIEWED, PaymentBatchStatus.EXPORTED_TO_BANK, PaymentBatchStatus.PROCESSED].includes(batch.status as any)) {
+    throw new AppError('Batch must be reviewed by Accounting Supervisor before CitiBusiness export', 400);
   }
 
   const delimiter = CITIBUSINESS_EXPORT_CONFIG.DELIMITER;
@@ -101,7 +101,7 @@ export async function exportBatchToCitiBusiness(batchId: string): Promise<{ csv:
  */
 export async function exportMultipleBatchesToCitiBusiness(startDate?: Date, endDate?: Date): Promise<{ csv: string; filename: string; batch_count: number; total_amount: number }> {
   const where: any = {
-    status: { in: [PaymentBatchStatus.APPROVED, PaymentBatchStatus.PROCESSED] },
+    status: { in: [PaymentBatchStatus.REVIEWED, PaymentBatchStatus.EXPORTED_TO_BANK, PaymentBatchStatus.PROCESSED] },
   };
 
   if (startDate || endDate) {

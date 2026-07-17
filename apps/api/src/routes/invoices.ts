@@ -39,6 +39,7 @@ router.post('/:id/validate-sync', authorize(UserRole.PURCHASING_COORDINATOR, Use
 router.post('/:id/request-approval', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), approvalController.requestApproval);
 router.post('/:id/approve', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.PURCHASING_MANAGER, UserRole.MLO_ACCOUNT_HOLDER, UserRole.PLANNING_MANAGER, UserRole.SR_MANAGER_GLOBAL_PRODUCTION, UserRole.MS_POLLY, UserRole.PRESIDENT, UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE), approvalController.approveInvoiceController);
 router.post('/:id/reject', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.PURCHASING_MANAGER, UserRole.MLO_ACCOUNT_HOLDER, UserRole.PLANNING_MANAGER, UserRole.SR_MANAGER_GLOBAL_PRODUCTION, UserRole.MS_POLLY, UserRole.PRESIDENT, UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE), approvalController.rejectInvoiceController);
+router.post('/:id/return', authorize(UserRole.PURCHASING_MANAGER, UserRole.MLO_ACCOUNT_HOLDER, UserRole.PLANNING_MANAGER, UserRole.SR_MANAGER_GLOBAL_PRODUCTION, UserRole.MS_POLLY), approvalController.returnInvoiceController);
 router.post('/:id/post', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), postingController.postInvoiceController);
 router.post('/:id/release-hold', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), postingController.releaseFromHoldController);
 router.post('/:id/schedule-payment', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), postingController.schedulePaymentController);
@@ -50,6 +51,6 @@ router.post('/', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), 
 router.get('/', invoiceController.getInvoices);
 router.get('/:id', invoiceController.getInvoiceById);
 router.patch('/:id/status', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), invoiceController.updateInvoiceStatus);
-router.patch('/:id', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), invoiceController.updateInvoice);
+router.patch('/:id', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.PURCHASING_MANAGER, UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), invoiceController.updateInvoice);
 
 export default router;

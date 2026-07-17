@@ -114,9 +114,14 @@ export enum InvoiceSource {
 
 export enum PaymentBatchStatus {
   DRAFT = 'DRAFT',
-  PENDING_CFO = 'PENDING_CFO',
-  APPROVED = 'APPROVED',
+  PENDING_SUPERVISOR_REVIEW = 'PENDING_SUPERVISOR_REVIEW',
+  RETURNED_FOR_CORRECTION = 'RETURNED_FOR_CORRECTION',
+  REVIEWED = 'REVIEWED',
+  EXPORTED_TO_BANK = 'EXPORTED_TO_BANK',
+  PROCESSING = 'PROCESSING',
   PROCESSED = 'PROCESSED',
+  PARTIALLY_PAID = 'PARTIALLY_PAID',
+  FAILED = 'FAILED',
   CANCELLED = 'CANCELLED',
 }
 
@@ -164,6 +169,7 @@ export enum UserRole {
 export interface Invoice {
   id: string;
   invoice_number: string;
+  revision?: number;
   invoice_date?: Date;
   invoice_received_date?: Date;
   due_date?: Date;
@@ -192,6 +198,10 @@ export interface Invoice {
   brand_code?: string;
   season?: string;
   mpo_number?: string;
+  mpo_base_number?: string;
+  mpo_order_sequence?: string;
+  material_code?: string;
+  material_name?: string;
   customer_po_number?: string;
   bill_to_entity: BillToEntity;
   approval_tier?: number;
@@ -216,8 +226,42 @@ export interface Invoice {
   exceptions?: Exception[];
   stage_timestamps?: StageTimestamp[];
   payments?: Payment[];
+  invoice_lines?: InvoiceLine[];
+  workflow_actions?: InvoiceWorkflowAction[];
   created_at: Date;
   updated_at: Date;
+}
+
+export interface InvoiceLine {
+  id: string;
+  invoice_id: string;
+  line_number: number;
+  description?: string;
+  mpo_base_number?: string;
+  mpo_order_sequence?: string;
+  material_code?: string;
+  material_name?: string;
+  quantity?: number;
+  selling_quantity?: number;
+  unit_price?: number;
+  line_amount?: number;
+  matched_nextgen_line_id?: string;
+  match_level?: string;
+  match_confidence?: number;
+  match_status?: string;
+}
+
+export interface InvoiceWorkflowAction {
+  id: string;
+  invoice_id: string;
+  invoice_revision: number;
+  action: string;
+  from_stage?: string;
+  to_stage?: string;
+  reason?: string;
+  performed_by: string;
+  performed_by_role?: string;
+  created_at: Date;
 }
 
 export interface Vendor {
@@ -312,6 +356,14 @@ export interface PaymentBatch {
   created_by?: string;
   processed_by?: string;
   processed_at?: Date;
+  submitted_by?: string;
+  submitted_at?: Date;
+  reviewed_by?: string;
+  reviewed_at?: Date;
+  review_note?: string;
+  returned_by?: string;
+  returned_at?: Date;
+  return_reason?: string;
   cancelled_by?: string;
   cancelled_at?: Date;
   cancellation_reason?: string;

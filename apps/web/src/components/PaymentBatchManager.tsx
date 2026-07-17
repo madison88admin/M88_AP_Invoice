@@ -15,6 +15,7 @@ interface ScheduledPayment {
     id: string;
     invoice_number: string;
     vendor: {
+      id?: string;
       name: string;
     };
   };
@@ -39,11 +40,13 @@ interface PaymentBatch {
   batch_number: string;
   total_amount: number;
   payment_count: number;
-  status: 'DRAFT' | 'PROCESSED' | 'CANCELLED';
+  status: 'DRAFT' | 'PENDING_SUPERVISOR_REVIEW' | 'RETURNED_FOR_CORRECTION' | 'REVIEWED' | 'EXPORTED_TO_BANK' | 'PROCESSING' | 'PROCESSED' | 'PARTIALLY_PAID' | 'FAILED' | 'CANCELLED';
   created_at: string;
   processed_at?: string;
   cancelled_at?: string;
   cancellation_reason?: string;
+  return_reason?: string;
+  review_note?: string;
   payments: Payment[];
 }
 
@@ -59,6 +62,7 @@ export default function PaymentBatchManager() {
   const [processing, setProcessing] = useState(false);
   const [selectedPaymentIds, setSelectedPaymentIds] = useState<Set<string>>(new Set());
   const [actionLoading, setActionLoading] = useState(false);
+  const [filters, setFilters] = useState({ vendorId: '', currency: '', dateFrom: '', dateTo: '', search: '' });
 
   const isAssociate = user?.role === 'ACCOUNTING_ASSOCIATE';
   const isSupervisor = user?.role === 'ACCOUNTING_SUPERVISOR';
@@ -77,6 +81,8 @@ export default function PaymentBatchManager() {
         processed_at: b.processed_at || undefined,
         cancelled_at: b.cancelled_at || undefined,
         cancellation_reason: b.cancellation_reason || undefined,
+        return_reason: b.return_reason || undefined,
+        review_note: b.review_note || undefined,
         payments: (b.payments || []).map((p: any) => ({
           id: p.id,
           amount: Number(p.amount || 0),
@@ -97,7 +103,7 @@ export default function PaymentBatchManager() {
 
   const loadScheduledPayments = useCallback(async () => {
     try {
-      const response = await paymentBatchApi.getScheduledPayments();
+      const response = await paymentBatchApi.getScheduledPayments(Object.fromEntries(Object.entries(filters).filter(([, value]) => value)));
       const data = response.data || [];
       const mapped = data.map((p: any) => ({
         id: p.id,
@@ -109,7 +115,7 @@ export default function PaymentBatchManager() {
         invoice: {
           id: p.invoice?.id || p.invoice_id,
           invoice_number: p.invoice?.invoice_number || '',
-          vendor: { name: p.invoice?.vendor?.name || '' },
+          vendor: { id: p.invoice?.vendor?.id || p.invoice?.vendor_id, name: p.invoice?.vendor?.name || '' },
         },
       }));
       setScheduledPayments(mapped);
@@ -120,7 +126,7 @@ export default function PaymentBatchManager() {
       console.error('Failed to load scheduled payments:', error);
       setScheduledPayments([]);
     }
-  }, []);
+  }, [filters]);
 
   useEffect(() => {
     const init = async () => {
@@ -204,6 +210,24 @@ export default function PaymentBatchManager() {
     }
   };
 
+  const handleBatchAction = async (action: 'submit' | 'review' | 'return' | 'export', batchId: string) => {
+    const reason = action === 'return' ? window.prompt('Reason for returning this batch to Accounting Associate:') : undefined;
+    if (action === 'return' && !reason?.trim()) return;
+    setProcessing(true);
+    try {
+      if (action === 'submit') await paymentBatchApi.submit(batchId);
+      if (action === 'review') await paymentBatchApi.review(batchId);
+      if (action === 'return') await paymentBatchApi.returnForCorrection(batchId, reason!.trim());
+      if (action === 'export') await paymentBatchApi.markExported(batchId);
+      await loadBatches();
+      setSelectedBatch(null);
+    } catch (error) {
+      console.error(`Failed to ${action} batch:`, error);
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   const handleCancelBatch = async () => {
     if (!selectedBatch || !cancelReason) return;
     setProcessing(true);
@@ -277,6 +301,7 @@ export default function PaymentBatchManager() {
               <div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))', boxShadow: '0 0 16px color-mix(in srgb, var(--accent-purple) 25%, transparent)' }}>
                 <Package className="h-5 w-5 text-white" strokeWidth={1.75} />
               </div>
+
               <div>
                 <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Payment Batches</h1>
                 <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Manage payment batches for wire transfers</p>
@@ -352,6 +377,20 @@ export default function PaymentBatchManager() {
                     Deselect All
                   </button>
                 </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-3 mb-4 p-4 rounded-xl" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
+                <input value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} placeholder="Invoice, MPO, material, vendor" className="px-3 py-2 rounded-lg text-sm" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }} />
+                <select value={filters.vendorId} onChange={(e) => setFilters({ ...filters, vendorId: e.target.value })} className="px-3 py-2 rounded-lg text-sm" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}>
+                  <option value="">All vendors</option>
+                  {Array.from(new Map(scheduledPayments.filter(p => p.invoice.vendor.id).map(p => [p.invoice.vendor.id!, p.invoice.vendor.name])).entries()).map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+                </select>
+                <select value={filters.currency} onChange={(e) => setFilters({ ...filters, currency: e.target.value })} className="px-3 py-2 rounded-lg text-sm" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}>
+                  <option value="">All currencies</option>
+                  {Array.from(new Set(scheduledPayments.map(p => p.currency))).map(currency => <option key={currency} value={currency}>{currency}</option>)}
+                </select>
+                <input type="date" value={filters.dateFrom} onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value })} className="px-3 py-2 rounded-lg text-sm" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }} />
+                <input type="date" value={filters.dateTo} onChange={(e) => setFilters({ ...filters, dateTo: e.target.value })} className="px-3 py-2 rounded-lg text-sm" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }} />
               </div>
 
               {/* Selection summary bar */}
@@ -535,16 +574,16 @@ export default function PaymentBatchManager() {
                 </div>
               </div>
 
-              {selectedBatch.status === 'DRAFT' && isAssociate && (
+              {(['DRAFT', 'RETURNED_FOR_CORRECTION'].includes(selectedBatch.status)) && isAssociate && (
                 <div className="flex items-center space-x-3 mb-6">
-                  <button onClick={() => handleProcessBatch(selectedBatch.id)} disabled={processing}
+                  <button onClick={() => handleBatchAction('submit', selectedBatch.id)} disabled={processing}
                     className="flex items-center px-4 py-2.5 rounded-xl transition-colors disabled:opacity-50 text-sm font-semibold"
                     style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}
                     onMouseEnter={(e) => { if (!processing) e.currentTarget.style.background = 'var(--accent-lime-hover)'; }}
                     onMouseLeave={(e) => { if (!processing) e.currentTarget.style.background = 'var(--accent-lime)'; }}
                   >
                     {processing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" strokeWidth={1.75} />}
-                    Execute Payments
+                    Submit for Supervisor Review
                   </button>
                   <button onClick={() => setShowCancelModal(true)} disabled={processing}
                     className="flex items-center px-4 py-2.5 rounded-xl transition-colors disabled:opacity-50 text-sm font-medium"
@@ -555,6 +594,26 @@ export default function PaymentBatchManager() {
                     <X className="h-4 w-4 mr-2" strokeWidth={1.75} />
                     Cancel Batch
                   </button>
+                </div>
+              )}
+
+              {selectedBatch.status === 'PENDING_SUPERVISOR_REVIEW' && isSupervisor && (
+                <div className="flex items-center gap-3 mb-6">
+                  <button onClick={() => handleBatchAction('review', selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'var(--accent-green)', color: 'white' }}>Mark Reviewed</button>
+                  <button onClick={() => handleBatchAction('return', selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'var(--accent-amber)', color: 'var(--bg-base)' }}>Return for Correction</button>
+                </div>
+              )}
+
+              {selectedBatch.status === 'REVIEWED' && isAssociate && (
+                <div className="flex items-center gap-3 mb-6">
+                  <button onClick={() => handleBatchAction('export', selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'var(--accent-purple)', color: 'white' }}>Mark Exported to Bank</button>
+                  <button onClick={() => handleProcessBatch(selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}>Execute Payments</button>
+                </div>
+              )}
+
+              {selectedBatch.status === 'EXPORTED_TO_BANK' && isAssociate && (
+                <div className="flex items-center gap-3 mb-6">
+                  <button onClick={() => handleProcessBatch(selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}>Confirm Payment Processing</button>
                 </div>
               )}
 
@@ -593,6 +652,12 @@ export default function PaymentBatchManager() {
                 <div className="mt-4 p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}>
                   <div className="text-sm font-medium" style={{ color: 'var(--accent-red)' }}>Cancellation Reason</div>
                   <div className="text-sm" style={{ color: 'var(--accent-red)', opacity: 0.8 }}>{selectedBatch.cancellation_reason}</div>
+                </div>
+              )}
+              {selectedBatch.return_reason && (
+                <div className="mt-4 p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', border: '1px solid var(--accent-amber)' }}>
+                  <div className="text-sm font-medium" style={{ color: 'var(--accent-amber)' }}>Supervisor Return Reason</div>
+                  <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>{selectedBatch.return_reason}</div>
                 </div>
               )}
             </div>

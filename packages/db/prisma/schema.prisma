@@ -51,7 +51,8 @@ model Vendor {
 
 model Invoice {
   id                    String        @id @default(uuid())
-  invoice_number        String        @unique
+  invoice_number        String
+  revision              Int           @default(1)
   invoice_date          DateTime?
   invoice_received_date DateTime?
   due_date              DateTime?
@@ -87,6 +88,10 @@ model Invoice {
   // PO & order details
   customer_po_number    String?
   mpo_number            String?
+  mpo_base_number       String?
+  mpo_order_sequence    String?
+  material_code         String?
+  material_name         String?
   brand_code            String?
   brand                 String?
   brand_tier            BrandTier?
@@ -131,7 +136,7 @@ model Invoice {
   account_number        String?
   
   // Duplicate detection hash
-  invoice_hash          String?       @unique
+  invoice_hash          String?
   
   // Bank matching
   bank_match_status     String?
@@ -169,6 +174,8 @@ model Invoice {
   exceptions            Exception[]
   follow_up_tasks       FollowUpTask[]
   payment_confirmations PaymentConfirmation[]
+  invoice_lines         InvoiceLine[]
+  workflow_actions      InvoiceWorkflowAction[]
   
   @@index([vendor_id])
   @@index([status])
@@ -177,6 +184,8 @@ model Invoice {
   @@index([bill_to_entity])
   @@index([approval_tier])
   @@index([invoice_hash])
+  @@index([invoice_number, vendor_id, invoice_type])
+  @@index([mpo_base_number, mpo_order_sequence, material_code])
   @@map("APInvoice_Invoice")
 }
 
@@ -189,11 +198,58 @@ model Signature {
   signed_at     DateTime?
   signature_type SignatureType
   ocr_detected  Boolean       @default(false)
+  invoice_revision Int        @default(1)
+  approval_status String      @default("PENDING")
+  invalidated_at DateTime?
+  invalidation_reason String?
   created_at    DateTime      @default(now())
   
   @@index([invoice_id])
   @@index([signatory_role])
   @@map("APInvoice_Signature")
+}
+
+model InvoiceLine {
+  id                  String   @id @default(uuid())
+  invoice_id          String
+  invoice             Invoice  @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
+  line_number         Int
+  description         String?
+  mpo_base_number     String?
+  mpo_order_sequence  String?
+  material_code       String?
+  material_name       String?
+  quantity            Decimal?
+  selling_quantity    Decimal?
+  unit_price          Decimal?
+  line_amount         Decimal?
+  matched_nextgen_line_id String?
+  match_level         String?
+  match_confidence    Decimal?
+  match_status        String?
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  @@unique([invoice_id, line_number])
+  @@index([mpo_base_number, mpo_order_sequence, material_code])
+  @@map("APInvoice_InvoiceLine")
+}
+
+model InvoiceWorkflowAction {
+  id                String   @id @default(uuid())
+  invoice_id        String
+  invoice           Invoice  @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
+  invoice_revision  Int
+  action            String
+  from_stage        String?
+  to_stage          String?
+  reason            String?
+  performed_by      String
+  performed_by_role String?
+  created_at        DateTime @default(now())
+
+  @@index([invoice_id, created_at])
+  @@map("APInvoice_WorkflowAction")
 }
 
 model StageTimestamp {
@@ -260,6 +316,14 @@ model PaymentBatch {
   created_by           String?
   processed_by         String?
   processed_at         DateTime?
+  submitted_by         String?
+  submitted_at         DateTime?
+  reviewed_by          String?
+  reviewed_at          DateTime?
+  review_note          String?
+  returned_by          String?
+  returned_at          DateTime?
+  return_reason        String?
   cancelled_by         String?
   cancelled_at         DateTime?
   cancellation_reason  String?
@@ -458,9 +522,14 @@ enum ExceptionStatus {
 
 enum PaymentBatchStatus {
   DRAFT
-  PENDING_CFO
-  APPROVED
+  PENDING_SUPERVISOR_REVIEW
+  RETURNED_FOR_CORRECTION
+  REVIEWED
+  EXPORTED_TO_BANK
+  PROCESSING
   PROCESSED
+  PARTIALLY_PAID
+  FAILED
   CANCELLED
 }
 

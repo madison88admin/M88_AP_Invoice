@@ -5,15 +5,14 @@
 | Role | Responsibilities |
 |---|---|
 | **Vendor / Supplier** | Sends invoices via email or portal |
-| **Accounting Associate** | Uploads invoices, reviews OCR, posts invoices, selects invoices for payment batch |
-| **Accounting Supervisor** | Reviews exceptions, creates payment batches, submits payment batches for CFO approval |
+| **Accounting Associate** | Uploads invoices, reviews OCR, posts invoices, schedules payments, creates and executes reviewed payment batches |
+| **Accounting Supervisor** | Reviews exceptions and payment batches; marks batches reviewed or returns them for correction |
 | **Purchasing Coordinator** | First approval for all invoices; shares approval responsibility with Purchasing Manager |
 | **Purchasing Manager** | Approves all invoices; shares 7-day SLA with Purchasing Coordinator |
 | **MLO Account Holder** | Approval for Tier 2+ invoices ($5,000+) — brand-specific: Edwin / Glecie |
 | **MLO Planning Manager** | Approval for Tier 2+ invoices |
 | **Sr. Manager Global Production** | Approval for Tier 2+ invoices |
 | **Ms. Polly** | Approval for Tier 3 invoices ($100,000+) |
-| **CFO** | Approves payment batches before execution |
 | **President** | Optional top-level approval |
 | **Administrator** | System configuration, views all invoices/vendors, manages users, generates reports |
 | **IT Admin** | System configuration, health monitoring |
@@ -202,11 +201,13 @@ Accounting Supervisor creates payment batch → DRAFT
         ↓
 Accounting Supervisor reviews batch (total, bank, due dates)
         ↓
-Accounting Supervisor submits for CFO approval → PENDING_CFO
+Accounting Associate submits batch → PENDING_SUPERVISOR_REVIEW
         ↓
-CFO reviews batch
+Accounting Supervisor reviews
         ↓
-CFO approves → PROCESSED
+Supervisor marks REVIEWED or returns it with a reason
+        ↓
+Accounting Associate exports and executes the reviewed batch
         ↓
 System generates payment export file (CSV format compatible with CitiBusiness)
         ↓

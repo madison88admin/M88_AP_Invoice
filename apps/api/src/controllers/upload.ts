@@ -1035,6 +1035,8 @@ export const confirmOCR = async (
       brand_code,
       season,
       mpo_number,
+      material_code,
+      material_name,
       customer_po_number,
       bill_to_entity,
       is_handwritten,
@@ -1048,6 +1050,7 @@ export const confirmOCR = async (
       po_validation,
       po_audit_id,
       qty_shipped,
+      line_items,
     } = req.body;
 
     // Import invoice service dynamically to avoid circular dependency
@@ -1085,6 +1088,8 @@ export const confirmOCR = async (
         brand_code,
         season,
         mpo_number,
+        material_code: material_code || ocr_raw_data?.material_code,
+        material_name: material_name || ocr_raw_data?.material_name,
         customer_po_number,
         bill_to_entity: bill_to_entity || 'MADISON_88_LTD',
         is_handwritten: is_handwritten || false,
@@ -1092,6 +1097,7 @@ export const confirmOCR = async (
         priority_flag: priority_flag || false,
         priority_pay_date,
         qty_shipped,
+        line_items: line_items || ocr_raw_data?.line_items,
         ocr_confidence_score,
         // Preserve full OCR raw data for audit trail — merge bank_info and signatures into ocr_raw_data
         ocr_raw_data: ocr_raw_data || {

@@ -7,6 +7,7 @@ import { matchVendor } from './vendorMatchingService';
 import { fieldDecisionEngine } from './fieldDecisionEngine';
 import { inAppNotificationService } from './inAppNotificationService';
 import crypto from 'crypto';
+import { parseMPOReference } from '../utils/mpoReference';
 
 function safeDate(value: any): Date | null {
   if (!value || value === '') return null;
@@ -54,6 +55,9 @@ export const createInvoice = async (invoiceData: any, userId: string) => {
     season,
     qty_shipped,
     mpo_number,
+    material_code,
+    material_name,
+    line_items,
     customer_po_number,
     bill_to_entity,
     is_handwritten,
@@ -81,25 +85,14 @@ export const createInvoice = async (invoiceData: any, userId: string) => {
     throw new AppError('Total amount must be a positive number', 400);
   }
 
-  // Check for duplicate invoice number
-  const existingInvoice = await prisma.invoice.findUnique({
-    where: { invoice_number: String(invoice_number).trim() },
-    select: { id: true, status: true },
-  });
-  if (existingInvoice) {
-    throw new AppError(
-      `Invoice number "${invoice_number}" already exists (status: ${existingInvoice.status}). Duplicate invoices are not allowed.`,
-      409
-    );
-  }
   if (!isValidInvoiceType(invoice_type)) {
     throw new AppError(`Invalid invoice type: ${invoice_type}`, 400);
   }
   if (source && !isValidInvoiceSource(source)) {
     throw new AppError(`Invalid source: ${source}`, 400);
   }
-  if (mpo_number && !/^MPO\d{5,8}$/.test(String(mpo_number))) {
-    throw new AppError('MPO number must be MPO followed by 5 to 8 digits (e.g. MPO15371 or MPO015189)', 400);
+  if (mpo_number && !/^MPO\d{5,8}(?:-[A-Z0-9]+){0,2}$/i.test(String(mpo_number))) {
+    throw new AppError('MPO reference must be MPO plus 5-8 digits, optionally followed by order and material suffixes', 400);
   }
 
   // Determine brand_tier from brand or brand_code
@@ -134,6 +127,20 @@ export const createInvoice = async (invoiceData: any, userId: string) => {
     }
   }
 
+  const existingInvoice = await prisma.invoice.findFirst({
+    where: {
+      invoice_number: String(invoice_number).trim(),
+      vendor_id: resolvedVendorId,
+      invoice_type: invoice_type as any,
+    },
+    select: { id: true, status: true },
+  });
+  if (existingInvoice) {
+    throw new AppError(`The same vendor, invoice number, and document type already exists (status: ${existingInvoice.status})`, 409);
+  }
+
+  const parsedMpo = parseMPOReference(mpo_number);
+
   const invoice = await prisma.invoice.create({
     data: {
       invoice_number: String(invoice_number).trim(),
@@ -167,6 +174,10 @@ export const createInvoice = async (invoiceData: any, userId: string) => {
       season,
       qty_shipped: qty_shipped ? parseInt(qty_shipped) : null,
       mpo_number,
+      mpo_base_number: parsedMpo.baseMpo,
+      mpo_order_sequence: parsedMpo.orderSequence,
+      material_code: material_code || parsedMpo.materialCode,
+      material_name,
       customer_po_number,
       bill_to_entity: bill_to_entity || 'MADISON_88_LTD',
       is_handwritten: is_handwritten || false,
@@ -184,12 +195,30 @@ export const createInvoice = async (invoiceData: any, userId: string) => {
       swift_code: swift_code || undefined,
       account_number: account_number || undefined,
       ocr_confidence_score: ocr_confidence_score ? parseFloat(ocr_confidence_score) : null,
+      ...(Array.isArray(line_items) && line_items.length > 0 ? {
+        invoice_lines: {
+          create: line_items.map((line: any, index: number) => ({
+            line_number: Number(line.line_number || index + 1),
+            description: line.description || line.material_name || null,
+            mpo_base_number: line.mpo_base_number || parsedMpo.baseMpo || null,
+            mpo_order_sequence: line.mpo_order_sequence || parsedMpo.orderSequence || null,
+            material_code: line.material_code || line.item_code || parsedMpo.materialCode || null,
+            material_name: line.material_name || line.description || null,
+            quantity: line.quantity != null ? Number(line.quantity) : null,
+            selling_quantity: line.selling_quantity != null ? Number(line.selling_quantity) : null,
+            unit_price: line.unit_price != null ? Number(line.unit_price) : null,
+            line_amount: line.line_amount != null ? Number(line.line_amount) : (line.total_amount != null ? Number(line.total_amount) : null),
+            match_status: 'PENDING',
+          })),
+        },
+      } : {}),
     },
     include: {
       vendor: true,
       signatures: true,
       exceptions: true,
       stage_timestamps: true,
+      invoice_lines: true,
     },
   });
 
@@ -263,6 +292,7 @@ export const getInvoices = async (filters: any) => {
       signatures: true,
       exceptions: true,
       stage_timestamps: true,
+      invoice_lines: true,
     },
     orderBy: {
       created_at: 'desc',
@@ -285,6 +315,8 @@ export const getInvoiceById = async (id: string) => {
           created_at: 'desc',
         },
       },
+      invoice_lines: true,
+      workflow_actions: { orderBy: { created_at: 'desc' } },
     },
   });
 
@@ -323,13 +355,13 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
   }
 
   // Only coordinators, accounting supervisors, or admins can edit invoice data
-  const allowedRoles = ['PURCHASING_COORDINATOR', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'];
+  const allowedRoles = ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'];
   if (!allowedRoles.includes(userRole)) {
     throw new AppError('Not authorized to edit invoice data', 403);
   }
 
   // Prevent editing invoices that are already posted or paid
-  const lockedStatuses = ['APPROVED', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID', 'REJECTED'];
+  const lockedStatuses = ['POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID', 'PAYMENT_CONFIRMATION_SENT', 'REJECTED'];
   if (lockedStatuses.includes(existing.status)) {
     throw new AppError(`Cannot edit invoice in ${existing.status} status`, 400);
   }
@@ -338,7 +370,7 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
   const data: Record<string, any> = {};
 
   // Only copy defined, non-undefined values — prevents accidental null overwrites
-  const protectedFields = ['id', 'created_at', 'updated_at', 'status', 'source', 'approval_tier', 'qb_posted_at', 'vendor_id'];
+  const protectedFields = ['id', 'created_at', 'updated_at', 'status', 'source', 'approval_tier', 'qb_posted_at', 'vendor_id', 'revision', 'edit_reason'];
   for (const [key, value] of Object.entries(invoiceData)) {
     if (value === undefined) continue;
     if (protectedFields.includes(key)) continue;
@@ -382,11 +414,13 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     }
   }
 
-  // Check for duplicate invoice_number if it's being changed
+  // Invoice numbers are unique within a vendor/document type, not globally.
   if (data.invoice_number && data.invoice_number !== existing.invoice_number) {
     const duplicate = await prisma.invoice.findFirst({
       where: {
         invoice_number: data.invoice_number,
+        vendor_id: existing.vendor_id,
+        invoice_type: (data.invoice_type || existing.invoice_type) as any,
         id: { not: id },
       },
       select: { id: true },
@@ -396,9 +430,42 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     }
   }
 
+  const materialFields = new Set([
+    'vendor_name_raw', 'invoice_number', 'invoice_type', 'invoice_date', 'total_amount',
+    'currency', 'mpo_number', 'mpo_base_number', 'mpo_order_sequence', 'material_code',
+    'material_name', 'qty_shipped', 'bank_name', 'swift_code', 'account_number',
+    'payment_terms', 'customer_po_number'
+  ]);
+  const materialChange = Object.keys(data).some((key) =>
+    materialFields.has(key) && String((existing as any)[key] ?? '') !== String(data[key] ?? '')
+  );
+  if (materialChange && !String(invoiceData.edit_reason || '').trim()) {
+    throw new AppError('A reason is required for material or financial invoice changes', 400);
+  }
+  const approvalStarted = String(existing.status).startsWith('PENDING_') || existing.status === 'APPROVED';
+  const nextRevision = materialChange ? Number((existing as any).revision || 1) + 1 : Number((existing as any).revision || 1);
+
+  if (materialChange && approvalStarted) {
+    await prisma.signature.updateMany({
+      where: { invoice_id: id, signed_at: { not: null } },
+      data: {
+        approval_status: 'SUPERSEDED',
+        invalidated_at: new Date(),
+        invalidation_reason: `Material invoice data changed by ${userName || userId}`,
+      },
+    });
+  }
+
   const invoice = await prisma.invoice.update({
     where: { id },
-    data,
+    data: {
+      ...data,
+      revision: nextRevision,
+      ...(materialChange && approvalStarted ? {
+        status: 'VALIDATION_PENDING' as any,
+        current_approver_role: null,
+      } : {}),
+    },
     include: {
       vendor: true,
       signatures: true,
@@ -406,6 +473,21 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
       stage_timestamps: true,
     },
   });
+
+  if (materialChange) {
+    await prisma.invoiceWorkflowAction.create({
+      data: {
+        invoice_id: id,
+        invoice_revision: nextRevision,
+        action: approvalStarted ? 'MATERIAL_EDIT_REVALIDATION_REQUIRED' : 'MATERIAL_EDIT',
+        from_stage: existing.status,
+        to_stage: approvalStarted ? 'VALIDATION_PENDING' : existing.status,
+        reason: String(invoiceData.edit_reason || 'Invoice data corrected'),
+        performed_by: userId,
+        performed_by_role: userRole,
+      },
+    });
+  }
 
   // Build detailed change log with old→new values
   const displayName = userName || userId;

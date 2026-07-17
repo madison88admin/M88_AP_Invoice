@@ -166,7 +166,7 @@ export interface MockVendor {
 export interface MockPaymentBatch {
   id: string;
   batch_name: string;
-  status: 'DRAFT' | 'PENDING_CFO' | 'APPROVED' | 'PROCESSED';
+  status: 'DRAFT' | 'PENDING_SUPERVISOR_REVIEW' | 'RETURNED_FOR_CORRECTION' | 'REVIEWED' | 'EXPORTED_TO_BANK' | 'PROCESSING' | 'PROCESSED' | 'PARTIALLY_PAID' | 'FAILED';
   total_amount: number;
   currency: string;
   due_date: string;

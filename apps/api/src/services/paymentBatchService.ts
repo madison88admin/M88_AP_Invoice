@@ -60,13 +60,33 @@ export async function getPaymentsForNextWednesday() {
 /**
  * Get scheduled payments available for batch selection
  */
-export async function getScheduledPaymentsForBatch() {
+export interface ScheduledPaymentFilters {
+  vendorId?: string;
+  currency?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  search?: string;
+}
+
+export async function getScheduledPaymentsForBatch(filters: ScheduledPaymentFilters = {}) {
+  const paymentDate: any = { gte: filters.dateFrom ? new Date(filters.dateFrom) : new Date() };
+  if (filters.dateTo) paymentDate.lte = new Date(`${filters.dateTo}T23:59:59.999Z`);
   const payments = await prisma.payment.findMany({
     where: {
       status: 'SCHEDULED',
       batch_id: null,
-      payment_date: {
-        gte: new Date(),
+      payment_date: paymentDate,
+      ...(filters.currency ? { currency: filters.currency } : {}),
+      invoice: {
+        ...(filters.vendorId ? { vendor_id: filters.vendorId } : {}),
+        ...(filters.search ? {
+          OR: [
+            { invoice_number: { contains: filters.search, mode: 'insensitive' as const } },
+            { mpo_number: { contains: filters.search, mode: 'insensitive' as const } },
+            { material_code: { contains: filters.search, mode: 'insensitive' as const } },
+            { vendor: { name: { contains: filters.search, mode: 'insensitive' as const } } },
+          ],
+        } : {}),
       },
     },
     include: {
@@ -203,8 +223,8 @@ export async function generatePaymentFile(batchId: string) {
 export async function getPaymentBatchStatistics() {
   const totalBatches = await prisma.paymentBatch.count();
   const pendingBatches = await prisma.paymentBatch.count({ where: { status: PaymentBatchStatus.DRAFT } });
-  const pendingCfoBatches = await prisma.paymentBatch.count({ where: { status: PaymentBatchStatus.PENDING_CFO } });
-  const approvedBatches = await prisma.paymentBatch.count({ where: { status: PaymentBatchStatus.APPROVED } });
+  const pendingReviewBatches = await prisma.paymentBatch.count({ where: { status: PaymentBatchStatus.PENDING_SUPERVISOR_REVIEW } });
+  const reviewedBatches = await prisma.paymentBatch.count({ where: { status: PaymentBatchStatus.REVIEWED } });
   const processedBatches = await prisma.paymentBatch.count({ where: { status: PaymentBatchStatus.PROCESSED } });
   const cancelledBatches = await prisma.paymentBatch.count({ where: { status: PaymentBatchStatus.CANCELLED } });
 
@@ -215,8 +235,8 @@ export async function getPaymentBatchStatistics() {
   return {
     total_batches: totalBatches,
     pending_batches: pendingBatches,
-    pending_cfo_batches: pendingCfoBatches,
-    approved_batches: approvedBatches,
+    pending_supervisor_review_batches: pendingReviewBatches,
+    reviewed_batches: reviewedBatches,
     processed_batches: processedBatches,
     cancelled_batches: cancelledBatches,
     total_amount_processed: totalAmount._sum.total_amount || 0,
@@ -245,6 +265,17 @@ export async function createPaymentBatch(
 
   if (payments.length !== paymentIds.length) {
     throw new AppError('Some payments are not found, not selected for batch, or not in SCHEDULED status', 400);
+  }
+
+  // One payment batch must have one vendor, currency, beneficiary account and legal entity.
+  const compatibilityKeys = new Set(payments.map((p: any) => [
+    p.invoice.vendor_id,
+    p.currency,
+    p.invoice.vendor?.account_number || '',
+    p.invoice.bill_to_entity || '',
+  ].join('|')));
+  if (compatibilityKeys.size > 1) {
+    throw new AppError('A batch can only combine payments for the same vendor, currency, beneficiary account, and legal entity', 400);
   }
 
   // Calculate total batch amount
@@ -348,9 +379,11 @@ export async function processPaymentBatch(
     throw new AppError('Payment batch not found', 404);
   }
 
-  if (batch.status !== PaymentBatchStatus.DRAFT) {
-    throw new AppError('Batch is not in DRAFT status', 400);
+  if (![PaymentBatchStatus.REVIEWED, PaymentBatchStatus.EXPORTED_TO_BANK].includes(batch.status as any)) {
+    throw new AppError('Batch must be reviewed by Accounting Supervisor before processing', 400);
   }
+
+  await prisma.paymentBatch.update({ where: { id: batchId }, data: { status: PaymentBatchStatus.PROCESSING as any } });
 
   // Process each payment in the batch via processPayment for consistent behavior
   // (email notifications, payment references, in-app notifications, stage timestamps)
@@ -392,6 +425,66 @@ export async function processPaymentBatch(
   return updatedBatch;
 }
 
+export async function submitPaymentBatchForReview(batchId: string, userId: string) {
+  const batch = await prisma.paymentBatch.findUnique({ where: { id: batchId }, include: { payments: true } });
+  if (!batch) throw new AppError('Payment batch not found', 404);
+  if (![PaymentBatchStatus.DRAFT, PaymentBatchStatus.RETURNED_FOR_CORRECTION].includes(batch.status as any)) {
+    throw new AppError('Only draft or returned batches can be submitted', 400);
+  }
+  if (batch.payments.length === 0) throw new AppError('Cannot submit an empty batch', 400);
+  return prisma.paymentBatch.update({
+    where: { id: batchId },
+    data: {
+      status: PaymentBatchStatus.PENDING_SUPERVISOR_REVIEW as any,
+      submitted_by: userId,
+      submitted_at: new Date(),
+      return_reason: null,
+      returned_at: null,
+      returned_by: null,
+    },
+  });
+}
+
+export async function reviewPaymentBatch(batchId: string, userId: string, note?: string) {
+  const batch = await prisma.paymentBatch.findUnique({ where: { id: batchId } });
+  if (!batch) throw new AppError('Payment batch not found', 404);
+  if (batch.status !== PaymentBatchStatus.PENDING_SUPERVISOR_REVIEW) {
+    throw new AppError('Batch is not pending supervisor review', 400);
+  }
+  return prisma.paymentBatch.update({
+    where: { id: batchId },
+    data: { status: PaymentBatchStatus.REVIEWED as any, reviewed_by: userId, reviewed_at: new Date(), review_note: note || null },
+  });
+}
+
+export async function returnPaymentBatch(batchId: string, userId: string, reason: string) {
+  if (!reason?.trim()) throw new AppError('Return reason is required', 400);
+  const batch = await prisma.paymentBatch.findUnique({ where: { id: batchId } });
+  if (!batch) throw new AppError('Payment batch not found', 404);
+  if (batch.status !== PaymentBatchStatus.PENDING_SUPERVISOR_REVIEW) {
+    throw new AppError('Only a batch pending supervisor review can be returned', 400);
+  }
+  return prisma.paymentBatch.update({
+    where: { id: batchId },
+    data: {
+      status: PaymentBatchStatus.RETURNED_FOR_CORRECTION as any,
+      returned_by: userId,
+      returned_at: new Date(),
+      return_reason: reason.trim(),
+      reviewed_by: null,
+      reviewed_at: null,
+    },
+  });
+}
+
+export async function markPaymentBatchExported(batchId: string, userId: string) {
+  const batch = await prisma.paymentBatch.findUnique({ where: { id: batchId } });
+  if (!batch) throw new AppError('Payment batch not found', 404);
+  if (batch.status !== PaymentBatchStatus.REVIEWED) throw new AppError('Only a reviewed batch can be exported', 400);
+  await prisma.auditLog.create({ data: { action: 'PAYMENT_BATCH_EXPORTED', performed_by: userId, note: `Batch ${batch.batch_number} exported to bank` } });
+  return prisma.paymentBatch.update({ where: { id: batchId }, data: { status: PaymentBatchStatus.EXPORTED_TO_BANK as any } });
+}
+
 export async function cancelPaymentBatch(
   batchId: string,
   userId: string,
@@ -408,8 +501,8 @@ export async function cancelPaymentBatch(
     throw new AppError('Payment batch not found', 404);
   }
 
-  if (batch.status !== PaymentBatchStatus.DRAFT && batch.status !== PaymentBatchStatus.PENDING_CFO) {
-    throw new AppError('Only DRAFT or PENDING_CFO batches can be cancelled', 400);
+  if (![PaymentBatchStatus.DRAFT, PaymentBatchStatus.RETURNED_FOR_CORRECTION, PaymentBatchStatus.PENDING_SUPERVISOR_REVIEW].includes(batch.status as any)) {
+    throw new AppError('Only draft, returned, or pending-review batches can be cancelled', 400);
   }
 
   // Update batch status to CANCELLED

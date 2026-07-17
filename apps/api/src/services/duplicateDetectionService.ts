@@ -34,7 +34,8 @@ export async function checkDuplicateInvoice(
   vendorId: string,
   amount: number,
   invoiceDate: Date,
-  currentInvoiceId?: string
+  currentInvoiceId?: string,
+  context?: { invoice_type?: string; mpo_base_number?: string; mpo_order_sequence?: string; material_code?: string }
 ): Promise<DuplicateDetectionResult> {
   const hash = generateInvoiceHash(invoiceNumber, vendorId, amount, invoiceDate);
 
@@ -43,6 +44,10 @@ export async function checkDuplicateInvoice(
     where: {
       invoice_number: invoiceNumber,
       vendor_id: vendorId,
+      ...(context?.invoice_type ? { invoice_type: context.invoice_type as any } : {}),
+      ...(context?.mpo_base_number ? { mpo_base_number: context.mpo_base_number } : {}),
+      ...(context?.mpo_order_sequence ? { mpo_order_sequence: context.mpo_order_sequence } : {}),
+      ...(context?.material_code ? { material_code: context.material_code } : {}),
       ...(currentInvoiceId && { id: { not: currentInvoiceId } }),
     },
     select: {

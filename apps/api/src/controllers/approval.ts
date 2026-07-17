@@ -6,6 +6,7 @@ import {
   rejectInvoice,
   getPendingApprovals,
   batchApproveInvoices,
+  returnInvoice,
 } from '../services/approvalService';
 import { logAudit } from '../services/auditLogService';
 
@@ -24,6 +25,21 @@ export const requestApproval = async (
       note: `Approval requested by ${req.user!.role}`,
     });
     res.json({ message: 'Approval request created', approvals });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const returnInvoiceController = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { id } = req.params;
+    const { reason, targetRole } = req.body;
+    const result = await returnInvoice(id, req.user!.id, req.user!.role, reason, targetRole);
+    res.json(result);
   } catch (error) {
     next(error);
   }

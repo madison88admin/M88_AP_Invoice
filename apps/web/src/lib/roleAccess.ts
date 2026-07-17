@@ -66,7 +66,7 @@ export const ROLE_PERMISSIONS = {
     canUpload: true,
     canValidate: true,
     canRequestApproval: true,
-    canViewAllInvoices: false,
+    canViewAllInvoices: true,
     canViewPendingApprovals: true,
     canViewReports: false,
     canViewFinancialReports: false,
@@ -88,7 +88,7 @@ export const ROLE_PERMISSIONS = {
     canViewReports: false,
     canViewFinancialReports: false,
     canManageUsers: false,
-    canEditInvoice: false,
+    canEditInvoice: true,
     canDeleteInvoice: false,
     canViewSystemHealth: false,
     canViewErrorLogs: false,
@@ -272,7 +272,7 @@ export function canUserApproveStatus(role: string, status: string): boolean {
 // Get invoices filtered by role's accessible stages AND tier threshold
 export function filterInvoicesByRole(invoices: any[], role: string): any[] {
   if (role === 'SUPERADMIN') return []; // No invoice visibility
-  if (role === 'IT_ADMIN') return invoices; // Read-only all invoices
+  if (['IT_ADMIN', 'PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'PRESIDENT'].includes(role)) return invoices;
   const accessibleStages = ROLE_STAGE_ACCESS[role];
   if (!accessibleStages || accessibleStages.length === 0) return invoices;
   const threshold = ROLE_TIER_THRESHOLD[role] || 0;

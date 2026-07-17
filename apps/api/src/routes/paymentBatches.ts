@@ -13,7 +13,11 @@ router.get('/:batchId', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUN
 router.post('/', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), paymentBatchController.createPaymentBatchController);
 router.post('/select', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), paymentBatchController.selectPaymentsForBatchController);
 router.post('/deselect', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), paymentBatchController.deselectPaymentsForBatchController);
+router.post('/:batchId/submit', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.submitPaymentBatchController);
+router.post('/:batchId/review', authorize(UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.reviewPaymentBatchController);
+router.post('/:batchId/return', authorize(UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.returnPaymentBatchController);
+router.post('/:batchId/export', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.exportPaymentBatchController);
 router.post('/:batchId/process', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), paymentBatchController.processPaymentBatchController);
-router.post('/:batchId/cancel', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), paymentBatchController.cancelPaymentBatchController);
+router.post('/:batchId/cancel', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), paymentBatchController.cancelPaymentBatchController);
 
 export default router;

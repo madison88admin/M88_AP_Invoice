@@ -270,7 +270,7 @@ async function processSingleInvoiceBuffer(
         qb_memo: qbMemo,
         qb_account_class: ocrResult.qb_account_class,
         status: (vendorId ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,
-        source: InvoiceSource.EMAIL as any,
+        source: InvoiceSource.MANUAL_UPLOAD as any,
         approval_tier: tier,
         payment_terms: ocrResult.payment_terms,
         ...(ocrResult.date_range_start ? { date_range_start: new Date(ocrResult.date_range_start) } : {}),
@@ -359,6 +359,18 @@ async function processSingleInvoiceBuffer(
         }
       } catch (validationError) {
         logger.error(`[File Watcher] Validation failed for ${invoice.invoice_number}${partLabel}:`, validationError);
+        // Flag as exception so it's visible in the system, not stuck in RECEIVED
+        await prisma.invoice.update({
+          where: { id: invoice.id },
+          data: { status: InvoiceStatus.EXCEPTION_FLAGGED as any },
+        });
+        await prisma.exception.create({
+          data: {
+            invoice_id: invoice.id,
+            reason: ExceptionReason.OCR_LOW_CONFIDENCE as any,
+            detail: `Validation error during file watcher processing: ${validationError instanceof Error ? validationError.message : String(validationError)}`,
+          },
+        });
         if (splitIndex === undefined) safeMove(processingPath, MANUAL_REVIEW_DIR);
         return;
       }

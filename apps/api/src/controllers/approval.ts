@@ -37,17 +37,18 @@ export const approveInvoiceController = async (
   try {
     const { id } = req.params;
     const { signerName } = req.body;
+    const effectiveSignerName = signerName || req.user!.name || req.user!.email;
     const result = await approveInvoice(
       id,
       req.user!.id,
       req.user!.role,
-      signerName
+      effectiveSignerName
     );
     await logAudit({
       invoice_id: id,
       performed_by: req.user!.id,
       action: 'INVOICE_APPROVED',
-      note: `Approved by ${req.user!.role}${signerName ? ` (${signerName})` : ''}`,
+      note: `Approved by ${req.user!.role}${effectiveSignerName ? ` (${effectiveSignerName})` : ''}`,
     });
     res.json(result);
   } catch (error) {

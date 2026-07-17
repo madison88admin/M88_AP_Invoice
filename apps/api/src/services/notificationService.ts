@@ -1,11 +1,29 @@
-import { Client } from '@microsoft/microsoft-graph-client';
-import { ClientSecretCredential } from '@azure/identity';
+import nodemailer from 'nodemailer';
 import { InvoiceStatus, ExceptionReason } from '@ap-invoice/shared';
 import { logger } from '../utils/logger';
 
-const clientId = process.env.GRAPH_API_CLIENT_ID || '';
-const clientSecret = process.env.GRAPH_API_CLIENT_SECRET || '';
-const tenantId = process.env.GRAPH_API_TENANT_ID || '';
+const smtpHost = process.env.SMTP_HOST || '';
+const smtpPort = parseInt(process.env.SMTP_PORT || '587', 10);
+const smtpUser = process.env.SMTP_USER || '';
+const smtpPass = process.env.SMTP_PASS || '';
+const smtpFrom = process.env.SMTP_FROM || smtpUser;
+
+let transporter: nodemailer.Transporter | null = null;
+
+function getTransporter(): nodemailer.Transporter {
+  if (!transporter) {
+    if (!smtpHost || !smtpUser || !smtpPass) {
+      throw new Error('SMTP credentials not configured (SMTP_HOST, SMTP_USER, SMTP_PASS)');
+    }
+    transporter = nodemailer.createTransport({
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpPort === 465,
+      auth: { user: smtpUser, pass: smtpPass },
+    });
+  }
+  return transporter;
+}
 
 export interface NotificationPayload {
   to: string[];
@@ -19,56 +37,25 @@ export interface NotificationPayload {
   }>;
 }
 
-export async function getGraphClient(): Promise<Client> {
-  if (!clientId || !clientSecret || !tenantId) {
-    throw new Error('Microsoft Graph API credentials not configured');
-  }
-
-  const credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
-
-  const client = Client.init({
-    authProvider: async (done) => {
-      try {
-        const token = await credential.getToken('https://graph.microsoft.com/.default');
-        done(null, token.token);
-      } catch (error) {
-        done(error as Error, null);
-      }
-    },
-  });
-
-  return client;
-}
-
 export async function sendEmail(payload: NotificationPayload): Promise<void> {
   try {
-    const client = await getGraphClient();
+    const transport = getTransporter();
 
-    const ccRecipients = payload.cc ? payload.cc.map(email => ({ emailAddress: { address: email } })) : [];
     const attachments = payload.attachments ? payload.attachments.map(att => ({
-      '@odata.type': '#microsoft.graph.fileAttachment',
-      name: att.name,
-      contentBytes: att.contentBytes,
+      filename: att.name,
+      content: Buffer.from(att.contentBytes, 'base64'),
       contentType: att.contentType,
     })) : [];
 
-    const message = {
+    await transport.sendMail({
+      from: smtpFrom,
+      to: payload.to.join(', '),
+      cc: payload.cc?.join(', '),
       subject: payload.subject,
-      body: {
-        contentType: 'HTML',
-        content: payload.body,
-      },
-      toRecipients: payload.to.map(email => ({ emailAddress: { address: email } })),
-      ccRecipients,
+      html: payload.body,
       attachments,
-    };
+    });
 
-    const sendMail = {
-      message,
-      saveToSentItems: true,
-    };
-
-    await client.api('/me/sendMail').post(sendMail);
     logger.info(`Email sent successfully to ${payload.to.join(', ')}`);
   } catch (error) {
     logger.error('Error sending email:', error);

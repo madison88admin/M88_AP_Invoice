@@ -5,6 +5,7 @@ import { analyzeInvoice } from '../services/ocrService';
 import { extractMadisonInvoiceFields, AST_SINGLE_SOURCE_MODE } from '../services/madisonInvoiceExtractor';
 import { matchVendor, matchOrCreateVendor } from '../services/vendorMatchingService';
 import { InvoiceStatus, SignatureType } from '@ap-invoice/shared';
+import { sanitizeInvoiceType, sanitizeCategory } from '../utils/enumSanitizer';
 import { NextGenService } from '../services/nextGenService';
 import { validateInvoiceAgainstPO } from '../services/invoiceValidationAgent';
 import { poAuditService } from '../services/poAuditService';
@@ -1077,8 +1078,8 @@ export const confirmOCR = async (
         additional_charges: additional_charges || 0,
         ship_to,
         sold_to,
-        invoice_type,
-        category,
+        invoice_type: sanitizeInvoiceType(invoice_type),
+        category: sanitizeCategory(category),
         order_type,
         brand,
         brand_code,

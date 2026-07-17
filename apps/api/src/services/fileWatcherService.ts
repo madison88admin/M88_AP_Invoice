@@ -21,6 +21,7 @@ import {
 import prisma from '../config/database';
 import { inAppNotificationService } from './inAppNotificationService';
 import { detectMultiInvoice, splitPdfByPageRanges } from './multiInvoiceDetector';
+import { sanitizeInvoiceType, sanitizeCategory } from '../utils/enumSanitizer';
 
 const INCOMING_DIR = process.env.WATCHER_INCOMING_DIR || '/incoming-invoices';
 const PROCESSING_DIR = process.env.WATCHER_PROCESSING_DIR || '/incoming-invoices/processing';
@@ -244,8 +245,8 @@ async function processSingleInvoiceBuffer(
         discount_amount: (ocrResult as any).discount_amount || undefined,
         ship_to: (ocrResult as any).ship_to || undefined,
         sold_to: (ocrResult as any).sold_to || undefined,
-        invoice_type: (ocrResult.invoice_type || InvoiceType.INVOICE) as any,
-        category: ((ocrResult as any).category || 'TRIMS') as any,
+        invoice_type: sanitizeInvoiceType(ocrResult.invoice_type) as any,
+        category: sanitizeCategory((ocrResult as any).category) as any,
         invoice_template_type: (ocrResult as any).invoice_template_type as any,
         order_type: ocrResult.order_type as any,
         brand: ocrResult.brand,

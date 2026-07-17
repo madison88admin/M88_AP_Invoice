@@ -20,6 +20,7 @@ import {
   Activity,
   Pause,
   Gauge,
+  ScanSearch,
 } from 'lucide-react';
 
 interface NavItem {

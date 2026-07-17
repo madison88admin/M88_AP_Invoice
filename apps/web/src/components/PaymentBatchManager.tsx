@@ -206,7 +206,7 @@ export default function PaymentBatchManager() {
     } catch (error) {
       console.error('Failed to create batch:', error);
       const message = axios.isAxiosError(error)
-        ? error.response?.data?.error || error.response?.data?.message
+        ? error.response?.data?.error?.message || error.response?.data?.error || error.response?.data?.message
         : undefined;
       setActionMessage({ type: 'error', text: message || 'Unable to create payment batch. Refresh the schedule and try again.' });
     } finally {

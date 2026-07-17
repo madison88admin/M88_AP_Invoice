@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { Package, Play, X, AlertCircle, CheckCircle, Clock, DollarSign, ArrowLeft, CheckSquare, Calendar, Loader2 } from 'lucide-react';
 import { paymentBatchApi } from '../lib/api';
+import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
 
 interface ScheduledPayment {
@@ -11,6 +12,7 @@ interface ScheduledPayment {
   payment_date: string;
   status: string;
   selected_for_batch: boolean;
+  selected_by?: string;
   invoice: {
     id: string;
     invoice_number: string;
@@ -62,6 +64,7 @@ export default function PaymentBatchManager() {
   const [processing, setProcessing] = useState(false);
   const [selectedPaymentIds, setSelectedPaymentIds] = useState<Set<string>>(new Set());
   const [actionLoading, setActionLoading] = useState(false);
+  const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [filters, setFilters] = useState({ vendorId: '', currency: '', dateFrom: '', dateTo: '', search: '' });
 
   const isAssociate = user?.role === 'ACCOUNTING_ASSOCIATE';
@@ -112,6 +115,7 @@ export default function PaymentBatchManager() {
         payment_date: p.payment_date || new Date().toISOString(),
         status: p.status || 'SCHEDULED',
         selected_for_batch: p.selected_for_batch || false,
+        selected_by: p.selected_by || undefined,
         invoice: {
           id: p.invoice?.id || p.invoice_id,
           invoice_number: p.invoice?.invoice_number || '',
@@ -120,13 +124,15 @@ export default function PaymentBatchManager() {
       }));
       setScheduledPayments(mapped);
       const selected = new Set<string>();
-      mapped.forEach((p: ScheduledPayment) => { if (p.selected_for_batch) selected.add(p.id); });
+      mapped.forEach((p: ScheduledPayment) => {
+        if (p.selected_for_batch && p.selected_by === user?.id) selected.add(p.id);
+      });
       setSelectedPaymentIds(selected);
     } catch (error) {
       console.error('Failed to load scheduled payments:', error);
       setScheduledPayments([]);
     }
-  }, [filters]);
+  }, [filters, user?.id]);
 
   useEffect(() => {
     const init = async () => {
@@ -185,13 +191,24 @@ export default function PaymentBatchManager() {
   const handleCreateBatch = async () => {
     if (selectedPaymentIds.size === 0) return;
     setProcessing(true);
+    setActionMessage(null);
     try {
-      await paymentBatchApi.create(Array.from(selectedPaymentIds));
+      const response = await paymentBatchApi.create(Array.from(selectedPaymentIds));
+      const batchCount = Number(response.data?.batch_count || 1);
+      const paymentCount = Number(response.data?.payment_count || selectedPaymentIds.size);
       await Promise.all([loadBatches(), loadScheduledPayments()]);
       setSelectedPaymentIds(new Set());
       setActiveTab('batches');
+      setActionMessage({
+        type: 'success',
+        text: `${batchCount} compatible batch${batchCount === 1 ? '' : 'es'} created for ${paymentCount} payment${paymentCount === 1 ? '' : 's'}.`,
+      });
     } catch (error) {
       console.error('Failed to create batch:', error);
+      const message = axios.isAxiosError(error)
+        ? error.response?.data?.error || error.response?.data?.message
+        : undefined;
+      setActionMessage({ type: 'error', text: message || 'Unable to create payment batch. Refresh the schedule and try again.' });
     } finally {
       setProcessing(false);
     }
@@ -347,6 +364,24 @@ export default function PaymentBatchManager() {
             )}
           </button>
         </div>
+
+        {actionMessage && (
+          <div
+            className="flex items-center gap-2 rounded-xl px-4 py-3 text-sm"
+            style={{
+              color: actionMessage.type === 'success' ? 'var(--accent-green)' : 'var(--accent-red)',
+              background: actionMessage.type === 'success'
+                ? 'color-mix(in srgb, var(--accent-green) 10%, transparent)'
+                : 'color-mix(in srgb, var(--accent-red) 10%, transparent)',
+              border: `1px solid ${actionMessage.type === 'success' ? 'var(--accent-green)' : 'var(--accent-red)'}`,
+            }}
+          >
+            {actionMessage.type === 'success'
+              ? <CheckCircle className="h-4 w-4 shrink-0" />
+              : <AlertCircle className="h-4 w-4 shrink-0" />}
+            {actionMessage.text}
+          </div>
+        )}
 
         {/* Scheduled Payments Tab */}
         {activeTab === 'scheduled' && (

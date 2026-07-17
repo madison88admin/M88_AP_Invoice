@@ -108,11 +108,20 @@ export async function getScheduledPaymentsForBatch(filters: ScheduledPaymentFilt
  * Select payments for batch creation by Accounting Associate
  */
 export async function selectPaymentsForBatch(paymentIds: string[], userId: string) {
+  if (!Array.isArray(paymentIds) || paymentIds.length === 0) {
+    throw new AppError('Select at least one scheduled payment', 400);
+  }
+
   const payments = await prisma.payment.findMany({
     where: {
       id: { in: paymentIds },
       status: 'SCHEDULED',
       batch_id: null,
+      OR: [
+        { selected_for_batch: false },
+        { selected_by: null },
+        { selected_by: userId },
+      ],
     },
   });
 
@@ -140,6 +149,7 @@ export async function deselectPaymentsForBatch(paymentIds: string[], userId: str
     where: {
       id: { in: paymentIds },
       selected_for_batch: true,
+      selected_by: userId,
       batch_id: null,
     },
     data: {
@@ -247,12 +257,18 @@ export async function createPaymentBatch(
   paymentIds: string[],
   userId: string
 ) {
+  if (!Array.isArray(paymentIds) || paymentIds.length === 0) {
+    throw new AppError('Select at least one scheduled payment to create a batch', 400);
+  }
+
   // Validate that all payments exist, are in SCHEDULED status, and selected by Accounting Associate
   const payments = await prisma.payment.findMany({
     where: {
       id: { in: paymentIds },
       status: 'SCHEDULED',
       selected_for_batch: true,
+      selected_by: userId,
+      batch_id: null,
     },
     include: {
       invoice: {
@@ -318,6 +334,54 @@ export async function createPaymentBatch(
   });
 
   return batch;
+}
+
+/**
+ * Create one batch per compatible vendor/payment group. This lets Accounting
+ * Associates select payments across vendors while preserving banking controls.
+ */
+export async function createGroupedPaymentBatches(paymentIds: string[], userId: string) {
+  if (!Array.isArray(paymentIds) || paymentIds.length === 0) {
+    throw new AppError('Select at least one scheduled payment to create a batch', 400);
+  }
+
+  const uniquePaymentIds = [...new Set(paymentIds)];
+  const payments = await prisma.payment.findMany({
+    where: {
+      id: { in: uniquePaymentIds },
+      status: 'SCHEDULED',
+      selected_for_batch: true,
+      selected_by: userId,
+      batch_id: null,
+    },
+    include: { invoice: { include: { vendor: true } } },
+  });
+
+  if (payments.length !== uniquePaymentIds.length) {
+    throw new AppError('Some payments are no longer available or were selected by another user. Refresh the schedule and try again.', 400);
+  }
+
+  const groups = new Map<string, string[]>();
+  for (const payment of payments as any[]) {
+    const key = [
+      payment.invoice.vendor_id,
+      payment.currency,
+      payment.invoice.vendor?.account_number || '',
+      payment.invoice.bill_to_entity || '',
+    ].join('|');
+    groups.set(key, [...(groups.get(key) || []), payment.id]);
+  }
+
+  const batches = [];
+  for (const ids of groups.values()) {
+    batches.push(await createPaymentBatch(ids, userId));
+  }
+
+  return {
+    batches,
+    batch_count: batches.length,
+    payment_count: uniquePaymentIds.length,
+  };
 }
 
 export async function getPaymentBatches() {

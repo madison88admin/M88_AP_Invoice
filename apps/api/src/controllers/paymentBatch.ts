@@ -2,6 +2,7 @@ import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import {
   createPaymentBatch,
+  createGroupedPaymentBatches,
   getPaymentBatches,
   getPaymentBatchById,
   getScheduledPaymentsForBatch,
@@ -22,7 +23,7 @@ export const createPaymentBatchController = async (
 ) => {
   try {
     const { paymentIds } = req.body;
-    const result = await createPaymentBatch(paymentIds, req.user!.id);
+    const result = await createGroupedPaymentBatches(paymentIds, req.user!.id);
     res.json(result);
   } catch (error) {
     next(error);

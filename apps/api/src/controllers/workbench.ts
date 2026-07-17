@@ -9,7 +9,8 @@ const invoiceInclude = { vendor: true, invoice_lines: true, parent_invoice: true
 export async function queue(_req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const invoices = await prisma.invoice.findMany({ include: invoiceInclude, orderBy: { created_at: 'desc' }, take: 200 });
-    const lines = invoices.flatMap(i => i.invoice_lines);
+    const effectiveLines = invoices.flatMap(i => i.invoice_lines.length ? i.invoice_lines : [{ id: `invoice:${i.id}`, invoice_id: i.id, line_number: 1, description: i.material_name, mpo_base_number: i.mpo_base_number, mpo_order_sequence: i.mpo_order_sequence, material_code: i.material_code, material_name: i.material_name, quantity: i.qty_shipped, selling_quantity: null, unit_price: i.qty_shipped ? Number(i.total_amount) / i.qty_shipped : null, line_amount: i.total_amount, match_status: 'HEADER_FALLBACK' } as any]);
+    const lines = effectiveLines;
     const consumption = new Map<string, number>();
     for (const line of lines) {
       const key = [line.mpo_base_number, line.mpo_order_sequence, line.material_code].join('|');
@@ -18,7 +19,7 @@ export async function queue(_req: AuthRequest, res: Response, next: NextFunction
     res.json(invoices.map(invoice => ({
       ...invoice,
       field_confidence: (invoice.ocr_raw_data as any)?.field_decision?.fields || (invoice.ocr_raw_data as any)?.field_confidence || {},
-      invoice_lines: invoice.invoice_lines.map(line => {
+      invoice_lines: effectiveLines.filter(line => line.invoice_id === invoice.id).map(line => {
         const key = [line.mpo_base_number, line.mpo_order_sequence, line.material_code].join('|');
         const ordered = Number((invoice.po_validation as any)?.nextgen_data?.line_items?.find((x: any) =>
           (!line.material_code || [x.material_code, x.item_code].includes(line.material_code)))?.quantity || 0);
@@ -31,7 +32,11 @@ export async function queue(_req: AuthRequest, res: Response, next: NextFunction
 
 export async function updateLine(req: AuthRequest, res: Response, next: NextFunction) {
   try {
-    const line = await prisma.invoiceLine.findUnique({ where: { id: req.params.lineId }, include: { invoice: true } });
+    let line: any = req.params.lineId.startsWith('invoice:') ? null : await prisma.invoiceLine.findUnique({ where: { id: req.params.lineId }, include: { invoice: true } });
+    if (!line && req.params.lineId.startsWith('invoice:')) {
+      const invoice = await prisma.invoice.findUnique({ where: { id: req.params.lineId.slice(8) } });
+      if (invoice) line = await prisma.invoiceLine.create({ data: { invoice_id: invoice.id, line_number: 1, description: invoice.material_name, mpo_base_number: invoice.mpo_base_number, mpo_order_sequence: invoice.mpo_order_sequence, material_code: invoice.material_code, material_name: invoice.material_name, quantity: invoice.qty_shipped, line_amount: invoice.total_amount, match_status: 'PENDING' }, include: { invoice: true } });
+    }
     if (!line) throw new AppError('Invoice line not found', 404);
     const allowed = ['description','mpo_base_number','mpo_order_sequence','material_code','material_name','quantity','selling_quantity','unit_price','line_amount','match_status'];
     const data = Object.fromEntries(Object.entries(req.body).filter(([k]) => allowed.includes(k)));

@@ -1303,6 +1303,7 @@ export default function Dashboard() {
             active
             collapsed={sidebarCollapsed}
           />
+          <SidebarItem icon={FileText} label="Invoice Repository" collapsed={sidebarCollapsed} onClick={() => navigate('/repository')} />
           {user && [
             'PURCHASING_COORDINATOR',
             'PURCHASING_MANAGER',
@@ -1420,6 +1421,7 @@ export default function Dashboard() {
             </div>
             <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
               <SidebarItem icon={LayoutDashboard} label="Dashboard" active collapsed={false} onClick={() => setMobileSidebarOpen(false)} />
+              <SidebarItem icon={FileText} label="Invoice Repository" collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/repository'); }} />
               {user && ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'PLANNING_MANAGER', 'SR_MANAGER_GLOBAL_PRODUCTION', 'MS_POLLY', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
                 <SidebarItem icon={CheckSquare} label="Approvals" badge={awaitingApprovalCount.count} collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/approvals'); }} />
               )}

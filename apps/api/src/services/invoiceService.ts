@@ -219,6 +219,7 @@ export const createInvoice = async (invoiceData: any, userId: string) => {
       exceptions: true,
       stage_timestamps: true,
       invoice_lines: true,
+      payments: true,
     },
   });
 
@@ -293,6 +294,7 @@ export const getInvoices = async (filters: any) => {
       exceptions: true,
       stage_timestamps: true,
       invoice_lines: true,
+      payments: true,
     },
     orderBy: {
       created_at: 'desc',

@@ -18,6 +18,7 @@ import SLAAnalyticsDashboard from './components/SLAAnalyticsDashboard';
 import OnHoldQueue from './components/OnHoldQueue';
 import UserManagement from './components/UserManagement';
 import SettingsPage from './components/SettingsPage';
+import InvoiceRepository from './components/InvoiceRepository';
 import ProtectedRoute from './components/ProtectedRoute';
 import NotFound from './components/NotFound';
 
@@ -103,6 +104,11 @@ function App() {
                 <Route path="/settings" element={
                   <ProtectedRoute>
                     <SettingsPage />
+                  </ProtectedRoute>
+                } />
+                <Route path="/repository" element={
+                  <ProtectedRoute>
+                    <InvoiceRepository />
                   </ProtectedRoute>
                 } />
                 <Route path="*" element={<NotFound />} />

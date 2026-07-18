@@ -166,6 +166,8 @@ export const analyticsApi = {
   getErrors: (days?: number) => api.get('/api/analytics/errors', { params: { days } }),
   getTimeline: (days?: number) => api.get('/api/analytics/timeline', { params: { days } }),
   getPerformance: (days?: number) => api.get('/api/analytics/performance', { params: { days } }),
+  getExtractionPolicies: () => api.get('/api/analytics/extraction-policies'),
+  runExtractionBenchmark: (cases: any[]) => api.post('/api/analytics/extraction-benchmark', { cases }),
 };
 
 export const notificationApi = {

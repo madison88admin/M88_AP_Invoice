@@ -3,6 +3,8 @@ import { AuthRequest } from '../middleware/auth';
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { logAudit } from '../services/auditLogService';
+import { fieldDecisionEngine } from '../services/fieldDecisionEngine';
+import { correctionLogService } from '../services/correctionLogService';
 
 const invoiceInclude = { vendor: true, invoice_lines: true, parent_invoice: true, child_invoices: true } as const;
 
@@ -30,6 +32,12 @@ export async function queue(_req: AuthRequest, res: Response, next: NextFunction
         const orderedAmount = Number(nextgenLine?.amount || nextgenLine?.total_amount || nextgenLine?.line_amount || 0);
         const invoiced = consumption.get(key) || 0;
         const invoicedAmount = amountConsumption.get(key) || 0;
+        const currentQuantity = Number(line.quantity || 0);
+        const previouslyInvoiced = Math.max(0, invoiced - currentQuantity);
+        const received = Number(line.received_quantity ?? nextgenLine?.received_quantity ?? nextgenLine?.quantity_received ?? 0);
+        const accepted = Number(line.accepted_quantity ?? nextgenLine?.accepted_quantity ?? nextgenLine?.quantity_accepted ?? received);
+        const receivableLimit = accepted || received || ordered;
+        const remainingBeforeInvoice = receivableLimit ? receivableLimit - previouslyInvoiced : null;
         const alerts = [
           ordered && invoiced > ordered ? {
             type: 'QUANTITY_EXCEEDS_MPO',
@@ -56,6 +64,16 @@ export async function queue(_req: AuthRequest, res: Response, next: NextFunction
             severity: 'error',
             message: `Material ${line.material_code} was not found in the NextGen MPO line list.`,
           } : null,
+          ordered && !received ? {
+            type: 'RECEIPT_NOT_AVAILABLE',
+            severity: 'warning',
+            message: 'No goods receipt or accepted quantity is available; three-way match requires manual confirmation.',
+          } : null,
+          remainingBeforeInvoice != null && currentQuantity > remainingBeforeInvoice ? {
+            type: 'QUANTITY_EXCEEDS_RECEIVED_BALANCE',
+            severity: 'error',
+            message: `Invoice quantity ${currentQuantity} exceeds remaining received/accepted balance ${remainingBeforeInvoice}.`,
+          } : null,
         ].filter(Boolean);
         return {
           ...line,
@@ -65,6 +83,15 @@ export async function queue(_req: AuthRequest, res: Response, next: NextFunction
           ordered_amount: orderedAmount || null,
           invoiced_amount: invoicedAmount,
           remaining_amount: orderedAmount ? orderedAmount - invoicedAmount : null,
+          received_quantity: received || null,
+          accepted_quantity: accepted || null,
+          previously_invoiced_quantity: previouslyInvoiced,
+          remaining_receivable_quantity: receivableLimit ? receivableLimit - invoiced : null,
+          three_way_match_status: !ordered
+            ? 'NO_PO'
+            : !received ? 'RECEIPT_REQUIRED'
+            : remainingBeforeInvoice != null && currentQuantity > remainingBeforeInvoice ? 'OVER_RECEIPT'
+            : 'MATCHED',
           tolerance_alerts: alerts,
         };
       }),
@@ -80,10 +107,10 @@ export async function updateLine(req: AuthRequest, res: Response, next: NextFunc
       if (invoice) line = await prisma.invoiceLine.create({ data: { invoice_id: invoice.id, line_number: 1, description: invoice.material_name, mpo_base_number: invoice.mpo_base_number, mpo_order_sequence: invoice.mpo_order_sequence, material_code: invoice.material_code, material_name: invoice.material_name, quantity: invoice.qty_shipped, line_amount: invoice.total_amount, match_status: 'PENDING' }, include: { invoice: true } });
     }
     if (!line) throw new AppError('Invoice line not found', 404);
-    const allowed = ['description','mpo_base_number','mpo_order_sequence','material_code','material_name','quantity','selling_quantity','unit_price','line_amount','match_status'];
+    const allowed = ['description','mpo_base_number','mpo_order_sequence','material_code','material_name','quantity','selling_quantity','unit_price','line_amount','received_quantity','accepted_quantity','match_status'];
     const data = Object.fromEntries(Object.entries(req.body).filter(([k]) => allowed.includes(k)));
     const updated = await prisma.invoiceLine.update({ where: { id: line.id }, data: data as any });
-    await prisma.correctionLog.create({ data: { invoice_id: line.invoice_id, vendor_name: line.invoice.vendor_name_raw, original_fields: line as any, corrected_fields: data as any, note: req.body.note || 'Line validation correction' } });
+    await correctionLogService.saveCorrection({ invoice_id: line.invoice_id, vendor_name: line.invoice.vendor_name_raw, original_fields: line as any, corrected_fields: data as any, note: req.body.note || 'Line validation correction' });
     await logAudit({ invoice_id: line.invoice_id, performed_by: req.user!.id, action: 'INVOICE_LINE_CORRECTED', note: `Line ${line.line_number} corrected: ${Object.keys(data).join(', ')}` });
     res.json(updated);
   } catch (e) { next(e); }
@@ -121,5 +148,51 @@ export async function resolveDuplicate(req: AuthRequest, res: Response, next: Ne
     const invoice = await prisma.invoice.update({ where: { id: req.params.id }, data });
     await logAudit({ invoice_id: invoice.id, performed_by: req.user!.id, action: `DUPLICATE_${resolution}`, note });
     res.json(invoice);
+  } catch (e) { next(e); }
+}
+
+export async function learningRules(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const status = String(req.query.status || 'pending');
+    const where = status === 'approved'
+      ? { approved_for_learning: true, disabled_at: null }
+      : status === 'disabled'
+      ? { disabled_at: { not: null } }
+      : { approved_for_learning: false, disabled_at: null };
+    const rules = await prisma.correctionLog.findMany({
+      where,
+      orderBy: { created_at: 'desc' },
+      take: 200,
+    });
+    res.json(rules);
+  } catch (e) { next(e); }
+}
+
+export async function approveLearningRule(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const rule = await prisma.correctionLog.update({
+      where: { id: req.params.id },
+      data: {
+        approved_for_learning: true,
+        approved_by: req.user!.id,
+        approved_at: new Date(),
+        disabled_at: null,
+      },
+    });
+    fieldDecisionEngine.invalidateLearningCache(rule.vendor_name || undefined);
+    await logAudit({ performed_by: req.user!.id, action: 'EXTRACTION_RULE_APPROVED', note: `Approved correction ${rule.id} for vendor ${rule.vendor_name || 'unknown'}` });
+    res.json(rule);
+  } catch (e) { next(e); }
+}
+
+export async function disableLearningRule(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const rule = await prisma.correctionLog.update({
+      where: { id: req.params.id },
+      data: { approved_for_learning: false, disabled_at: new Date() },
+    });
+    fieldDecisionEngine.invalidateLearningCache(rule.vendor_name || undefined);
+    await logAudit({ performed_by: req.user!.id, action: 'EXTRACTION_RULE_DISABLED', note: req.body.note || `Disabled correction ${rule.id}` });
+    res.json(rule);
   } catch (e) { next(e); }
 }

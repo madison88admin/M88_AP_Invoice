@@ -1,12 +1,17 @@
 import { logger } from '../utils/logger';
 import { correctionLogService } from './correctionLogService';
 import { AST_SINGLE_SOURCE_MODE } from './extractors/constants';
+import {
+  calibrateExtractionConfidence,
+  getExtractionFieldPolicy,
+  requiresExtractionReview,
+} from './extractionPolicyService';
 
 // ============================================================================
 // TYPES
 // ============================================================================
 
-export type EngineName = 'madison' | 'gemini' | 'qwen' | 'groq' | 'ollama' | 'vendor_rules' | 'nextgen';
+export type EngineName = 'madison' | 'gemini' | 'qwen' | 'groq' | 'ollama' | 'vendor_rules' | 'nextgen' | 'structured';
 
 export interface FieldCandidate {
   value: any;
@@ -18,6 +23,7 @@ export interface FieldCandidate {
 export interface FieldEvidence {
   page?: number;
   line?: number;
+  bounding_box?: { x: number; y: number; width: number; height: number };
   matched_label?: string;
   matched_regex?: string;
   raw_text_snippet?: string;
@@ -75,7 +81,7 @@ export interface DecisionResult {
     season?: string;
     ship_to?: string;
     sold_to?: string;
-    line_items: any[];
+    line_items: LineItemDecision[];
   };
   overall_confidence: number;
   overall_status: 'APPROVED' | 'REVIEW_REQUIRED' | 'FAILED';
@@ -86,6 +92,30 @@ export interface DecisionResult {
   engine_notes: string;
   extraction_time_ms: number;
   extracted_at: Date;
+}
+
+export interface LineItemDecision {
+  line_number: number;
+  description?: string | null;
+  mpo_base_number?: string | null;
+  mpo_order_sequence?: string | null;
+  material_code?: string | null;
+  material_name?: string | null;
+  quantity?: number | null;
+  selling_quantity?: number | null;
+  unit_price?: number | null;
+  line_amount?: number | null;
+  total_amount?: number | null;
+  extraction_confidence: number;
+  review_required: boolean;
+  field_confidence: Record<string, FieldDecision>;
+  extraction_provenance: Record<string, FieldProvenance>;
+  source_evidence: Record<string, FieldEvidence>;
+  arithmetic_validation: {
+    passed: boolean;
+    expected_amount: number | null;
+    difference: number | null;
+  };
 }
 
 interface EngineOutput {
@@ -182,12 +212,12 @@ export class FieldDecisionEngine {
 
       const learnedOverride = this.applyLearnedRules(fieldName, candidates, learnedRules);
       const decision = this.selectBestCandidate(fieldName, candidates, options?.nextGenData, learnedOverride);
-      fields[fieldName] = decision;
+      fields[fieldName] = this.applyConfidencePolicy(fieldName, decision);
 
-      if (decision.conflict) {
+      if (fields[fieldName].conflict) {
         conflicts.push({
           field: fieldName,
-          reason: decision.conflict_reason || 'Conflict between engines',
+          reason: fields[fieldName].conflict_reason || 'Conflict between engines',
           severity: this.getConflictSeverity(fieldName),
         });
       }
@@ -454,23 +484,183 @@ export class FieldDecisionEngine {
   // LINE ITEM SELECTION
   // ============================================================================
 
-  private selectLineItems(engines: EngineOutput[]): any[] {
-    for (const engineName of ['gemini', 'qwen', 'groq'] as EngineName[]) {
-      const engine = engines.find(e => e.engine_name === engineName);
-      if (engine?.data?.line_items && Array.isArray(engine.data.line_items) && engine.data.line_items.length > 0) {
-        return engine.data.line_items;
+  private selectLineItems(engines: EngineOutput[]): LineItemDecision[] {
+    const lineFields = [
+      'description', 'mpo_base_number', 'mpo_order_sequence', 'material_code',
+      'material_name', 'quantity', 'selling_quantity', 'unit_price', 'line_amount',
+    ];
+    const buckets: Array<Array<{ engine: EngineOutput; line: any; index: number }>> = [];
+
+    for (const engine of engines) {
+      const engineLines = Array.isArray(engine.data?.line_items) ? engine.data.line_items : [];
+      engineLines.forEach((rawLine: any, index: number) => {
+        const line = this.normalizeLineItem(rawLine, index);
+        const identity = this.lineIdentity(line);
+        let bucket = buckets.find(group => {
+          const candidate = group[0]?.line;
+          const candidateIdentity = this.lineIdentity(candidate);
+          return identity && candidateIdentity
+            ? identity === candidateIdentity
+            : group[0]?.index === index;
+        });
+        if (!bucket) {
+          bucket = [];
+          buckets.push(bucket);
+        }
+        bucket.push({ engine, line, index });
+      });
+    }
+
+    return buckets.map((bucket, bucketIndex) => {
+      const fieldConfidence: Record<string, FieldDecision> = {};
+      for (const field of lineFields) {
+        const candidates: FieldCandidate[] = bucket
+          .map(({ engine, line }) => {
+            const value = line[field];
+            if (value === null || value === undefined || String(value).trim() === '') return null;
+            const suppliedConfidence = Number(
+              line.field_confidence?.[field]?.confidence ??
+              line.field_confidence?.[field] ??
+              line.confidence ??
+              engine.confidence
+            );
+            return {
+              value,
+              engine: engine.engine_name,
+              confidence: this.calculateFieldConfidence(`line_items.${field}`, value, engine.engine_name, suppliedConfidence),
+              evidence: line.source_evidence?.[field] || line.evidence?.[field] || {},
+            } as FieldCandidate;
+          })
+          .filter((candidate): candidate is FieldCandidate => candidate !== null);
+
+        if (candidates.length === 0) continue;
+        fieldConfidence[field] = this.applyConfidencePolicy(
+          `line_items.${field}`,
+          this.selectBestCandidate(`line_items.${field}`, candidates)
+        );
       }
-    }
-    const madison = engines.find(e => e.engine_name === 'madison');
-    if (madison?.data?.line_items && Array.isArray(madison.data.line_items)) {
-      return madison.data.line_items;
-    }
-    return [];
+
+      const value = (field: string) => fieldConfidence[field]?.final_value ?? null;
+      const quantity = this.toNumberOrNull(value('quantity'));
+      const unitPrice = this.toNumberOrNull(value('unit_price'));
+      const lineAmount = this.toNumberOrNull(value('line_amount'));
+      const expectedAmount = quantity != null && unitPrice != null ? quantity * unitPrice : null;
+      const difference = expectedAmount != null && lineAmount != null ? Math.abs(expectedAmount - lineAmount) : null;
+      const arithmeticPassed = difference != null && expectedAmount != null
+        ? difference <= Math.max(0.01, Math.abs(expectedAmount) * 0.005)
+        : false;
+
+      for (const field of ['quantity', 'unit_price', 'line_amount']) {
+        const decision = fieldConfidence[field];
+        if (!decision) continue;
+        decision.final_confidence = calibrateExtractionConfidence({
+          field,
+          raw_confidence: decision.final_confidence,
+          source_count: decision.candidates.length,
+          consensus_count: this.consensusCount(field, decision),
+          arithmetic_validated: arithmeticPassed,
+        });
+        decision.confidence_breakdown.total = decision.final_confidence;
+        decision.review_required = requiresExtractionReview(field, decision.final_confidence);
+      }
+
+      const decisions = Object.values(fieldConfidence);
+      const confidence = decisions.length
+        ? Math.round(decisions.reduce((sum, decision) => sum + decision.final_confidence, 0) / decisions.length)
+        : 0;
+
+      return {
+        line_number: Number(value('line_number') || bucket[0]?.line?.line_number || bucketIndex + 1),
+        description: value('description'),
+        mpo_base_number: value('mpo_base_number'),
+        mpo_order_sequence: value('mpo_order_sequence'),
+        material_code: value('material_code'),
+        material_name: value('material_name'),
+        quantity,
+        selling_quantity: this.toNumberOrNull(value('selling_quantity')),
+        unit_price: unitPrice,
+        line_amount: lineAmount,
+        total_amount: lineAmount,
+        extraction_confidence: confidence,
+        review_required: decisions.some(decision => decision.review_required) || !arithmeticPassed,
+        field_confidence: fieldConfidence,
+        extraction_provenance: Object.fromEntries(
+          Object.entries(fieldConfidence).map(([field, decision]) => [field, decision.provenance])
+        ),
+        source_evidence: Object.fromEntries(
+          Object.entries(fieldConfidence).map(([field, decision]) => [field, decision.evidence])
+        ),
+        arithmetic_validation: {
+          passed: arithmeticPassed,
+          expected_amount: expectedAmount,
+          difference,
+        },
+      };
+    });
+  }
+
+  private normalizeLineItem(line: any, index: number) {
+    return {
+      ...line,
+      line_number: Number(line.line_number || index + 1),
+      description: line.description || line.item_description || line.material_name || null,
+      mpo_base_number: line.mpo_base_number || line.mpo_number || null,
+      mpo_order_sequence: line.mpo_order_sequence || line.order_sequence || null,
+      material_code: line.material_code || line.item_code || line.sku || null,
+      material_name: line.material_name || line.item_name || line.description || null,
+      quantity: line.quantity ?? line.qty ?? null,
+      selling_quantity: line.selling_quantity ?? line.sell_qty ?? null,
+      unit_price: line.unit_price ?? line.price ?? null,
+      line_amount: line.line_amount ?? line.total_amount ?? line.amount ?? null,
+    };
+  }
+
+  private lineIdentity(line: any): string {
+    const material = String(line?.material_code || '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
+    const mpo = String(line?.mpo_base_number || '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
+    const sequence = String(line?.mpo_order_sequence || '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
+    const lineNumber = Number(line?.line_number || 0);
+    if (material) return `${mpo}|${sequence}|${material}|${lineNumber}`;
+    if (mpo && sequence) return `${mpo}|${sequence}|${lineNumber}`;
+    return '';
+  }
+
+  private toNumberOrNull(value: any): number | null {
+    if (value === null || value === undefined || value === '') return null;
+    const parsed = Number(String(value).replace(/,/g, ''));
+    return Number.isFinite(parsed) ? parsed : null;
   }
 
   // ============================================================================
   // CONFIDENCE CALCULATION
   // ============================================================================
+
+  private applyConfidencePolicy(field: string, decision: FieldDecision): FieldDecision {
+    const externallyValidated = ['nextgen', 'structured'].includes(decision.selected_engine) || decision.confidence_breakdown.nextgen_match_bonus > 0;
+    const confidence = calibrateExtractionConfidence({
+      field,
+      raw_confidence: decision.final_confidence,
+      source_count: decision.candidates.length || 1,
+      consensus_count: this.consensusCount(field, decision),
+      externally_validated: externallyValidated,
+    });
+    const policy = getExtractionFieldPolicy(field);
+    return {
+      ...decision,
+      final_confidence: confidence,
+      confidence_breakdown: { ...decision.confidence_breakdown, total: confidence },
+      review_required: decision.conflict || requiresExtractionReview(field, confidence, externallyValidated),
+      provenance: {
+        ...decision.provenance,
+        selection_reason: `${decision.provenance.selection_reason}; policy ${policy.review_threshold}/${policy.auto_accept_threshold}`,
+      },
+    };
+  }
+
+  private consensusCount(field: string, decision: FieldDecision): number {
+    const selected = this.normalizeForComparison(field, decision.final_value);
+    return decision.candidates.filter(candidate => this.normalizeForComparison(field, candidate.value) === selected).length;
+  }
 
   private calculateFieldConfidence(field: string, value: any, engine: EngineName, engineConfidence: number): number {
     let confidence = engineConfidence;
@@ -493,14 +683,17 @@ export class FieldDecisionEngine {
         confidence = 100;
       }
     }
+    if (engine === 'structured') confidence = Math.max(confidence, 99);
 
-    if (field === 'total_amount' && (isNaN(Number(value)) || Number(value) <= 0)) {
+    const normalizedField = field.replace(/^line_items\./, '');
+    if (['total_amount', 'line_amount', 'unit_price', 'quantity', 'selling_quantity'].includes(normalizedField) &&
+        (isNaN(Number(String(value).replace(/,/g, ''))) || Number(String(value).replace(/,/g, '')) < 0)) {
       confidence = Math.min(confidence, 30);
     }
-    if (field === 'invoice_date' && !this.isValidDate(value)) {
+    if (normalizedField === 'invoice_date' && !this.isValidDate(value)) {
       confidence = Math.min(confidence, 40);
     }
-    if (field === 'currency' && value && !['USD', 'HKD', 'EUR', 'IDR', 'PHP', 'JPY', 'CNY', 'GBP', 'AUD', 'CAD', 'SGD', 'VND'].includes(String(value).toUpperCase())) {
+    if (normalizedField === 'currency' && value && !['USD', 'HKD', 'EUR', 'IDR', 'PHP', 'JPY', 'CNY', 'GBP', 'AUD', 'CAD', 'SGD', 'VND'].includes(String(value).toUpperCase())) {
       confidence = Math.min(confidence, 50);
     }
 
@@ -546,6 +739,12 @@ export class FieldDecisionEngine {
   private learnedRulesCache: Map<string, StructuredLearningRule[]> = new Map();
   private cacheExpiry: number = 0;
   private readonly CACHE_TTL_MS = 5 * 60 * 1000;
+
+  invalidateLearningCache(vendorName?: string) {
+    if (vendorName) this.learnedRulesCache.delete(vendorName.toLowerCase());
+    else this.learnedRulesCache.clear();
+    this.cacheExpiry = 0;
+  }
 
   private async getLearnedRules(vendorName?: string): Promise<StructuredLearningRule[]> {
     if (!vendorName) return [];
@@ -663,6 +862,7 @@ export class FieldDecisionEngine {
     original_fields: Record<string, any>;
     corrected_fields: Record<string, any>;
     note?: string;
+    layout_fingerprint?: string;
   }): Promise<void> {
     if (input.vendor_name) {
       this.learnedRulesCache.delete(input.vendor_name.toLowerCase());
@@ -720,8 +920,9 @@ export class FieldDecisionEngine {
     let s = String(value).trim().toUpperCase();
     if (field === 'mpo_number') s = s.replace(/^MPO_?/, 'MPO').replace(/\s/g, '');
     if (field === 'currency') s = s.replace(/US\$/, 'USD').replace(/HK\$/, 'HKD');
-    if (field === 'total_amount') {
-      const n = Number(value);
+    const normalizedField = field.replace(/^line_items\./, '');
+    if (['total_amount', 'line_amount', 'unit_price', 'quantity', 'selling_quantity'].includes(normalizedField)) {
+      const n = Number(String(value).replace(/,/g, ''));
       if (!isNaN(n)) return n.toFixed(2);
     }
     if (field === 'invoice_date' || field === 'due_date') {

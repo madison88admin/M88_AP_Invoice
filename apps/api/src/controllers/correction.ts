@@ -12,7 +12,7 @@ export const saveCorrection = async (
 ) => {
   try {
     const invoiceId = req.params.id;
-    const { vendor_name, invoice_template_type, raw_text, original_fields, corrected_fields, note } = req.body;
+    const { vendor_name, invoice_template_type, raw_text, original_fields, corrected_fields, note, layout_fingerprint } = req.body;
 
     if (!corrected_fields || Object.keys(corrected_fields).length === 0) {
       throw new AppError('corrected_fields is required', 400);
@@ -26,6 +26,7 @@ export const saveCorrection = async (
       original_fields,
       corrected_fields,
       note,
+      layout_fingerprint,
     });
 
     await logAudit({
@@ -37,7 +38,7 @@ export const saveCorrection = async (
 
     res.status(201).json({
       success: true,
-      message: 'Correction saved and will be used for future extractions',
+      message: 'Correction saved and queued for manager approval before vendor learning',
     });
   } catch (error) {
     next(error);
@@ -50,7 +51,7 @@ export const saveStandaloneCorrection = async (
   next: NextFunction
 ) => {
   try {
-    const { vendor_name, invoice_template_type, raw_text, original_fields, corrected_fields, note } = req.body;
+    const { vendor_name, invoice_template_type, raw_text, original_fields, corrected_fields, note, layout_fingerprint } = req.body;
 
     if (!corrected_fields || Object.keys(corrected_fields).length === 0) {
       throw new AppError('corrected_fields is required', 400);
@@ -63,6 +64,7 @@ export const saveStandaloneCorrection = async (
       original_fields,
       corrected_fields,
       note,
+      layout_fingerprint,
     });
 
     await logAudit({
@@ -73,7 +75,7 @@ export const saveStandaloneCorrection = async (
 
     res.status(201).json({
       success: true,
-      message: 'Correction saved and will be used for future extractions',
+      message: 'Correction saved and queued for manager approval before vendor learning',
     });
   } catch (error) {
     next(error);

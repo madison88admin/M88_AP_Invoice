@@ -6,6 +6,7 @@ import {
 import {
   Activity, TrendingUp, AlertTriangle, Clock, Building2,
   Gauge, CheckCircle, RefreshCw, Cpu, Shield, Brain,
+  FileCheck2,
 } from 'lucide-react';
 import { analyticsApi } from '../lib/api';
 
@@ -85,6 +86,20 @@ export default function ExtractionDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [days, setDays] = useState(30);
+  const [benchmark, setBenchmark] = useState<any | null>(null);
+  const [benchmarkError, setBenchmarkError] = useState('');
+
+  const runBenchmark = async (file: File) => {
+    try {
+      setBenchmarkError('');
+      const parsed = JSON.parse(await file.text());
+      const cases = Array.isArray(parsed) ? parsed : parsed.cases;
+      const response = await analyticsApi.runExtractionBenchmark(cases);
+      setBenchmark(response.data);
+    } catch (e: any) {
+      setBenchmarkError(e.response?.data?.error || e.message || 'Benchmark file is invalid');
+    }
+  };
 
   const fetchData = async () => {
     setLoading(true);
@@ -440,6 +455,33 @@ export default function ExtractionDashboard() {
           </ResponsiveContainer>
         ) : (
           <EmptyState message="No timeline data yet" />
+        )}
+      </div>
+
+      <div className="rounded-xl p-6" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+              <FileCheck2 className="w-5 h-5" style={{ color: 'var(--accent-purple)' }} />
+              Ground-truth Extraction Benchmark
+            </h2>
+            <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>Upload JSON cases containing expected and actual fields to measure true accuracy—not model confidence.</p>
+          </div>
+          <label className="px-4 py-2 rounded-lg cursor-pointer" style={{ background: 'var(--accent-purple)', color: 'white' }}>
+            Run benchmark
+            <input type="file" accept="application/json,.json" className="hidden" onChange={(event) => event.target.files?.[0] && runBenchmark(event.target.files[0])} />
+          </label>
+        </div>
+        {benchmarkError && <div className="mt-3 text-sm" style={{ color: 'var(--accent-red)' }}>{benchmarkError}</div>}
+        {benchmark && (
+          <div className="grid sm:grid-cols-3 gap-4 mt-5">
+            <KpiCard icon={<Gauge className="w-5 h-5" />} label="Measured Accuracy" value={`${benchmark.overall_accuracy}%`} subtitle={`${benchmark.case_count} test invoices`} />
+            <KpiCard icon={<CheckCircle className="w-5 h-5" />} label="Straight-through Rate" value={`${benchmark.straight_through_rate}%`} subtitle="No field corrections required" />
+            <div className="rounded-xl p-4" style={{ background: 'var(--bg-elevated)' }}>
+              <div className="text-sm mb-2" style={{ color: 'var(--text-muted)' }}>Lowest-accuracy fields</div>
+              {(benchmark.per_field || []).slice(0, 4).map((field: any) => <div key={field.field} className="flex justify-between text-sm"><span>{field.field}</span><strong>{field.accuracy}%</strong></div>)}
+            </div>
+          </div>
         )}
       </div>
 

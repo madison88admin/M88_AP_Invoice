@@ -1,15 +1,17 @@
 import { Fragment, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, GitCompare, ScanSearch, ShoppingCart } from 'lucide-react';
+import { ArrowLeft, BookOpenCheck, Eye, GitCompare, ScanSearch, ShoppingCart, X } from 'lucide-react';
 import api from '../lib/api';
 
 const fmt = (value: any) => (value == null || value === '' ? '-' : String(value));
 
 export default function PurchasingWorkbench() {
-  const [tab, setTab] = useState<'lines' | 'extraction' | 'duplicates'>('lines');
+  const [tab, setTab] = useState<'lines' | 'extraction' | 'duplicates' | 'learning'>('lines');
   const [invoices, setInvoices] = useState<any[]>([]);
   const [pairs, setPairs] = useState<any[]>([]);
   const [message, setMessage] = useState('');
+  const [learningRules, setLearningRules] = useState<any[]>([]);
+  const [selectedEvidence, setSelectedEvidence] = useState<any | null>(null);
 
   const load = async () => {
     const [queue, duplicates] = await Promise.all([
@@ -18,6 +20,9 @@ export default function PurchasingWorkbench() {
     ]);
     setInvoices(queue.data);
     setPairs(duplicates.data);
+    api.get('/api/workbench/learning-rules?status=pending')
+      .then((response) => setLearningRules(response.data))
+      .catch(() => setLearningRules([]));
   };
 
   useEffect(() => {
@@ -28,7 +33,7 @@ export default function PurchasingWorkbench() {
     const value = prompt(`Correct ${field}`, fmt(line[field]) === '-' ? '' : fmt(line[field]));
     if (value == null) return;
     await api.patch(`/api/workbench/lines/${line.id}`, {
-      [field]: ['quantity', 'selling_quantity', 'unit_price', 'line_amount'].includes(field) ? Number(value) : value,
+      [field]: ['quantity', 'selling_quantity', 'unit_price', 'line_amount', 'received_quantity', 'accepted_quantity'].includes(field) ? Number(value) : value,
     });
     setMessage('Correction saved with audit history.');
     await load();
@@ -45,7 +50,7 @@ export default function PurchasingWorkbench() {
       corrected_fields: { [field]: corrected },
       note: 'Field-confidence workbench correction',
     });
-    setMessage(`${field.replace(/_/g, ' ')} corrected and added to extraction learning history.`);
+    setMessage(`${field.replace(/_/g, ' ')} corrected and queued for manager approval before vendor learning.`);
     await load();
   };
 
@@ -56,6 +61,12 @@ export default function PurchasingWorkbench() {
       note: `Resolved in side-by-side workbench as ${resolution}`,
     });
     setMessage('Duplicate decision saved.');
+    await load();
+  };
+
+  const updateLearningRule = async (id: string, action: 'approve' | 'disable') => {
+    await api.post(`/api/workbench/learning-rules/${id}/${action}`, action === 'disable' ? { note: 'Disabled in learning review' } : {});
+    setMessage(action === 'approve' ? 'Vendor-specific extraction rule approved.' : 'Extraction rule disabled.');
     await load();
   };
 
@@ -79,6 +90,7 @@ export default function PurchasingWorkbench() {
             ['lines', 'Line Validation', ShoppingCart],
             ['extraction', 'Extraction Review', ScanSearch],
             ['duplicates', 'Duplicate Resolution', GitCompare],
+            ['learning', 'Learning Rules', BookOpenCheck],
           ] as any[]).map(([id, label, Icon]) => (
             <button
               key={id}
@@ -108,7 +120,7 @@ export default function PurchasingWorkbench() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr>
-                      {['Line', 'Material', 'MPO / Order', 'Qty', 'Selling Qty', 'Ordered', 'Total Invoiced', 'Remaining', 'Unit Price', 'Amount', 'Match'].map((heading) => (
+                      {['Line', 'Material', 'MPO / Order', 'Qty', 'Selling Qty', 'Ordered', 'Received', 'Accepted', 'Previously Invoiced', 'Receipt Balance', 'Unit Price', 'Amount', 'Extraction', '3-Way Match'].map((heading) => (
                         <th className="p-3 text-left" key={heading}>{heading}</th>
                       ))}
                     </tr>
@@ -118,20 +130,23 @@ export default function PurchasingWorkbench() {
                       <Fragment key={line.id}>
                         <tr style={{ borderTop: '1px solid var(--border-color)' }}>
                           <td className="p-3">{line.line_number}</td>
-                          <td className="p-3 cursor-pointer" onClick={() => editLine(line, 'material_code')}>{fmt(line.material_code)}<br /><small>{fmt(line.material_name)}</small></td>
+                          <td className="p-3"><ConfidenceCell line={line} field="material_code" value={line.material_code} onCorrect={() => editLine(line, 'material_code')} onEvidence={setSelectedEvidence} /><small>{fmt(line.material_name)}</small></td>
                           <td className="p-3">{fmt(line.mpo_base_number)}-{fmt(line.mpo_order_sequence)}</td>
-                          <td className="p-3 cursor-pointer" onClick={() => editLine(line, 'quantity')}>{fmt(line.quantity)}</td>
-                          <td className="p-3 cursor-pointer" onClick={() => editLine(line, 'selling_quantity')}>{fmt(line.selling_quantity)}</td>
+                          <td className="p-3"><ConfidenceCell line={line} field="quantity" value={line.quantity} onCorrect={() => editLine(line, 'quantity')} onEvidence={setSelectedEvidence} /></td>
+                          <td className="p-3"><ConfidenceCell line={line} field="selling_quantity" value={line.selling_quantity} onCorrect={() => editLine(line, 'selling_quantity')} onEvidence={setSelectedEvidence} /></td>
                           <td className="p-3">{fmt(line.ordered_quantity)}</td>
-                          <td className="p-3">{fmt(line.invoiced_quantity)}</td>
-                          <td className="p-3">{fmt(line.remaining_quantity)}</td>
-                          <td className="p-3 cursor-pointer" onClick={() => editLine(line, 'unit_price')}>{fmt(line.unit_price)}</td>
-                          <td className="p-3">{fmt(line.line_amount)}</td>
-                          <td className="p-3">{fmt(line.match_status)}</td>
+                          <td className="p-3 cursor-pointer" onClick={() => editLine(line, 'received_quantity')}>{fmt(line.received_quantity)}</td>
+                          <td className="p-3 cursor-pointer" onClick={() => editLine(line, 'accepted_quantity')}>{fmt(line.accepted_quantity)}</td>
+                          <td className="p-3">{fmt(line.previously_invoiced_quantity)}</td>
+                          <td className="p-3">{fmt(line.remaining_receivable_quantity)}</td>
+                          <td className="p-3"><ConfidenceCell line={line} field="unit_price" value={line.unit_price} onCorrect={() => editLine(line, 'unit_price')} onEvidence={setSelectedEvidence} /></td>
+                          <td className="p-3"><ConfidenceCell line={line} field="line_amount" value={line.line_amount} onCorrect={() => editLine(line, 'line_amount')} onEvidence={setSelectedEvidence} /></td>
+                          <td className="p-3">{fmt(line.extraction_confidence)}%{line.review_required ? <small className="block" style={{ color: 'var(--accent-amber)' }}>Review</small> : null}</td>
+                          <td className="p-3">{fmt(line.three_way_match_status)}</td>
                         </tr>
                         {line.tolerance_alerts?.length > 0 && (
                           <tr>
-                            <td colSpan={11} className="px-3 pb-3">
+                            <td colSpan={14} className="px-3 pb-3">
                               <div className="flex flex-wrap gap-2">
                                 {line.tolerance_alerts.map((alert: any) => (
                                   <span
@@ -164,12 +179,21 @@ export default function PurchasingWorkbench() {
             {invoices.map((invoice) => (
               <div key={invoice.id} className="p-4 rounded-xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
                 <div className="font-semibold mb-3">{invoice.invoice_number} | {invoice.vendor?.name}</div>
-                {['invoice_number', 'invoice_date', 'total_amount', 'currency', 'mpo_number', 'material_code', 'qty_shipped'].map((field) => (
-                  <button type="button" onClick={() => editField(invoice, field)} key={field} className="flex justify-between gap-3 p-2 w-full text-left rounded hover:opacity-80">
-                    <span>{field.replace(/_/g, ' ')}</span>
-                    <span>{fmt(invoice[field])} <small style={{ color: 'var(--text-muted)' }}>({fmt(invoice.field_confidence?.[field]?.confidence || invoice.field_confidence?.[field])}%)</small></span>
-                  </button>
-                ))}
+                {['invoice_number', 'invoice_date', 'total_amount', 'currency', 'mpo_number', 'material_code', 'qty_shipped'].map((field) => {
+                  const decision = invoice.field_confidence?.[field];
+                  const confidence = decision?.final_confidence ?? decision?.confidence ?? decision;
+                  return (
+                    <div key={field} className="flex items-center gap-2 p-2 rounded">
+                      <button type="button" onClick={() => editField(invoice, field)} className="flex justify-between gap-3 flex-1 text-left hover:opacity-80">
+                        <span>{field.replace(/_/g, ' ')}</span>
+                        <span>{fmt(invoice[field])} <small style={{ color: Number(confidence) < 80 ? 'var(--accent-amber)' : 'var(--text-muted)' }}>({fmt(confidence)}%)</small></span>
+                      </button>
+                      <button type="button" title="View source evidence" onClick={() => setSelectedEvidence({ field, value: invoice[field], decision })} className="p-1 rounded" style={{ background: 'var(--bg-elevated)' }}>
+                        <Eye className="h-4 w-4" />
+                      </button>
+                    </div>
+                  );
+                })}
                 <Link className="inline-block mt-3 text-sm" to={`/repository?invoice=${invoice.id}`}>Open invoice and correction history</Link>
               </div>
             ))}
@@ -195,7 +219,46 @@ export default function PurchasingWorkbench() {
             ))}
           </div>
         )}
+
+        {tab === 'learning' && (
+          <div className="space-y-3">
+            {learningRules.length === 0 ? (
+              <div className="p-5 rounded-xl" style={{ background: 'var(--bg-card)' }}>
+                No pending vendor learning rules, or your role does not manage rule approvals.
+              </div>
+            ) : learningRules.map((rule) => (
+              <div key={rule.id} className="p-4 rounded-xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+                <div className="flex flex-wrap justify-between gap-3">
+                  <div>
+                    <div className="font-semibold">{rule.vendor_name || 'Unknown vendor'}</div>
+                    <div className="text-sm" style={{ color: 'var(--text-muted)' }}>{rule.note || 'Manual extraction correction'}</div>
+                    <pre className="text-xs mt-2 whitespace-pre-wrap">{JSON.stringify(rule.corrected_fields, null, 2)}</pre>
+                  </div>
+                  <div className="flex gap-2 items-start">
+                    <button onClick={() => updateLearningRule(rule.id, 'approve')} className="px-3 py-2 rounded-lg" style={{ background: 'var(--accent-green)', color: 'white' }}>Approve for vendor</button>
+                    <button onClick={() => updateLearningRule(rule.id, 'disable')} className="px-3 py-2 rounded-lg" style={{ background: 'var(--bg-elevated)' }}>Disable</button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
+
+      {selectedEvidence && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,.65)' }}>
+          <div className="w-full max-w-2xl max-h-[85vh] overflow-auto rounded-2xl p-5" style={{ background: 'var(--bg-card)' }}>
+            <div className="flex justify-between gap-3 mb-4">
+              <div>
+                <h2 className="text-xl font-bold">Extraction source evidence</h2>
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{selectedEvidence.field}: {fmt(selectedEvidence.value)}</p>
+              </div>
+              <button onClick={() => setSelectedEvidence(null)}><X className="h-5 w-5" /></button>
+            </div>
+            <EvidenceDetails evidence={selectedEvidence.evidence || selectedEvidence.decision?.evidence} provenance={selectedEvidence.provenance || selectedEvidence.decision?.provenance} decision={selectedEvidence.decision} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -218,6 +281,47 @@ function Doc({ title, invoice }: { title: string; invoice: any }) {
           <strong>{fmt(value)}</strong>
         </div>
       ))}
+    </div>
+  );
+}
+
+function ConfidenceCell({ line, field, value, onCorrect, onEvidence }: { line: any; field: string; value: any; onCorrect: () => void; onEvidence: (value: any) => void }) {
+  const decision = line.field_confidence?.[field];
+  const confidence = Number(decision?.final_confidence ?? decision?.confidence ?? line.extraction_confidence ?? 0);
+  return (
+    <div className="flex items-center gap-1">
+      <button type="button" className="text-left hover:opacity-80" onClick={onCorrect}>
+        {fmt(value)} <small style={{ color: confidence < 80 ? 'var(--accent-amber)' : 'var(--text-muted)' }}>{confidence ? `${confidence}%` : ''}</small>
+      </button>
+      <button
+        type="button"
+        title="View source and engine candidates"
+        onClick={() => onEvidence({ field, value, decision, evidence: line.source_evidence?.[field], provenance: line.extraction_provenance?.[field] })}
+        className="p-1 rounded"
+        style={{ background: 'var(--bg-elevated)' }}
+      >
+        <Eye className="h-3 w-3" />
+      </button>
+    </div>
+  );
+}
+
+function EvidenceDetails({ evidence, provenance, decision }: { evidence: any; provenance: any; decision: any }) {
+  const candidates = decision?.candidates || provenance?.other_candidates || [];
+  return (
+    <div className="space-y-4 text-sm">
+      <div className="grid sm:grid-cols-2 gap-3">
+        <div className="p-3 rounded-lg" style={{ background: 'var(--bg-elevated)' }}><strong>Selected engine</strong><div>{provenance?.chosen_engine || decision?.selected_engine || '-'}</div></div>
+        <div className="p-3 rounded-lg" style={{ background: 'var(--bg-elevated)' }}><strong>Confidence</strong><div>{decision?.final_confidence ?? '-'}%</div></div>
+        <div className="p-3 rounded-lg" style={{ background: 'var(--bg-elevated)' }}><strong>Page / line</strong><div>{evidence?.page || '-'} / {evidence?.line || '-'}</div></div>
+        <div className="p-3 rounded-lg" style={{ background: 'var(--bg-elevated)' }}><strong>Matched label</strong><div>{evidence?.matched_label || '-'}</div></div>
+      </div>
+      {evidence?.raw_text_snippet && <div className="p-4 rounded-lg font-mono whitespace-pre-wrap" style={{ background: 'var(--bg-elevated)' }}>{evidence.raw_text_snippet}</div>}
+      {evidence?.bounding_box && <div>Bounding box: {JSON.stringify(evidence.bounding_box)}</div>}
+      <div><strong>Decision reason</strong><p>{provenance?.selection_reason || decision?.provenance?.selection_reason || '-'}</p></div>
+      {candidates.length > 0 && (
+        <div><strong>Other candidates</strong><pre className="mt-2 p-3 rounded-lg overflow-auto" style={{ background: 'var(--bg-elevated)' }}>{JSON.stringify(candidates, null, 2)}</pre></div>
+      )}
     </div>
   );
 }

@@ -74,6 +74,9 @@ export const createInvoice = async (invoiceData: any, userId: string) => {
     swift_code,
     account_number,
     ocr_confidence_score,
+    source_document_type,
+    structured_source_format,
+    document_layout_fingerprint,
   } = invoiceData;
 
   // Validate required fields
@@ -195,6 +198,9 @@ export const createInvoice = async (invoiceData: any, userId: string) => {
       swift_code: swift_code || undefined,
       account_number: account_number || undefined,
       ocr_confidence_score: ocr_confidence_score ? parseFloat(ocr_confidence_score) : null,
+      source_document_type: source_document_type || undefined,
+      structured_source_format: structured_source_format || undefined,
+      document_layout_fingerprint: document_layout_fingerprint || undefined,
       ...(Array.isArray(line_items) && line_items.length > 0 ? {
         invoice_lines: {
           create: line_items.map((line: any, index: number) => ({
@@ -208,6 +214,14 @@ export const createInvoice = async (invoiceData: any, userId: string) => {
             selling_quantity: line.selling_quantity != null ? Number(line.selling_quantity) : null,
             unit_price: line.unit_price != null ? Number(line.unit_price) : null,
             line_amount: line.line_amount != null ? Number(line.line_amount) : (line.total_amount != null ? Number(line.total_amount) : null),
+            received_quantity: line.received_quantity != null ? Number(line.received_quantity) : null,
+            accepted_quantity: line.accepted_quantity != null ? Number(line.accepted_quantity) : null,
+            previously_invoiced_quantity: line.previously_invoiced_quantity != null ? Number(line.previously_invoiced_quantity) : null,
+            remaining_receivable_quantity: line.remaining_receivable_quantity != null ? Number(line.remaining_receivable_quantity) : null,
+            extraction_confidence: line.extraction_confidence != null ? Number(line.extraction_confidence) : null,
+            field_confidence: line.field_confidence || undefined,
+            extraction_provenance: line.extraction_provenance || undefined,
+            source_evidence: line.source_evidence || undefined,
             match_status: 'PENDING',
           })),
         },

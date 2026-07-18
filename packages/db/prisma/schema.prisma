@@ -127,6 +127,9 @@ model Invoice {
   ocr_confidence_score  Decimal?
   is_handwritten        Boolean       @default(false)
   ocr_raw_data          Json?
+  source_document_type  String?
+  structured_source_format String?
+  document_layout_fingerprint String?
   po_validation         Json?
   exception_reasons     ExceptionReason[]
   
@@ -227,6 +230,14 @@ model InvoiceLine {
   match_level         String?
   match_confidence    Decimal?
   match_status        String?
+  received_quantity   Decimal?
+  accepted_quantity   Decimal?
+  previously_invoiced_quantity Decimal?
+  remaining_receivable_quantity Decimal?
+  extraction_confidence Decimal?
+  field_confidence    Json?
+  extraction_provenance Json?
+  source_evidence     Json?
   created_at          DateTime @default(now())
   updated_at          DateTime @updatedAt
 
@@ -551,12 +562,21 @@ model CorrectionLog {
   original_fields   Json?
   corrected_fields  Json?
   note              String?
+  vendor_scope_key  String?
+  layout_fingerprint String?
+  approved_for_learning Boolean @default(false)
+  approved_by       String?
+  approved_at       DateTime?
+  disabled_at       DateTime?
+  validation_success_count Int @default(0)
+  validation_failure_count Int @default(0)
   use_count         Int      @default(0)
   last_used_at      DateTime?
   created_at        DateTime @default(now())
   updated_at        DateTime @updatedAt
 
   @@index([vendor_name])
+  @@index([vendor_scope_key, approved_for_learning, disabled_at])
   @@index([invoice_template_type])
   @@index([use_count])
   @@index([created_at])

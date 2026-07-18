@@ -29,6 +29,13 @@ export interface SaveCorrectionInput {
   original_fields?: CorrectionFields;
   corrected_fields?: CorrectionFields;
   note?: string;
+  layout_fingerprint?: string;
+}
+
+export function correctionVendorScopeKey(vendorName?: string): string | null {
+  if (!vendorName) return null;
+  const key = vendorName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+  return key || null;
 }
 
 export class CorrectionLogService {
@@ -52,6 +59,9 @@ export class CorrectionLogService {
           original_fields: input.original_fields as any,
           corrected_fields: input.corrected_fields as any,
           note: input.note,
+          vendor_scope_key: correctionVendorScopeKey(input.vendor_name),
+          layout_fingerprint: input.layout_fingerprint,
+          approved_for_learning: false,
         },
       });
 
@@ -85,44 +95,43 @@ export class CorrectionLogService {
     rawText: string,
     vendorName?: string,
     invoiceTemplateType?: string,
-    limit: number = 3
+    limit: number = 3,
+    allowCrossVendor: boolean = false
   ) {
     try {
       let corrections: any[] = [];
 
-      // Strategy 1: Match by exact vendor name (contains, case-insensitive)
-      if (vendorName) {
+      // Vendor learning is strictly isolated. Never borrow rules from another vendor.
+      const vendorScopeKey = correctionVendorScopeKey(vendorName);
+      if (vendorScopeKey) {
         corrections = await prisma.correctionLog.findMany({
-          where: { vendor_name: { contains: vendorName, mode: 'insensitive' } },
+          where: {
+            vendor_scope_key: vendorScopeKey,
+            approved_for_learning: true,
+            disabled_at: null,
+          },
           orderBy: [{ use_count: 'desc' }, { created_at: 'desc' }],
           take: limit,
         });
       }
 
-      // Strategy 2: Match by first word of vendor name (broader match)
-      if (corrections.length === 0 && vendorName) {
-        const firstWord = vendorName.split(/[\s\-,.]+/)[0];
-        if (firstWord && firstWord.length > 2) {
-          corrections = await prisma.correctionLog.findMany({
-            where: { vendor_name: { contains: firstWord, mode: 'insensitive' } },
-            orderBy: [{ use_count: 'desc' }, { created_at: 'desc' }],
-            take: limit,
-          });
-        }
-      }
-
-      // Strategy 3: Match by invoice template type
-      if (corrections.length === 0 && invoiceTemplateType) {
+      // Template rules are only used when the vendor is unknown and the rule was approved.
+      if (corrections.length === 0 && !vendorScopeKey && invoiceTemplateType) {
         corrections = await prisma.correctionLog.findMany({
-          where: { invoice_template_type: invoiceTemplateType },
+          where: {
+            invoice_template_type: invoiceTemplateType,
+            approved_for_learning: true,
+            disabled_at: null,
+          },
           orderBy: [{ use_count: 'desc' }, { created_at: 'desc' }],
           take: limit,
         });
       }
 
-      // Strategy 4: Fall back to most recent corrections (any vendor)
-      if (corrections.length === 0) {
+      // Cross-vendor examples must be explicitly requested; normal extraction never enables this.
+      if (corrections.length === 0 && allowCrossVendor && !vendorScopeKey && !invoiceTemplateType) {
         corrections = await prisma.correctionLog.findMany({
+          where: { approved_for_learning: true, disabled_at: null },
           orderBy: [{ use_count: 'desc' }, { created_at: 'desc' }],
           take: limit,
         });

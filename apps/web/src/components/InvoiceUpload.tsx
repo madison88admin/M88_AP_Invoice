@@ -63,6 +63,11 @@ interface OCRResult {
   ocr_confidence_score?: number;
   raw_data?: any;
   po_validation?: any;
+  line_items?: any[];
+  source_document_type?: string;
+  structured_source_format?: string;
+  document_layout_fingerprint?: string;
+  document_classification?: { document_type: string; confidence: number; payable_candidate: boolean; reasons: string[] };
   amount_resolution_debug?: {
     method: string;
     confidence: number;
@@ -135,6 +140,10 @@ export default function InvoiceUpload() {
 
   const handleConfirm = async () => {
     if (!ocrResult) return;
+    if (ocrResult.document_classification && !ocrResult.document_classification.payable_candidate &&
+        !window.confirm(`This file was classified as ${ocrResult.document_classification.document_type}. Save it as an invoice record anyway?`)) {
+      return;
+    }
 
     setUploading(true);
     setError(null);
@@ -187,9 +196,13 @@ export default function InvoiceUpload() {
         bank_info: ocrResult.bank_info || (ocrResult as any).bank_details,
         signatures: ocrResult.signatures,
         ocr_confidence_score: ocrResult.ocr_confidence_score,
-        ocr_raw_data: ocrResult.raw_data,
+        ocr_raw_data: ocrResult.raw_data || ocrResult,
         po_validation: ocrResult.po_validation,
         qty_shipped: (ocrResult as any).qty_shipped,
+        line_items: ocrResult.line_items,
+        source_document_type: ocrResult.source_document_type,
+        structured_source_format: ocrResult.structured_source_format,
+        document_layout_fingerprint: ocrResult.document_layout_fingerprint,
       });
 
       setSuccess(true);
@@ -259,6 +272,7 @@ export default function InvoiceUpload() {
         original_fields: originalFields,
         corrected_fields: correctedFields,
         note: 'Manual correction from upload review',
+        layout_fingerprint: ocrResult.document_layout_fingerprint,
       });
 
       setCorrectionSaved(true);
@@ -329,12 +343,12 @@ export default function InvoiceUpload() {
           >
             <Upload className="h-12 w-12 mx-auto mb-4" style={{ color: 'var(--text-muted)' }} strokeWidth={1.75} />
             <p className="mb-2" style={{ color: 'var(--text-secondary)' }}>
-              Drag and drop your invoice PDF or image here, or click to browse
+              Drag and drop an invoice PDF, image, XML, or UBL file here, or click to browse
             </p>
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Supported formats: PDF, JPG, PNG</p>
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Supported formats: PDF, JPG, PNG, XML, UBL</p>
             <input
               type="file"
-              accept=".pdf,.jpg,.jpeg,.png"
+              accept=".pdf,.jpg,.jpeg,.png,.xml,.ubl,application/xml,text/xml"
               onChange={(e) => e.target.files?.[0] && handleFileSelect(e.target.files[0])}
               className="hidden"
               id="file-input"
@@ -398,6 +412,19 @@ export default function InvoiceUpload() {
             <h3 className="font-semibold mb-2" style={{ color: 'var(--accent-purple)' }}>OCR Extraction Results</h3>
             <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Review and confirm the extracted information below.</p>
           </div>
+
+          {ocrResult.document_classification && (
+            <div className="p-4 rounded-xl flex items-start" style={{
+              background: ocrResult.document_classification.payable_candidate ? 'color-mix(in srgb, var(--accent-green) 10%, transparent)' : 'color-mix(in srgb, var(--accent-amber) 10%, transparent)',
+              border: `1px solid ${ocrResult.document_classification.payable_candidate ? 'var(--accent-green)' : 'var(--accent-amber)'}`,
+            }}>
+              <AlertCircle className="h-5 w-5 mr-3 mt-0.5" />
+              <div>
+                <p className="text-sm font-medium">Document classified as {ocrResult.document_classification.document_type.replace(/_/g, ' ')} ({ocrResult.document_classification.confidence}%)</p>
+                {!ocrResult.document_classification.payable_candidate && <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>This is normally a supporting document and should not proceed to payment unless Purchasing confirms it.</p>}
+              </div>
+            </div>
+          )}
 
           {ocrResult.is_handwritten && (
             <div className="p-4 rounded-xl flex items-start" style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}>

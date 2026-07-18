@@ -21,6 +21,11 @@ import { runSelfValidation } from '../services/selfValidation';
 import { validateAgainstVendorHistory } from '../services/vendorHistoryValidator';
 import { activeLearningService, vendorTemplateService } from '../services/continuousLearningService';
 import { detectMultiInvoice, splitPdfByPageRanges } from '../services/multiInvoiceDetector';
+import {
+  classifyInvoiceDocument,
+  isStructuredInvoice,
+  parseStructuredInvoice,
+} from '../services/structuredInvoiceService';
 import crypto from 'crypto';
 import { createChildLogger } from '../utils/logger';
 
@@ -248,6 +253,11 @@ async function processSingleInvoice(
     // Extract Madison-specific invoice fields (Engine 1)
     const startTime = Date.now();
     const madisonRawResult = await extractMadisonInvoiceFields(fileBuffer);
+    const documentClassification = classifyInvoiceDocument({
+      fileName: req.file?.originalname,
+      mimeType: req.file?.mimetype,
+      text: madisonRawResult.raw_text || '',
+    });
 
     logger.info(`[${reqId}] Madison extraction completed`, {
       status: madisonRawResult.status || 'unknown',
@@ -561,6 +571,9 @@ async function processSingleInvoice(
       ...decisionFinal,
       amount: finalAmount,
       invoice_received_date: invoiceReceivedDate,
+      source_document_type: documentClassification.document_type,
+      document_classification: documentClassification,
+      document_layout_fingerprint: documentClassification.layout_fingerprint,
       vendor_name: decisionFinal.vendor_name,
       invoice_number: cleanInvoiceNumber(decisionFinal.invoice_number),
       invoice_date: decisionFinal.invoice_date,
@@ -908,6 +921,50 @@ async function processSingleInvoice(
 }
 
 // ─── Public upload endpoint with multi-invoice detection ───
+async function processStructuredInvoiceUpload(req: Request, res: Response) {
+  if (!req.file) throw new AppError('No structured invoice uploaded', 400);
+  const parsed = parseStructuredInvoice(req.file.buffer, req.file.originalname);
+  const decision = await fieldDecisionEngine.decide([{
+    engine_name: 'structured' as EngineName,
+    data: parsed.extraction,
+    confidence: 99,
+  }]);
+  const extraction: any = {
+    ...parsed.extraction,
+    ...decision.final,
+    amount: decision.final.total_amount,
+    invoice_type: parsed.classification.document_type === 'PROFORMA_INVOICE'
+      ? 'PROFORMA'
+      : parsed.classification.document_type === 'STATEMENT' ? 'STATEMENT' : 'INVOICE',
+    source_document_type: parsed.classification.document_type,
+    structured_source_format: parsed.source_format,
+    document_classification: parsed.classification,
+    document_layout_fingerprint: parsed.classification.layout_fingerprint,
+    ocr_confidence_score: decision.overall_confidence / 100,
+    decision,
+  };
+
+  let vendorMatch: any = null;
+  if (extraction.vendor_name) {
+    vendorMatch = await matchVendor(extraction.vendor_name);
+    if (!vendorMatch) vendorMatch = await matchOrCreateVendor(extraction.vendor_name);
+  }
+
+  return res.status(200).json({
+    success: true,
+    structured_source: true,
+    extraction,
+    vendor_match: vendorMatch ? {
+      vendor_id: vendorMatch.vendor_id,
+      vendor_name: vendorMatch.vendor_name || extraction.vendor_name,
+    } : null,
+    requires_manual_vendor_assignment: !vendorMatch,
+    po_validation: null,
+    decision,
+    document_classification: parsed.classification,
+  });
+}
+
 export const uploadMadisonInvoice = async (
   req: Request,
   res: Response,
@@ -925,6 +982,10 @@ export const uploadMadisonInvoice = async (
     const mimeType = req.file.mimetype;
 
     // ─── Multi-invoice detection ───
+    if (isStructuredInvoice(req.file.originalname, mimeType)) {
+      return await processStructuredInvoiceUpload(req, res);
+    }
+
     if (mimeType === 'application/pdf' || req.file.originalname.toLowerCase().endsWith('.pdf')) {
       try {
         const detection = await detectMultiInvoice(fileBuffer);
@@ -1047,6 +1108,9 @@ export const confirmOCR = async (
       signatures,
       ocr_confidence_score,
       ocr_raw_data,
+      source_document_type,
+      structured_source_format,
+      document_layout_fingerprint,
       po_validation,
       po_audit_id,
       qty_shipped,
@@ -1099,6 +1163,9 @@ export const confirmOCR = async (
         qty_shipped,
         line_items: line_items || ocr_raw_data?.line_items,
         ocr_confidence_score,
+        source_document_type: source_document_type || ocr_raw_data?.source_document_type,
+        structured_source_format: structured_source_format || ocr_raw_data?.structured_source_format,
+        document_layout_fingerprint: document_layout_fingerprint || ocr_raw_data?.document_layout_fingerprint,
         // Preserve full OCR raw data for audit trail — merge bank_info and signatures into ocr_raw_data
         ocr_raw_data: ocr_raw_data || {
           bank_info,

@@ -1,10 +1,24 @@
 import { Router } from 'express';
 import { authenticate } from '../middleware/auth';
 import { analyticsService } from '../services/analyticsService';
+import { evaluateExtractionBenchmark } from '../services/extractionBenchmarkService';
+import { listExtractionPolicies } from '../services/extractionPolicyService';
 
 const router: Router = Router();
 
 router.use(authenticate);
+
+router.get('/extraction-policies', (_req, res) => {
+  res.json(listExtractionPolicies());
+});
+
+router.post('/extraction-benchmark', (req, res) => {
+  try {
+    res.json(evaluateExtractionBenchmark(req.body?.cases));
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Invalid benchmark dataset' });
+  }
+});
 
 /**
  * GET /api/analytics/dashboard

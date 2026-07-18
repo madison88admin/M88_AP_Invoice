@@ -31,7 +31,8 @@ export function validateLineItems(
     description?: string;
     quantity: number;
     unit_price: number;
-    total_amount: number;
+    total_amount?: number;
+    line_amount?: number;
   }>,
   invoiceTotal?: number
 ): LineItemValidationResult {
@@ -44,7 +45,7 @@ export function validateLineItems(
   for (let i = 0; i < lineItems.length; i++) {
     const item = lineItems[i];
     const expected = Number(item.quantity) * Number(item.unit_price);
-    const actual = Number(item.total_amount);
+    const actual = Number(item.line_amount ?? item.total_amount);
     const difference = Math.abs(expected - actual);
     const tolerance = Math.max(0.01, expected * 0.001); // 0.1% tolerance or minimum 1 cent
 

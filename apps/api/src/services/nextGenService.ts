@@ -1,4 +1,6 @@
 import { logger } from '../utils/logger';
+import { parseMPOReference } from '../utils/mpoReference';
+import { matchMPOLines } from '../utils/mpoLineMatching';
 
 // Timeout helper for fetch calls — prevents indefinite hangs
 const FETCH_TIMEOUT_MS = 30000; // 30 seconds
@@ -34,12 +36,67 @@ export interface NextGenPOData {
   order_type: string;
   status: string;
   line_items: Array<{
+    order_id?: number;
+    line_id?: number;
+    line_reference?: string;
+    material_id?: number;
+    material_url?: string;
     item_code: string;
+    material_name?: string;
     description: string;
     quantity: number;
+    selling_quantity?: number;
     unit_price: number;
     total_amount: number;
+    external_reference?: string;
+    customer_reference?: string;
+    purchase_uom?: string;
+    selling_uom?: string;
+    received_quantity?: number;
+    remaining_quantity?: number;
   }>;
+  matched_line_items?: NextGenPOData['line_items'];
+  match_level?: 'MPO_HEADER' | 'MPO_LINE' | 'MATERIAL_LINE';
+}
+
+/** Convert the actual NextGen MPO-line payload into stable AP validation fields. */
+export function mapNextGenMPOLine(li: any) {
+  const quantity = Number(li.Quantity ?? li.TotalQuantity ?? li.quantity ?? 0);
+  const sellingQuantity = Number(li.SellingLineQuantityTotal ?? li.SellingQuantity ?? li.selling_quantity ?? 0);
+  // In FormLinesGridRead, LinePurchasePrice is the extended line total while
+  // PurchasePrice is the per-unit amount (e.g. 1050 × .05 = 52.50).
+  const explicitLineTotal = Number(li.LinePurchasePrice ?? li.TotalAmount ?? li.total_amount ?? 0);
+  const explicitUnitPrice = Number(li.PurchasePrice ?? li.UnitPrice ?? li.unit_price ?? 0);
+  const unitPrice = explicitUnitPrice || (quantity > 0 && explicitLineTotal > 0 ? explicitLineTotal / quantity : 0);
+  const totalAmount = explicitLineTotal || quantity * unitPrice;
+  const materialName = String(li.CommodityName ?? li.MaterialName ?? li.material_name ?? '').trim();
+  const externalReference = String(li.CommodityExternalReference ?? li.MaterialExternalReference ?? '').trim();
+  const customerReference = String(li.CommodityCustomerReference ?? li.MaterialCustomerReference ?? '').trim();
+  const itemCode = String(externalReference || customerReference || li.ItemCode || li.item_code || materialName).trim();
+  const materialId = Number(li.CommodityId ?? li.MaterialId ?? li.material_id ?? 0) || undefined;
+
+  return {
+    order_id: Number(li.OrderId ?? li.order_id ?? 0) || undefined,
+    line_id: Number(li.Id ?? li.LineId ?? li.line_id ?? 0) || undefined,
+    line_reference: String(li.LineItem ?? li.LineNumber ?? li.line_reference ?? '').trim() || undefined,
+    material_id: materialId,
+    material_url: materialId ? `https://nextgen.madison88.com/Material/Edit/${materialId}` : undefined,
+    item_code: itemCode,
+    material_name: materialName,
+    description: String(li.CommodityDescription ?? li.Description ?? li.description ?? '').trim(),
+    quantity,
+    selling_quantity: sellingQuantity,
+    unit_price: unitPrice,
+    total_amount: totalAmount,
+    external_reference: externalReference || undefined,
+    customer_reference: customerReference || undefined,
+    purchase_uom: String(li.PurchaseUnitOfMeasureName ?? li.purchase_uom ?? '').trim() || undefined,
+    selling_uom: String(li.SellingUnitOfMeasureName ?? li.selling_uom ?? '').trim() || undefined,
+    received_quantity: Number(li.Received ?? li.received_quantity ?? 0) || undefined,
+    remaining_quantity: Number(li.Balance ?? li.remaining_quantity ?? 0) || undefined,
+    color: li.ColourName || li.OptionColourName || '',
+    size: li.SizeName || '',
+  };
 }
 
 /** Kendo DataSourceRequest body used by NextGen grid endpoints */
@@ -936,10 +993,17 @@ export class NextGenService {
     try {
       if (this.useMock) return this.getMockPOData(mpoNumber);
 
+      const parsedReference = parseMPOReference(mpoNumber);
+      const lookupMpo = parsedReference.baseMpo || mpoNumber.trim().toUpperCase();
+      const effectiveHint = {
+        ...hint,
+        material_code: hint?.material_code || parsedReference.materialCode,
+      };
+
       // ── Fast path: Try GetEntityBrowserList to find OrderId, then GetById ──
       // Skip if EntityBrowserList is known to be broken (500 errors)
       try {
-        const orderId = await this.getMPOOrderId(mpoNumber);
+        const orderId = await this.getMPOOrderId(lookupMpo);
         if (orderId) {
           logger.info(`MPO ${mpoNumber}: Fast path — GetEntityBrowserList resolved to OrderId ${orderId}`);
           const result = await this.get<any>(`/MaterialPurchaseOrder/GetById?id=${orderId}`);
@@ -949,7 +1013,7 @@ export class NextGenService {
               logger.info(`MPO ${mpoNumber}: Fast path succeeded via GetById`);
               // Fetch lines separately
               const lines = await this.fetchMPOLines(orderId);
-              return { ...mapped, line_items: lines ?? [], mpo_number: mapped.mpo_number || mpoNumber };
+              return { ...mapped, line_items: lines ?? [], mpo_number: mapped.mpo_number || lookupMpo };
             }
           }
         }
@@ -957,43 +1021,43 @@ export class NextGenService {
         logger.warn(`MPO ${mpoNumber}: Fast path failed, falling back to pagination`);
       }
 
-      const allHeaders = await this.fetchAllMPOHeaders(mpoNumber);
+      const allHeaders = await this.fetchAllMPOHeaders(lookupMpo);
       if (allHeaders.length === 0) return null;
 
       // Normalize MPO number for flexible matching
       // Remove "MPO" prefix and leading zeros for comparison
-      const normalizedMPO = mpoNumber.replace(/^MPO/i, '').replace(/^0+/, '');
+      const normalizedMPO = lookupMpo.replace(/^MPO/i, '').replace(/^0+/, '');
       const mpoWithPrefix = `MPO${normalizedMPO.padStart(6, '0')}`; // 6-digit padding based on sample MPO013402
       const mpoWithPrefixShort = `MPO${normalizedMPO}`;
 
-      logger.info(`MPO ${mpoNumber}: Searching with formats: ${mpoNumber}, ${mpoWithPrefix}, ${mpoWithPrefixShort}, ${normalizedMPO}`);
+      logger.info(`MPO ${lookupMpo}: Searching with formats: ${lookupMpo}, ${mpoWithPrefix}, ${mpoWithPrefixShort}, ${normalizedMPO}`);
       logger.info(`MPO ${mpoNumber}: Sample results from search: ${allHeaders.slice(0, 5).map((h: any) => h.Name).join(', ')}`);
 
       // ── Tier 1: Exact Name match (try multiple formats) ─────────────────────
       const exactMatch = allHeaders.find((i: any) =>
-        i.Name === mpoNumber ||
+        i.Name === lookupMpo ||
         i.Name === mpoWithPrefix ||
         i.Name === mpoWithPrefixShort ||
         i.Name === normalizedMPO
       );
       if (exactMatch) {
         logger.info(`MPO ${mpoNumber}: Tier-1 exact name match (found as ${exactMatch.Name})`);
-        return this.buildMPOData(exactMatch, mpoNumber);
+        return this.buildMPOData(exactMatch, lookupMpo);
       }
 
       // ── Tier 2: Reference field match (Comments / Description / SupplierDescription) ──
       const refMatch = allHeaders.find((i: any) => {
         const refs = [i.Comments, i.Description, i.SupplierDescription].filter(Boolean).join(' ');
-        return refs.includes(mpoNumber) || refs.includes(normalizedMPO) || refs.includes(mpoWithPrefix);
+        return refs.includes(lookupMpo) || refs.includes(normalizedMPO) || refs.includes(mpoWithPrefix);
       });
       if (refMatch) {
         logger.info(`MPO ${mpoNumber}: Tier-2 reference field match (OrderId ${refMatch.Id})`);
-        return this.buildMPOData(refMatch, mpoNumber);
+        return this.buildMPOData(refMatch, lookupMpo);
       }
 
       // ── Tier 2.5: Material code match — search reference fields for material code (e.g., ZVC, ZVCT0014) ──
-      if (hint?.material_code) {
-        const mc = hint.material_code.toUpperCase();
+      if (effectiveHint.material_code) {
+        const mc = effectiveHint.material_code.toUpperCase();
         const materialMatch = allHeaders.find((i: any) => {
           const refs = [i.Comments, i.Description, i.SupplierDescription, i.Name].filter(Boolean).join(' ').toUpperCase();
           // Match material code as substring (ZVC matches ZVCT0014)
@@ -1001,27 +1065,27 @@ export class NextGenService {
         });
         if (materialMatch) {
           logger.info(`MPO ${mpoNumber}: Tier-2.5 material code match (${mc}, OrderId ${materialMatch.Id}, Name ${materialMatch.Name})`);
-          return this.buildMPOData(materialMatch, mpoNumber);
+          return this.buildMPOData(materialMatch, lookupMpo);
         }
       }
 
       // ── Tier 3: Supplier + amount + material code fuzzy match (requires hint) ─────────────
-      if (hint?.vendor_name || hint?.amount || hint?.material_code) {
+      if (effectiveHint.vendor_name || effectiveHint.amount || effectiveHint.material_code) {
         const scored = allHeaders.map((i: any) => {
           let score = 0;
-          if (hint.vendor_name) {
+          if (effectiveHint.vendor_name) {
             const vn = (i.SupplierName || '').toLowerCase();
-            const hv = hint.vendor_name.toLowerCase();
+            const hv = effectiveHint.vendor_name.toLowerCase();
             if (vn.includes(hv) || hv.includes(vn)) score += 70;
           }
-          if (hint.amount && i.TotalCost) {
-            const diff = Math.abs(Number(i.TotalCost) - hint.amount) / hint.amount;
+          if (effectiveHint.amount && i.TotalCost) {
+            const diff = Math.abs(Number(i.TotalCost) - effectiveHint.amount) / effectiveHint.amount;
             if (diff < 0.01) score += 20;
             else if (diff < 0.05) score += 10;
           }
           // Material code match adds significant score
-          if (hint.material_code) {
-            const mc = hint.material_code.toUpperCase();
+          if (effectiveHint.material_code) {
+            const mc = effectiveHint.material_code.toUpperCase();
             const refs = [i.Comments, i.Description, i.SupplierDescription, i.Name].filter(Boolean).join(' ').toUpperCase();
             if (refs.includes(mc)) score += 50;
           }
@@ -1032,7 +1096,7 @@ export class NextGenService {
         const best = scored[0];
         if (best && best.score >= 50) {
           logger.info(`MPO ${mpoNumber}: Tier-3 fuzzy match (score ${best.score}, OrderId ${best.item.Id}, Name ${best.item.Name})`);
-          return this.buildMPOData(best.item, mpoNumber);
+          return this.buildMPOData(best.item, lookupMpo);
         }
 
         logger.warn(`MPO ${mpoNumber}: Tier-3 best score ${best?.score ?? 0} — no confident match`);
@@ -1196,15 +1260,7 @@ export class NextGenService {
       if (!result) return [];
 
       const items = result?.Data || result?.data || [];
-      return (Array.isArray(items) ? items : []).map((li: any) => ({
-        item_code: li.CommodityName || li.ItemCode || li.item_code || '',
-        description: li.CommodityDescription || li.Description || li.description || '',
-        quantity: Number(li.Quantity || li.TotalQuantity || li.quantity || 0),
-        unit_price: Number(li.LinePurchasePrice || li.PurchasePrice || li.UnitPrice || li.unit_price || 0),
-        total_amount: Number(li.TotalAmount || li.total_amount || (Number(li.Quantity || 0) * Number(li.LinePurchasePrice || 0))),
-        color: li.ColourName || li.OptionColourName || '',
-        size: li.SizeName || '',
-      }));
+      return (Array.isArray(items) ? items : []).map(mapNextGenMPOLine);
     } catch (error) {
       logger.error(`Error fetching MPO lines for OrderId ${orderId}:`, error);
       return [];
@@ -1224,6 +1280,9 @@ export class NextGenService {
       brand?: string;
       season?: string;
       order_type?: string;
+      mpo_order_sequence?: string;
+      material_code?: string;
+      material_name?: string;
     }
   ): Promise<POComparisonResult> {
     const poNumber = invoiceData.po_number || invoiceData.mpo_number;
@@ -1266,6 +1325,41 @@ export class NextGenService {
       };
     }
 
+    const parsedReference = parseMPOReference(invoiceData.mpo_number);
+    const lineResolution = matchMPOLines(nextgenData.line_items || [], {
+      orderSequence: invoiceData.mpo_order_sequence || parsedReference.orderSequence,
+      materialCode: invoiceData.material_code || parsedReference.materialCode,
+      materialName: invoiceData.material_name,
+    });
+    const hasLineSelector = Boolean(
+      invoiceData.mpo_order_sequence || parsedReference.orderSequence ||
+      invoiceData.material_code || parsedReference.materialCode || invoiceData.material_name
+    );
+    if (hasLineSelector && lineResolution.error) {
+      return {
+        po_found: true,
+        is_match: false,
+        nextgen_data: { ...nextgenData, matched_line_items: lineResolution.lines, match_level: lineResolution.matchLevel },
+        comparison: {
+          amount_match: false,
+          vendor_match: false,
+          brand_match: false,
+          season_match: false,
+          order_type_match: false,
+          differences: [`NextGen ${lineResolution.error}: requested MPO line/material was not resolved under ${nextgenData.mpo_number}`],
+        },
+      };
+    }
+    const targetLines = hasLineSelector ? lineResolution.lines : [];
+    const comparisonAmount = targetLines.length
+      ? targetLines.reduce((sum, line) => sum + Number(line.total_amount || 0), 0)
+      : nextgenData.amount;
+    const resolvedNextGenData: NextGenPOData = {
+      ...nextgenData,
+      matched_line_items: targetLines,
+      match_level: hasLineSelector ? lineResolution.matchLevel : 'MPO_HEADER',
+    };
+
     // Compare fields
     const differences: string[] = [];
     let amountMatch = false;
@@ -1275,12 +1369,14 @@ export class NextGenService {
     let orderTypeMatch = false;
 
     // Amount comparison (2% warning, 5% blocking thresholds)
-    const amountDiff = Math.abs(invoiceData.amount - nextgenData.amount) / nextgenData.amount;
+    const amountDiff = comparisonAmount > 0
+      ? Math.abs(invoiceData.amount - comparisonAmount) / comparisonAmount
+      : 0;
     amountMatch = amountDiff <= 0.02; // Strict match: within 2%
     if (amountDiff > 0.05) {
-      differences.push(`Amount mismatch: Invoice $${invoiceData.amount.toFixed(2)} vs PO $${nextgenData.amount.toFixed(2)} (${(amountDiff * 100).toFixed(1)}% variance)`);
+      differences.push(`Amount mismatch: Invoice $${invoiceData.amount.toFixed(2)} vs PO line $${comparisonAmount.toFixed(2)} (${(amountDiff * 100).toFixed(1)}% variance)`);
     } else if (amountDiff > 0.02) {
-      differences.push(`Amount variance warning: Invoice $${invoiceData.amount.toFixed(2)} vs PO $${nextgenData.amount.toFixed(2)} (${(amountDiff * 100).toFixed(1)}% variance)`);
+      differences.push(`Amount variance warning: Invoice $${invoiceData.amount.toFixed(2)} vs PO line $${comparisonAmount.toFixed(2)} (${(amountDiff * 100).toFixed(1)}% variance)`);
     }
 
     // Vendor comparison (fuzzy matching for full company names)
@@ -1339,7 +1435,7 @@ export class NextGenService {
     return {
       po_found: true,
       is_match: isMatch,
-      nextgen_data: nextgenData,
+      nextgen_data: resolvedNextGenData,
       comparison: {
         amount_match: amountMatch,
         vendor_match: vendorMatch,

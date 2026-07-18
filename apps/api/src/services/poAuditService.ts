@@ -56,6 +56,9 @@ export interface POAuditInput {
   brand?: string;
   season?: string;
   order_type?: string;
+  mpo_order_sequence?: string;
+  material_code?: string;
+  material_name?: string;
 }
 
 // In-memory store (replace with DB later)
@@ -112,6 +115,9 @@ export class POAuditService {
         brand: invoiceData.brand,
         season: invoiceData.season,
         order_type: invoiceData.order_type,
+        mpo_order_sequence: invoiceData.mpo_order_sequence,
+        material_code: invoiceData.material_code,
+        material_name: invoiceData.material_name,
       });
 
       if (!result.po_found) {

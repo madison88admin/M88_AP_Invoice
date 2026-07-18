@@ -90,6 +90,9 @@ export const uploadInvoice = async (
           brand: ocrResult.brand,
           season: ocrResult.season,
           order_type: ocrResult.order_type,
+          mpo_order_sequence: (ocrResult as any).mpo_order_sequence,
+          material_code: (ocrResult as any).material_code,
+          material_name: (ocrResult as any).material_name,
         });
 
         // Use new validation agent for enhanced validation
@@ -646,6 +649,9 @@ async function processSingleInvoice(
             brand: madisonResult.brand || undefined,
             season: madisonResult.season || undefined,
             order_type: madisonResult.order_type || undefined,
+            mpo_order_sequence: (madisonResult as any).mpo_order_sequence,
+            material_code: madisonResult.material_code || undefined,
+            material_name: madisonResult.material_name || undefined,
           });
 
           const validationResult = await validateInvoiceAgainstPO(
@@ -740,6 +746,9 @@ async function processSingleInvoice(
           brand: madisonResult.brand || undefined,
           season: madisonResult.season || undefined,
           order_type: madisonResult.order_type || undefined,
+          mpo_order_sequence: (madisonResult as any).mpo_order_sequence,
+          material_code: madisonResult.material_code || undefined,
+          material_name: madisonResult.material_name || undefined,
         },
         2000
       );
@@ -754,6 +763,9 @@ async function processSingleInvoice(
           brand: madisonResult.brand || undefined,
           season: madisonResult.season || undefined,
           order_type: madisonResult.order_type || undefined,
+          mpo_order_sequence: (madisonResult as any).mpo_order_sequence,
+          material_code: madisonResult.material_code || undefined,
+          material_name: madisonResult.material_name || undefined,
         });
 
         // Use new validation agent for enhanced validation

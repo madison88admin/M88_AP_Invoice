@@ -2341,6 +2341,21 @@ export function extractMPONumber(text: string, vendor: string = 'UNKNOWN'): { va
   
   // Normalize text first
   const normalized = normalizeInvoiceText(text);
+
+  // Preserve line/material suffixes when the invoice prints a combined
+  // reference such as MPO015958-1-ZVT000123. The base MPO is normalized, but
+  // the suffixes remain available for line-level NextGen validation.
+  const combinedReference = normalized.match(
+    /\bMPO[\s_-]*(\d{5,8})(?:\s*-\s*(\d+))?(?:\s*-\s*([A-Z][A-Z0-9._/]+))?/i
+  );
+  if (combinedReference) {
+    const base = `MPO${combinedReference[1].padStart(6, '0')}`;
+    const line = combinedReference[2] ? `-${combinedReference[2].toUpperCase()}` : '';
+    const material = combinedReference[3] ? `-${combinedReference[3].toUpperCase()}` : '';
+    const value = `${base}${line}${material}`;
+    console.log('[extractMPONumber] Found combined MPO reference:', value);
+    return { value, confidence: material ? 0.98 : line ? 0.96 : 0.90 };
+  }
   
   // Get vendor-specific patterns
   const rules = VendorRules[vendor] || VendorRules.UNKNOWN;

@@ -5,6 +5,8 @@ import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils/logger';
 import { nextGenService } from './nextGenService';
 import { checkDuplicateInvoice as checkDuplicateDetailed } from './duplicateDetectionService';
+import { parseMPOReference } from '../utils/mpoReference';
+import { matchMPOLines } from '../utils/mpoLineMatching';
 
 export interface ValidationResult {
   passed: boolean;
@@ -89,6 +91,7 @@ export async function validateInvoice(invoiceId: string): Promise<InvoiceValidat
     include: {
       vendor: true,
       signatures: true,
+      invoice_lines: true,
     },
   });
 
@@ -939,17 +942,18 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
     };
   }
 
-  // Extract material_code and mpo_suffix from raw_data if available
-  const rawData = (invoice as any).raw_data || {};
-  const materialCode = rawData.material_code || (invoice as any).material_code;
-  const materialName = rawData.material_name || (invoice as any).material_name;
-  const mpoSuffix = rawData.mpo_suffix || (invoice as any).mpo_suffix;
+  const rawData = (invoice as any).ocr_raw_data || (invoice as any).raw_data || {};
+  const parsedMpo = parseMPOReference(invoice.mpo_number);
+  const baseMpo = invoice.mpo_base_number || parsedMpo.baseMpo || invoice.mpo_number;
+  const orderSequence = invoice.mpo_order_sequence || parsedMpo.orderSequence || rawData.mpo_order_sequence;
+  const materialCode = invoice.material_code || parsedMpo.materialCode || rawData.material_code;
+  const materialName = invoice.material_name || rawData.material_name;
 
   try {
     // Fetch PO from NextGen (read-only)
     // Pass material_code as additional hint for fuzzy matching
     let po = invoice.mpo_number
-      ? await nextGenService.fetchPOByMPO(invoice.mpo_number, {
+      ? await nextGenService.fetchPOByMPO(baseMpo, {
           vendor_name: invoice.vendor?.name,
           amount: Number(invoice.total_amount),
           material_code: materialCode,
@@ -983,32 +987,35 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
     // Compare the most specific target available. A material invoice must not
     // be compared against the total of every line under the MPO.
     const differences: string[] = [];
-    const requestedMaterialCode = String(invoice.material_code || rawData.material_code || '').trim().toUpperCase();
-    const requestedMaterialName = String(invoice.material_name || rawData.material_name || '').trim().toUpperCase();
+    const requestedMaterialCode = String(materialCode || '').trim().toUpperCase();
+    const requestedMaterialName = String(materialName || '').trim().toUpperCase();
     let targetLines = po.line_items || [];
     let matchLevel = 'MPO_HEADER';
-    if (requestedMaterialCode || requestedMaterialName) {
-      const matchedLines = targetLines.filter((line: any) => {
-        const code = String(line.item_code || '').toUpperCase();
-        const description = String(line.description || '').toUpperCase();
-        return (requestedMaterialCode && (code === requestedMaterialCode || description.includes(requestedMaterialCode))) ||
-          (requestedMaterialName && (description.includes(requestedMaterialName) || requestedMaterialName.includes(description)));
+    if (orderSequence || requestedMaterialCode || requestedMaterialName) {
+      const resolution = matchMPOLines(targetLines, {
+        orderSequence,
+        materialCode: requestedMaterialCode,
+        materialName: requestedMaterialName,
       });
-      if (matchedLines.length === 0) {
+      if (resolution.error) {
+        const target = [orderSequence ? `line ${orderSequence}` : '', requestedMaterialCode || requestedMaterialName]
+          .filter(Boolean).join(' / ');
         return {
           passed: false,
           reason: ExceptionReason.PO_NOT_FOUND,
-          message: `Material ${requestedMaterialCode || requestedMaterialName} not found under ${poRef}`,
-          detail: 'The MPO exists, but no matching material line was found. Manual line selection is required.',
+          message: `${target || 'Requested line'} not found under ${baseMpo}`,
+          detail: resolution.error === 'AMBIGUOUS_MATERIAL'
+            ? 'More than one MPO line matches the material. Select the correct line reference manually.'
+            : `The base MPO exists, but the requested ${resolution.error === 'LINE_NOT_FOUND' ? 'line reference' : 'material'} was not found. Manual purchasing validation is required.`,
         };
       }
-      targetLines = matchedLines;
-      matchLevel = 'MATERIAL_LINE';
+      targetLines = resolution.lines;
+      matchLevel = resolution.matchLevel;
     }
 
     // Amount check (>5% variance = fail)
     // Subtract all charges from invoice total to get the net goods amount for PO comparison
-    const poAmount = matchLevel === 'MATERIAL_LINE'
+    const poAmount = matchLevel !== 'MPO_HEADER'
       ? targetLines.reduce((sum: number, li: any) => sum + Number(li.total_amount || 0), 0)
       : Number(po.amount);
     const invoiceTotal = Number(invoice.total_amount);

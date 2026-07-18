@@ -5,6 +5,7 @@ import { AppError } from '../middleware/errorHandler';
 import { logAudit } from '../services/auditLogService';
 import { fieldDecisionEngine } from '../services/fieldDecisionEngine';
 import { correctionLogService } from '../services/correctionLogService';
+import { matchMPOLines } from '../utils/mpoLineMatching';
 
 const invoiceInclude = { vendor: true, invoice_lines: true, parent_invoice: true, child_invoices: true } as const;
 
@@ -25,10 +26,14 @@ export async function queue(_req: AuthRequest, res: Response, next: NextFunction
       field_confidence: (invoice.ocr_raw_data as any)?.field_decision?.fields || (invoice.ocr_raw_data as any)?.field_confidence || {},
       invoice_lines: effectiveLines.filter(line => line.invoice_id === invoice.id).map(line => {
         const key = [line.mpo_base_number, line.mpo_order_sequence, line.material_code].join('|');
-        const ordered = Number((invoice.po_validation as any)?.nextgen_data?.line_items?.find((x: any) =>
-          (!line.material_code || [x.material_code, x.item_code].includes(line.material_code)))?.quantity || 0);
-        const nextgenLine = (invoice.po_validation as any)?.nextgen_data?.line_items?.find((x: any) =>
-          (!line.material_code || [x.material_code, x.item_code].includes(line.material_code)));
+        const nextgenLines = (invoice.po_validation as any)?.nextgen_data?.line_items || [];
+        const lineResolution = matchMPOLines(nextgenLines, {
+          orderSequence: line.mpo_order_sequence,
+          materialCode: line.material_code,
+          materialName: line.material_name || line.description,
+        });
+        const nextgenLine = lineResolution.error ? null : lineResolution.lines[0];
+        const ordered = Number(nextgenLine?.quantity || 0);
         const orderedAmount = Number(nextgenLine?.amount || nextgenLine?.total_amount || nextgenLine?.line_amount || 0);
         const invoiced = consumption.get(key) || 0;
         const invoicedAmount = amountConsumption.get(key) || 0;

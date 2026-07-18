@@ -34,6 +34,7 @@ router.post('/:id/confirm-ocr', authorize(UserRole.PURCHASING_COORDINATOR, UserR
 router.post('/:id/correct-extraction', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), correctionController.saveCorrection);
 router.post('/corrections', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), correctionController.saveStandaloneCorrection);
 router.post('/corrections/similar', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), correctionController.getSimilarCorrections);
+router.get('/:id/timeline', invoiceController.getInvoiceTimeline);
 router.post('/:id/validate', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), validationController.validateInvoiceAsyncController);
 router.post('/:id/validate-sync', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), validationController.validateInvoiceController);
 router.post('/:id/request-approval', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), approvalController.requestApproval);

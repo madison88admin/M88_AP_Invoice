@@ -1,7 +1,7 @@
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { PaymentBatchStatus } from '@ap-invoice/shared';
-import { processPayment } from './postingService';
+import { PaymentExecutionInput, processPayment } from './postingService';
 import { logger } from '../utils/logger';
 
 /**
@@ -430,7 +430,8 @@ export async function getPaymentBatchById(batchId: string) {
 
 export async function processPaymentBatch(
   batchId: string,
-  userId: string
+  userId: string,
+  execution: PaymentExecutionInput = {}
 ) {
   const batch = await prisma.paymentBatch.findUnique({
     where: { id: batchId },
@@ -461,7 +462,7 @@ export async function processPaymentBatch(
       continue;
     }
     try {
-      await processPayment(payment.id, userId);
+      await processPayment(payment.id, userId, execution);
     } catch (err) {
       logger.error(`Failed to process payment ${payment.id} in batch ${batch.batch_number}:`, err);
       throw new AppError(`Payment ${payment.id} failed to process: ${err instanceof Error ? err.message : 'unknown error'}`, 500);

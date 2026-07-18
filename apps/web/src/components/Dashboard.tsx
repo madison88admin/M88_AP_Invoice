@@ -8,6 +8,7 @@ import BottleneckView from './BottleneckView';
 import AuditLogViewer from './AuditLogViewer';
 import MyTasksWidget from './MyTasksWidget';
 import StatusGuide from './StatusGuide';
+import RoleDashboardPanel from './RoleDashboardPanel';
 import StatCard from './ui/StatCard';
 import AuditTile from './ui/AuditTile';
 import SidebarItem from './ui/SidebarItem';
@@ -1643,6 +1644,10 @@ export default function Dashboard() {
                 </button>
               )}
             </div>
+          </div>
+
+          <div className="mb-6">
+            <RoleDashboardPanel />
           </div>
 
           {/* KPI Cards */}

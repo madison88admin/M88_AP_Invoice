@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { Package, Play, X, AlertCircle, CheckCircle, Clock, DollarSign, ArrowLeft, CheckSquare, Calendar, Loader2 } from 'lucide-react';
+import { Package, Play, X, AlertCircle, CheckCircle, Clock, DollarSign, ArrowLeft, CheckSquare, Calendar, Loader2, Paperclip } from 'lucide-react';
 import { paymentBatchApi } from '../lib/api';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
@@ -30,6 +30,12 @@ interface Payment {
   amount: number;
   scheduled_date: string;
   status: string;
+  paid_at?: string;
+  reference?: string;
+  bank_used?: string;
+  remarks?: string;
+  proof_file_url?: string;
+  proof_file_name?: string;
   invoice: {
     id: string;
     invoice_number: string;
@@ -61,7 +67,15 @@ export default function PaymentBatchManager() {
   const [scheduledPayments, setScheduledPayments] = useState<ScheduledPayment[]>([]);
   const [selectedBatch, setSelectedBatch] = useState<PaymentBatch | null>(null);
   const [showCancelModal, setShowCancelModal] = useState(false);
+  const [showExecutionModal, setShowExecutionModal] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
+  const [executionForm, setExecutionForm] = useState({
+    paidDate: new Date().toISOString().split('T')[0],
+    reference: '',
+    bankUsed: '',
+    remarks: '',
+    proof: null as File | null,
+  });
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [selectedPaymentIds, setSelectedPaymentIds] = useState<Set<string>>(new Set());
@@ -93,6 +107,12 @@ export default function PaymentBatchManager() {
           amount: Number(p.amount || 0),
           scheduled_date: p.payment_date || p.scheduled_date || new Date().toISOString(),
           status: p.status || 'SCHEDULED',
+          paid_at: p.paid_at || undefined,
+          reference: p.reference || undefined,
+          bank_used: p.bank_used || undefined,
+          remarks: p.remarks || undefined,
+          proof_file_url: p.proof_file_url || undefined,
+          proof_file_name: p.proof_file_name || undefined,
           invoice: {
             id: p.invoice?.id || p.invoice_id,
             invoice_number: p.invoice?.invoice_number || '',
@@ -220,9 +240,11 @@ export default function PaymentBatchManager() {
   const handleProcessBatch = async (batchId: string) => {
     setProcessing(true);
     try {
-      await paymentBatchApi.process(batchId);
+      await paymentBatchApi.process(batchId, executionForm);
       await loadBatches();
       setSelectedBatch(null);
+      setShowExecutionModal(false);
+      setExecutionForm({ paidDate: new Date().toISOString().split('T')[0], reference: '', bankUsed: '', remarks: '', proof: null });
     } catch (error) {
       console.error('Failed to process batch:', error);
     } finally {
@@ -651,13 +673,13 @@ export default function PaymentBatchManager() {
               {selectedBatch.status === 'REVIEWED' && isAssociate && (
                 <div className="flex items-center gap-3 mb-6">
                   <button onClick={() => handleBatchAction('export', selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'var(--accent-purple)', color: 'white' }}>Mark Exported to Bank</button>
-                  <button onClick={() => handleProcessBatch(selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}>Execute Payments</button>
+                  <button onClick={() => setShowExecutionModal(true)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}>Execute Payments</button>
                 </div>
               )}
 
               {selectedBatch.status === 'EXPORTED_TO_BANK' && isAssociate && (
                 <div className="flex items-center gap-3 mb-6">
-                  <button onClick={() => handleProcessBatch(selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}>Confirm Payment Processing</button>
+                  <button onClick={() => setShowExecutionModal(true)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}>Confirm Payment Processing</button>
                 </div>
               )}
 
@@ -671,6 +693,7 @@ export default function PaymentBatchManager() {
                       <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Amount</th>
                       <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Scheduled Date</th>
                       <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Status</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Execution</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -685,6 +708,21 @@ export default function PaymentBatchManager() {
                         <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--text-secondary)' }}>{new Date(payment.scheduled_date).toLocaleDateString()}</td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium" style={getStatusStyle(payment.status)}>{payment.status}</span>
+                        </td>
+                        <td className="px-6 py-4 text-sm" style={{ color: 'var(--text-secondary)' }}>
+                          {payment.reference || payment.paid_at || payment.proof_file_url ? (
+                            <div className="space-y-1">
+                              {payment.reference && <div>Ref: {payment.reference}</div>}
+                              {payment.bank_used && <div>Bank: {payment.bank_used}</div>}
+                              {payment.paid_at && <div>Paid: {new Date(payment.paid_at).toLocaleDateString()}</div>}
+                              {payment.proof_file_url && (
+                                <a href={payment.proof_file_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1" style={{ color: 'var(--accent-purple)' }}>
+                                  <Paperclip className="h-3 w-3" strokeWidth={1.75} />
+                                  {payment.proof_file_name || 'Proof'}
+                                </a>
+                              )}
+                            </div>
+                          ) : 'Pending'}
                         </td>
                       </tr>
                     ))}
@@ -733,6 +771,43 @@ export default function PaymentBatchManager() {
                   onMouseEnter={(e) => { if (cancelReason && !processing) e.currentTarget.style.opacity = '0.9'; }}
                   onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
                 >Confirm Cancellation</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showExecutionModal && selectedBatch && (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-backdrop">
+            <div className="p-6 max-w-lg w-full mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
+              <h3 className="text-lg font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Execute Payment Batch</h3>
+              <p className="text-sm mb-4" style={{ color: 'var(--text-muted)' }}>{selectedBatch.batch_number} | {selectedBatch.payment_count} payments | ${selectedBatch.total_amount.toLocaleString()}</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Paid date</label>
+                  <input type="date" value={executionForm.paidDate} onChange={(e) => setExecutionForm({ ...executionForm, paidDate: e.target.value })} className="w-full px-3 py-2 rounded-xl text-sm" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }} />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Reference / check no.</label>
+                  <input value={executionForm.reference} onChange={(e) => setExecutionForm({ ...executionForm, reference: e.target.value })} placeholder="Bank reference" className="w-full px-3 py-2 rounded-xl text-sm" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }} />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Bank used</label>
+                  <input value={executionForm.bankUsed} onChange={(e) => setExecutionForm({ ...executionForm, bankUsed: e.target.value })} placeholder="Bank / payment channel" className="w-full px-3 py-2 rounded-xl text-sm" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }} />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Proof of payment</label>
+                  <input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={(e) => setExecutionForm({ ...executionForm, proof: e.target.files?.[0] || null })} className="w-full px-3 py-2 rounded-xl text-sm" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }} />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Remarks</label>
+                  <textarea value={executionForm.remarks} onChange={(e) => setExecutionForm({ ...executionForm, remarks: e.target.value })} rows={3} placeholder="Optional notes" className="w-full px-3 py-2 rounded-xl text-sm" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }} />
+                </div>
+              </div>
+              <div className="flex justify-end gap-3 mt-5">
+                <button onClick={() => setShowExecutionModal(false)} className="px-4 py-2 text-sm" style={{ color: 'var(--text-secondary)' }}>Cancel</button>
+                <button onClick={() => handleProcessBatch(selectedBatch.id)} disabled={processing || !executionForm.paidDate} className="px-4 py-2 rounded-xl text-sm font-semibold disabled:opacity-50" style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}>
+                  {processing ? 'Processing...' : 'Confirm Paid'}
+                </button>
               </div>
             </div>
           </div>

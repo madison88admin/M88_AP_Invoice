@@ -6,6 +6,7 @@ import {
   getExceptionRateReport,
   getKPIMetrics,
   getForecastReport,
+  getOperationalReports,
 } from '../services/reportService';
 
 export async function getInvoiceVolume(req: Request, res: Response) {
@@ -86,5 +87,15 @@ export async function getForecast(req: Request, res: Response) {
   } catch (error) {
     console.error('Error getting forecast report:', error);
     res.status(500).json({ error: 'Failed to get forecast report' });
+  }
+}
+
+export async function getOperational(req: Request, res: Response) {
+  try {
+    const report = await getOperationalReports();
+    res.json(report);
+  } catch (error) {
+    console.error('Error getting operational reports:', error);
+    res.status(500).json({ error: 'Failed to get operational reports' });
   }
 }

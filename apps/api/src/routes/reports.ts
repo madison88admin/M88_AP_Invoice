@@ -7,6 +7,7 @@ import {
   getExceptionRate,
   getKPI,
   getForecast,
+  getOperational,
 } from '../controllers/reports';
 
 const router: Router = Router();
@@ -19,5 +20,6 @@ router.get('/vendor-spending', getVendorSpending);
 router.get('/exception-rate', getExceptionRate);
 router.get('/kpi', getKPI);
 router.get('/forecast', getForecast);
+router.get('/operational', getOperational);
 
 export default router;

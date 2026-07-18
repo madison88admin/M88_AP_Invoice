@@ -12,9 +12,11 @@ export async function queue(_req: AuthRequest, res: Response, next: NextFunction
     const effectiveLines = invoices.flatMap(i => i.invoice_lines.length ? i.invoice_lines : [{ id: `invoice:${i.id}`, invoice_id: i.id, line_number: 1, description: i.material_name, mpo_base_number: i.mpo_base_number, mpo_order_sequence: i.mpo_order_sequence, material_code: i.material_code, material_name: i.material_name, quantity: i.qty_shipped, selling_quantity: null, unit_price: i.qty_shipped ? Number(i.total_amount) / i.qty_shipped : null, line_amount: i.total_amount, match_status: 'HEADER_FALLBACK' } as any]);
     const lines = effectiveLines;
     const consumption = new Map<string, number>();
+    const amountConsumption = new Map<string, number>();
     for (const line of lines) {
       const key = [line.mpo_base_number, line.mpo_order_sequence, line.material_code].join('|');
       consumption.set(key, (consumption.get(key) || 0) + Number(line.quantity || 0));
+      amountConsumption.set(key, (amountConsumption.get(key) || 0) + Number(line.line_amount || 0));
     }
     res.json(invoices.map(invoice => ({
       ...invoice,
@@ -23,8 +25,48 @@ export async function queue(_req: AuthRequest, res: Response, next: NextFunction
         const key = [line.mpo_base_number, line.mpo_order_sequence, line.material_code].join('|');
         const ordered = Number((invoice.po_validation as any)?.nextgen_data?.line_items?.find((x: any) =>
           (!line.material_code || [x.material_code, x.item_code].includes(line.material_code)))?.quantity || 0);
+        const nextgenLine = (invoice.po_validation as any)?.nextgen_data?.line_items?.find((x: any) =>
+          (!line.material_code || [x.material_code, x.item_code].includes(line.material_code)));
+        const orderedAmount = Number(nextgenLine?.amount || nextgenLine?.total_amount || nextgenLine?.line_amount || 0);
         const invoiced = consumption.get(key) || 0;
-        return { ...line, ordered_quantity: ordered || null, invoiced_quantity: invoiced, remaining_quantity: ordered ? ordered - invoiced : null };
+        const invoicedAmount = amountConsumption.get(key) || 0;
+        const alerts = [
+          ordered && invoiced > ordered ? {
+            type: 'QUANTITY_EXCEEDS_MPO',
+            severity: 'error',
+            message: `Invoiced quantity ${invoiced} exceeds ordered quantity ${ordered}.`,
+          } : null,
+          ordered && invoiced > ordered * 0.95 && invoiced <= ordered ? {
+            type: 'QUANTITY_NEAR_FULLY_CONSUMED',
+            severity: 'warning',
+            message: `MPO/material is ${Math.round((invoiced / ordered) * 100)}% consumed.`,
+          } : null,
+          orderedAmount && invoicedAmount > orderedAmount ? {
+            type: 'AMOUNT_EXCEEDS_MPO',
+            severity: 'error',
+            message: `Invoiced amount ${invoicedAmount.toFixed(2)} exceeds ordered amount ${orderedAmount.toFixed(2)}.`,
+          } : null,
+          line.mpo_base_number && !line.material_code ? {
+            type: 'MATERIAL_MISSING',
+            severity: 'warning',
+            message: 'MPO was detected but no material code is available for line-level matching.',
+          } : null,
+          line.material_code && !nextgenLine && (invoice.po_validation as any)?.nextgen_data?.line_items?.length ? {
+            type: 'MATERIAL_NOT_FOUND_IN_MPO',
+            severity: 'error',
+            message: `Material ${line.material_code} was not found in the NextGen MPO line list.`,
+          } : null,
+        ].filter(Boolean);
+        return {
+          ...line,
+          ordered_quantity: ordered || null,
+          invoiced_quantity: invoiced,
+          remaining_quantity: ordered ? ordered - invoiced : null,
+          ordered_amount: orderedAmount || null,
+          invoiced_amount: invoicedAmount,
+          remaining_amount: orderedAmount ? orderedAmount - invoicedAmount : null,
+          tolerance_alerts: alerts,
+        };
       }),
     })));
   } catch (e) { next(e); }

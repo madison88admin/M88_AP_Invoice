@@ -610,3 +610,150 @@ export const checkDuplicate = async (invoiceData: any) => {
 
   return { isDuplicate: false };
 };
+
+export const getInvoiceTimeline = async (invoiceId: string) => {
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    include: {
+      vendor: true,
+      audit_logs: { orderBy: { created_at: 'asc' } },
+      workflow_actions: { orderBy: { created_at: 'asc' } },
+      stage_timestamps: { orderBy: { entered_at: 'asc' } },
+      signatures: { orderBy: { created_at: 'asc' } },
+      payments: {
+        include: { batch: true },
+        orderBy: { created_at: 'asc' },
+      },
+      exceptions: { orderBy: { created_at: 'asc' } },
+      payment_confirmations: { orderBy: { created_at: 'asc' } },
+      parent_invoice: { select: { id: true, invoice_number: true, invoice_type: true, status: true } },
+      child_invoices: { select: { id: true, invoice_number: true, invoice_type: true, status: true, created_at: true } },
+    },
+  });
+
+  if (!invoice) return null;
+
+  const events: Array<{
+    id: string;
+    type: string;
+    title: string;
+    detail?: string | null;
+    actor?: string | null;
+    status?: string | null;
+    created_at: Date;
+  }> = [
+    {
+      id: `created:${invoice.id}`,
+      type: 'upload',
+      title: 'Invoice uploaded/created',
+      detail: `${invoice.invoice_number} from ${invoice.vendor?.name || invoice.vendor_name_raw || 'Unknown vendor'}`,
+      actor: null,
+      status: invoice.status,
+      created_at: invoice.created_at,
+    },
+  ];
+
+  for (const audit of invoice.audit_logs) {
+    events.push({
+      id: `audit:${audit.id}`,
+      type: 'audit',
+      title: audit.action,
+      detail: audit.note,
+      actor: audit.performed_by,
+      status: null,
+      created_at: audit.created_at,
+    });
+  }
+
+  for (const action of invoice.workflow_actions) {
+    events.push({
+      id: `workflow:${action.id}`,
+      type: 'workflow',
+      title: action.action,
+      detail: action.reason || [action.from_stage, action.to_stage].filter(Boolean).join(' -> '),
+      actor: action.performed_by,
+      status: action.to_stage,
+      created_at: action.created_at,
+    });
+  }
+
+  for (const stage of invoice.stage_timestamps) {
+    events.push({
+      id: `stage:${stage.id}`,
+      type: 'stage',
+      title: `Entered ${stage.stage}`,
+      detail: stage.exited_at ? `Exited ${new Date(stage.exited_at).toLocaleString()}` : 'Current/open stage',
+      actor: null,
+      status: stage.stage,
+      created_at: stage.entered_at,
+    });
+  }
+
+  for (const signature of invoice.signatures) {
+    events.push({
+      id: `signature:${signature.id}`,
+      type: 'approval',
+      title: `${signature.signatory_role} ${signature.approval_status?.toLowerCase() || 'approval'}`,
+      detail: signature.invalidated_at ? `Invalidated: ${signature.invalidation_reason || 'no reason recorded'}` : signature.signatory_name,
+      actor: signature.signatory_name,
+      status: signature.approval_status,
+      created_at: signature.signed_at || signature.created_at,
+    });
+  }
+
+  for (const exception of invoice.exceptions) {
+    events.push({
+      id: `exception:${exception.id}`,
+      type: 'exception',
+      title: `Exception: ${exception.reason}`,
+      detail: exception.resolution_notes || exception.detail,
+      actor: exception.resolved_by,
+      status: exception.status,
+      created_at: exception.resolved_at || exception.created_at,
+    });
+  }
+
+  for (const payment of invoice.payments as any[]) {
+    events.push({
+      id: `payment:${payment.id}`,
+      type: 'payment',
+      title: payment.status === 'PAID' ? 'Payment executed' : 'Payment scheduled',
+      detail: [
+        `${payment.currency} ${Number(payment.amount).toLocaleString()}`,
+        payment.batch?.batch_number ? `Batch ${payment.batch.batch_number}` : null,
+        payment.reference ? `Reference ${payment.reference}` : null,
+        payment.bank_used ? `Bank ${payment.bank_used}` : null,
+        payment.proof_file_name ? `Proof ${payment.proof_file_name}` : null,
+      ].filter(Boolean).join(' | '),
+      actor: payment.batch?.processed_by || null,
+      status: payment.status,
+      created_at: payment.paid_at || payment.created_at,
+    });
+  }
+
+  for (const confirmation of invoice.payment_confirmations) {
+    events.push({
+      id: `confirmation:${confirmation.id}`,
+      type: 'payment_confirmation',
+      title: confirmation.email_sent ? 'Payment confirmation sent' : 'Payment confirmation recorded',
+      detail: confirmation.payment_reference || confirmation.vendor_email,
+      actor: confirmation.sent_by,
+      status: confirmation.email_sent ? 'SENT' : 'RECORDED',
+      created_at: confirmation.sent_at,
+    });
+  }
+
+  return {
+    invoice: {
+      id: invoice.id,
+      invoice_number: invoice.invoice_number,
+      vendor_name: invoice.vendor?.name || invoice.vendor_name_raw || 'Unknown',
+      status: invoice.status,
+      total_amount: Number(invoice.total_amount),
+      currency: invoice.currency,
+      parent_invoice: invoice.parent_invoice,
+      child_invoices: invoice.child_invoices,
+    },
+    events: events.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()),
+  };
+};

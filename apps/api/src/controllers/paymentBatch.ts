@@ -1,4 +1,7 @@
 import { Response, NextFunction } from 'express';
+import fs from 'fs/promises';
+import path from 'path';
+import crypto from 'crypto';
 import { AuthRequest } from '../middleware/auth';
 import {
   createPaymentBatch,
@@ -99,7 +102,29 @@ export const processPaymentBatchController = async (
 ) => {
   try {
     const { batchId } = req.params;
-    const result = await processPaymentBatch(batchId, req.user!.id);
+    let proofFileUrl: string | undefined;
+    let proofFileName: string | undefined;
+    const uploadedFile = (req as any).file;
+
+    if (uploadedFile?.buffer) {
+      const uploadRoot = process.env.PAYMENT_PROOF_DIR || path.join(process.cwd(), 'data', 'payment-proofs');
+      await fs.mkdir(uploadRoot, { recursive: true });
+      const extension = path.extname(uploadedFile.originalname || '').toLowerCase() || '.bin';
+      const storedName = `${batchId}-${Date.now()}-${crypto.randomBytes(6).toString('hex')}${extension}`;
+      const targetPath = path.join(uploadRoot, storedName);
+      await fs.writeFile(targetPath, uploadedFile.buffer);
+      proofFileUrl = `/api/payment-batches/proofs/${storedName}`;
+      proofFileName = uploadedFile.originalname;
+    }
+
+    const result = await processPaymentBatch(batchId, req.user!.id, {
+      paidDate: req.body.paidDate,
+      reference: req.body.reference,
+      bankUsed: req.body.bankUsed,
+      remarks: req.body.remarks,
+      proofFileUrl,
+      proofFileName,
+    });
     res.json(result);
   } catch (error) {
     next(error);

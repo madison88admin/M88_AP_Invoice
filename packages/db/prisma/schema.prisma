@@ -294,6 +294,10 @@ model Payment {
   batch         PaymentBatch? @relation(fields: [batch_id], references: [id])
   paid_at       DateTime?
   reference     String?
+  bank_used     String?
+  remarks       String?
+  proof_file_url String?
+  proof_file_name String?
   selected_for_batch Boolean  @default(false)
   selected_by   String?
   selected_at   DateTime?

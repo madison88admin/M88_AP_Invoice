@@ -103,6 +103,7 @@ class InAppNotificationService {
   }
 
   async getNotifications(userRole: string, limit: number = 20) {
+    await this.ensureActionableAlerts(userRole);
     const notifications = await prisma.notification.findMany({
       where: {
         OR: [
@@ -114,6 +115,54 @@ class InAppNotificationService {
       take: limit,
     });
     return notifications;
+  }
+
+  async ensureActionableAlerts(userRole: string) {
+    const targetStatuses: Record<string, InvoiceStatus[]> = {
+      [UserRole.PURCHASING_COORDINATOR]: [InvoiceStatus.RECEIVED, InvoiceStatus.VALIDATION_PENDING, InvoiceStatus.EXCEPTION_FLAGGED, InvoiceStatus.REJECTED, InvoiceStatus.ON_HOLD],
+      [UserRole.PURCHASING_MANAGER]: [InvoiceStatus.PENDING_MANAGER],
+      [UserRole.ACCOUNTING_SUPERVISOR]: [InvoiceStatus.PENDING_ACCOUNTING],
+      [UserRole.ACCOUNTING_ASSOCIATE]: [InvoiceStatus.APPROVED, InvoiceStatus.POSTED_TO_QB, InvoiceStatus.PAYMENT_SCHEDULED],
+      [UserRole.MLO_ACCOUNT_HOLDER]: [InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER],
+      [UserRole.PLANNING_MANAGER]: [InvoiceStatus.PENDING_MLO_PLANNING_MANAGER],
+      [UserRole.SR_MANAGER_GLOBAL_PRODUCTION]: [InvoiceStatus.PENDING_SR_MANAGER],
+      [UserRole.MS_POLLY]: [InvoiceStatus.PENDING_POLLY],
+    };
+
+    const statuses = targetStatuses[userRole] || [];
+    if (statuses.length === 0) return;
+
+    const cutoff = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+    const recentCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const staleInvoices = await prisma.invoice.findMany({
+      where: { status: { in: statuses as any[] }, updated_at: { lte: cutoff } },
+      include: { vendor: true },
+      take: 25,
+      orderBy: { updated_at: 'asc' },
+    });
+
+    for (const invoice of staleInvoices) {
+      const existing = await prisma.notification.findFirst({
+        where: {
+          invoice_id: invoice.id,
+          target_role: userRole,
+          category: 'approval',
+          title: 'Long-pending invoice',
+          created_at: { gte: recentCutoff },
+        },
+      });
+      if (existing) continue;
+      await this.create({
+        invoice_id: invoice.id,
+        invoice_number: invoice.invoice_number,
+        vendor_name: invoice.vendor?.name || invoice.vendor_name_raw || 'Unknown',
+        title: 'Long-pending invoice',
+        message: `Invoice ${invoice.invoice_number} has been in ${invoice.status} since ${invoice.updated_at.toISOString().split('T')[0]}.`,
+        type: 'warning',
+        category: 'approval',
+        target_role: userRole as UserRole,
+      });
+    }
   }
 
   async getUnreadCount(userRole: string): Promise<number> {

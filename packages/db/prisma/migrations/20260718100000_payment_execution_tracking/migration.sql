@@ -1,0 +1,5 @@
+ALTER TABLE "APInvoice_Payment"
+ADD COLUMN IF NOT EXISTS "bank_used" TEXT,
+ADD COLUMN IF NOT EXISTS "remarks" TEXT,
+ADD COLUMN IF NOT EXISTS "proof_file_url" TEXT,
+ADD COLUMN IF NOT EXISTS "proof_file_name" TEXT;

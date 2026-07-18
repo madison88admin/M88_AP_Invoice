@@ -1,5 +1,5 @@
 import prisma from '../config/database';
-import { InvoiceStatus, APPROVAL_THRESHOLDS, determineApprovalTier } from '@ap-invoice/shared';
+import { InvoiceStatus, InvoiceType, APPROVAL_THRESHOLDS, determineApprovalTier } from '@ap-invoice/shared';
 
 export interface InvoiceVolumeReport {
   date: string;
@@ -73,6 +73,163 @@ export interface ForecastReport {
     pending_count: number;
     ytd_total: number;
   }>;
+}
+
+const unpaidStatuses = [
+  InvoiceStatus.RECEIVED,
+  InvoiceStatus.OCR_PROCESSING,
+  InvoiceStatus.VALIDATION_PENDING,
+  InvoiceStatus.EXCEPTION_FLAGGED,
+  InvoiceStatus.PENDING_COORDINATOR,
+  InvoiceStatus.PENDING_MANAGER,
+  InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER,
+  InvoiceStatus.PENDING_MLO_PLANNING_MANAGER,
+  InvoiceStatus.PENDING_SR_MANAGER,
+  InvoiceStatus.PENDING_POLLY,
+  InvoiceStatus.PENDING_ACCOUNTING,
+  InvoiceStatus.APPROVED,
+  InvoiceStatus.POSTED_TO_QB,
+  InvoiceStatus.PAYMENT_SCHEDULED,
+  InvoiceStatus.ON_HOLD,
+];
+
+export async function getOperationalReports() {
+  const now = new Date();
+  const [openInvoices, paidPayments, rejectedInvoices, duplicateInvoices, correctionLogs, pendingApproverGroups] = await Promise.all([
+    prisma.invoice.findMany({
+      where: { status: { in: unpaidStatuses as any[] } },
+      include: { vendor: true },
+      orderBy: { due_date: 'asc' },
+    }),
+    prisma.payment.findMany({
+      where: { status: 'PAID' },
+      include: { invoice: { include: { vendor: true } }, batch: true },
+      orderBy: { paid_at: 'desc' },
+      take: 200,
+    }),
+    prisma.invoice.findMany({
+      where: { status: InvoiceStatus.REJECTED as any },
+      include: { vendor: true, audit_logs: { where: { action: { contains: 'REJECT' } }, orderBy: { created_at: 'desc' }, take: 1 } },
+      orderBy: { updated_at: 'desc' },
+      take: 100,
+    }),
+    prisma.invoice.findMany({
+      where: {
+        OR: [
+          { is_duplicate: true },
+          { invoice_type: { in: [InvoiceType.PROFORMA, InvoiceType.COMMERCIAL] as any[] } },
+          { parent_invoice_id: { not: null } },
+        ],
+      },
+      include: { vendor: true, parent_invoice: true, child_invoices: true },
+      orderBy: { updated_at: 'desc' },
+      take: 100,
+    }),
+    prisma.correctionLog.findMany({
+      orderBy: [{ use_count: 'desc' }, { updated_at: 'desc' }],
+      take: 50,
+    }),
+    prisma.invoice.groupBy({
+      by: ['current_approver_role', 'status'],
+      where: {
+        status: {
+          in: [
+            InvoiceStatus.PENDING_COORDINATOR,
+            InvoiceStatus.PENDING_MANAGER,
+            InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER,
+            InvoiceStatus.PENDING_MLO_PLANNING_MANAGER,
+            InvoiceStatus.PENDING_SR_MANAGER,
+            InvoiceStatus.PENDING_POLLY,
+            InvoiceStatus.PENDING_ACCOUNTING,
+          ] as any[],
+        },
+      },
+      _count: { id: true },
+      _sum: { total_amount: true },
+    }),
+  ]);
+
+  const agingBuckets = [
+    { bucket: 'Current', min: -Infinity, max: 0 },
+    { bucket: '1-30', min: 1, max: 30 },
+    { bucket: '31-60', min: 31, max: 60 },
+    { bucket: '60+', min: 61, max: Infinity },
+  ].map((bucket) => ({ ...bucket, count: 0, total_amount: 0 }));
+
+  const pendingByVendor = new Map<string, { vendor_id: string; vendor_name: string; count: number; total_amount: number; oldest_due_date?: Date | null }>();
+  for (const invoice of openInvoices as any[]) {
+    const due = invoice.due_date ? new Date(invoice.due_date) : null;
+    const daysOverdue = due ? Math.floor((now.getTime() - due.getTime()) / (24 * 60 * 60 * 1000)) : 0;
+    const bucket = agingBuckets.find((item) => daysOverdue >= item.min && daysOverdue <= item.max) || agingBuckets[0];
+    bucket.count += 1;
+    bucket.total_amount += Number(invoice.total_amount);
+
+    const vendorId = invoice.vendor_id || 'unknown';
+    const current = pendingByVendor.get(vendorId) || {
+      vendor_id: vendorId,
+      vendor_name: invoice.vendor?.name || invoice.vendor_name_raw || 'Unknown',
+      count: 0,
+      total_amount: 0,
+      oldest_due_date: due,
+    };
+    current.count += 1;
+    current.total_amount += Number(invoice.total_amount);
+    if (due && (!current.oldest_due_date || due < current.oldest_due_date)) current.oldest_due_date = due;
+    pendingByVendor.set(vendorId, current);
+  }
+
+  return {
+    ap_aging: agingBuckets.map(({ bucket, count, total_amount }) => ({ bucket, count, total_amount })),
+    pending_by_vendor: Array.from(pendingByVendor.values()).sort((a, b) => b.total_amount - a.total_amount).slice(0, 50),
+    pending_by_approver: (pendingApproverGroups as any[]).map((row) => ({
+      approver_role: row.current_approver_role || row.status,
+      status: row.status,
+      count: row._count.id,
+      total_amount: Number(row._sum.total_amount || 0),
+    })),
+    paid_invoices: (paidPayments as any[]).map((payment) => ({
+      payment_id: payment.id,
+      invoice_id: payment.invoice_id,
+      invoice_number: payment.invoice?.invoice_number,
+      vendor_name: payment.invoice?.vendor?.name || 'Unknown',
+      amount: Number(payment.amount),
+      currency: payment.currency,
+      paid_at: payment.paid_at,
+      reference: payment.reference,
+      bank_used: payment.bank_used,
+      proof_file_url: payment.proof_file_url,
+      batch_number: payment.batch?.batch_number,
+    })),
+    rejected_invoices: (rejectedInvoices as any[]).map((invoice) => ({
+      id: invoice.id,
+      invoice_number: invoice.invoice_number,
+      vendor_name: invoice.vendor?.name || invoice.vendor_name_raw || 'Unknown',
+      amount: Number(invoice.total_amount),
+      currency: invoice.currency,
+      reason: invoice.audit_logs?.[0]?.note || null,
+      updated_at: invoice.updated_at,
+    })),
+    duplicate_proforma_tracking: (duplicateInvoices as any[]).map((invoice) => ({
+      id: invoice.id,
+      invoice_number: invoice.invoice_number,
+      vendor_name: invoice.vendor?.name || invoice.vendor_name_raw || 'Unknown',
+      invoice_type: invoice.invoice_type,
+      status: invoice.status,
+      is_duplicate: invoice.is_duplicate,
+      parent_invoice_number: invoice.parent_invoice?.invoice_number || null,
+      child_count: invoice.child_invoices?.length || 0,
+      amount: Number(invoice.total_amount),
+      currency: invoice.currency,
+    })),
+    vendor_template_rules: correctionLogs.map((log: any) => ({
+      id: log.id,
+      vendor_name: log.vendor_name || 'Unknown',
+      invoice_template_type: log.invoice_template_type || 'NO_DATA',
+      corrected_fields: log.corrected_fields,
+      use_count: log.use_count,
+      updated_at: log.updated_at,
+    })),
+  };
 }
 
 export async function getInvoiceVolumeReport(startDate: Date, endDate: Date): Promise<InvoiceVolumeReport[]> {

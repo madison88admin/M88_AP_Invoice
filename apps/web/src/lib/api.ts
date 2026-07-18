@@ -21,6 +21,7 @@ api.interceptors.request.use((config) => {
 export const invoiceApi = {
   getAll: (filters?: any) => api.get('/api/invoices', { params: filters }),
   getById: (id: string) => api.get(`/api/invoices/${id}`),
+  getTimeline: (id: string) => api.get(`/api/invoices/${id}/timeline`),
   create: (data: any) => api.post('/api/invoices', data),
   updateStatus: (id: string, status: string) => api.patch(`/api/invoices/${id}/status`, { status }),
   update: (id: string, data: any) => api.patch(`/api/invoices/${id}`, data),
@@ -119,11 +120,30 @@ export const paymentBatchApi = {
   review: (batchId: string, note?: string) => api.post(`/api/payment-batches/${batchId}/review`, { note }),
   returnForCorrection: (batchId: string, reason: string) => api.post(`/api/payment-batches/${batchId}/return`, { reason }),
   markExported: (batchId: string) => api.post(`/api/payment-batches/${batchId}/export`),
-  process: (batchId: string) => api.post(`/api/payment-batches/${batchId}/process`),
+  process: (batchId: string, data?: { paidDate?: string; reference?: string; bankUsed?: string; remarks?: string; proof?: File | null }) => {
+    if (data?.proof) {
+      const form = new FormData();
+      if (data.paidDate) form.append('paidDate', data.paidDate);
+      if (data.reference) form.append('reference', data.reference);
+      if (data.bankUsed) form.append('bankUsed', data.bankUsed);
+      if (data.remarks) form.append('remarks', data.remarks);
+      form.append('proof', data.proof);
+      return api.post(`/api/payment-batches/${batchId}/process`, form, { headers: { 'Content-Type': 'multipart/form-data' } });
+    }
+    return api.post(`/api/payment-batches/${batchId}/process`, data || {});
+  },
   cancel: (batchId: string, reason: string) => api.post(`/api/payment-batches/${batchId}/cancel`, { reason }),
   getScheduledPayments: (filters?: any) => api.get('/api/payment-batches/scheduled-payments', { params: filters }),
   selectPayments: (paymentIds: string[]) => api.post('/api/payment-batches/select', { paymentIds }),
   deselectPayments: (paymentIds: string[]) => api.post('/api/payment-batches/deselect', { paymentIds }),
+};
+
+export const dashboardApi = {
+  getRoleDashboard: () => api.get('/api/dashboard/role'),
+};
+
+export const reportApi = {
+  getOperational: () => api.get('/api/reports/operational'),
 };
 
 export const vendorApi = {

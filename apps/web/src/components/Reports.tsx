@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { TrendingUp, DollarSign, FileText, AlertTriangle, Clock, CheckCircle, ArrowLeft, Calendar, Download, Package } from 'lucide-react';
 import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
+import { reportApi } from '../lib/api';
 
 interface KPIMetrics {
   total_invoices: number;
@@ -50,8 +51,19 @@ const COLORS = ['#6C5CE7', '#C6FF3D', '#F59E0B', '#EF4444', '#3B82F6'];
 export default function Reports() {
   const { invoices, paymentBatches } = useMockData();
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState<'kpi' | 'volume' | 'payments' | 'weekly' | 'vendors' | 'exceptions' | 'activity'>('kpi');
+  const [activeTab, setActiveTab] = useState<'kpi' | 'volume' | 'payments' | 'weekly' | 'vendors' | 'exceptions' | 'activity' | 'operational'>('kpi');
+  const [operational, setOperational] = useState<any>(null);
+  const [operationalLoading, setOperationalLoading] = useState(false);
   const isSupervisor = user?.role === 'ACCOUNTING_SUPERVISOR';
+
+  useEffect(() => {
+    if (activeTab !== 'operational' || operational) return;
+    setOperationalLoading(true);
+    reportApi.getOperational()
+      .then((res) => setOperational(res.data))
+      .catch(() => setOperational(null))
+      .finally(() => setOperationalLoading(false));
+  }, [activeTab, operational]);
 
   // Calculate KPI metrics from real invoice data
   const kpiMetrics: KPIMetrics = {
@@ -281,6 +293,7 @@ export default function Reports() {
               { id: 'kpi', label: 'KPI Dashboard', icon: TrendingUp },
               { id: 'volume', label: 'Invoice Volume', icon: FileText },
               { id: 'payments', label: 'Payment Status', icon: DollarSign },
+              { id: 'operational', label: 'Operational', icon: Package },
               ...(isSupervisor ? [{ id: 'weekly', label: 'Weekly Payments', icon: Calendar }] : []),
               { id: 'vendors', label: 'Vendor Spending', icon: TrendingUp },
               { id: 'exceptions', label: 'Exception Rate', icon: AlertTriangle },
@@ -399,6 +412,69 @@ export default function Reports() {
                 <Tooltip contentStyle={{ background: 'var(--bg-card)', borderRadius: '12px', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }} />
               </PieChart>
             </ResponsiveContainer>
+          </div>
+        )}
+
+        {activeTab === 'operational' && (
+          <div className="space-y-6">
+            {operationalLoading ? (
+              <div className="p-8 text-center rounded-2xl" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-muted)' }}>Loading operational reports...</div>
+            ) : operational ? (
+              <>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <ReportTable title="AP Aging" rows={operational.ap_aging || []} columns={[
+                    ['bucket', 'Bucket'],
+                    ['count', 'Invoices'],
+                    ['total_amount', 'Amount', 'money'],
+                  ]} />
+                  <ReportTable title="Pending by Approver" rows={operational.pending_by_approver || []} columns={[
+                    ['approver_role', 'Approver'],
+                    ['status', 'Status'],
+                    ['count', 'Invoices'],
+                    ['total_amount', 'Amount', 'money'],
+                  ]} />
+                </div>
+                <ReportTable title="Pending by Vendor" rows={(operational.pending_by_vendor || []).slice(0, 20)} columns={[
+                  ['vendor_name', 'Vendor'],
+                  ['count', 'Invoices'],
+                  ['total_amount', 'Amount', 'money'],
+                  ['oldest_due_date', 'Oldest Due', 'date'],
+                ]} />
+                <ReportTable title="Paid Invoices" rows={(operational.paid_invoices || []).slice(0, 20)} columns={[
+                  ['invoice_number', 'Invoice'],
+                  ['vendor_name', 'Vendor'],
+                  ['amount', 'Amount', 'money'],
+                  ['paid_at', 'Paid Date', 'date'],
+                  ['reference', 'Reference'],
+                  ['bank_used', 'Bank'],
+                ]} />
+                <ReportTable title="Rejected Invoices" rows={(operational.rejected_invoices || []).slice(0, 20)} columns={[
+                  ['invoice_number', 'Invoice'],
+                  ['vendor_name', 'Vendor'],
+                  ['amount', 'Amount', 'money'],
+                  ['reason', 'Reason'],
+                  ['updated_at', 'Updated', 'date'],
+                ]} />
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <ReportTable title="Duplicate / Proforma Tracking" rows={(operational.duplicate_proforma_tracking || []).slice(0, 20)} columns={[
+                    ['invoice_number', 'Invoice'],
+                    ['vendor_name', 'Vendor'],
+                    ['invoice_type', 'Type'],
+                    ['status', 'Status'],
+                    ['parent_invoice_number', 'Parent'],
+                    ['child_count', 'Children'],
+                  ]} />
+                  <ReportTable title="Vendor Extraction Rules" rows={(operational.vendor_template_rules || []).slice(0, 20)} columns={[
+                    ['vendor_name', 'Vendor'],
+                    ['invoice_template_type', 'Template'],
+                    ['use_count', 'Uses'],
+                    ['updated_at', 'Updated', 'date'],
+                  ]} />
+                </div>
+              </>
+            ) : (
+              <div className="p-8 text-center rounded-2xl" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-muted)' }}>Operational report is not available.</div>
+            )}
           </div>
         )}
 
@@ -609,6 +685,48 @@ export default function Reports() {
             )}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function ReportTable({ title, rows, columns }: { title: string; rows: any[]; columns: Array<[string, string, string?]> }) {
+  const formatValue = (value: any, type?: string) => {
+    if (value === null || value === undefined || value === '') return '-';
+    if (type === 'money') return `$${Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+    if (type === 'date') return new Date(value).toLocaleDateString();
+    if (typeof value === 'object') return Object.keys(value).join(', ') || '-';
+    return String(value);
+  };
+
+  return (
+    <div className="p-6 rounded-2xl" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
+      <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>{title}</h2>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
+              {columns.map(([, label]) => (
+                <th key={label} className="text-left py-3 px-3 font-semibold" style={{ color: 'var(--text-secondary)' }}>{label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length > 0 ? rows.map((row, index) => (
+              <tr key={index} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                {columns.map(([field, label, type]) => (
+                  <td key={label} className="py-3 px-3 align-top max-w-xs truncate" style={{ color: 'var(--text-primary)', fontVariantNumeric: type === 'money' ? 'tabular-nums' : undefined }}>
+                    {formatValue(row[field], type)}
+                  </td>
+                ))}
+              </tr>
+            )) : (
+              <tr>
+                <td colSpan={columns.length} className="py-8 text-center" style={{ color: 'var(--text-muted)' }}>No data available</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );

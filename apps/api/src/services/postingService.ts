@@ -431,7 +431,16 @@ export async function schedulePayment(
   return payment;
 }
 
-export async function processPayment(paymentId: string, userId: string) {
+export interface PaymentExecutionInput {
+  paidDate?: string;
+  reference?: string;
+  bankUsed?: string;
+  remarks?: string;
+  proofFileUrl?: string;
+  proofFileName?: string;
+}
+
+export async function processPayment(paymentId: string, userId: string, execution: PaymentExecutionInput = {}) {
   const payment = await prisma.payment.findUnique({
     where: { id: paymentId },
     include: { invoice: true },
@@ -447,14 +456,20 @@ export async function processPayment(paymentId: string, userId: string) {
 
   // Simulate payment processing
   const paymentResult = await simulatePaymentProcessing(payment);
+  const paidAt = execution.paidDate ? new Date(execution.paidDate) : new Date();
+  const reference = execution.reference?.trim() || paymentResult.reference;
 
   // Update payment status
   await prisma.payment.update({
     where: { id: paymentId },
     data: {
       status: 'PAID',
-      paid_at: new Date(),
-      reference: paymentResult.reference,
+      paid_at: paidAt,
+      reference,
+      bank_used: execution.bankUsed?.trim() || null,
+      remarks: execution.remarks?.trim() || null,
+      proof_file_url: execution.proofFileUrl || null,
+      proof_file_name: execution.proofFileName || null,
     },
   });
 
@@ -499,7 +514,12 @@ export async function processPayment(paymentId: string, userId: string) {
       invoice_id: payment.invoice_id,
       action: 'PAYMENT_PROCESSED',
       performed_by: userId,
-      note: `Payment processed successfully. Reference: ${paymentResult.reference}`,
+      note: [
+        `Payment processed successfully. Reference: ${reference}`,
+        execution.bankUsed ? `Bank: ${execution.bankUsed}` : null,
+        execution.remarks ? `Remarks: ${execution.remarks}` : null,
+        execution.proofFileName ? `Proof: ${execution.proofFileName}` : null,
+      ].filter(Boolean).join(' | '),
     },
   });
 
@@ -517,8 +537,8 @@ export async function processPayment(paymentId: string, userId: string) {
         fullInvoice.vendor.contact_email,
         Number(payment.amount),
         payment.currency || 'USD',
-        paymentResult.reference,
-        new Date()
+        reference,
+        paidAt
       );
       logger.info(`Payment confirmation email sent to ${fullInvoice.vendor.contact_email} for invoice ${fullInvoice.invoice_number}`);
     } else {

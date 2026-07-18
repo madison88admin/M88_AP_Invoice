@@ -56,6 +56,22 @@ export const getInvoiceById = async (
   }
 };
 
+export const getInvoiceTimeline = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const invoice = await invoiceService.getInvoiceTimeline(req.params.id);
+    if (!invoice) {
+      throw new AppError('Invoice not found', 404);
+    }
+    res.json(invoice);
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const updateInvoiceStatus = async (
   req: AuthRequest,
   res: Response,

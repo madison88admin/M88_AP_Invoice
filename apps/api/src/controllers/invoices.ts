@@ -108,3 +108,21 @@ export const updateInvoice = async (
     next(error);
   }
 };
+
+export const deleteInvoice = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const result = await invoiceService.deleteInvoice(
+      req.params.id,
+      req.user!.id,
+      req.user!.role,
+      req.user!.name
+    );
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};

@@ -771,3 +771,26 @@ export const getInvoiceTimeline = async (invoiceId: string) => {
     events: events.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()),
   };
 };
+
+export const deleteInvoice = async (id: string, userId: string, userRole: string, userName: string) => {
+  const existing = await prisma.invoice.findUnique({ where: { id } });
+  if (!existing) {
+    throw new AppError('Invoice not found', 404);
+  }
+
+  const lockedStatuses = ['POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID', 'PAYMENT_CONFIRMATION_SENT'];
+  if (lockedStatuses.includes(existing.status)) {
+    throw new AppError(`Cannot delete invoice in ${existing.status} status`, 400);
+  }
+
+  await prisma.invoice.delete({ where: { id } });
+
+  await logAudit({
+    invoice_id: id,
+    performed_by: userName,
+    action: 'INVOICE_DELETED',
+    note: `Invoice ${existing.invoice_number} deleted by ${userName} (${userRole})`,
+  });
+
+  return { id, deleted: true, invoice_number: existing.invoice_number };
+};

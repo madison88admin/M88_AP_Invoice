@@ -18,7 +18,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { MockInvoice } from '../lib/mockData';
 import { hasPermission, filterInvoicesByRole, canUserApproveStatus, isWithinRoleThreshold } from '../lib/roleAccess';
 import { cn } from '../lib/utils';
-import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, LogOut, Edit, Unlock, Users, Loader2, Menu, X } from 'lucide-react';
+import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, LogOut, Edit, Unlock, Users, Loader2, Menu, X, Trash2 } from 'lucide-react';
 import { Skeleton, SkeletonBar } from './ui/Skeleton';
 
 // Custom hook for number count-up animation
@@ -668,6 +668,21 @@ export default function Dashboard() {
       setSelectedInvoice(null);
     } catch (error: any) {
       showToast(error?.response?.data?.error?.message || 'Failed to return invoice', 'error');
+    }
+  };
+
+  const handleDeleteInvoice = async () => {
+    if (!selectedInvoice) return;
+    const confirmed = window.confirm(`Are you sure you want to delete invoice "${selectedInvoice.invoice_number}"? This action cannot be undone.`);
+    if (!confirmed) return;
+    try {
+      await invoiceApi.delete(selectedInvoice.id);
+      showToast(`Invoice ${selectedInvoice.invoice_number} deleted successfully`, 'success');
+      await refresh();
+      setSelectedInvoice(null);
+    } catch (error: any) {
+      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to delete invoice';
+      showToast(msg, 'error');
     }
   };
 
@@ -2408,6 +2423,22 @@ export default function Dashboard() {
                   {user.role !== 'PURCHASING_COORDINATOR' && (
                     <button onClick={handleReturnForCorrection} className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl font-medium text-sm" style={{ background: 'color-mix(in srgb, var(--accent-amber) 12%, transparent)', color: 'var(--accent-amber)', border: '1px solid var(--accent-amber)' }}>
                       Return to Previous Approver
+                    </button>
+                  )}
+                  {['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN', 'ADMIN'].includes(user?.role || '') && (
+                    <button
+                      onClick={handleDeleteInvoice}
+                      className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
+                      style={{
+                        background: 'color-mix(in srgb, var(--accent-red) 8%, transparent)',
+                        color: 'var(--accent-red)',
+                        border: '1px solid color-mix(in srgb, var(--accent-red) 15%, transparent)',
+                      }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'color-mix(in srgb, var(--accent-red) 15%, transparent)'; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'color-mix(in srgb, var(--accent-red) 8%, transparent)'; }}
+                    >
+                      <Trash2 className="h-4 w-4 mr-2" strokeWidth={1.75} />
+                      Delete Invoice
                     </button>
                   )}
                 </div>

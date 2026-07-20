@@ -94,6 +94,7 @@ export const invoiceApi = {
     return res;
   },
   reExtractBulk: (invoiceIds: string[]) => api.post('/api/reprocess/bulk-re-extract', { invoiceIds }, { timeout: 600000 }),
+  delete: (id: string) => api.delete(`/api/invoices/${id}`),
 };
 
 export const approvalApi = {

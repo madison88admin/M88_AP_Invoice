@@ -33,7 +33,7 @@ export const getInvoices = async (
       category: req.query.category as InvoiceCategory | undefined,
     };
     
-    const invoices = await invoiceService.getInvoices(filters);
+    const invoices = await invoiceService.getInvoices(filters, req.user?.role);
     res.json(invoices);
   } catch (error) {
     next(error);

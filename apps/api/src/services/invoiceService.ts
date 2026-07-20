@@ -266,11 +266,44 @@ export const createInvoice = async (invoiceData: any, userId: string) => {
   return invoice;
 };
 
-export const getInvoices = async (filters: any) => {
+const PAYMENT_STAGES = ['POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID', 'PAYMENT_CONFIRMATION_SENT'];
+
+const ROLE_STAGE_ACCESS: Record<string, string[]> = {
+  SUPERADMIN: [],
+  ACCOUNTING_ASSOCIATE: ['VALIDATION_PENDING', 'APPROVED', 'PENDING_ACCOUNTING', 'ON_HOLD', ...PAYMENT_STAGES],
+  ACCOUNTING_SUPERVISOR: ['VALIDATION_PENDING', 'PENDING_ACCOUNTING', 'APPROVED', 'ON_HOLD', ...PAYMENT_STAGES],
+  PURCHASING_COORDINATOR: ['VALIDATION_PENDING', 'EXCEPTION_FLAGGED', 'PENDING_COORDINATOR', 'ON_HOLD', ...PAYMENT_STAGES],
+  PURCHASING_MANAGER: ['PENDING_MANAGER', ...PAYMENT_STAGES],
+  MLO_ACCOUNT_HOLDER: ['PENDING_MLO_ACCOUNT_HOLDER', 'PENDING_MLO_PLANNING_MANAGER', ...PAYMENT_STAGES],
+  PLANNING_MANAGER: ['PENDING_MLO_PLANNING_MANAGER', ...PAYMENT_STAGES],
+  SR_MANAGER_GLOBAL_PRODUCTION: ['PENDING_SR_MANAGER', ...PAYMENT_STAGES],
+  MS_POLLY: ['PENDING_POLLY', ...PAYMENT_STAGES],
+  PRESIDENT: ['PENDING_ACCOUNTING', ...PAYMENT_STAGES],
+  IT_ADMIN: [],
+};
+
+export const getInvoices = async (filters: any, userRole?: string) => {
   const where: any = {};
 
   if (filters.status) {
     where.status = filters.status;
+  }
+
+  // Role-based filtering at API level
+  if (userRole && userRole !== 'SUPERADMIN' && userRole !== 'IT_ADMIN') {
+    const accessibleStages = ROLE_STAGE_ACCESS[userRole];
+    if (accessibleStages && accessibleStages.length > 0) {
+      // If a specific status filter is applied, check if it's allowed for the role
+      if (where.status) {
+        if (!accessibleStages.includes(where.status)) {
+          // Role doesn't have access to this status — return empty
+          return [];
+        }
+      } else {
+        // No specific status filter — restrict to accessible stages
+        where.status = { in: accessibleStages };
+      }
+    }
   }
 
   if (filters.vendor) {

@@ -194,7 +194,7 @@ export class OllamaOCRService {
 
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.model = process.env.OLLAMA_MODEL || 'qwen3:4b';
-    this.timeout = Number(process.env.OLLAMA_TIMEOUT) || 300000;
+    this.timeout = (Number(process.env.OLLAMA_TIMEOUT) || 300) * 1000;
     this.isConfigured = true;
     logger.info(`Ollama OCR service initialized at ${this.baseUrl} with model ${this.model}`);
   }

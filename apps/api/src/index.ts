@@ -222,6 +222,27 @@ const startServer = async () => {
       logger.error('Failed to start SharePoint watcher:', err);
     });
 
+    // Pre-load Ollama model into memory so first OCR request doesn't timeout
+    if (ollamaOCRService.isAvailable()) {
+      logger.info('Pre-loading Ollama model into memory...');
+      try {
+        const ollamaModel = process.env.OLLAMA_MODEL || 'qwen3:4b';
+        const ollamaUrl = (process.env.OLLAMA_BASE_URL || '').replace(/\/$/, '');
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 120000);
+        await fetch(`${ollamaUrl}/api/generate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: ollamaModel, prompt: '', stream: false }),
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+        logger.info(`✅ Ollama model '${ollamaModel}' pre-loaded into memory`);
+      } catch (err) {
+        logger.warn('Ollama model pre-load failed (will load on first use):', err instanceof Error ? err.message : String(err));
+      }
+    }
+
     // Start local file watcher (polls /incoming-invoices for SFTP drops)
     const fileWatcherIntervalSec = parseInt(process.env.FILE_WATCHER_INTERVAL_SEC || '30', 10);
     startFileWatcher(fileWatcherIntervalSec).catch((err) => {

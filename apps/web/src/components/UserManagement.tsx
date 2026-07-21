@@ -209,26 +209,8 @@ export default function UserManagement() {
   };
 
   return (
-    <div className="min-h-screen animate-page-in" style={{ background: 'var(--bg-base)' }}>
-      <div className="relative z-10">
-        {/* Header */}
-        <header className="px-6 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Link to="/" className="transition-colors" style={{ color: 'var(--text-muted)' }}
-                onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
-              >
-                <ArrowLeft className="h-5 w-5" strokeWidth={1.75} />
-              </Link>
-              <div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))', boxShadow: '0 0 16px color-mix(in srgb, var(--accent-purple) 25%, transparent)' }}>
-                <Users className="h-5 w-5 text-white" strokeWidth={1.75} />
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>User Management</h1>
-                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Manage user accounts and roles</p>
-              </div>
-            </div>
+    <div>
+        <div className="flex items-center justify-end mb-4">
             <button
               onClick={openAddModal}
               className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-medium text-sm transition-all duration-200"
@@ -240,9 +222,8 @@ export default function UserManagement() {
               Add User
             </button>
           </div>
-        </header>
 
-        <main className="px-6 py-8">
+        <div>
           {/* Stats Summary */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
             {[
@@ -417,8 +398,7 @@ export default function UserManagement() {
               </div>
             )}
           </div>
-        </main>
-      </div>
+        </div>
 
       {/* Add/Edit Modal */}
       {(showAddModal || editingUser) && (

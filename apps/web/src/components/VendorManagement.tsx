@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 import { Building2, Search, Plus, Edit, Trash2, ArrowLeft, Building, Save, X } from 'lucide-react';
 import { MockVendor } from '../lib/mockData';
 import { vendorApi } from '../lib/api';
@@ -9,12 +10,31 @@ import { vendorApi } from '../lib/api';
 export default function VendorManagement() {
   const { vendors } = useMockData();
   const { user } = useAuth();
+  const { showToast } = useToast();
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selectedVendor, setSelectedVendor] = useState<MockVendor | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingVendor, setEditingVendor] = useState<Partial<MockVendor>>({});
   const [saving, setSaving] = useState(false);
+  const [isAddMode, setIsAddMode] = useState(false);
+
+  const canAddVendor = user && ['PURCHASING_COORDINATOR', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role);
+
+  const handleAdd = () => {
+    setIsAddMode(true);
+    setEditingVendor({
+      name: '',
+      name_aliases: [],
+      supplier_location: '',
+      expected_template: 'STANDARD',
+      bank_name: '',
+      swift_code: '',
+      account_number: '',
+      has_multiple_accounts: false,
+    });
+    setShowEditModal(true);
+  };
 
   useEffect(() => {
     setLoading(false);
@@ -26,22 +46,58 @@ export default function VendorManagement() {
   );
 
   const handleEdit = (vendor: MockVendor) => {
+    setIsAddMode(false);
     setEditingVendor(vendor);
     setShowEditModal(true);
   };
 
   const handleSave = async () => {
-    if (!editingVendor.id || !user) return;
+    if (!user) return;
 
-    try {
-      setSaving(true);
-      await vendorApi.update(editingVendor.id, editingVendor);
-      setShowEditModal(false);
-      setEditingVendor({});
-    } catch (error) {
-      console.error('Failed to save vendor:', error);
-    } finally {
-      setSaving(false);
+    if (isAddMode) {
+      if (!editingVendor.name || !editingVendor.name.trim()) {
+        showToast('Vendor name is required', 'error');
+        return;
+      }
+      try {
+        setSaving(true);
+        const payload: any = {
+          name: editingVendor.name.trim(),
+          name_aliases: editingVendor.name_aliases || [],
+          invoice_template_type: editingVendor.expected_template || 'STANDARD',
+          bank_name: editingVendor.bank_name || null,
+          swift_code: editingVendor.swift_code || null,
+          account_number: editingVendor.account_number || null,
+          is_active: true,
+        };
+        if (editingVendor.supplier_location) payload.supplier_location = editingVendor.supplier_location;
+        await vendorApi.create(payload);
+        showToast('Vendor added successfully', 'success');
+        setShowEditModal(false);
+        setEditingVendor({});
+        setIsAddMode(false);
+      } catch (error: any) {
+        console.error('Failed to add vendor:', error);
+        const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to add vendor';
+        showToast(msg, 'error');
+      } finally {
+        setSaving(false);
+      }
+    } else {
+      if (!editingVendor.id) return;
+      try {
+        setSaving(true);
+        await vendorApi.update(editingVendor.id, editingVendor);
+        showToast('Vendor updated successfully', 'success');
+        setShowEditModal(false);
+        setEditingVendor({});
+      } catch (error: any) {
+        console.error('Failed to save vendor:', error);
+        const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to save vendor';
+        showToast(msg, 'error');
+      } finally {
+        setSaving(false);
+      }
     }
   };
 
@@ -66,29 +122,7 @@ export default function VendorManagement() {
   };
 
   return (
-    <div className="min-h-screen animate-page-in" style={{ background: 'var(--bg-base)' }}>
-      <div className="relative z-10">
-        <header className="px-6 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Link to="/" className="transition-colors" style={{ color: 'var(--text-muted)' }}
-                onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
-              >
-                <ArrowLeft className="h-5 w-5" strokeWidth={1.75} />
-              </Link>
-              <div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))', boxShadow: '0 0 16px color-mix(in srgb, var(--accent-purple) 25%, transparent)' }}>
-                <Building2 className="h-5 w-5 text-white" strokeWidth={1.75} />
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Vendor Management</h1>
-                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Manage vendor profiles and bank details</p>
-              </div>
-            </div>
-          </div>
-        </header>
-
-        <main className="px-6 py-8">
+    <div>
           {/* Search and Filter */}
           <div className="p-6 mb-6 rounded-2xl" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
             <div className="flex items-center gap-4">
@@ -106,6 +140,18 @@ export default function VendorManagement() {
               <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
                 {filteredVendors.length} vendors
               </div>
+              {canAddVendor && (
+                <button
+                  onClick={handleAdd}
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-medium text-sm transition-all duration-200"
+                  style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)', boxShadow: '0 0 16px var(--accent-lime-glow)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 0 24px var(--accent-lime-glow)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 0 16px var(--accent-lime-glow)'; }}
+                >
+                  <Plus className="h-4 w-4" />
+                  Add Vendor
+                </button>
+              )}
             </div>
           </div>
 
@@ -211,8 +257,6 @@ export default function VendorManagement() {
               </div>
             </div>
           )}
-        </main>
-      </div>
 
       {/* Edit Modal */}
       {showEditModal && (
@@ -220,7 +264,7 @@ export default function VendorManagement() {
           <div className="max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
             <div className="p-6">
               <div className="flex items-center justify-between mb-6">
-                <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Edit Vendor</h3>
+                <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>{isAddMode ? 'Add Vendor' : 'Edit Vendor'}</h3>
                 <button
                   onClick={() => {
                     setShowEditModal(false);
@@ -340,7 +384,7 @@ export default function VendorManagement() {
                   onMouseLeave={(e) => { if (!saving) e.currentTarget.style.background = 'var(--accent-lime)'; }}
                 >
                   <Save className="h-4 w-4" strokeWidth={1.75} />
-                  {saving ? 'Saving...' : 'Save Changes'}
+                  {saving ? 'Saving...' : isAddMode ? 'Add Vendor' : 'Save Changes'}
                 </button>
               </div>
             </div>

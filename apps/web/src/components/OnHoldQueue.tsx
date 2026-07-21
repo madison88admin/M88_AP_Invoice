@@ -101,22 +101,11 @@ export default function OnHoldQueue() {
   const summary = data?.summary;
 
   return (
-    <div className="min-h-screen animate-page-in" style={{ background: 'var(--bg-base)' }}>
-      <div className="px-6 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-4">
-            <Link to="/" style={{ color: 'var(--text-muted)' }}>
-              <ArrowLeft className="h-5 w-5" strokeWidth={1.75} />
-            </Link>
-            <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>On-Hold & Exception Queue</h1>
-          </div>
-          <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
-            {summary?.total || 0} invoices on hold
-          </div>
+    <div className="space-y-6">
+        <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+          {summary?.total || 0} invoices on hold
         </div>
-      </div>
 
-      <div className="px-6 py-6 space-y-6">
         {/* Summary Cards */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <SummaryCard label="Total On Hold" value={summary?.total?.toString() || '0'} icon={Pause} color="var(--accent-amber)" />
@@ -210,7 +199,6 @@ export default function OnHoldQueue() {
             </table>
           </div>
         </div>
-      </div>
     </div>
   );
 }

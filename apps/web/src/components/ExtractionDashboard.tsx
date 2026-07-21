@@ -155,19 +155,9 @@ export default function ExtractionDashboard() {
   ];
 
   return (
-    <div className="p-6 space-y-6 max-w-[1600px] mx-auto animate-page-in" style={{ background: 'var(--bg-base)', minHeight: '100vh' }}>
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
-            <Activity className="w-7 h-7" style={{ color: 'var(--accent-blue)' }} />
-            Extraction Analytics
-          </h1>
-          <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>
-            Real-time monitoring of extraction pipeline performance
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
+    <div className="space-y-6 max-w-[1600px] mx-auto">
+      {/* Filter Controls */}
+      <div className="flex items-center justify-end gap-3">
           <select
             value={days}
             onChange={(e) => setDays(Number(e.target.value))}
@@ -189,7 +179,6 @@ export default function ExtractionDashboard() {
             Refresh
           </button>
         </div>
-      </div>
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

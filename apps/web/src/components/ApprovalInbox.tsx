@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 import { CheckCircle, XCircle, Clock, ArrowLeft, Loader2 } from 'lucide-react';
 import { MockInvoice } from '../lib/mockData';
 import { Skeleton } from './ui/Skeleton';
@@ -27,6 +28,7 @@ const mapUserRoleToSignatoryRoles = (role: string): string[] => {
 export default function ApprovalInbox() {
   const { invoices, approveInvoice, rejectInvoice } = useMockData();
   const { user } = useAuth();
+  const { showToast } = useToast();
   const [loading, setLoading] = useState(true);
   const [selectedInvoice, setSelectedInvoice] = useState<MockInvoice | null>(null);
   const [approving, setApproving] = useState(false);
@@ -69,9 +71,12 @@ export default function ApprovalInbox() {
     try {
       setApproving(true);
       await approveInvoice(selectedInvoice.id, user.name);
+      showToast('Invoice approved successfully', 'success');
       setSelectedInvoice(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to approve invoice:', error);
+      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to approve invoice';
+      showToast(msg, 'error');
     } finally {
       setApproving(false);
     }
@@ -83,11 +88,14 @@ export default function ApprovalInbox() {
     try {
       setRejecting(true);
       await rejectInvoice(selectedInvoice.id, rejectReason);
+      showToast('Invoice rejected successfully', 'success');
       setSelectedInvoice(null);
       setShowRejectModal(false);
       setRejectReason('');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to reject invoice:', error);
+      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to reject invoice';
+      showToast(msg, 'error');
     } finally {
       setRejecting(false);
     }
@@ -108,22 +116,8 @@ export default function ApprovalInbox() {
   };
 
   return (
-    <div className="min-h-screen animate-page-in" style={{ background: 'var(--bg-base)' }}>
-      <div className="relative z-10">
-        <header className="px-4 md:px-6 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
-          <div className="flex items-center">
-            <Link to="/" className="mr-2 md:mr-4 transition-colors" style={{ color: 'var(--text-muted)' }}
-              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
-            >
-              <ArrowLeft className="h-5 w-5" strokeWidth={1.75} />
-            </Link>
-            <h1 className="text-lg md:text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Approval Inbox</h1>
-          </div>
-        </header>
-
-        <main className="px-4 md:px-6 py-6 md:py-8">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Invoice List */}
             <div className="lg:col-span-2">
               <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
@@ -334,8 +328,6 @@ export default function ApprovalInbox() {
               </div>
             )}
           </div>
-        </main>
-      </div>
 
       {/* Reject Modal */}
       {showRejectModal && (

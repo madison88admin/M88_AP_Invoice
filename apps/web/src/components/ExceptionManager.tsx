@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 import { AlertTriangle, CheckCircle, XCircle, ArrowLeft, AlertCircle, Search, ExternalLink } from 'lucide-react';
 import { MockException } from '../lib/mockData';
 import { exceptionApi } from '../lib/api';
@@ -12,6 +13,7 @@ type ExceptionFilter = 'OPEN' | 'RESOLVED' | 'WAIVED' | 'ALL';
 export default function ExceptionManager() {
   const { invoices, resolveException, refresh } = useMockData();
   const { user } = useAuth();
+  const { showToast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
   const [loading, setLoading] = useState(true);
@@ -87,8 +89,10 @@ export default function ExceptionManager() {
       if (result?.approvalWarning) {
         setApprovalWarning(result.approvalWarning);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to resolve exception:', error);
+      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to resolve exception';
+      showToast(msg, 'error');
     }
   };
 
@@ -104,8 +108,10 @@ export default function ExceptionManager() {
       if (res.data?.approvalWarning) {
         setApprovalWarning(res.data.approvalWarning);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to waive exception:', error);
+      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to waive exception';
+      showToast(msg, 'error');
     }
   };
 
@@ -134,26 +140,14 @@ export default function ExceptionManager() {
   }
 
   return (
-    <div className="min-h-screen animate-page-in" style={{ background: 'var(--bg-base)' }}>
-      <div className="relative z-10">
-        <div className="px-4 md:px-6 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2 md:space-x-4">
-              <Link to="/" className="transition-colors" style={{ color: 'var(--text-muted)' }}
-                onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
-              >
-                <ArrowLeft className="h-5 w-5" strokeWidth={1.75} />
-              </Link>
-              <h1 className="text-lg md:text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Exception Manager</h1>
-            </div>
-            <div className="text-xs md:text-sm" style={{ color: 'var(--text-muted)' }}>
-              {exceptions.filter(exc => exc.status === 'OPEN').length} active / {exceptions.length} total
-            </div>
+    <div>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-xs md:text-sm" style={{ color: 'var(--text-muted)' }}>
+            {exceptions.filter(exc => exc.status === 'OPEN').length} active / {exceptions.length} total
           </div>
         </div>
 
-        <div className="px-4 md:px-6 py-6">
+        <div>
           {/* Approval warning banner */}
           {approvalWarning && (
             <div className="mb-4 p-4 rounded-xl flex items-start gap-3" style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}>
@@ -386,7 +380,6 @@ export default function ExceptionManager() {
             </div>
           )}
         </div>
-      </div>
 
       {/* Resolve Modal */}
       {showResolveModal && (

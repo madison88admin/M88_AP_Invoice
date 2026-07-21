@@ -130,16 +130,8 @@ export default function SLAAnalyticsDashboard() {
   }
 
   return (
-    <div className="min-h-screen animate-page-in" style={{ background: 'var(--bg-base)' }}>
-      <div className="px-6 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-4">
-            <Link to="/" style={{ color: 'var(--text-muted)' }}>
-              <ArrowLeft className="h-5 w-5" strokeWidth={1.75} />
-            </Link>
-            <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>SLA Analytics Dashboard</h1>
-          </div>
-          <div className="flex items-center gap-3">
+    <div className="space-y-6">
+        <div className="flex items-center justify-end gap-3">
             <select
               value={days}
               onChange={(e) => setDays(parseInt(e.target.value))}
@@ -162,10 +154,7 @@ export default function SLAAnalyticsDashboard() {
             </button>
             )}
           </div>
-        </div>
-      </div>
 
-      <div className="px-6 py-6 space-y-6">
         {/* KPI Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <KPICard
@@ -322,7 +311,6 @@ export default function SLAAnalyticsDashboard() {
             </div>
           </div>
         </div>
-      </div>
     </div>
   );
 }

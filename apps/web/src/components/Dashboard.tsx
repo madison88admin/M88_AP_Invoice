@@ -18,7 +18,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { MockInvoice } from '../lib/mockData';
 import { hasPermission, filterInvoicesByRole, canUserApproveStatus, isWithinRoleThreshold } from '../lib/roleAccess';
 import { cn } from '../lib/utils';
-import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, LogOut, Edit, Unlock, Users, Loader2, Menu, X, Trash2 } from 'lucide-react';
+import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, ChevronRight, LogOut, Edit, Unlock, Users, Loader2, Menu, X, Trash2 } from 'lucide-react';
 import { Skeleton, SkeletonBar } from './ui/Skeleton';
 
 // Custom hook for number count-up animation
@@ -160,6 +160,10 @@ export default function Dashboard() {
   const [bypassVarianceCheck, setBypassVarianceCheck] = useState(false);
   const [sendingConfirmation, setSendingConfirmation] = useState(false);
   const [showConfirmSendModal, setShowConfirmSendModal] = useState(false);
+  const [detailTab, setDetailTab] = useState<'overview' | 'validation' | 'actions' | 'audit'>('overview');
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const [editCollapsed, setEditCollapsed] = useState<Record<string, boolean>>({});
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [poAuditSummary, setPoAuditSummary] = useState({
     matched: 0,
     warnings: 0,
@@ -332,6 +336,7 @@ export default function Dashboard() {
     if (state?.selectedInvoiceId && invoices.length > 0) {
       const target = invoices.find(inv => inv.id === state.selectedInvoiceId);
       if (target) {
+        setDetailTab('overview');
         setSelectedInvoice(target);
         // Clear the state so it doesn't re-trigger on refresh
         navigate('/', { replace: true, state: {} });
@@ -472,11 +477,14 @@ export default function Dashboard() {
       setValidating(true);
       const response = await invoiceApi.validate(selectedInvoice.id);
       setValidationResult(response.data);
+      setDetailTab('validation');
       await refresh();
       const updatedInvoice = await invoiceApi.getById(selectedInvoice.id);
       setSelectedInvoice(updatedInvoice.data);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to validate invoice:', error);
+      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to validate invoice';
+      showToast(msg, 'error');
     } finally {
       setValidating(false);
     }
@@ -651,9 +659,10 @@ export default function Dashboard() {
       setSelectedInvoice(null);
       setShowRejectModal(false);
       setRejectReason('');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to reject invoice:', error);
-      showToast('Failed to reject invoice', 'error');
+      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to reject invoice';
+      showToast(msg, 'error');
     }
   };
 
@@ -695,9 +704,10 @@ export default function Dashboard() {
       showToast('Invoice posted to accounting successfully', 'success');
       await refresh();
       setSelectedInvoice(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to post invoice:', error);
-      showToast('Failed to post invoice', 'error');
+      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to post invoice';
+      showToast(msg, 'error');
     } finally {
       setPosting(false);
     }
@@ -712,9 +722,10 @@ export default function Dashboard() {
       showToast('Invoice released from hold', 'success');
       await refresh();
       setSelectedInvoice(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to release invoice from hold:', error);
-      showToast('Failed to release invoice from hold', 'error');
+      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to release invoice from hold';
+      showToast(msg, 'error');
     } finally {
       setPosting(false);
     }
@@ -734,9 +745,10 @@ export default function Dashboard() {
         showToast('No NextGen changes detected', 'success');
       }
       await refresh();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to check NextGen changes:', error);
-      showToast('Failed to check NextGen changes', 'error');
+      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to check NextGen changes';
+      showToast(msg, 'error');
     } finally {
       setPosting(false);
     }
@@ -752,9 +764,10 @@ export default function Dashboard() {
       setSelectedInvoice(null);
       setShowSchedulePaymentModal(false);
       setPaymentDate('');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to schedule payment:', error);
-      showToast('Failed to schedule payment', 'error');
+      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to schedule payment';
+      showToast(msg, 'error');
     }
   };
 
@@ -1816,8 +1829,11 @@ export default function Dashboard() {
             <div className="p-4 mb-6 rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Filter Invoices</h3>
-                <StatusGuide />
+                <div className="flex items-center gap-3">
+                  <StatusGuide />
+                </div>
               </div>
+              {/* Primary filters — always visible */}
               <div className="flex flex-col md:flex-row items-start md:items-center gap-3">
                 <div className="relative w-full md:flex-1">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4" style={{ color: 'var(--text-muted)' }} />
@@ -1842,83 +1858,16 @@ export default function Dashboard() {
                     </option>
                   ))}
                 </select>
-                <select
-                  value={filters.category || ''}
-                  onChange={(e) => setFilters({ ...filters, category: e.target.value as InvoiceCategory | undefined })}
-                  className="h-9 w-full md:w-auto px-4 rounded-full focus:outline-none text-sm appearance-none cursor-pointer transition-all" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
+                <button
+                  onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
+                  className="h-9 w-full md:w-auto px-4 rounded-full transition-colors text-sm font-medium flex items-center justify-center gap-1.5"
+                  style={showAdvancedFilters
+                    ? { color: 'var(--accent-purple)', background: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)' }
+                    : { color: 'var(--text-secondary)', background: 'var(--bg-elevated)' }}
                 >
-                  <option value="" style={{ background: 'var(--input-bg)' }}>All Categories</option>
-                  {Object.values(InvoiceCategory).map((category) => (
-                    <option key={category} value={category} style={{ background: 'var(--input-bg)' }}>
-                      {category.replace(/_/g, ' ')}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={filters.type || ''}
-                  onChange={(e) => setFilters({ ...filters, type: e.target.value as InvoiceType | undefined })}
-                  className="h-9 w-full md:w-auto px-4 rounded-full focus:outline-none text-sm appearance-none cursor-pointer transition-all" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
-                >
-                  <option value="" style={{ background: 'var(--input-bg)' }}>All Types</option>
-                  {Object.values(InvoiceType).map((type) => (
-                    <option key={type} value={type} style={{ background: 'var(--input-bg)' }}>{type}</option>
-                  ))}
-                </select>
-                <select
-                  value={filters.brand || ''}
-                  onChange={(e) => setFilters({ ...filters, brand: e.target.value || undefined })}
-                  className="h-9 w-full md:w-auto px-4 rounded-full focus:outline-none text-sm appearance-none cursor-pointer transition-all" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
-                >
-                  <option value="" style={{ background: 'var(--input-bg)' }}>All Brands</option>
-                  <option value="Columbia Sportswear" style={{ background: 'var(--input-bg)' }}>Columbia Sportswear</option>
-                  <option value="The North Face" style={{ background: 'var(--input-bg)' }}>The North Face</option>
-                  <option value="Vans" style={{ background: 'var(--input-bg)' }}>Vans</option>
-                  <option value="Arc'teryx" style={{ background: 'var(--input-bg)' }}>Arc'teryx</option>
-                  <option value="Under Armour" style={{ background: 'var(--input-bg)' }}>Under Armour</option>
-                  <option value="Helly Hansen" style={{ background: 'var(--input-bg)' }}>Helly Hansen</option>
-                  <option value="Burton" style={{ background: 'var(--input-bg)' }}>Burton</option>
-                  <option value="Travis Mathew" style={{ background: 'var(--input-bg)' }}>Travis Mathew</option>
-                  <option value="Fjallraven" style={{ background: 'var(--input-bg)' }}>Fjallraven</option>
-                  <option value="On Running" style={{ background: 'var(--input-bg)' }}>On Running</option>
-                  <option value="Prana" style={{ background: 'var(--input-bg)' }}>Prana</option>
-                  <option value="Other" style={{ background: 'var(--input-bg)' }}>Other brands</option>
-                </select>
-                <select
-                  value={filters.brand_code || ''}
-                  onChange={(e) => setFilters({ ...filters, brand_code: e.target.value as string | undefined })}
-                  className="h-9 w-full md:w-auto px-4 rounded-full focus:outline-none text-sm appearance-none cursor-pointer transition-all" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
-                >
-                  <option value="" style={{ background: 'var(--input-bg)' }}>All Brand Codes</option>
-                  <option value="CSC" style={{ background: 'var(--input-bg)' }}>CSC</option>
-                  <option value="TNF" style={{ background: 'var(--input-bg)' }}>TNF</option>
-                  <option value="VNS" style={{ background: 'var(--input-bg)' }}>VNS</option>
-                  <option value="ARC" style={{ background: 'var(--input-bg)' }}>ARC</option>
-                  <option value="UA" style={{ background: 'var(--input-bg)' }}>UA</option>
-                  <option value="HH" style={{ background: 'var(--input-bg)' }}>HH</option>
-                  <option value="BUR" style={{ background: 'var(--input-bg)' }}>BUR</option>
-                  <option value="TM" style={{ background: 'var(--input-bg)' }}>TM</option>
-                  <option value="FR" style={{ background: 'var(--input-bg)' }}>FR</option>
-                  <option value="ON" style={{ background: 'var(--input-bg)' }}>ON</option>
-                </select>
-                <div className="flex items-center gap-2 w-full md:w-auto">
-                  <input
-                    type="date"
-                    value={filters.dateFrom || ''}
-                    onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value || undefined })}
-                    className="h-9 px-3 rounded-full text-sm focus:outline-none"
-                    style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
-                    placeholder="From"
-                  />
-                  <span style={{ color: 'var(--text-subtle)' }}>-</span>
-                  <input
-                    type="date"
-                    value={filters.dateTo || ''}
-                    onChange={(e) => setFilters({ ...filters, dateTo: e.target.value || undefined })}
-                    className="h-9 px-3 rounded-full text-sm focus:outline-none"
-                    style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
-                    placeholder="To"
-                  />
-                </div>
+                  <ChevronRight className="h-3.5 w-3.5 transition-transform" style={{ transform: showAdvancedFilters ? 'rotate(90deg)' : 'rotate(0deg)' }} />
+                  Advanced
+                </button>
                 <button
                   onClick={() => setFilters({ status: undefined, category: undefined, type: undefined, brand: undefined, brand_code: undefined, search: undefined, dateFrom: undefined, dateTo: undefined, agingBucket: undefined })}
                   disabled={activeFilterCount === 0}
@@ -1932,6 +1881,89 @@ export default function Dashboard() {
                   Clear{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
                 </button>
               </div>
+
+              {/* Advanced filters — collapsible */}
+              {showAdvancedFilters && (
+                <div className="flex flex-col md:flex-row items-start md:items-center gap-3 mt-3 pt-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                  <select
+                    value={filters.category || ''}
+                    onChange={(e) => setFilters({ ...filters, category: e.target.value as InvoiceCategory | undefined })}
+                    className="h-9 w-full md:w-auto px-4 rounded-full focus:outline-none text-sm appearance-none cursor-pointer transition-all" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
+                  >
+                    <option value="" style={{ background: 'var(--input-bg)' }}>All Categories</option>
+                    {Object.values(InvoiceCategory).map((category) => (
+                      <option key={category} value={category} style={{ background: 'var(--input-bg)' }}>
+                        {category.replace(/_/g, ' ')}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={filters.type || ''}
+                    onChange={(e) => setFilters({ ...filters, type: e.target.value as InvoiceType | undefined })}
+                    className="h-9 w-full md:w-auto px-4 rounded-full focus:outline-none text-sm appearance-none cursor-pointer transition-all" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
+                  >
+                    <option value="" style={{ background: 'var(--input-bg)' }}>All Types</option>
+                    {Object.values(InvoiceType).map((type) => (
+                      <option key={type} value={type} style={{ background: 'var(--input-bg)' }}>{type}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={filters.brand || ''}
+                    onChange={(e) => setFilters({ ...filters, brand: e.target.value || undefined })}
+                    className="h-9 w-full md:w-auto px-4 rounded-full focus:outline-none text-sm appearance-none cursor-pointer transition-all" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
+                  >
+                    <option value="" style={{ background: 'var(--input-bg)' }}>All Brands</option>
+                    <option value="Columbia Sportswear" style={{ background: 'var(--input-bg)' }}>Columbia Sportswear</option>
+                    <option value="The North Face" style={{ background: 'var(--input-bg)' }}>The North Face</option>
+                    <option value="Vans" style={{ background: 'var(--input-bg)' }}>Vans</option>
+                    <option value="Arc'teryx" style={{ background: 'var(--input-bg)' }}>Arc'teryx</option>
+                    <option value="Under Armour" style={{ background: 'var(--input-bg)' }}>Under Armour</option>
+                    <option value="Helly Hansen" style={{ background: 'var(--input-bg)' }}>Helly Hansen</option>
+                    <option value="Burton" style={{ background: 'var(--input-bg)' }}>Burton</option>
+                    <option value="Travis Mathew" style={{ background: 'var(--input-bg)' }}>Travis Mathew</option>
+                    <option value="Fjallraven" style={{ background: 'var(--input-bg)' }}>Fjallraven</option>
+                    <option value="On Running" style={{ background: 'var(--input-bg)' }}>On Running</option>
+                    <option value="Prana" style={{ background: 'var(--input-bg)' }}>Prana</option>
+                    <option value="Other" style={{ background: 'var(--input-bg)' }}>Other brands</option>
+                  </select>
+                  <select
+                    value={filters.brand_code || ''}
+                    onChange={(e) => setFilters({ ...filters, brand_code: e.target.value as string | undefined })}
+                    className="h-9 w-full md:w-auto px-4 rounded-full focus:outline-none text-sm appearance-none cursor-pointer transition-all" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
+                  >
+                    <option value="" style={{ background: 'var(--input-bg)' }}>All Brand Codes</option>
+                    <option value="CSC" style={{ background: 'var(--input-bg)' }}>CSC</option>
+                    <option value="TNF" style={{ background: 'var(--input-bg)' }}>TNF</option>
+                    <option value="VNS" style={{ background: 'var(--input-bg)' }}>VNS</option>
+                    <option value="ARC" style={{ background: 'var(--input-bg)' }}>ARC</option>
+                    <option value="UA" style={{ background: 'var(--input-bg)' }}>UA</option>
+                    <option value="HH" style={{ background: 'var(--input-bg)' }}>HH</option>
+                    <option value="BUR" style={{ background: 'var(--input-bg)' }}>BUR</option>
+                    <option value="TM" style={{ background: 'var(--input-bg)' }}>TM</option>
+                    <option value="FR" style={{ background: 'var(--input-bg)' }}>FR</option>
+                    <option value="ON" style={{ background: 'var(--input-bg)' }}>ON</option>
+                  </select>
+                  <div className="flex items-center gap-2 w-full md:w-auto">
+                    <input
+                      type="date"
+                      value={filters.dateFrom || ''}
+                      onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value || undefined })}
+                      className="h-9 px-3 rounded-full text-sm focus:outline-none"
+                      style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                      placeholder="From"
+                    />
+                    <span style={{ color: 'var(--text-subtle)' }}>-</span>
+                    <input
+                      type="date"
+                      value={filters.dateTo || ''}
+                      onChange={(e) => setFilters({ ...filters, dateTo: e.target.value || undefined })}
+                      className="h-9 px-3 rounded-full text-sm focus:outline-none"
+                      style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                      placeholder="To"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1951,7 +1983,7 @@ export default function Dashboard() {
             </div>
             <InvoiceTable
               invoices={displayedInvoices}
-              onInvoiceClick={setSelectedInvoice}
+              onInvoiceClick={(inv) => { setDetailTab('overview'); setSelectedInvoice(inv); }}
               loading={loading}
               emptyHint={activeFilterCount > 0 ? 'filters' : 'default'}
             />
@@ -2212,9 +2244,10 @@ export default function Dashboard() {
             <span className="text-xs mt-1">Vendors</span>
           </Link>
           <button className="flex flex-col items-center px-4 py-2" style={{ color: 'var(--text-muted)' }}
+            onClick={() => setMobileSidebarOpen(true)}
             onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
             onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}>
-            <Package className="h-5 w-5" strokeWidth={1.75} />
+            <Menu className="h-5 w-5" strokeWidth={1.75} />
             <span className="text-xs mt-1">More</span>
           </button>
         </div>
@@ -2222,73 +2255,111 @@ export default function Dashboard() {
 
       {/* Invoice Detail Panel */}
       {selectedInvoice && (
-        <div className="fixed right-0 top-0 h-full w-full sm:w-96 overflow-y-auto z-50" style={{ background: 'var(--bg-card)', borderLeft: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
-          <div className="p-6">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Invoice Details</h3>
+        <div className="fixed right-0 top-0 h-full w-full sm:w-[560px] lg:w-[640px] flex flex-col z-50 animate-slide-in-right" style={{ background: 'var(--bg-card)', borderLeft: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+          {/* Panel Header — Invoice number + status + close */}
+          <div className="px-6 py-4 flex-shrink-0" style={{ borderBottom: '1px solid var(--border-color)' }}>
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="p-2 rounded-xl flex-shrink-0" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}>
+                  <FileText className="h-5 w-5 text-white" strokeWidth={1.75} />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-lg font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.invoice_number}</h3>
+                  <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{selectedInvoice.vendor?.name} · {selectedInvoice.currency} {Number(selectedInvoice.total_amount).toFixed(2)}</p>
+                </div>
+              </div>
               <button
                 onClick={() => setSelectedInvoice(null)}
-                className="transition-colors"
+                className="p-2 rounded-xl transition-colors flex-shrink-0"
                 style={{ color: 'var(--text-muted)' }}
-                onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent'; }}
               >
-                ×
+                <X className="h-5 w-5" strokeWidth={1.75} />
               </button>
             </div>
+            {/* Status badge + Tab navigation */}
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-full" style={{ background: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)', color: 'var(--accent-purple)', border: '1px solid color-mix(in srgb, var(--accent-purple) 20%, transparent)' }}>
+                {selectedInvoice.status.replace(/_/g, ' ')}
+              </span>
+              <div className="flex items-center gap-1 p-1 rounded-xl" style={{ background: 'var(--bg-elevated)' }}>
+                {(['overview', 'validation', 'actions', 'audit'] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    onClick={() => setDetailTab(tab)}
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all capitalize"
+                    style={detailTab === tab
+                      ? { background: 'var(--bg-card)', color: 'var(--text-primary)', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }
+                      : { color: 'var(--text-muted)' }}
+                  >
+                    {tab}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Tab Content — scrollable */}
+          <div className="flex-1 overflow-y-auto p-6">
+            {/* Overview Tab */}
+            {detailTab === 'overview' && (
             <div className="space-y-4">
-              <div>
-                <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Invoice Number</p>
-                <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.invoice_number}</p>
-              </div>
-              <div>
-                <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Vendor</p>
-                <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.vendor?.name}</p>
-              </div>
-              <div>
-                <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Amount</p>
-                <p className="text-sm font-semibold" style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-primary)' }}>
-                  {selectedInvoice.currency} {Number(selectedInvoice.total_amount).toFixed(2)}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Status</p>
-                <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.status}</p>
-              </div>
-              {(selectedInvoice as any).ocr_confidence_score !== undefined && (selectedInvoice as any).ocr_confidence_score !== null && (
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>OCR Confidence</p>
-                  <div className="flex items-center gap-2 mt-1">
+                  <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Invoice Number</p>
+                  <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.invoice_number}</p>
+                </div>
+                <div>
+                  <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Vendor</p>
+                  <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.vendor?.name}</p>
+                </div>
+                <div>
+                  <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Amount</p>
+                  <p className="text-sm font-semibold" style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-primary)' }}>
+                    {selectedInvoice.currency} {Number(selectedInvoice.total_amount).toFixed(2)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Status</p>
+                  <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.status.replace(/_/g, ' ')}</p>
+                </div>
+              </div>
+
+              {(selectedInvoice as any).ocr_confidence_score !== undefined && (selectedInvoice as any).ocr_confidence_score !== null && (
+                <div className="rounded-xl p-4" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
+                  <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>OCR Confidence</p>
+                  <div className="flex items-center gap-2">
                     <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'var(--border-subtle)' }}>
                       <div
-                        className={cn(
-                          'h-full rounded-full',
-                          Number((selectedInvoice as any).ocr_confidence_score) >= 0.9 ? '' : ''
-                        )}
+                        className="h-full rounded-full"
                         style={{ width: `${Math.round(Number((selectedInvoice as any).ocr_confidence_score) * 100)}%`, backgroundColor: Number((selectedInvoice as any).ocr_confidence_score) >= 0.9 ? 'var(--accent-lime)' : 'var(--accent-amber)' }}
                       />
                     </div>
-                    <span className="text-xs" style={{ color: 'var(--text-primary)' }}>
+                    <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>
                       {Math.round(Number((selectedInvoice as any).ocr_confidence_score) * 100)}%
                     </span>
                   </div>
                 </div>
               )}
-              <div>
-                <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Payment Terms</p>
-                <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.payment_terms}</p>
-              </div>
-              {selectedInvoice.incoterm && (
+
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Incoterm</p>
-                  <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.incoterm}</p>
+                  <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Payment Terms</p>
+                  <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.payment_terms}</p>
                 </div>
-              )}
-              <div>
-                <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Bill To</p>
-                <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.bill_to_entity}</p>
+                {selectedInvoice.incoterm && (
+                  <div>
+                    <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Incoterm</p>
+                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.incoterm}</p>
+                  </div>
+                )}
+                <div>
+                  <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Bill To</p>
+                  <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.bill_to_entity}</p>
+                </div>
               </div>
-              
+
               {/* Batch Threshold Indicator */}
               {selectedInvoice.status === (InvoiceStatus.ON_HOLD as any) && (
                 <div
@@ -2305,6 +2376,37 @@ export default function Dashboard() {
                 </div>
               )}
 
+              {/* Exceptions summary in overview */}
+              {selectedInvoice.exceptions && selectedInvoice.exceptions.length > 0 && (
+                <div className="p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}>
+                  <p className="text-sm font-semibold mb-2" style={{ color: 'var(--accent-red)' }}>Exceptions</p>
+                  {selectedInvoice.exceptions.map((exc) => (
+                    <p key={exc.id} className="text-xs" style={{ color: 'var(--accent-red)' }}>
+                      {exc.reason}: {exc.detail}
+                    </p>
+                  ))}
+                </div>
+              )}
+
+              {/* Payment Confirmation Sent — read-only label */}
+              {selectedInvoice.status === (InvoiceStatus.PAYMENT_CONFIRMATION_SENT as any) && (selectedInvoice as any).confirmation_sent_at && (
+                <div className="p-3 rounded-xl text-xs" style={{ background: 'color-mix(in srgb, var(--accent-lime) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-lime) 20%, transparent)' }}>
+                  <div className="flex items-center gap-2" style={{ color: 'var(--accent-lime)' }}>
+                    <CheckCircle className="h-4 w-4" strokeWidth={1.75} />
+                    <span className="font-medium">Confirmation Sent</span>
+                  </div>
+                  <p className="mt-1" style={{ color: 'var(--text-secondary)' }}>
+                    Sent on {new Date((selectedInvoice as any).confirmation_sent_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: '2-digit' })} to {selectedInvoice.vendor?.name}
+                    <br />CC: PURCHASINGTEAM@madison88.com
+                  </p>
+                </div>
+              )}
+            </div>
+            )}
+
+            {/* Actions Tab */}
+            {detailTab === 'actions' && (
+            <div className="space-y-3">
               {/* Edit Invoice Button */}
               {user && hasPermission(user.role, 'canEditInvoice') && (
                 <button
@@ -2513,24 +2615,18 @@ export default function Dashboard() {
                 </button>
               )}
 
-              {/* Payment Confirmation Sent — read-only label */}
-              {selectedInvoice.status === (InvoiceStatus.PAYMENT_CONFIRMATION_SENT as any) && (selectedInvoice as any).confirmation_sent_at && (
-                <div className="p-3 rounded-xl text-xs" style={{ background: 'color-mix(in srgb, var(--accent-lime) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-lime) 20%, transparent)' }}>
-                  <div className="flex items-center gap-2" style={{ color: 'var(--accent-lime)' }}>
-                    <CheckCircle className="h-4 w-4" strokeWidth={1.75} />
-                    <span className="font-medium">Confirmation Sent</span>
-                  </div>
-                  <p className="mt-1" style={{ color: 'var(--text-secondary)' }}>
-                    Sent on {new Date((selectedInvoice as any).confirmation_sent_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: '2-digit' })} to {selectedInvoice.vendor?.name}
-                    <br />CC: PURCHASINGTEAM@madison88.com
-                  </p>
+              {/* No actions available */}
+              {!user?.role || (user.role === 'MS_POLLY') && (
+                <div className="text-center py-8">
+                  <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No actions available for your role</p>
                 </div>
               )}
+            </div>
+            )}
 
-              {/* Audit Log */}
-              <AuditLogViewer invoiceId={selectedInvoice.id} />
-
-              {/* Validation Results - Detailed 17-Rule Display */}
+            {/* Validation Tab */}
+            {detailTab === 'validation' && (
+            <div className="space-y-4">
               {validationResult && (
                 <div className={`mt-4 p-4 rounded-lg border`} style={{ background: validationResult.passed ? 'color-mix(in srgb, var(--accent-lime) 10%, transparent)' : 'color-mix(in srgb, var(--accent-red) 10%, transparent)', border: `1px solid ${validationResult.passed ? 'color-mix(in srgb, var(--accent-lime) 20%, transparent)' : 'color-mix(in srgb, var(--accent-red) 20%, transparent)'}` }}>
                   <div className="flex items-center justify-between mb-3">
@@ -2640,7 +2736,23 @@ export default function Dashboard() {
                   ))}
                 </div>
               )}
+
+              {!validationResult && (
+                <div className="text-center py-8">
+                  <Shield className="h-8 w-8 mx-auto mb-2 opacity-30" style={{ color: 'var(--text-muted)' }} />
+                  <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No validation results yet</p>
+                  <p className="text-xs mt-1" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>Run validation to see detailed rule results</p>
+                </div>
+              )}
             </div>
+            )}
+
+            {/* Audit Tab */}
+            {detailTab === 'audit' && (
+            <div>
+              <AuditLogViewer invoiceId={selectedInvoice.id} />
+            </div>
+            )}
           </div>
         </div>
       )}
@@ -2794,8 +2906,9 @@ export default function Dashboard() {
               <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
                 Edit Invoice
               </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {[
+
+              {([
+                { title: 'Basic Information', fields: [
                   { label: 'Vendor Name', field: 'vendor_name_raw', type: 'text' },
                   { label: 'Invoice Number', field: 'invoice_number', type: 'text' },
                   { label: 'Invoice Date', field: 'invoice_date', type: 'date' },
@@ -2812,6 +2925,10 @@ export default function Dashboard() {
                     { value: 'PREPAID', label: 'Prepaid' },
                     { value: 'PROTO_SAMPLE', label: 'Proto Sample' },
                   ] },
+                  { label: 'Payment Terms', field: 'payment_terms', type: 'text' },
+                  { label: 'Incoterm', field: 'incoterm', type: 'text' },
+                ]},
+                { title: 'Classification', fields: [
                   { label: 'Brand', field: 'brand', type: 'text' },
                   { label: 'Brand Tier', field: 'brand_tier', type: 'select', options: [
                     { value: '', label: '— Select —' },
@@ -2825,28 +2942,6 @@ export default function Dashboard() {
                     { value: 'SMS', label: 'SMS' },
                     { value: 'SAMPLE', label: 'Sample' },
                   ] },
-                  { label: 'PO Number', field: 'customer_po_number', type: 'text' },
-                  { label: 'MPO Number', field: 'mpo_number', type: 'text' },
-                  { label: 'Base MPO', field: 'mpo_base_number', type: 'text' },
-                  { label: 'Order Sequence', field: 'mpo_order_sequence', type: 'text' },
-                  { label: 'Material Code', field: 'material_code', type: 'text' },
-                  { label: 'Material Name', field: 'material_name', type: 'text' },
-                  { label: 'QTY SHIPPED', field: 'qty_shipped', type: 'number' },
-                  { label: 'Payment Terms', field: 'payment_terms', type: 'text' },
-                  { label: 'Bank Name', field: 'bank_name', type: 'text' },
-                  { label: 'SWIFT Code', field: 'swift_code', type: 'text' },
-                  { label: 'Account Number', field: 'account_number', type: 'text' },
-                  { label: 'Ship To', field: 'ship_to', type: 'text' },
-                  { label: 'Sold To', field: 'sold_to', type: 'text' },
-                  { label: 'Subtotal', field: 'subtotal', type: 'number' },
-                  { label: 'Tax Amount', field: 'tax_amount', type: 'number' },
-                  { label: 'Discount', field: 'discount_amount', type: 'number' },
-                  { label: 'Bank Charges', field: 'bank_charges', type: 'number' },
-                  { label: 'Freight Charges', field: 'freight_charges', type: 'number' },
-                  { label: 'Additional Charges', field: 'additional_charges', type: 'number' },
-                  { label: 'Exchange Rate', field: 'exchange_rate_to_usd', type: 'number' },
-                  { label: 'Original Currency', field: 'invoice_currency_original', type: 'text' },
-                  { label: 'Incoterm', field: 'incoterm', type: 'text' },
                   { label: 'Category', field: 'category', type: 'select', options: [
                     { value: '', label: '— Select —' },
                     { value: 'TRIMS', label: 'Trims' },
@@ -2866,38 +2961,91 @@ export default function Dashboard() {
                     { value: 'MADISON_88_LTD', label: 'Madison 88 Ltd' },
                     { value: 'MADISON_88_HK_LIMITED', label: 'Madison 88 HK Limited' },
                   ] },
+                ]},
+                { title: 'PO & Material', fields: [
+                  { label: 'PO Number', field: 'customer_po_number', type: 'text' },
+                  { label: 'MPO Number', field: 'mpo_number', type: 'text' },
+                  { label: 'Base MPO', field: 'mpo_base_number', type: 'text' },
+                  { label: 'Order Sequence', field: 'mpo_order_sequence', type: 'text' },
+                  { label: 'Material Code', field: 'material_code', type: 'text' },
+                  { label: 'Material Name', field: 'material_name', type: 'text' },
+                  { label: 'QTY SHIPPED', field: 'qty_shipped', type: 'number' },
+                ]},
+                { title: 'Financial Details', fields: [
+                  { label: 'Subtotal', field: 'subtotal', type: 'number' },
+                  { label: 'Tax Amount', field: 'tax_amount', type: 'number' },
+                  { label: 'Discount', field: 'discount_amount', type: 'number' },
+                  { label: 'Bank Charges', field: 'bank_charges', type: 'number' },
+                  { label: 'Freight Charges', field: 'freight_charges', type: 'number' },
+                  { label: 'Additional Charges', field: 'additional_charges', type: 'number' },
+                  { label: 'Exchange Rate', field: 'exchange_rate_to_usd', type: 'number' },
+                  { label: 'Original Currency', field: 'invoice_currency_original', type: 'text' },
+                ]},
+                { title: 'Bank Details', fields: [
+                  { label: 'Bank Name', field: 'bank_name', type: 'text' },
+                  { label: 'SWIFT Code', field: 'swift_code', type: 'text' },
+                  { label: 'Account Number', field: 'account_number', type: 'text' },
+                ]},
+                { title: 'Shipping & Dates', fields: [
+                  { label: 'Ship To', field: 'ship_to', type: 'text' },
+                  { label: 'Sold To', field: 'sold_to', type: 'text' },
                   { label: 'Date Range Start', field: 'date_range_start', type: 'date' },
                   { label: 'Date Range End', field: 'date_range_end', type: 'date' },
                   { label: 'Priority Pay Date', field: 'priority_pay_date', type: 'date' },
-                ].map(({ label, field, type, options }: any) => (
-                  <div key={field}>
-                    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
-                      {label}
-                    </label>
-                    {type === 'select' ? (
-                      <select
-                        value={editFormData[field] || ''}
-                        onChange={(e) => handleEditChange(field, e.target.value)}
-                        className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
-                        style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
-                      >
-                        {options.map((opt: any) => (
-                          <option key={opt.value} value={opt.value}>{opt.label}</option>
-                        ))}
-                      </select>
-                    ) : (
-                      <input
-                        type={type}
-                        value={editFormData[field] || ''}
-                        onChange={(e) => handleEditChange(field, e.target.value)}
-                        className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
-                        style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
-                      />
-                    )}
-                  </div>
-                ))}
+                ]},
+              ] as any[]).map((section) => {
+                const isCollapsed = editCollapsed[section.title];
+                return (
+                <div key={section.title} className="mb-3 rounded-xl overflow-hidden" style={{ border: '1px solid var(--border-color)' }}>
+                  <button
+                    onClick={() => setEditCollapsed({ ...editCollapsed, [section.title]: !isCollapsed })}
+                    className="w-full flex items-center justify-between px-4 py-3 transition-colors"
+                    style={{ background: 'var(--bg-elevated)', color: 'var(--text-primary)' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--bg-elevated)'; }}
+                  >
+                    <span className="text-sm font-medium">{section.title}</span>
+                    <ChevronRight className="h-4 w-4 transition-transform" style={{ color: 'var(--text-muted)', transform: isCollapsed ? 'rotate(0deg)' : 'rotate(90deg)' }} />
+                  </button>
+                  {!isCollapsed && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
+                      {section.fields.map(({ label, field, type, options }: any) => (
+                        <div key={field}>
+                          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
+                            {label}
+                          </label>
+                          {type === 'select' ? (
+                            <select
+                              value={editFormData[field] || ''}
+                              onChange={(e) => handleEditChange(field, e.target.value)}
+                              className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                              style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                            >
+                              {options.map((opt: any) => (
+                                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type={type}
+                              value={editFormData[field] || ''}
+                              onChange={(e) => handleEditChange(field, e.target.value)}
+                              className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                              style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                            />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                );
+              })}
 
-                <div className="col-span-full flex flex-wrap gap-4 mt-2">
+              {/* Flags */}
+              <div className="mt-3 p-4 rounded-xl" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
+                <p className="text-sm font-medium mb-3" style={{ color: 'var(--text-primary)' }}>Flags</p>
+                <div className="flex flex-wrap gap-4">
                   {[
                     { label: 'Handwritten', field: 'is_handwritten' },
                     { label: 'Urgent', field: 'is_urgent' },
@@ -2914,13 +3062,14 @@ export default function Dashboard() {
                     </label>
                   ))}
                 </div>
-
-                <div className="col-span-full">
-                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Reason for edit</label>
-                  <textarea value={editFormData.edit_reason || ''} onChange={(e) => handleEditChange('edit_reason', e.target.value)} rows={2} placeholder="Required for material or financial changes" className="w-full px-3 py-2 rounded-xl text-sm" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }} />
-                </div>
-
               </div>
+
+              {/* Reason for edit */}
+              <div className="mt-3">
+                <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Reason for edit</label>
+                <textarea value={editFormData.edit_reason || ''} onChange={(e) => handleEditChange('edit_reason', e.target.value)} rows={2} placeholder="Required for material or financial changes" className="w-full px-3 py-2 rounded-xl text-sm" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }} />
+              </div>
+
               <div className="mt-6 flex justify-end space-x-3">
                 <button
                   onClick={() => setShowEditModal(false)}

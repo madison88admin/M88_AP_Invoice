@@ -69,9 +69,9 @@
   --logo-bg: #6C5CE7;
 
   /* Lime (primary CTA) — slightly muted for white backgrounds */
-  --accent-lime: #a3e635;
-  --accent-lime-hover: #92d62f;
-  --accent-lime-glow: rgba(163, 230, 53, 0.25);
+  --accent-lime: #84cc16;
+  --accent-lime-hover: #65a30d;
+  --accent-lime-glow: rgba(132, 204, 22, 0.25);
 
   /* Status colors — darker for legibility on white */
   --accent-green: #16a34a;

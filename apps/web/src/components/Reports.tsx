@@ -264,28 +264,7 @@ export default function Reports() {
   })();
 
   return (
-    <div className="min-h-screen animate-page-in" style={{ background: 'var(--bg-base)' }}>
-      <div className="relative z-10 max-w-7xl mx-auto p-6">
-        <header className="px-6 py-4 -mx-6 mb-8" style={{ borderBottom: '1px solid var(--border-color)' }}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Link to="/" className="transition-colors" style={{ color: 'var(--text-muted)' }}
-                onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
-              >
-                <ArrowLeft className="h-5 w-5" strokeWidth={1.75} />
-              </Link>
-              <div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))', boxShadow: '0 0 16px color-mix(in srgb, var(--accent-purple) 25%, transparent)' }}>
-                <TrendingUp className="h-5 w-5 text-white" strokeWidth={1.75} />
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Reports & Analytics</h1>
-                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Comprehensive insights into your invoice processing performance</p>
-              </div>
-            </div>
-          </div>
-        </header>
-
+    <div className="max-w-7xl mx-auto">
         {/* Tab Navigation */}
         <div className="p-2 mb-6 rounded-2xl" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
           <div className="flex space-x-2">
@@ -685,7 +664,6 @@ export default function Reports() {
             )}
           </div>
         )}
-      </div>
     </div>
   );
 }

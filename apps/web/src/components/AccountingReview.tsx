@@ -42,33 +42,8 @@ export default function AccountingReview() {
   };
 
   return (
-    <div className="min-h-screen animate-page-in" style={{ background: 'var(--bg-base)' }}>
-      <div className="relative z-10">
-        <header className="px-6 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))', boxShadow: '0 0 16px color-mix(in srgb, var(--accent-purple) 25%, transparent)' }}>
-                <FileSearch className="h-5 w-5 text-white" strokeWidth={1.75} />
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Accounting Review</h1>
-                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Review posted invoices and audit trail</p>
-              </div>
-            </div>
-            <Link
-              to="/"
-              className="flex items-center px-4 py-2.5 rounded-xl transition-all text-sm font-medium"
-              style={{ color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-card-hover)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = ''; e.currentTarget.style.color = 'var(--text-secondary)'; }}
-            >
-              Back to Dashboard
-            </Link>
-          </div>
-        </header>
-
-        <main className="px-6 py-8">
-          {/* Tab Switcher */}
+    <div>
+        {/* Tab Switcher */}
           <div className="flex gap-2 mb-6">
             <button
               onClick={() => setActiveTab('posted')}
@@ -309,8 +284,6 @@ export default function AccountingReview() {
               </div>
             </div>
           )}
-        </main>
-      </div>
-    </div>
+        </div>
   );
 }

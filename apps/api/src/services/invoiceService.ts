@@ -286,7 +286,12 @@ export const getInvoices = async (filters: any, userRole?: string) => {
   const where: any = {};
 
   if (filters.status) {
-    where.status = filters.status;
+    const validStatuses = Object.values(InvoiceStatus);
+    if (validStatuses.includes(filters.status)) {
+      where.status = filters.status;
+    } else {
+      return [];
+    }
   }
 
   // Role-based filtering at API level

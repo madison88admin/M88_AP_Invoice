@@ -101,24 +101,7 @@ export default function AuditLog() {
   };
 
   return (
-    <div className="min-h-screen animate-page-in" style={{ background: 'var(--bg-base)' }}>
-      <header className="px-6 py-4 border-b flex items-center justify-between" style={{ background: 'var(--bg-card)', borderColor: 'var(--border-color)' }}>
-        <div className="flex items-center gap-3">
-          <img src="/madison-logo.png" alt="Madison 88" className="h-8 w-auto" />
-          <h1 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Audit Logs</h1>
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{user?.name}</span>
-          <button onClick={() => navigate('/dashboard')} className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all" style={{ background: 'var(--bg-card-hover)', border: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
-            <LayoutDashboard className="h-4 w-4" /> Dashboard
-          </button>
-          <button onClick={handleLogout} className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all" style={{ background: 'var(--bg-card-hover)', border: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
-            <LogOut className="h-4 w-4" /> Logout
-          </button>
-        </div>
-      </header>
-
-      <main className="p-6 max-w-7xl mx-auto">
+    <div className="max-w-7xl mx-auto">
         <form onSubmit={handleSearch} className="rounded-xl p-4 mb-6 grid grid-cols-1 md:grid-cols-5 gap-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
           <div>
             <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Action</label>
@@ -214,7 +197,6 @@ export default function AuditLog() {
             </table>
           </div>
         </div>
-      </main>
     </div>
   );
 }

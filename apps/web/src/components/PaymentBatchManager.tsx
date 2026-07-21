@@ -4,6 +4,7 @@ import { Package, Play, X, AlertCircle, CheckCircle, Clock, DollarSign, ArrowLef
 import { paymentBatchApi } from '../lib/api';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 
 interface ScheduledPayment {
   id: string;
@@ -62,6 +63,7 @@ interface PaymentBatch {
 
 export default function PaymentBatchManager() {
   const { user } = useAuth();
+  const { showToast } = useToast();
   const [activeTab, setActiveTab] = useState<'scheduled' | 'batches'>('scheduled');
   const [batches, setBatches] = useState<PaymentBatch[]>([]);
   const [scheduledPayments, setScheduledPayments] = useState<ScheduledPayment[]>([]);
@@ -177,8 +179,10 @@ export default function PaymentBatchManager() {
         await paymentBatchApi.selectPayments([paymentId]);
         setSelectedPaymentIds(prev => { const next = new Set(prev); next.add(paymentId); return next; });
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to toggle payment selection:', error);
+      const msg = error?.response?.data?.error?.message || 'Failed to toggle payment selection';
+      showToast(msg, 'error');
     } finally {
       setActionLoading(false);
     }
@@ -191,8 +195,10 @@ export default function PaymentBatchManager() {
     try {
       await paymentBatchApi.selectPayments(unselected.map(p => p.id));
       setSelectedPaymentIds(new Set(scheduledPayments.map(p => p.id)));
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to select all payments:', error);
+      const msg = error?.response?.data?.error?.message || 'Failed to select all payments';
+      showToast(msg, 'error');
     } finally {
       setActionLoading(false);
     }
@@ -204,8 +210,10 @@ export default function PaymentBatchManager() {
     try {
       await paymentBatchApi.deselectPayments(Array.from(selectedPaymentIds));
       setSelectedPaymentIds(new Set());
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to deselect all payments:', error);
+      const msg = error?.response?.data?.error?.message || 'Failed to deselect all payments';
+      showToast(msg, 'error');
     } finally {
       setActionLoading(false);
     }
@@ -245,8 +253,10 @@ export default function PaymentBatchManager() {
       setSelectedBatch(null);
       setShowExecutionModal(false);
       setExecutionForm({ paidDate: new Date().toISOString().split('T')[0], reference: '', bankUsed: '', remarks: '', proof: null });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to process batch:', error);
+      const msg = error?.response?.data?.error?.message || 'Failed to process batch';
+      showToast(msg, 'error');
     } finally {
       setProcessing(false);
     }
@@ -263,8 +273,10 @@ export default function PaymentBatchManager() {
       if (action === 'export') await paymentBatchApi.markExported(batchId);
       await loadBatches();
       setSelectedBatch(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error(`Failed to ${action} batch:`, error);
+      const msg = error?.response?.data?.error?.message || `Failed to ${action} batch`;
+      showToast(msg, 'error');
     } finally {
       setProcessing(false);
     }
@@ -279,8 +291,10 @@ export default function PaymentBatchManager() {
       setShowCancelModal(false);
       setCancelReason('');
       setSelectedBatch(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to cancel batch:', error);
+      const msg = error?.response?.data?.error?.message || 'Failed to cancel batch';
+      showToast(msg, 'error');
     } finally {
       setProcessing(false);
     }
@@ -334,29 +348,7 @@ export default function PaymentBatchManager() {
   }, new Map<string, {vendor:string;currency:string;account:string;entity:string;count:number;total:number}>()).values());
 
   return (
-    <div className="min-h-screen animate-page-in" style={{ background: 'var(--bg-base)' }}>
-      <div className="relative z-10 px-6 py-8 space-y-6">
-        <header className="px-6 py-4 -mx-6" style={{ borderBottom: '1px solid var(--border-color)' }}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Link to="/" className="transition-colors" style={{ color: 'var(--text-muted)' }}
-                onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
-              >
-                <ArrowLeft className="h-5 w-5" strokeWidth={1.75} />
-              </Link>
-              <div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))', boxShadow: '0 0 16px color-mix(in srgb, var(--accent-purple) 25%, transparent)' }}>
-                <Package className="h-5 w-5 text-white" strokeWidth={1.75} />
-              </div>
-
-              <div>
-                <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Payment Batches</h1>
-                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Manage payment batches for wire transfers</p>
-              </div>
-            </div>
-          </div>
-        </header>
-
+    <div className="space-y-6">
         {/* Tabs */}
         <div className="flex gap-2">
           <button
@@ -812,7 +804,6 @@ export default function PaymentBatchManager() {
             </div>
           </div>
         )}
-      </div>
     </div>
   );
 }

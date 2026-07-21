@@ -321,18 +321,6 @@ export default function InvoiceUpload() {
 
   return (
     <div className="rounded-2xl p-8" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center">
-          <Link to="/" className="mr-4 transition-colors" style={{ color: 'var(--text-muted)' }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
-          >
-            <ArrowLeft className="h-5 w-5" strokeWidth={1.75} />
-          </Link>
-          <h2 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Upload Invoice</h2>
-        </div>
-      </div>
-
       {!ocrResult ? (
         <>
           <div

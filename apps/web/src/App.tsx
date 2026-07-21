@@ -22,6 +22,8 @@ import InvoiceRepository from './components/InvoiceRepository';
 import PurchasingWorkbench from './components/PurchasingWorkbench';
 import ProtectedRoute from './components/ProtectedRoute';
 import NotFound from './components/NotFound';
+import AppLayout from './components/AppLayout';
+import { FileText, CheckSquare, AlertTriangle, Building2, Package, BarChart3, FileSearch, Users, Settings, Upload, FileSearch as AuditIcon } from 'lucide-react';
 
 function App() {
   return (
@@ -44,75 +46,109 @@ function App() {
                 } />
                 <Route path="/upload" element={
                   <ProtectedRoute>
-                    <InvoiceUpload />
+                    <AppLayout title="Upload Invoice" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}><Upload className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
+                      <InvoiceUpload />
+                    </AppLayout>
                   </ProtectedRoute>
                 } />
                 <Route path="/approvals" element={
                   <ProtectedRoute>
-                    <ApprovalInbox />
+                    <AppLayout title="Approval Inbox" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}><CheckSquare className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
+                      <ApprovalInbox />
+                    </AppLayout>
                   </ProtectedRoute>
                 } />
                 <Route path="/exceptions" element={
                   <ProtectedRoute>
-                    <ExceptionManager />
+                    <AppLayout title="Exception Manager" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}><AlertTriangle className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
+                      <ExceptionManager />
+                    </AppLayout>
                   </ProtectedRoute>
                 } />
                 <Route path="/payment-batches" element={
                   <ProtectedRoute>
-                    <PaymentBatchManager />
+                    <AppLayout title="Payment Batches" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}><Package className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
+                      <PaymentBatchManager />
+                    </AppLayout>
                   </ProtectedRoute>
                 } />
                 <Route path="/reports" element={
                   <ProtectedRoute>
-                    <Reports />
+                    <AppLayout title="Reports" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}><BarChart3 className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
+                      <Reports />
+                    </AppLayout>
                   </ProtectedRoute>
                 } />
                 <Route path="/accounting-review" element={
                   <ProtectedRoute>
-                    <AccountingReview />
+                    <AppLayout title="Accounting Review" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}><FileSearch className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
+                      <AccountingReview />
+                    </AppLayout>
                   </ProtectedRoute>
                 } />
                 <Route path="/vendors" element={
                   <ProtectedRoute>
-                    <VendorManagement />
+                    <AppLayout title="Vendor Management" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}><Building2 className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
+                      <VendorManagement />
+                    </AppLayout>
                   </ProtectedRoute>
                 } />
                 <Route path="/audit-logs" element={
                   <ProtectedRoute>
-                    <AuditLog />
+                    <AppLayout title="Audit Logs" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}><AuditIcon className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
+                      <AuditLog />
+                    </AppLayout>
                   </ProtectedRoute>
                 } />
                 <Route path="/extraction-analytics" element={
                   <ProtectedRoute>
-                    <ExtractionDashboard />
+                    <AppLayout title="Extraction Analytics" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}><FileText className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
+                      <ExtractionDashboard />
+                    </AppLayout>
                   </ProtectedRoute>
                 } />
                 <Route path="/sla-analytics" element={
                   <ProtectedRoute>
-                    <SLAAnalyticsDashboard />
+                    <AppLayout title="SLA Analytics" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}><BarChart3 className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
+                      <SLAAnalyticsDashboard />
+                    </AppLayout>
                   </ProtectedRoute>
                 } />
                 <Route path="/on-hold-queue" element={
                   <ProtectedRoute>
-                    <OnHoldQueue />
+                    <AppLayout title="On-Hold Queue" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}><AlertTriangle className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
+                      <OnHoldQueue />
+                    </AppLayout>
                   </ProtectedRoute>
                 } />
                 <Route path="/users" element={
                   <ProtectedRoute>
-                    <UserManagement />
+                    <AppLayout title="User Management" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}><Users className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
+                      <UserManagement />
+                    </AppLayout>
                   </ProtectedRoute>
                 } />
                 <Route path="/settings" element={
                   <ProtectedRoute>
-                    <SettingsPage />
+                    <AppLayout title="System Configuration" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}><Settings className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
+                      <SettingsPage />
+                    </AppLayout>
                   </ProtectedRoute>
                 } />
                 <Route path="/repository" element={
                   <ProtectedRoute>
-                    <InvoiceRepository />
+                    <AppLayout title="Invoice Repository" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}><FileText className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
+                      <InvoiceRepository />
+                    </AppLayout>
                   </ProtectedRoute>
                 } />
-                <Route path="/purchasing-workbench" element={<ProtectedRoute><PurchasingWorkbench /></ProtectedRoute>} />
+                <Route path="/purchasing-workbench" element={
+                  <ProtectedRoute>
+                    <AppLayout title="Purchasing Workbench" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}><Package className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
+                      <PurchasingWorkbench />
+                    </AppLayout>
+                  </ProtectedRoute>
+                } />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </Router>

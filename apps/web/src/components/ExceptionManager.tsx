@@ -8,7 +8,7 @@ import { MockException } from '../lib/mockData';
 import { exceptionApi } from '../lib/api';
 import { getStatusStyle } from '../lib/statusStyle';
 
-type ExceptionFilter = 'OPEN' | 'RESOLVED' | 'WAIVED' | 'ALL';
+type ExceptionFilter = 'OPEN' | 'PENDING' | 'RESOLVED' | 'WAIVED' | 'ALL';
 
 export default function ExceptionManager() {
   const { invoices, resolveException, refresh } = useMockData();
@@ -37,8 +37,13 @@ export default function ExceptionManager() {
   };
 
   // Sort by creation time (FIFO) and apply status + search filter
+  // 'OPEN' tab matches both 'OPEN' and 'PENDING' (backend uses PENDING)
   const filteredExceptions = exceptions
-    .filter(exc => filter === 'ALL' || exc.status === filter)
+    .filter(exc => {
+      if (filter === 'ALL') return true;
+      if (filter === 'OPEN') return exc.status === 'OPEN' || exc.status === 'PENDING';
+      return exc.status === filter;
+    })
     .filter(exc => {
       if (!searchQuery.trim()) return true;
       const q = searchQuery.toLowerCase();
@@ -63,7 +68,7 @@ export default function ExceptionManager() {
     const state = location.state as { selectedInvoiceId?: string } | null;
     if (state?.selectedInvoiceId && invoices.length > 0) {
       const invoiceExceptions = exceptions.filter(
-        exc => exc.invoice_id === state.selectedInvoiceId && exc.status === 'OPEN'
+        exc => exc.invoice_id === state.selectedInvoiceId && (exc.status === 'OPEN' || exc.status === 'PENDING')
       );
       if (invoiceExceptions.length > 0) {
         setSelectedException(invoiceExceptions[0]);
@@ -155,7 +160,7 @@ export default function ExceptionManager() {
     <div>
         <div className="flex items-center justify-between mb-4">
           <div className="text-xs md:text-sm" style={{ color: 'var(--text-muted)' }}>
-            {exceptions.filter(exc => exc.status === 'OPEN').length} active / {exceptions.length} total
+            {exceptions.filter(exc => exc.status === 'OPEN' || exc.status === 'PENDING').length} active / {exceptions.length} total
           </div>
         </div>
 
@@ -219,7 +224,11 @@ export default function ExceptionManager() {
               >
                 {tab.label}
                 <span className="ml-2 px-2 py-0.5 text-xs rounded-full" style={{ background: filter === tab.key ? 'rgba(255,255,255,0.2)' : 'var(--bg-card-hover)' }}>
-                  {exceptions.filter(exc => tab.key === 'ALL' || exc.status === tab.key).length}
+                  {exceptions.filter(exc => {
+                    if (tab.key === 'ALL') return true;
+                    if (tab.key === 'OPEN') return exc.status === 'OPEN' || exc.status === 'PENDING';
+                    return exc.status === tab.key;
+                  }).length}
                 </span>
               </button>
             ))}
@@ -352,7 +361,7 @@ export default function ExceptionManager() {
                         <div className="text-sm" style={{ color: 'var(--text-primary)' }}>{selectedException.resolved_by}</div>
                       </div>
                     )}
-                    {selectedException.status === 'OPEN' && user && ['PURCHASING_COORDINATOR', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'].includes(user.role) && (
+                    {(selectedException.status === 'OPEN' || selectedException.status === 'PENDING') && user && ['PURCHASING_COORDINATOR', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'].includes(user.role) && (
                       <div className="space-y-2 pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
                         <button
                           onClick={() => navigate('/', { state: { selectedInvoiceId: selectedInvoice.id } })}

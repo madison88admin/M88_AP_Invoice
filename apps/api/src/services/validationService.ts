@@ -82,7 +82,10 @@ export async function validateInvoiceWithData(
   };
 }
 
-export async function validateInvoice(invoiceId: string): Promise<InvoiceValidationResult> {
+export async function validateInvoice(
+  invoiceId: string,
+  options?: { skipAutoAdvance?: boolean }
+): Promise<InvoiceValidationResult> {
   if (!isDbEnabled()) {
     throw new AppError('Database not available', 500);
   }
@@ -128,16 +131,17 @@ export async function validateInvoice(invoiceId: string): Promise<InvoiceValidat
     },
   });
 
-  // Waived reasons are explicitly accepted. Resolved reasons must be checked
-  // again so a still-broken rule is not permanently suppressed.
-  const previouslyWaived = await prisma.exception.findMany({
+  // Both waived and resolved reasons are explicitly accepted by a coordinator.
+  // Re-creating them would cause an infinite resolve → revalidate → re-create loop.
+  // The coordinator said "I accept this" (waive) or "I fixed it" (resolve) — trust them.
+  const previouslyHandled = await prisma.exception.findMany({
     where: {
       invoice_id: invoiceId,
-      status: 'WAIVED' as any,
+      status: { in: ['WAIVED', 'RESOLVED'] as any },
     },
     select: { reason: true },
   });
-  const waivedReasons = new Set(previouslyWaived.map(e => e.reason as string));
+  const waivedReasons = new Set(previouslyHandled.map(e => e.reason as string));
 
   const results: ValidationResult[] = [];
   const exceptions: Array<{ reason: ExceptionReason; detail: string }> = [];
@@ -323,11 +327,14 @@ export async function validateInvoice(invoiceId: string): Promise<InvoiceValidat
     });
 
     // A waiver is an explicit acceptance of the failing rule, so continue the
-    // same approval routing used by a clean validation result.
-    try {
-      await createApprovalRequest(invoiceId, 'system', { fromExceptionResolution: true });
-    } catch (error) {
-      logger.error('Failed to create approval request after waived validation exceptions:', error);
+    // same approval routing used by a clean validation result — unless the
+    // caller asked us to hold for an explicit coordinator approval (resolve flow).
+    if (!options?.skipAutoAdvance) {
+      try {
+        await createApprovalRequest(invoiceId, 'system', { fromExceptionResolution: true });
+      } catch (error) {
+        logger.error('Failed to create approval request after waived validation exceptions:', error);
+      }
     }
   } else {
     // Batch threshold check: hold invoices below $100 cumulative per vendor
@@ -352,12 +359,15 @@ export async function validateInvoice(invoiceId: string): Promise<InvoiceValidat
         data: { status: InvoiceStatus.VALIDATION_PENDING as any },
       });
 
-      // Auto-create approval request when validation passes
-      try {
-        await createApprovalRequest(invoiceId, 'system', { fromExceptionResolution: true });
-      } catch (error) {
-        // Log error but don't fail validation if approval request fails
-        logger.error('Failed to create approval request:', error);
+      // Auto-create approval request when validation passes — unless the
+      // caller asked us to hold for an explicit coordinator approval (resolve flow).
+      if (!options?.skipAutoAdvance) {
+        try {
+          await createApprovalRequest(invoiceId, 'system', { fromExceptionResolution: true });
+        } catch (error) {
+          // Log error but don't fail validation if approval request fails
+          logger.error('Failed to create approval request:', error);
+        }
       }
     }
   }
@@ -1056,6 +1066,69 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
       matchLevel = resolution.matchLevel;
     }
 
+    // FALLBACK: If still at MPO_HEADER level, try matching using invoice line items from DB.
+    // This handles cases where the invoice header doesn't have material_code/material_name
+    // but the InvoiceLine records do (e.g., from OCR line item extraction).
+    let matchedInvoiceLineAmount = 0; // sum of invoice line amounts that matched a PO line
+    let matchedInvoiceLineQty = 0;   // sum of invoice line quantities that matched a PO line
+    if (matchLevel === 'MPO_HEADER' && targetLines.length > 1) {
+      // Gather line items from both DB InvoiceLine records and ocr_raw_data JSON
+      const dbLines = (invoice as any).invoice_lines || (invoice as any).line_items || [];
+      const rawLineItems = Array.isArray(rawData.line_items) ? rawData.line_items : [];
+      const invoiceLines = [...dbLines, ...rawLineItems];
+      if (invoiceLines.length > 0) {
+        // Try matching each invoice line to a PO line by material code
+        const matchedPoLines: any[] = [];
+        for (const invLine of invoiceLines) {
+          const lineMaterialCode = String(invLine.material_code || invLine.item_code || invLine.sku || '').trim().toUpperCase();
+          const lineMaterialName = String(invLine.material_name || invLine.description || '').trim().toUpperCase();
+          const lineQty = Number(invLine.quantity || 0);
+          const lineAmount = Number(invLine.line_amount || invLine.total_amount || 0);
+          if (lineMaterialCode || lineMaterialName) {
+            const lineResolution = matchMPOLines(targetLines, {
+              materialCode: lineMaterialCode,
+              materialName: lineMaterialName,
+            });
+
+            if (lineResolution.error === 'AMBIGUOUS_MATERIAL' && lineResolution.lines.length > 1) {
+              // Disambiguate by quantity or amount match
+              const disambiguated = lineResolution.lines.find((poLine: any) => {
+                const poQty = Number(poLine.quantity || 0);
+                const poAmount = Number(poLine.total_amount || 0);
+                if (lineQty > 0 && poQty > 0 && lineQty === poQty) return true;
+                if (lineAmount > 0 && poAmount > 0 && Math.abs(lineAmount - poAmount) < 0.01) return true;
+                return false;
+              });
+              if (disambiguated) {
+                if (!matchedPoLines.find(l => l.line_id === disambiguated.line_id)) {
+                  matchedPoLines.push(disambiguated);
+                  matchedInvoiceLineAmount += lineAmount;
+                  matchedInvoiceLineQty += lineQty;
+                }
+                continue;
+              }
+            }
+
+            if (!lineResolution.error && lineResolution.lines.length > 0) {
+              // Match found — add the PO line(s) to our target
+              for (const matchedLine of lineResolution.lines) {
+                if (!matchedPoLines.find(l => l.line_id === matchedLine.line_id)) {
+                  matchedPoLines.push(matchedLine);
+                  matchedInvoiceLineAmount += lineAmount;
+                  matchedInvoiceLineQty += lineQty;
+                }
+              }
+            }
+          }
+        }
+        if (matchedPoLines.length > 0) {
+          targetLines = matchedPoLines;
+          matchLevel = 'MATERIAL_LINE';
+          console.log(`[Validation] Line-level match found via invoice line items: ${matchedPoLines.length} PO line(s) matched, matched invoice line amount: $${matchedInvoiceLineAmount.toFixed(2)}`);
+        }
+      }
+    }
+
     // Amount check (>5% variance = fail)
     // Subtract all charges from invoice total to get the net goods amount for PO comparison
     const poAmount = matchLevel !== 'MPO_HEADER'
@@ -1078,13 +1151,22 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
       + financeSurcharge + setupCharge + sampleCharge + minOrderCharge + additionalCharges;
     const netInvoiceAmount = invoiceTotal - totalCharges + discountAmount;
 
+    // When line-level matching found only SOME invoice lines matching PO lines,
+    // compare the matched invoice line amounts against the matched PO line amounts
+    // instead of the full invoice total against only the matched PO lines.
+    const comparisonAmount = (matchLevel === 'MATERIAL_LINE' && matchedInvoiceLineAmount > 0)
+      ? matchedInvoiceLineAmount
+      : netInvoiceAmount;
+
     if (poAmount > 0) {
       // Compare net invoice amount (minus charges) against PO amount
-      const variance = Math.abs(netInvoiceAmount - poAmount) / poAmount;
+      const variance = Math.abs(comparisonAmount - poAmount) / poAmount;
       if (variance > 0.05) {
-        const chargeDetail = totalCharges > 0
+        const chargeDetail = totalCharges > 0 && comparisonAmount === netInvoiceAmount
           ? ` (invoice $${invoiceTotal.toFixed(2)} minus charges $${totalCharges.toFixed(2)} = net $${netInvoiceAmount.toFixed(2)})`
-          : '';
+          : (comparisonAmount !== netInvoiceAmount
+            ? ` (matched invoice lines $${comparisonAmount.toFixed(2)} vs matched PO lines $${poAmount.toFixed(2)})`
+            : '');
         differences.push(
           `Amount: invoice $${invoiceTotal.toFixed(2)} vs PO $${poAmount.toFixed(2)} (${(variance * 100).toFixed(1)}% variance)${chargeDetail}`
         );
@@ -1092,10 +1174,15 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
     }
 
     // Quantity check (if invoice has qty_shipped and PO has line items)
+    // When line-level matching found only SOME invoice lines, compare matched invoice line qty
+    // against matched PO line qty instead of full invoice qty vs only matched PO lines.
     const invoiceQty = Number(invoice.qty_shipped || 0);
     const poQty = targetLines.reduce((sum: number, li: any) => sum + Number(li.quantity || 0), 0);
-    if (invoiceQty > 0 && poQty > 0 && invoiceQty !== poQty) {
-      differences.push(`Quantity: invoice ${invoiceQty} vs PO ${poQty}`);
+    const comparisonQty = (matchLevel === 'MATERIAL_LINE' && matchedInvoiceLineQty > 0)
+      ? matchedInvoiceLineQty
+      : invoiceQty;
+    if (comparisonQty > 0 && poQty > 0 && comparisonQty !== poQty) {
+      differences.push(`Quantity: invoice ${comparisonQty} vs PO ${poQty}`);
     }
 
     // Vendor name check (only if MPO matches)

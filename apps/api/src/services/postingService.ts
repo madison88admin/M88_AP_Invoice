@@ -182,68 +182,81 @@ export async function postInvoice(invoiceId: string, userId: string, bypassVaria
   }
 
   if (!check.ready) {
-    // Create exceptions for blocking flags and route to accounting review
+    // Create exceptions for blocking flags and route to accounting review.
+    // Skip flags that were already acknowledged (RESOLVED/WAIVED) by a previous
+    // release-from-hold — otherwise the invoice loops ON_HOLD → release → post → ON_HOLD.
+    const remainingBlockFlags: typeof check.flags = [];
     for (const flag of check.flags) {
+      if (flag.severity !== 'block') continue;
       const flagReason = flag.type === 'AMOUNT_VARIANCE'
         ? ExceptionReason.AMOUNT_MISMATCH
         : flag.type === 'PO_NOT_FOUND'
         ? ExceptionReason.PO_NOT_FOUND
         : ExceptionReason.AMOUNT_MISMATCH;
-      
-      // Check if an exception with the same reason and similar detail already exists
+
+      // Check if this exact pre-post flag was already handled (PENDING or RESOLVED/WAIVED)
       const existingException = await prisma.exception.findFirst({
         where: {
           invoice_id: invoiceId,
           reason: flagReason as any,
-          status: 'PENDING' as any,
+          status: { in: ['PENDING', 'RESOLVED', 'WAIVED'] as any },
           detail: {
             contains: `[PRE-POST ${flag.severity.toUpperCase()}]`,
           },
         },
       });
-      
-      // Only create exception if it doesn't already exist
-      if (!existingException) {
-        await prisma.exception.create({
+
+      if (existingException) {
+        // Already acknowledged — skip this flag entirely
+        continue;
+      }
+
+      // New blocking flag — create exception and hold
+      await prisma.exception.create({
+        data: {
+          invoice_id: invoiceId,
+          reason: flagReason as any,
+          detail: `[PRE-POST ${flag.severity.toUpperCase()}] ${flag.detail}`,
+        },
+      });
+      remainingBlockFlags.push(flag);
+    }
+
+    // If all blocking flags were already acknowledged, proceed with posting
+    if (remainingBlockFlags.length === 0) {
+      check.ready = true;
+    } else {
+      await prisma.invoice.update({
+        where: { id: invoiceId },
+        data: { status: InvoiceStatus.ON_HOLD as any },
+      });
+
+      // Exit the PENDING_ACCOUNTING stage timestamp — SLA stops ticking while on hold
+      const holdStage = await prisma.stageTimestamp.findFirst({
+        where: { invoice_id: invoiceId, stage: InvoiceStatus.PENDING_ACCOUNTING as any, exited_at: null },
+      });
+      if (holdStage) {
+        const elapsedHours = calcWorkingHoursElapsed(new Date(holdStage.entered_at), new Date());
+        await prisma.stageTimestamp.update({
+          where: { id: holdStage.id },
           data: {
-            invoice_id: invoiceId,
-            reason: flagReason as any,
-            detail: `[PRE-POST ${flag.severity.toUpperCase()}] ${flag.detail}`,
+            exited_at: new Date(),
+            is_breached: elapsedHours > holdStage.sla_hours,
           },
         });
       }
-    }
 
-    await prisma.invoice.update({
-      where: { id: invoiceId },
-      data: { status: InvoiceStatus.ON_HOLD as any },
-    });
-
-    // Exit the PENDING_ACCOUNTING stage timestamp — SLA stops ticking while on hold
-    const accountingStage = await prisma.stageTimestamp.findFirst({
-      where: { invoice_id: invoiceId, stage: InvoiceStatus.PENDING_ACCOUNTING as any, exited_at: null },
-    });
-    if (accountingStage) {
-      const elapsedHours = calcWorkingHoursElapsed(new Date(accountingStage.entered_at), new Date());
-      await prisma.stageTimestamp.update({
-        where: { id: accountingStage.id },
+      await prisma.auditLog.create({
         data: {
-          exited_at: new Date(),
-          is_breached: elapsedHours > accountingStage.sla_hours,
+          invoice_id: invoiceId,
+          action: 'PRE_POST_CHECK_FAILED',
+          performed_by: userId,
+          note: `Pre-post check failed: ${remainingBlockFlags.filter((f: any) => f.severity === 'block').length} block(s), ${check.flags.filter((f: any) => f.severity === 'warn').length} warn(s). ${remainingBlockFlags.map((f: any) => f.detail).join(' | ')}`,
         },
       });
+
+      return { posted: false, status: 'ON_HOLD', flags: check.flags };
     }
-
-    await prisma.auditLog.create({
-      data: {
-        invoice_id: invoiceId,
-        action: 'PRE_POST_CHECK_FAILED',
-        performed_by: userId,
-        note: `Pre-post check failed: ${check.flags.filter(f => f.severity === 'block').length} block(s), ${check.flags.filter(f => f.severity === 'warn').length} warn(s). ${check.flags.map(f => f.detail).join(' | ')}`,
-      },
-    });
-
-    return { posted: false, status: 'ON_HOLD', flags: check.flags };
   }
 
   // Log any warnings (non-blocking) as audit trail

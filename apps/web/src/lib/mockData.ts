@@ -124,7 +124,7 @@ export interface MockException {
   reason: ExceptionReason;
   description: string;
   detail?: string;
-  status: 'OPEN' | 'RESOLVED' | 'WAIVED';
+  status: 'OPEN' | 'PENDING' | 'RESOLVED' | 'WAIVED';
   resolution_notes?: string;
   resolved_at?: string;
   resolved_by?: string;

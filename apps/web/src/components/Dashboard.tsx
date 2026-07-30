@@ -577,7 +577,7 @@ export default function Dashboard() {
         showToast('You must be logged in to approve invoices', 'error');
         return;
       }
-      
+
       // Signature attribution: pass user's name as signer
       // Backend will record full signature details (signer_name, signer_role, signed_at, is_digital)
       await invoiceApi.approve(invoiceId, user.name);
@@ -588,6 +588,38 @@ export default function Dashboard() {
       console.error('Failed to approve invoice:', error);
       const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to approve invoice';
       showToast(msg, 'error');
+    }
+  };
+
+  // Combined: request approval then immediately approve as coordinator.
+  // Used when coordinator resolved exceptions and wants to approve in one click
+  // (invoice is in VALIDATION_PENDING, needs to advance to PENDING_COORDINATOR first).
+  const handleResolveAndApprove = async (invoiceId: string) => {
+    try {
+      if (!user) {
+        showToast('You must be logged in to approve invoices', 'error');
+        return;
+      }
+      setRequestingApproval(true);
+      // Step 1: create approval request (moves VALIDATION_PENDING → PENDING_COORDINATOR)
+      await invoiceApi.requestApproval(invoiceId);
+      // Step 2: approve as coordinator
+      await invoiceApi.approve(invoiceId, user.name);
+      showToast('Invoice approved successfully', 'success');
+      await refresh();
+      setSelectedInvoice(null);
+    } catch (error: any) {
+      console.error('Failed to approve invoice:', error);
+      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to approve invoice';
+      showToast(msg, 'error');
+      // Refresh to show current state even on failure
+      await refresh();
+      try {
+        const updated = await invoiceApi.getById(invoiceId);
+        setSelectedInvoice(updated.data);
+      } catch {}
+    } finally {
+      setRequestingApproval(false);
     }
   };
 
@@ -2130,29 +2162,49 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* Batch Threshold Indicator */}
-              {selectedInvoice.status === (InvoiceStatus.ON_HOLD as any) && (
-                <div
-                  className="p-3 rounded-xl"
-                  style={{
-                    background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)',
-                    border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)',
-                  }}
-                >
-                  <p className="text-xs font-medium" style={{ color: 'var(--accent-amber)' }}>On Hold — Batch Threshold</p>
-                  <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>
-                    Held until vendor cumulative reaches $100. Another invoice for this vendor will release this batch.
-                  </p>
-                </div>
-              )}
+              {/* On Hold Indicator — batch threshold or pre-post check */}
+              {selectedInvoice.status === (InvoiceStatus.ON_HOLD as any) && (() => {
+                const isBatchThreshold = selectedInvoice.exceptions?.some(
+                  (e: any) => e.reason === 'BATCH_THRESHOLD_NOT_MET' && (e.status === 'PENDING' || e.status === 'OPEN')
+                );
+                return (
+                  <div
+                    className="p-3 rounded-xl"
+                    style={{
+                      background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)',
+                      border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)',
+                    }}
+                  >
+                    <p className="text-xs font-medium" style={{ color: 'var(--accent-amber)' }}>
+                      {isBatchThreshold ? 'On Hold — Batch Threshold' : 'On Hold — Pre-Post Check Failed'}
+                    </p>
+                    <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>
+                      {isBatchThreshold
+                        ? 'Held until vendor cumulative reaches $100. Another invoice for this vendor will release this batch.'
+                        : 'Amount variance or other issue detected during pre-post validation. Review the active exceptions and release hold when resolved.'}
+                    </p>
+                  </div>
+                );
+              })()}
 
-              {/* Exceptions summary in overview */}
-              {selectedInvoice.exceptions && selectedInvoice.exceptions.length > 0 && (
+              {/* Exceptions summary in overview — only show active (PENDING/OPEN) exceptions */}
+              {selectedInvoice.exceptions && selectedInvoice.exceptions.some(e => e.status === 'PENDING' || e.status === 'OPEN') && (
                 <div className="p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}>
-                  <p className="text-sm font-semibold mb-2" style={{ color: 'var(--accent-red)' }}>Exceptions</p>
-                  {selectedInvoice.exceptions.map((exc) => (
+                  <p className="text-sm font-semibold mb-2" style={{ color: 'var(--accent-red)' }}>Active Exceptions</p>
+                  {selectedInvoice.exceptions.filter(e => e.status === 'PENDING' || e.status === 'OPEN').map((exc) => (
                     <p key={exc.id} className="text-xs" style={{ color: 'var(--accent-red)' }}>
                       {exc.reason}: {exc.detail}
+                    </p>
+                  ))}
+                </div>
+              )}
+              {/* Waived/resolved exceptions — show as informational, not actionable */}
+              {selectedInvoice.exceptions && selectedInvoice.exceptions.some(e => e.status === 'WAIVED' || e.status === 'RESOLVED') && (
+                <div className="p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-green) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-green) 15%, transparent)' }}>
+                  <p className="text-sm font-semibold mb-2" style={{ color: 'var(--accent-green)' }}>Resolved Exceptions</p>
+                  {selectedInvoice.exceptions.filter(e => e.status === 'WAIVED' || e.status === 'RESOLVED').map((exc) => (
+                    <p key={exc.id} className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                      <span style={{ color: 'var(--accent-green)', fontWeight: 600 }}>{exc.status}</span> — {exc.reason}: {exc.detail}
                     </p>
                   ))}
                 </div>
@@ -2259,8 +2311,21 @@ export default function Dashboard() {
                 </button>
               )}
 
-              {/* Request Approval Button — for invoices in VALIDATION_PENDING that need manual approval trigger */}
-              {selectedInvoice.status === (InvoiceStatus.VALIDATION_PENDING as any) && user && hasPermission(user.role, 'canRequestApproval') && (
+              {/* Approve & Advance Button — for invoices in VALIDATION_PENDING (after resolve).
+                  Coordinator can approve directly: creates approval request + signs as coordinator in one click. */}
+              {selectedInvoice.status === (InvoiceStatus.VALIDATION_PENDING as any) && user && hasPermission(user.role, 'canRequestApproval') && hasPermission(user.role, 'canApprove') && (
+                <button
+                  onClick={() => handleResolveAndApprove(selectedInvoice.id)}
+                  disabled={requestingApproval}
+                  className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-semibold text-sm"
+                  style={requestingApproval ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--accent-lime)', color: 'var(--text-inverse)', boxShadow: '0 0 16px color-mix(in srgb, var(--accent-lime) 25%, transparent)' }}
+                >
+                  {requestingApproval ? <Loader2 className="h-4 w-4 mr-2 animate-spin" strokeWidth={1.75} /> : <CheckCircle className="h-4 w-4 mr-2" strokeWidth={1.75} />}
+                  {requestingApproval ? 'Approving...' : 'Approve'}
+                </button>
+              )}
+              {/* Request Approval Button — for VALIDATION_PENDING when user can request but NOT approve (e.g. IT_ADMIN) */}
+              {selectedInvoice.status === (InvoiceStatus.VALIDATION_PENDING as any) && user && hasPermission(user.role, 'canRequestApproval') && !hasPermission(user.role, 'canApprove') && (
                 <button
                   onClick={handleRequestApproval}
                   disabled={requestingApproval}
@@ -2519,10 +2584,10 @@ export default function Dashboard() {
                 </div>
               )}
 
-              {selectedInvoice.exceptions && selectedInvoice.exceptions.length > 0 && (
+              {selectedInvoice.exceptions && selectedInvoice.exceptions.some(e => e.status === 'PENDING' || e.status === 'OPEN') && (
                 <div className="mt-4 p-4 rounded-lg" style={{ background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}>
-                  <p className="text-sm font-semibold mb-2" style={{ color: 'var(--accent-red)' }}>Exceptions</p>
-                  {selectedInvoice.exceptions.map((exc) => (
+                  <p className="text-sm font-semibold mb-2" style={{ color: 'var(--accent-red)' }}>Active Exceptions</p>
+                  {selectedInvoice.exceptions.filter(e => e.status === 'PENDING' || e.status === 'OPEN').map((exc) => (
                     <p key={exc.id} className="text-xs" style={{ color: 'var(--accent-red)' }}>
                       {exc.reason}: {exc.detail}
                     </p>

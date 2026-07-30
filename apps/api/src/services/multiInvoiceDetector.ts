@@ -98,6 +98,41 @@ async function enrichWeakPagesWithOCR(fileBuffer: Buffer, pages: string[]): Prom
 }
 
 /**
+ * Common English words that can be falsely matched as invoice numbers.
+ */
+const FALSE_INVOICE_NUMBERS = new Set([
+  'TOGETHER', 'TOTAL', 'AMOUNT', 'BALANCE', 'SUBTOTAL', 'PAYMENT',
+  'RECEIVED', 'REMITTANCE', 'REFERENCE', 'ACCOUNT', 'NUMBER', 'DATE',
+  'PAGE', 'DESCRIPTION', 'QUANTITY', 'UNIT', 'PRICE', 'TAX', 'DISCOUNT',
+  'SHIPPING', 'FREIGHT', 'HANDLING', 'CHARGE', 'CHARGES', 'NOTE', 'NOTES',
+  'TERMS', 'DUE', 'NET', 'DAYS', 'MONTH', 'YEAR', 'VAT', 'GST', 'PAN',
+  'CURRENCY', 'EXCHANGE', 'RATE', 'CONVERSION', 'GRAND', 'CURRENT',
+  'ORDER', 'PURCHASE', 'CUSTOMER', 'SUPPLIER', 'VENDOR', 'BUYER',
+  'SHIP', 'BILL', 'MAIL', 'PHONE', 'FAX', 'EMAIL', 'WEBSITE', 'WWW',
+]);
+
+/**
+ * Check if an extracted string looks like a real invoice number.
+ * Real invoice numbers typically contain digits and may have letters/hyphens,
+ * but are NOT purely alphabetic English words.
+ */
+function isValidInvoiceNumber(num: string): boolean {
+  const upper = num.toUpperCase().trim();
+  if (!upper || upper.length < 3) return false;
+
+  // Reject pure alphabetic strings that are common English words
+  if (/^[A-Z]+$/.test(upper) && FALSE_INVOICE_NUMBERS.has(upper)) return false;
+
+  // Reject pure alphabetic strings longer than 15 chars (unlikely invoice numbers)
+  if (/^[A-Z]+$/.test(upper) && upper.length > 15) return false;
+
+  // Must contain at least one digit to be a valid invoice number
+  if (!/\d/.test(upper)) return false;
+
+  return true;
+}
+
+/**
  * Extract a potential invoice number from page text.
  * Looks for common invoice number patterns.
  */
@@ -117,7 +152,11 @@ function extractInvoiceNumberFromPage(text: string): string | null {
         .trim()
         .replace(/\d{1,2}(?:JANUARY|FEBRUARY|MARCH|APRIL|MAY|JUNE|JULY|AUGUST|SEPTEMBER|OCTOBER|NOVEMBER|DECEMBER).*$/i, '')
         .replace(/(?:DATE|PAGE|TOTAL|SEE).*$/i, '');
-      return cleaned || match[1].trim();
+      const candidate = cleaned || match[1].trim();
+      // Validate the candidate before returning
+      if (isValidInvoiceNumber(candidate)) {
+        return candidate;
+      }
     }
   }
   return null;
@@ -231,19 +270,26 @@ export async function detectMultiInvoice(fileBuffer: Buffer): Promise<MultiInvoi
 
       const differentInvoiceNumber = currentInvNumber && prevInvNumber && currentInvNumber !== prevInvNumber;
       const newInvoiceHeaderWithNumber = hasInvoiceHeader && currentInvNumber && (!prevInvNumber || currentInvNumber !== prevInvNumber);
-      const newInvoiceHeaderNoNumber = hasInvoiceHeader && !currentInvNumber && !prevInvNumber;
 
-      if (differentInvoiceNumber || newInvoiceHeaderWithNumber) {
+      // CONSERVATIVE: Require BOTH a different valid invoice number AND an invoice header
+      // to split. This prevents false positives on multi-page single invoices where
+      // continuation pages may contain "INVOICE" in table headers or reference text.
+      if (differentInvoiceNumber && hasInvoiceHeader) {
         invoiceStarts.push(i);
+      }
+      // Only split on header + new number (no previous number) if the header is at the very top
+      else if (newInvoiceHeaderWithNumber && !differentInvoiceNumber) {
+        const first200 = pages[i].substring(0, 200).toUpperCase();
+        if (first200.indexOf('INVOICE') < 80) {
+          invoiceStarts.push(i);
+        }
       }
       // If page has an invoice header but no invoice number, and previous also had no number,
       // be conservative — only treat as new if there's a clear "INVOICE" keyword at the top
-      else if (hasInvoiceHeader && !currentInvNumber) {
-        // Check if "INVOICE" appears in the first 200 chars (likely a header)
+      // AND the vendor changes
+      else if (hasInvoiceHeader && !currentInvNumber && !prevInvNumber) {
         const first200 = pages[i].substring(0, 200).toUpperCase();
         if (first200.includes('INVOICE') && !first200.includes('INVOICE NUMBER')) {
-          // Could be a continuation page with "INVOICE" in a table header — don't split
-          // Only split if the vendor also changes
           const currentVendor = extractVendorFromPage(pageText);
           const prevVendor = extractVendorFromPage(pages[i - 1]);
           const previousFirst200 = pages[i - 1].substring(0, 200).toUpperCase();

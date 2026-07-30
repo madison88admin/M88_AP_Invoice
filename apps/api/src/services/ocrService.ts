@@ -452,6 +452,8 @@ export async function extractInvoiceFields(fileBuffer: Buffer) {
       } else {
         mpo_number = m[1];
       }
+      // Normalize: MPO + 6-digit zero-padded (MPO15569 → MPO015569)
+      mpo_number = 'MPO' + mpo_number.replace(/^MPO/i, '').replace(/^0+/, '').padStart(6, '0');
       break;
     }
   }
@@ -914,7 +916,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
       grand_total: 0,
       currency: aiResult.currency || 'USD',
       po_reference: aiResult.po_number || '',
-      mpo_number: aiResult.mpo_number || '',
+      mpo_number: aiResult.mpo_number ? 'MPO' + aiResult.mpo_number.replace(/^MPO/i, '').replace(/^0+/, '').padStart(6, '0') : '',
       brand_code: aiResult.brand_code || '',
       payment_terms: aiResult.payment_terms || '',
       bank_swift: aiResult.swift_code || aiResult.bank_info?.swift_code || '',
@@ -1074,8 +1076,19 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
     brand: poParsed.brand_code ? (TOP_10_BRANDS[poParsed.brand_code] || poParsed.brand_code) : (extracted as any).brand || undefined,
     brand_code: poParsed.brand_code || extracted.brand_code || undefined,
     season: poParsed.season || (extracted as any).season || undefined,
-    mpo_number: poParsed.mpo_number || extracted.mpo_number,
-    customer_po_number: poParsed.po_number,
+    mpo_number: (() => {
+      const raw = poParsed.mpo_number || extracted.mpo_number || '';
+      if (!raw) return raw as any;
+      const digits = raw.replace(/^MPO/i, '').replace(/^0+/, '');
+      return 'MPO' + digits.padStart(6, '0');
+    })(),
+    customer_po_number: (() => {
+      const raw = poParsed.po_number || '';
+      if (!raw) return raw as any;
+      const poMatch = raw.match(/\bPO(\d{4,6})\b/i);
+      if (poMatch) return 'PO' + poMatch[1].padStart(6, '0');
+      return raw;
+    })(),
     bill_to_entity: BillToEntity.MADISON_88_LTD,
     is_handwritten: (extracted as any).is_handwritten || false,
     is_urgent: false,
@@ -1088,13 +1101,15 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
       swift_code: extracted.bank_swift,
       account_usd: extracted.bank_account,
     },
-    signatures: ((extracted as any).signatures || []).map((sig: any) => {
+    signatures: ((extracted as any).signatures || [])
+      .filter((sig: any) => sig && (sig.signatory_name || sig.signatory_role))
+      .map((sig: any) => {
       const role = matchSignerToRole(sig.signatory_name) ||
         (sig.signatory_role && Object.values(SignatoryRole).includes(sig.signatory_role.toUpperCase().replace(/ /g, '_') as any)
           ? (sig.signatory_role.toUpperCase().replace(/ /g, '_') as SignatoryRole)
           : SignatoryRole.COORDINATOR);
       return {
-        signatory_name: sig.signatory_name,
+        signatory_name: sig.signatory_name || 'Unknown',
         signed_at: sig.signed_date ? new Date(sig.signed_date) : new Date(),
         signatory_role: role,
         signature_type: SignatureType.DIGITAL,

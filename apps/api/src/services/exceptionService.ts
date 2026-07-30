@@ -16,10 +16,13 @@ const revalidationInFlight = new Map<string, Promise<ExceptionRevalidation>>();
 
 async function revalidateAfterExceptionsHandled(
   invoiceId: string,
-  userId: string
+  userId: string,
+  options?: { autoAdvance?: boolean }
 ): Promise<ExceptionRevalidation> {
   const existing = revalidationInFlight.get(invoiceId);
   if (existing) return existing;
+
+  const autoAdvance = options?.autoAdvance !== false; // default true (waive behavior)
 
   const task = (async () => {
     await prisma.auditLog.create({
@@ -27,11 +30,11 @@ async function revalidateAfterExceptionsHandled(
         invoice_id: invoiceId,
         action: 'AUTO_REVALIDATION_STARTED',
         performed_by: userId,
-        note: 'All active exceptions handled. Running one consolidated validation pass.',
+        note: `All active exceptions handled. Running one consolidated validation pass. Auto-advance: ${autoAdvance}.`,
       },
     });
 
-    await validateInvoice(invoiceId);
+    await validateInvoice(invoiceId, { skipAutoAdvance: !autoAdvance });
     const [invoice, pendingExceptions] = await Promise.all([
       prisma.invoice.findUnique({ where: { id: invoiceId }, select: { status: true } }),
       prisma.exception.findMany({
@@ -47,13 +50,15 @@ async function revalidateAfterExceptionsHandled(
       status !== InvoiceStatus.VALIDATION_PENDING;
     const message = passed
       ? 'Revalidation passed. The invoice advanced to the approval workflow.'
-      : pendingExceptions.some(exception => exception.reason === ExceptionReason.MISSING_BRAND_TIER)
-        ? `Validation passed, but approval routing needs attention: ${
-            pendingExceptions.find(exception => exception.reason === ExceptionReason.MISSING_BRAND_TIER)?.detail
-          }`
-      : pendingCount > 0
-        ? `Revalidation found ${pendingCount} consolidated exception(s). Review the complete updated list.`
-        : 'Validation passed, but approval routing could not advance. Review the invoice routing details.';
+      : pendingCount === 0 && status === InvoiceStatus.VALIDATION_PENDING && !autoAdvance
+        ? 'Revalidation passed. The invoice is ready for coordinator approval.'
+        : pendingExceptions.some(exception => exception.reason === ExceptionReason.MISSING_BRAND_TIER)
+          ? `Validation passed, but approval routing needs attention: ${
+              pendingExceptions.find(exception => exception.reason === ExceptionReason.MISSING_BRAND_TIER)?.detail
+            }`
+        : pendingCount > 0
+          ? `Revalidation found ${pendingCount} consolidated exception(s). Review the complete updated list.`
+          : 'Validation passed, but approval routing could not advance. Review the invoice routing details.';
 
     await prisma.auditLog.create({
       data: {
@@ -122,7 +127,9 @@ export async function resolveException(
     exception.invoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any)
   ) {
     try {
-      const revalidation = await revalidateAfterExceptionsHandled(exception.invoice_id, userId);
+      // Resolve = coordinator fixed the issue. Re-validate but DON'T auto-advance.
+      // The invoice stays in VALIDATION_PENDING until the coordinator explicitly approves.
+      const revalidation = await revalidateAfterExceptionsHandled(exception.invoice_id, userId, { autoAdvance: false });
       return { exception: updatedException, revalidation };
     } catch (err: any) {
       logger.error(`Automatic revalidation failed for invoice ${exception.invoice_id}:`, err);

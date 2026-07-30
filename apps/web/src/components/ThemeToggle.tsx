@@ -7,7 +7,7 @@ export function ThemeToggle() {
 
   useEffect(() => {
     const saved = localStorage.getItem("m88-theme");
-    const dark = saved ? saved === "dark" : false;
+    const dark = saved ? saved === "dark" : true; // default to dark
     setIsDark(dark);
     document.documentElement.classList.toggle("dark", dark);
     document.documentElement.classList.toggle("light", !dark);

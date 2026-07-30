@@ -522,6 +522,14 @@ async function processSingleInvoice(
       return value;
     };
 
+    // Normalize MPO number: MPO15569 → MPO015569 (6-digit zero-padded)
+    const cleanMPONumber = (value: string | null | undefined) => {
+      if (!value) return null;
+      const digits = value.replace(/^MPO/i, '').replace(/^0+/, '').replace(/\s+/g, '');
+      if (!digits || !/^\d+$/.test(digits)) return value; // not a valid MPO number, return as-is
+      return 'MPO' + digits.padStart(6, '0');
+    };
+
     const astInternalSumBad = astInternalSum > 0
       && decisionAmount > 0
       && Math.abs(astInternalSum - decisionAmount) / decisionAmount > 0.5;
@@ -588,7 +596,7 @@ async function processSingleInvoice(
         : (decisionFinal.payment_terms || madisonRawResult.payment_terms || null),
       currency: finalCurrency,
       po_number: cleanPONumber(decisionFinal.po_number || madisonRawResult.po_number || null),
-      mpo_number: decisionFinal.mpo_number || madisonRawResult.mpo_number || null,
+      mpo_number: cleanMPONumber(decisionFinal.mpo_number || madisonRawResult.mpo_number || null),
       brand: decisionFinal.brand || madisonRawResult.brand || null,
       brand_code: decisionFinal.brand_code || madisonRawResult.brand_code || null,
       season: decisionFinal.season || madisonRawResult.season || null,

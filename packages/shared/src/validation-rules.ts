@@ -454,7 +454,8 @@ export function isUrgent(text: string): boolean {
 /**
  * Match a signer's name to their SignatoryRole
  */
-export function matchSignerToRole(signerName: string): SignatoryRole | null {
+export function matchSignerToRole(signerName: string | null | undefined): SignatoryRole | null {
+  if (!signerName || typeof signerName !== 'string') return null;
   const lower = signerName.toLowerCase().trim();
 
   // Check coordinator names

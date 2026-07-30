@@ -229,36 +229,46 @@ async function createApprovalRequestInternal(
   } catch (routeError: any) {
     // Never leave a successfully validated invoice stuck in VALIDATION_PENDING.
     // Route failures become one actionable, de-duplicated exception.
-    await prisma.invoice.update({
-      where: { id: invoiceId },
-      data: { status: InvoiceStatus.EXCEPTION_FLAGGED as any },
-    });
-    await inAppNotificationService.notifyStageTransition(invoiceId, invoice.invoice_number, invoice.vendor?.name || 'Unknown', '', 'EXCEPTION');
+    // BUT: if MISSING_BRAND_TIER was already waived, don't re-create it (infinite loop).
     const existingRouteException = await prisma.exception.findFirst({
       where: {
         invoice_id: invoiceId,
         reason: ExceptionReason.MISSING_BRAND_TIER as any,
-        status: 'PENDING' as any,
+        status: { in: ['PENDING', 'WAIVED'] as any },
       },
     });
-    if (!existingRouteException) {
-      await prisma.exception.create({
+    if (existingRouteException && existingRouteException.status === 'WAIVED') {
+      // User already waived this exception — advance to default approval route
+      logger.warn(`Approval route failed for ${invoiceId} but MISSING_BRAND_TIER was already waived. Using default route.`);
+      approvalRoute = [
+        { role: SignatoryRole.COORDINATOR, assignee_name: 'Any Coordinator', sla_days: SLA_LIMITS.COORDINATOR_DAYS },
+        { role: SignatoryRole.PURCHASING_MANAGER, assignee_name: 'Any Purchasing Manager', sla_days: SLA_LIMITS.PURCHASING_MANAGER_DAYS },
+      ];
+    } else {
+      await prisma.invoice.update({
+        where: { id: invoiceId },
+        data: { status: InvoiceStatus.EXCEPTION_FLAGGED as any },
+      });
+      await inAppNotificationService.notifyStageTransition(invoiceId, invoice.invoice_number, invoice.vendor?.name || 'Unknown', '', 'EXCEPTION');
+      if (!existingRouteException) {
+        await prisma.exception.create({
+          data: {
+            invoice_id: invoiceId,
+            reason: ExceptionReason.MISSING_BRAND_TIER as any,
+            detail: routeError.message || 'Approval route could not be determined. Confirm Brand Tier.',
+          },
+        });
+      }
+      await prisma.auditLog.create({
         data: {
           invoice_id: invoiceId,
-          reason: ExceptionReason.MISSING_BRAND_TIER as any,
-          detail: routeError.message || 'Approval route could not be determined. Confirm Brand Tier.',
+          action: 'EXCEPTION_FLAGGED',
+          performed_by: 'system',
+          note: routeError.message || 'Approval route could not be determined',
         },
       });
+      return [{ exception_flagged: true, invoice_id: invoiceId }];
     }
-    await prisma.auditLog.create({
-      data: {
-        invoice_id: invoiceId,
-        action: 'EXCEPTION_FLAGGED',
-        performed_by: 'system',
-        note: routeError.message || 'Approval route could not be determined',
-      },
-    });
-    return [{ exception_flagged: true, invoice_id: invoiceId }];
   }
   const tier = determineApprovalTier(amount);
 

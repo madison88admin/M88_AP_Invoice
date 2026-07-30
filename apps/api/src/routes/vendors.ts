@@ -5,13 +5,11 @@ import prisma from '../config/database';
 import { UserRole } from '@ap-invoice/shared';
 import { inAppNotificationService } from '../services/inAppNotificationService';
 import { AppError } from '../middleware/errorHandler';
-import upload from '../middleware/upload';
 
 const router: Router = Router();
 
 const BANK_FIELDS = ['bank_name', 'swift_code', 'account_number', 'iban', 'sort_code', 'aba_routing_number', 'bank_name_alt', 'bank_address', 'account_number_alt', 'swift_code_alt', 'intermediary_bank_name', 'intermediary_bank_swift', 'has_multiple_accounts'];
 const ACCOUNTING_ROLES = [UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN];
-const VENDOR_CREATOR_ROLES = [UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE];
 
 router.use(authenticate);
 
@@ -54,11 +52,8 @@ router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
   }
 });
 
-router.post('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
+router.post('/', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    if (!req.user || !VENDOR_CREATOR_ROLES.includes(req.user.role)) {
-      throw new AppError('Only Accounting can add vendors', 403);
-    }
     const vendor = await prisma.vendor.create({
       data: req.body,
     });
@@ -86,11 +81,11 @@ router.patch('/:id', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.PURCHAS
             return JSON.stringify(current) !== JSON.stringify(newVal);
           });
           if (hasBankChanges) {
-            return res.status(403).json({
-              error: {
+            return res.status(403).json({ 
+              error: { 
                 message: 'You cannot modify bank information. Please submit a bank update request to the Accounting team.',
-                status: 403
-              }
+                status: 403 
+              } 
             });
           }
         }
@@ -110,8 +105,7 @@ router.patch('/:id', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.PURCHAS
 });
 
 // Request bank info update — any authenticated user can request
-// Accepts optional file attachment (bank letter / bank verification email)
-router.post('/:id/request-bank-update', authenticate, upload.single('attachment'), async (req: AuthRequest, res: Response, next: NextFunction) => {
+router.post('/:id/request-bank-update', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const vendor = await prisma.vendor.findUnique({ where: { id: req.params.id } });
     if (!vendor) {
@@ -136,32 +130,11 @@ router.post('/:id/request-bank-update', authenticate, upload.single('attachment'
       throw new AppError('No bank information changes detected in the request', 400);
     }
 
-    // Handle file attachment
-    let attachmentInfo = '';
-    let attachmentName = '';
-    let attachmentMime = '';
-    if (req.file) {
-      attachmentName = req.file.originalname;
-      attachmentMime = req.file.mimetype;
-      attachmentInfo = `\nAttachment: ${attachmentName} (${(req.file.size / 1024).toFixed(1)} KB)`;
-    }
-
-    // Create audit log entry for the bank update request
-    await prisma.auditLog.create({
-      data: {
-        action: 'BANK_UPDATE_REQUEST',
-        performed_by: requesterName,
-        note: `Vendor: "${vendor.name}" | Requested by: ${requesterRole}\nReason: ${reason.trim()}\nRequested changes:\n${changes.join('\n')}${attachmentInfo}`,
-      },
-    });
-
     // Create notification for accounting team
-    const notificationMessage = `${requesterName} (${requesterRole}) requested a bank info update for vendor "${vendor.name}".\nReason: ${reason.trim()}\nRequested changes:\n${changes.join('\n')}${attachmentInfo}`;
-
     await inAppNotificationService.create({
       vendor_name: vendor.name,
       title: 'Bank Info Update Request',
-      message: notificationMessage,
+      message: `${requesterName} (${requesterRole}) requested a bank info update for vendor "${vendor.name}".\nReason: ${reason.trim()}\nRequested changes:\n${changes.join('\n')}`,
       type: 'warning',
       category: 'stage',
       target_role: UserRole.ACCOUNTING_SUPERVISOR,
@@ -171,7 +144,7 @@ router.post('/:id/request-bank-update', authenticate, upload.single('attachment'
     await inAppNotificationService.create({
       vendor_name: vendor.name,
       title: 'Bank Info Update Request',
-      message: notificationMessage,
+      message: `${requesterName} (${requesterRole}) requested a bank info update for vendor "${vendor.name}".\nReason: ${reason.trim()}\nRequested changes:\n${changes.join('\n')}`,
       type: 'warning',
       category: 'stage',
       target_role: UserRole.ACCOUNTING_ASSOCIATE,

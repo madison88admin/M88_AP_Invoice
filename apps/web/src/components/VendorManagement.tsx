@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { Building2, Search, Plus, Edit, Trash2, ArrowLeft, Building, Save, X, Lock, Send, Paperclip, FileText } from 'lucide-react';
+import { Building2, Search, Plus, Edit, Trash2, ArrowLeft, Building, Save, X, Lock, Send } from 'lucide-react';
 import { MockVendor } from '../lib/mockData';
 import { vendorApi } from '../lib/api';
 
@@ -20,10 +20,9 @@ export default function VendorManagement() {
   const [isAddMode, setIsAddMode] = useState(false);
   const [showBankRequestModal, setShowBankRequestModal] = useState(false);
   const [bankRequestData, setBankRequestData] = useState({ bank_name: '', swift_code: '', account_number: '', reason: '' });
-  const [bankRequestAttachment, setBankRequestAttachment] = useState<File | null>(null);
   const [submittingRequest, setSubmittingRequest] = useState(false);
 
-  const canAddVendor = user && ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE'].includes(user.role);
+  const canAddVendor = user && ['PURCHASING_COORDINATOR', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role);
   const canEditBankInfo = user && ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role);
   const canEditVendor = user && ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role);
 
@@ -134,7 +133,6 @@ export default function VendorManagement() {
       account_number: vendor.account_number || '',
       reason: '',
     });
-    setBankRequestAttachment(null);
     setShowBankRequestModal(true);
   };
 
@@ -146,11 +144,10 @@ export default function VendorManagement() {
     }
     try {
       setSubmittingRequest(true);
-      await vendorApi.requestBankUpdate(selectedVendor.id, bankRequestData, bankRequestAttachment);
+      await vendorApi.requestBankUpdate(selectedVendor.id, bankRequestData);
       showToast('Bank update request sent to Accounting team', 'success');
       setShowBankRequestModal(false);
       setBankRequestData({ bank_name: '', swift_code: '', account_number: '', reason: '' });
-      setBankRequestAttachment(null);
     } catch (error: any) {
       console.error('Failed to submit bank update request:', error);
       const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to send request';
@@ -533,57 +530,12 @@ export default function VendorManagement() {
                     style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
                   />
                 </div>
-                <div>
-                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Attachment (Bank Letter / Verification Email)</label>
-                  <div className="space-y-2">
-                    {bankRequestAttachment ? (
-                      <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
-                        <div className="p-2 rounded-lg flex-shrink-0" style={{ background: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)' }}>
-                          <FileText className="h-4 w-4" style={{ color: 'var(--accent-purple)' }} strokeWidth={1.75} />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{bankRequestAttachment.name}</p>
-                          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{(bankRequestAttachment.size / 1024).toFixed(1)} KB</p>
-                        </div>
-                        <button
-                          onClick={() => setBankRequestAttachment(null)}
-                          className="p-1.5 rounded-lg transition-colors flex-shrink-0"
-                          style={{ color: 'var(--text-muted)' }}
-                          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-red)'; e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-red) 10%, transparent)'; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = ''; }}
-                        >
-                          <X className="h-4 w-4" strokeWidth={1.75} />
-                        </button>
-                      </div>
-                    ) : (
-                      <label
-                        className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl cursor-pointer transition-colors text-sm"
-                        style={{ background: 'var(--bg-elevated)', border: '1px dashed var(--border-color)', color: 'var(--text-muted)' }}
-                        onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent-purple)'; e.currentTarget.style.color = 'var(--accent-purple)'; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border-color)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
-                      >
-                        <Paperclip className="h-4 w-4" strokeWidth={1.75} />
-                        <span>Click to upload (PDF, JPG, PNG — max 10MB)</span>
-                        <input
-                          type="file"
-                          accept=".pdf,.jpg,.jpeg,.png"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file) setBankRequestAttachment(file);
-                          }}
-                          className="hidden"
-                        />
-                      </label>
-                    )}
-                  </div>
-                </div>
               </div>
               <div className="mt-6 flex justify-end space-x-3">
                 <button
                   onClick={() => {
                     setShowBankRequestModal(false);
                     setBankRequestData({ bank_name: '', swift_code: '', account_number: '', reason: '' });
-                    setBankRequestAttachment(null);
                   }}
                   className="px-4 py-2 transition-colors text-sm"
                   style={{ color: 'var(--text-secondary)' }}

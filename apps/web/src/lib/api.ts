@@ -154,17 +154,8 @@ export const vendorApi = {
   update: (id: string, data: any) => api.patch(`/api/vendors/${id}`, data),
   getSuggestions: (search: string, limit?: number) => 
     api.get('/api/vendors/suggestions', { params: { search, limit } }),
-  requestBankUpdate: (id: string, data: { bank_name?: string; swift_code?: string; account_number?: string; reason: string }, attachment?: File | null) => {
-    const formData = new FormData();
-    if (data.bank_name !== undefined) formData.append('bank_name', data.bank_name);
-    if (data.swift_code !== undefined) formData.append('swift_code', data.swift_code);
-    if (data.account_number !== undefined) formData.append('account_number', data.account_number);
-    formData.append('reason', data.reason);
-    if (attachment) formData.append('attachment', attachment);
-    return api.post(`/api/vendors/${id}/request-bank-update`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-  },
+  requestBankUpdate: (id: string, data: { bank_name?: string; swift_code?: string; account_number?: string; reason: string }) =>
+    api.post(`/api/vendors/${id}/request-bank-update`, data),
 };
 
 export const auditLogApi = {

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { InvoiceStatus, InvoiceCategory, InvoiceType, calcWorkingHoursElapsed } from '@ap-invoice/shared';
-import { invoiceApi, notificationApi, vendorApi } from '../lib/api';
+import { invoiceApi, notificationApi } from '../lib/api';
 import InvoiceTable from './InvoiceTable';
 import UploadInvoiceModal from './UploadInvoiceModal';
 import BottleneckView from './BottleneckView';
@@ -12,12 +12,14 @@ import StatusGuide from './StatusGuide';
 import RoleDashboardPanel from './RoleDashboardPanel';
 import StatCard from './ui/StatCard';
 import AuditTile from './ui/AuditTile';
+import SidebarItem from './ui/SidebarItem';
+import { ThemeToggle } from './ThemeToggle';
 import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { MockInvoice } from '../lib/mockData';
 import { hasPermission, filterInvoicesByRole, canUserApproveStatus, isWithinRoleThreshold } from '../lib/roleAccess';
 import { cn } from '../lib/utils';
-import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, LayoutDashboard, Building2, ChevronRight, Edit, Unlock, Users, Loader2, X, Trash2, Lock, Paperclip } from 'lucide-react';
+import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, ChevronRight, LogOut, Edit, Unlock, Users, Loader2, Menu, X, Trash2 } from 'lucide-react';
 import { Skeleton, SkeletonBar } from './ui/Skeleton';
 
 // Custom hook for number count-up animation
@@ -122,7 +124,7 @@ function calcTrend(invoiceList: { created_at?: string }[]): { trend: string; tre
 export default function Dashboard() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const { invoices, vendors, paymentBatches, refresh, loading: ctxLoading } = useMockData();
   const [selectedInvoice, setSelectedInvoice] = useState<MockInvoice | null>(null);
   const [validating, setValidating] = useState(false);
@@ -147,6 +149,8 @@ export default function Dashboard() {
     dateTo: undefined as string | undefined,
     agingBucket: undefined as 'current' | '1-30' | '31-60' | '60+' | undefined,
   });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [toasts, setToasts] = useState<{ id: string; message: string; type: 'success' | 'error' | 'warning' | 'info' }[]>([]);
   const [countUpStarted, setCountUpStarted] = useState(false);
@@ -157,13 +161,6 @@ export default function Dashboard() {
   const [bypassVarianceCheck, setBypassVarianceCheck] = useState(false);
   const [sendingConfirmation, setSendingConfirmation] = useState(false);
   const [showConfirmSendModal, setShowConfirmSendModal] = useState(false);
-  const [showBankRequestModal, setShowBankRequestModal] = useState(false);
-  const [showChangeRequestsModal, setShowChangeRequestsModal] = useState(false);
-  const [changeRequestData, setChangeRequestData] = useState<any>(null);
-  const [loadingChangeRequests, setLoadingChangeRequests] = useState(false);
-  const [bankRequestData, setBankRequestData] = useState({ bank_name: '', swift_code: '', account_number: '', reason: '' });
-  const [bankRequestAttachment, setBankRequestAttachment] = useState<File | null>(null);
-  const [submittingBankRequest, setSubmittingBankRequest] = useState(false);
   const [detailTab, setDetailTab] = useState<'overview' | 'pipeline' | 'validation' | 'actions' | 'audit'>('overview');
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [editCollapsed, setEditCollapsed] = useState<Record<string, boolean>>({});
@@ -180,47 +177,6 @@ export default function Dashboard() {
     total: 0,
   });
   const [poAuditLoading] = useState(false);
-
-  const canEditBankInfo = user && ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role);
-
-  const handleRequestBankUpdate = () => {
-    if (!selectedInvoice) return;
-    setBankRequestData({
-      bank_name: (selectedInvoice as any).bank_name || '',
-      swift_code: (selectedInvoice as any).swift_code || '',
-      account_number: (selectedInvoice as any).account_number || '',
-      reason: '',
-    });
-    setBankRequestAttachment(null);
-    setShowBankRequestModal(true);
-  };
-
-  const submitBankUpdateRequest = async () => {
-    if (!selectedInvoice) return;
-    if (!bankRequestData.reason.trim()) {
-      showToast('Please provide a reason for the bank update request', 'error');
-      return;
-    }
-    try {
-      setSubmittingBankRequest(true);
-      const vendorId = (selectedInvoice as any).vendor_id;
-      if (!vendorId) {
-        showToast('No vendor linked to this invoice. Cannot request bank update.', 'error');
-        return;
-      }
-      await vendorApi.requestBankUpdate(vendorId, bankRequestData, bankRequestAttachment);
-      showToast('Bank update request sent to Accounting team', 'success');
-      setShowBankRequestModal(false);
-      setBankRequestData({ bank_name: '', swift_code: '', account_number: '', reason: '' });
-      setBankRequestAttachment(null);
-    } catch (error: any) {
-      console.error('Failed to submit bank update request:', error);
-      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to send request';
-      showToast(msg, 'error');
-    } finally {
-      setSubmittingBankRequest(false);
-    }
-  };
 
   // Use live invoice data from the API
   const allInvoices = invoices;
@@ -577,7 +533,7 @@ export default function Dashboard() {
         showToast('You must be logged in to approve invoices', 'error');
         return;
       }
-
+      
       // Signature attribution: pass user's name as signer
       // Backend will record full signature details (signer_name, signer_role, signed_at, is_digital)
       await invoiceApi.approve(invoiceId, user.name);
@@ -591,45 +547,12 @@ export default function Dashboard() {
     }
   };
 
-  // Combined: request approval then immediately approve as coordinator.
-  // Used when coordinator resolved exceptions and wants to approve in one click
-  // (invoice is in VALIDATION_PENDING, needs to advance to PENDING_COORDINATOR first).
-  const handleResolveAndApprove = async (invoiceId: string) => {
-    try {
-      if (!user) {
-        showToast('You must be logged in to approve invoices', 'error');
-        return;
-      }
-      setRequestingApproval(true);
-      // Step 1: create approval request (moves VALIDATION_PENDING → PENDING_COORDINATOR)
-      await invoiceApi.requestApproval(invoiceId);
-      // Step 2: approve as coordinator
-      await invoiceApi.approve(invoiceId, user.name);
-      showToast('Invoice approved successfully', 'success');
-      await refresh();
-      setSelectedInvoice(null);
-    } catch (error: any) {
-      console.error('Failed to approve invoice:', error);
-      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to approve invoice';
-      showToast(msg, 'error');
-      // Refresh to show current state even on failure
-      await refresh();
-      try {
-        const updated = await invoiceApi.getById(invoiceId);
-        setSelectedInvoice(updated.data);
-      } catch {}
-    } finally {
-      setRequestingApproval(false);
-    }
-  };
-
   const handleOpenEdit = async () => {
     if (!selectedInvoice) return;
     const invoice = selectedInvoice as any;
     setEditFormData({
       invoice_number: invoice.invoice_number || '',
       invoice_date: invoice.invoice_date ? new Date(invoice.invoice_date).toISOString().split('T')[0] : '',
-      invoice_received_date: invoice.invoice_received_date ? new Date(invoice.invoice_received_date).toISOString().split('T')[0] : '',
       due_date: invoice.due_date ? new Date(invoice.due_date).toISOString().split('T')[0] : '',
       total_amount: invoice.total_amount || '',
       currency: invoice.currency || 'USD',
@@ -681,21 +604,6 @@ export default function Dashboard() {
     setEditFormData((prev: any) => ({ ...prev, [field]: value }));
   };
 
-  const handleOpenChangeRequests = async () => {
-    if (!selectedInvoice) return;
-    setLoadingChangeRequests(true);
-    setShowChangeRequestsModal(true);
-    try {
-      const response = await invoiceApi.getById(selectedInvoice.id);
-      setChangeRequestData(response.data);
-    } catch (error: any) {
-      showToast(error?.response?.data?.error?.message || 'Failed to load change requests', 'error');
-      setShowChangeRequestsModal(false);
-    } finally {
-      setLoadingChangeRequests(false);
-    }
-  };
-
   const handleSaveEdit = async () => {
     if (!selectedInvoice) return;
     setSavingEdit(true);
@@ -707,7 +615,6 @@ export default function Dashboard() {
         vendor_name_raw: parseString(editFormData.vendor_name_raw),
         invoice_number: parseString(editFormData.invoice_number),
         invoice_date: parseString(editFormData.invoice_date),
-        invoice_received_date: parseString(editFormData.invoice_received_date),
         due_date: parseString(editFormData.due_date),
         total_amount: parseNum(editFormData.total_amount),
         currency: parseString(editFormData.currency),
@@ -1425,9 +1332,333 @@ export default function Dashboard() {
   const kpis = getRoleSpecificKPIs();
 
   return (
-    <>
-      {/* Main Content Area */}
-      <div>
+    <div className="flex h-screen relative" style={{ background: 'var(--bg-base)' }}>
+
+      {/* Sidebar - Floating rounded card */}
+      <aside className={`${sidebarCollapsed ? 'w-20' : 'w-64'} m-4 flex flex-col flex-shrink-0 transition-all duration-300 hidden md:flex z-10 rounded-3xl`} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.35)' }}>
+        {/* Logo */}
+        <div className="p-5" style={{ borderBottom: '1px solid var(--border-color)' }}>
+          <div className="flex items-center gap-3">
+            <img src="/madison-logo.png" alt="Madison 88" className="h-10 w-auto flex-shrink-0" />
+          </div>
+        </div>
+
+        {/* Navigation */}
+        <nav className="flex-1 p-3 space-y-1">
+          <SidebarItem
+            icon={LayoutDashboard}
+            label="Dashboard"
+            active
+            collapsed={sidebarCollapsed}
+          />
+          <SidebarItem icon={FileText} label="Invoice Repository" collapsed={sidebarCollapsed} onClick={() => navigate('/repository')} />
+          {user && [
+            'PURCHASING_COORDINATOR',
+            'PURCHASING_MANAGER',
+            'PLANNING_MANAGER',
+            'SR_MANAGER_GLOBAL_PRODUCTION',
+            'MS_POLLY',
+            'ACCOUNTING_SUPERVISOR'
+          ].includes(user.role) && (
+            <SidebarItem
+              icon={CheckSquare}
+              label="Approvals"
+              badge={awaitingApprovalCount.count}
+              collapsed={sidebarCollapsed}
+              onClick={() => navigate('/approvals')}
+            />
+          )}
+          {user && ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN'].includes(user.role) && (
+            <SidebarItem
+              icon={AlertTriangle}
+              label="Exceptions"
+              badge={exceptionsCount.count}
+              collapsed={sidebarCollapsed}
+              onClick={() => navigate('/exceptions')}
+            />
+          )}
+          {user && ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE'].includes(user.role) && (
+            <SidebarItem
+              icon={Building2}
+              label="Vendors"
+              badge={vendorsPendingVerification}
+              collapsed={sidebarCollapsed}
+              onClick={() => navigate('/vendors')}
+            />
+          )}
+          {user && ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
+            <SidebarItem
+              icon={Package}
+              label="Batches"
+              badge={draftBatchCount}
+              collapsed={sidebarCollapsed}
+              onClick={() => navigate('/payment-batches')}
+            />
+          )}
+          {user && ['PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
+            <SidebarItem
+              icon={BarChart3}
+              label="Reports"
+              collapsed={sidebarCollapsed}
+              onClick={() => navigate('/reports')}
+            />
+          )}
+          {user && ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
+            <SidebarItem
+              icon={FileSearch}
+              label="Review"
+              badge={reviewPendingCount}
+              collapsed={sidebarCollapsed}
+              onClick={() => navigate('/accounting-review')}
+            />
+          )}
+          {user && (user.role === 'IT_ADMIN' || user.role === 'SUPERADMIN') && (
+            <SidebarItem
+              icon={Users}
+              label="User Management"
+              collapsed={sidebarCollapsed}
+              onClick={() => navigate('/users')}
+            />
+          )}
+          {user && (user.role === 'IT_ADMIN' || user.role === 'SUPERADMIN') && (
+            <SidebarItem
+              icon={Settings}
+              label="System Configuration"
+              collapsed={sidebarCollapsed}
+              onClick={() => navigate('/settings')}
+            />
+          )}
+        </nav>
+
+        {/* Collapse Toggle */}
+        <div className="p-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+          <button
+            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            className="flex items-center justify-center w-full p-2 rounded-lg transition-all duration-200"
+            style={{ transition: 'all 200ms ease' }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = 'var(--bg-card-hover)';
+              const svg = e.currentTarget.querySelector('svg');
+              if (svg) svg.style.transform = sidebarCollapsed ? 'rotate(0deg)' : 'rotate(180deg)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'transparent';
+              const svg = e.currentTarget.querySelector('svg');
+              if (svg) svg.style.transform = sidebarCollapsed ? 'rotate(180deg)' : 'rotate(0deg)';
+            }}
+          >
+            {sidebarCollapsed ? (
+              <ChevronLeft className="h-5 w-5" style={{ transform: 'rotate(180deg)', transition: 'transform 200ms ease' }} />
+            ) : (
+              <ChevronLeft className="h-5 w-5" style={{ transform: 'rotate(0deg)', transition: 'transform 200ms ease' }} />
+            )}
+          </button>
+        </div>
+      </aside>
+
+      {/* Mobile Sidebar Drawer */}
+      {mobileSidebarOpen && (
+        <div className="md:hidden fixed inset-0 z-50">
+          <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.5)' }} onClick={() => setMobileSidebarOpen(false)} />
+          <aside className="absolute left-0 top-0 bottom-0 w-64 flex flex-col animate-slide-in-left" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}>
+            <div className="p-5 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
+              <img src="/madison-logo.png" alt="Madison 88" className="h-10 w-auto flex-shrink-0" />
+              <button onClick={() => setMobileSidebarOpen(false)} className="p-2 rounded-lg" style={{ color: 'var(--text-muted)' }}>
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+              <SidebarItem icon={LayoutDashboard} label="Dashboard" active collapsed={false} onClick={() => setMobileSidebarOpen(false)} />
+              <SidebarItem icon={FileText} label="Invoice Repository" collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/repository'); }} />
+              {user && ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'PLANNING_MANAGER', 'SR_MANAGER_GLOBAL_PRODUCTION', 'MS_POLLY', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
+                <SidebarItem icon={CheckSquare} label="Approvals" badge={awaitingApprovalCount.count} collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/approvals'); }} />
+              )}
+              {user && ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN'].includes(user.role) && (
+                <SidebarItem icon={AlertTriangle} label="Exceptions" badge={exceptionsCount.count} collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/exceptions'); }} />
+              )}
+              {user && ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE'].includes(user.role) && (
+                <SidebarItem icon={Building2} label="Vendors" badge={vendorsPendingVerification} collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/vendors'); }} />
+              )}
+              {user && ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
+                <SidebarItem icon={Package} label="Batches" badge={draftBatchCount} collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/payment-batches'); }} />
+              )}
+              {user && ['PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
+                <SidebarItem icon={BarChart3} label="Reports" collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/reports'); }} />
+              )}
+              {user && ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
+                <SidebarItem icon={FileSearch} label="Review" badge={reviewPendingCount} collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/accounting-review'); }} />
+              )}
+              {user && (user.role === 'IT_ADMIN' || user.role === 'SUPERADMIN') && (
+                <SidebarItem icon={Users} label="User Management" collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/users'); }} />
+              )}
+              {user && (user.role === 'IT_ADMIN' || user.role === 'SUPERADMIN') && (
+                <SidebarItem icon={Settings} label="System Configuration" collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/settings'); }} />
+              )}
+            </nav>
+          </aside>
+        </div>
+      )}
+
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col overflow-hidden z-10">
+        {/* Top Header */}
+        <header className="px-4 md:px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setMobileSidebarOpen(true)}
+                className="md:hidden p-2 rounded-xl transition-colors"
+                style={{ color: 'var(--text-muted)', background: 'var(--bg-card)' }}
+              >
+                <Menu className="h-5 w-5" strokeWidth={1.75} />
+              </button>
+              <div>
+                <h1 className="text-xl md:text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
+                  {user ? `Welcome, ${user.name.split(' ')[0]}` : 'Dashboard'}
+                </h1>
+              {user && (
+                <span className="inline-block mt-1 px-3 py-1 text-xs font-medium rounded-full" style={{ background: 'var(--bg-card-hover)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>
+                  {user.role.replace(/_/g, ' ')}
+                </span>
+              )}
+              </div>
+            </div>
+            <div className="flex items-center gap-2 md:gap-3">
+              {/* Notification Bell */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowNotifications(!showNotifications)}
+                  className="relative p-2.5 rounded-xl transition-colors" style={{ color: 'var(--text-muted)' }}
+                  title="Notifications"
+                >
+                  <Bell className="h-5 w-5" strokeWidth={1.75} />
+                  {unreadCount > 0 && (
+                    <span className="absolute top-1 right-1 min-w-4 h-4 px-1 rounded-full text-[10px] font-bold flex items-center justify-center" style={{ background: 'var(--accent-red)', color: 'white' }}>
+                      {unreadCount > 99 ? '99+' : unreadCount}
+                    </span>
+                  )}
+                </button>
+                {showNotifications && (
+                  <div className="absolute right-0 top-full mt-2 w-[calc(100vw-2rem)] max-w-96 rounded-2xl z-50 overflow-hidden" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+                    <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Notifications</h3>
+                        {unreadCount > 0 && (
+                          <span className="px-2 py-0.5 text-[10px] font-bold rounded-full" style={{ background: 'var(--accent-red)', color: 'white' }}>{unreadCount} new</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {unreadCount > 0 && (
+                          <button onClick={handleMarkAllRead} className="text-xs font-medium transition-colors" style={{ color: 'var(--accent-blue)' }}
+                            onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.7'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}>
+                            Mark all read
+                          </button>
+                        )}
+                        <button onClick={() => setShowNotifications(false)} className="text-sm" style={{ color: 'var(--text-muted)' }}>Close</button>
+                      </div>
+                    </div>
+                    <div className="max-h-96 overflow-y-auto" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                      {notifications.length > 0 ? (
+                        notifications.map((n) => {
+                          const iconMap: Record<string, any> = {
+                            success: CheckCircle,
+                            warning: AlertTriangle,
+                            error: XCircle,
+                            info: Bell,
+                          };
+                          const colorMap: Record<string, string> = {
+                            success: 'var(--accent-lime)',
+                            warning: 'var(--accent-amber)',
+                            error: 'var(--accent-red)',
+                            info: 'var(--accent-blue)',
+                          };
+                          const Icon = iconMap[n.type] || Bell;
+                          const color = colorMap[n.type] || 'var(--accent-blue)';
+                          const timeAgo = (() => {
+                            const diff = Date.now() - new Date(n.created_at).getTime();
+                            const mins = Math.floor(diff / 60000);
+                            if (mins < 1) return 'just now';
+                            if (mins < 60) return `${mins}m ago`;
+                            const hrs = Math.floor(mins / 60);
+                            if (hrs < 24) return `${hrs}h ago`;
+                            const days = Math.floor(hrs / 24);
+                            return `${days}d ago`;
+                          })();
+                          return (
+                            <div key={n.id} className="p-4 cursor-pointer transition-colors" style={{ borderBottom: '1px solid var(--border-subtle)', background: n.is_read ? 'transparent' : 'color-mix(in srgb, var(--accent-blue) 4%, transparent)' }}
+                              onClick={() => { if (!n.is_read) handleMarkRead(n.id); }}
+                              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.background = n.is_read ? 'transparent' : 'color-mix(in srgb, var(--accent-blue) 4%, transparent)'; }}>
+                              <div className="flex items-start gap-3">
+                                <div className="p-2 rounded-xl flex-shrink-0" style={{ background: `color-mix(in srgb, ${color} 10%, transparent)`, border: `1px solid color-mix(in srgb, ${color} 20%, transparent)` }}>
+                                  <Icon className="h-4 w-4" style={{ color }} strokeWidth={1.75} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{n.title}</p>
+                                    {!n.is_read && <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: 'var(--accent-blue)' }} />}
+                                  </div>
+                                  <p className="text-xs mt-0.5 line-clamp-2" style={{ color: 'var(--text-muted)' }}>{n.message}</p>
+                                  <div className="flex items-center gap-2 mt-1.5">
+                                    <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{timeAgo}</span>
+                                    {n.invoice_number && (
+                                      <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'var(--bg-card-hover)', color: 'var(--text-muted)' }}>{n.invoice_number}</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <div className="p-8 text-center">
+                          <Bell className="h-8 w-8 mx-auto mb-2 opacity-30" style={{ color: 'var(--text-muted)' }} />
+                          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No notifications yet</p>
+                          <p className="text-xs mt-1" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>Stage transitions and updates will appear here</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+              {/* Theme Toggle */}
+              <ThemeToggle />
+              {/* User Info */}
+              {user && (
+                <div className="flex items-center gap-2 md:gap-3 px-2 md:px-3 py-2 rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+                  <div className="flex items-center gap-2">
+                    <div className="p-2 rounded-xl flex-shrink-0" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}>
+                      <span className="text-sm font-semibold" style={{ color: 'var(--text-inverse)' }}>
+                        {user.name.split(' ').map(n => n[0]).join('')}
+                      </span>
+                    </div>
+                    <div className="text-left hidden sm:block">
+                      <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{user.name}</p>
+                      <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{user.title || user.role.replace(/_/g, ' ')}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      logout();
+                      navigate('/login');
+                    }}
+                    className="p-2 rounded-xl transition-colors"
+                    style={{ color: 'var(--text-muted)' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent'; }}
+                    title="Logout"
+                  >
+                    <LogOut className="h-4 w-4" strokeWidth={1.75} />
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </header>
+
+        {/* Main Content Area */}
+        <main className="flex-1 overflow-auto p-4 md:p-6 pb-24 md:pb-6">
           {/* Primary Action Bar */}
           <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
@@ -2029,6 +2260,58 @@ export default function Dashboard() {
               </div>
             </div>
           )}
+        </main>
+      </div>
+
+      {/* Mobile Bottom Tab Bar */}
+      <div className="md:hidden fixed bottom-0 left-0 right-0 backdrop-blur-xl border-t z-50" style={{ background: 'var(--bg-card)', borderTop: '1px solid var(--border-color)' }}>
+        <div className="flex items-center justify-around py-2">
+          <Link
+            to="/"
+            className="flex flex-col items-center px-4 py-2"
+            style={{ color: 'var(--accent-purple)' }}
+          >
+            <LayoutDashboard className="h-5 w-5" strokeWidth={1.75} />
+            <span className="text-xs mt-1">Dashboard</span>
+          </Link>
+          <Link
+            to="/approvals"
+            className="flex flex-col items-center px-4 py-2"
+            style={{ color: 'var(--text-muted)' }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
+          >
+            <CheckSquare className="h-5 w-5" strokeWidth={1.75} />
+            <span className="text-xs mt-1">Approvals</span>
+          </Link>
+          <Link
+            to="/exceptions"
+            className="flex flex-col items-center px-4 py-2"
+            style={{ color: 'var(--text-muted)' }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
+          >
+            <AlertTriangle className="h-5 w-5" strokeWidth={1.75} />
+            <span className="text-xs mt-1">Exceptions</span>
+          </Link>
+          <Link
+            to="/vendors"
+            className="flex flex-col items-center px-4 py-2"
+            style={{ color: 'var(--text-muted)' }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
+          >
+            <Building2 className="h-5 w-5" strokeWidth={1.75} />
+            <span className="text-xs mt-1">Vendors</span>
+          </Link>
+          <button className="flex flex-col items-center px-4 py-2" style={{ color: 'var(--text-muted)' }}
+            onClick={() => setMobileSidebarOpen(true)}
+            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}>
+            <Menu className="h-5 w-5" strokeWidth={1.75} />
+            <span className="text-xs mt-1">More</span>
+          </button>
+        </div>
       </div>
 
       {/* Invoice Detail Panel */}
@@ -2079,7 +2362,7 @@ export default function Dashboard() {
           </div>
 
           {/* Tab Content — scrollable */}
-          <div className="flex-1 overflow-y-auto p-6 min-h-0">
+          <div className="flex-1 overflow-y-auto p-6">
             {/* Overview Tab */}
             {detailTab === 'overview' && (
             <div className="space-y-4">
@@ -2102,31 +2385,7 @@ export default function Dashboard() {
                   <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Status</p>
                   <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.status.replace(/_/g, ' ')}</p>
                 </div>
-                <div>
-                  <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Invoice Date</p>
-                  <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                    {selectedInvoice.invoice_date ? new Date(selectedInvoice.invoice_date).toLocaleDateString() : '—'}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Actual Date Received</p>
-                  <p className="text-sm font-medium" style={{ color: 'var(--accent-blue)' }}>
-                    {selectedInvoice.invoice_received_date ? new Date(selectedInvoice.invoice_received_date).toLocaleDateString() : '—'}
-                  </p>
-                </div>
               </div>
-
-              <button
-                onClick={handleOpenChangeRequests}
-                className="w-full flex items-center justify-between px-4 py-3 rounded-xl transition-colors"
-                style={{ background: 'color-mix(in srgb, var(--accent-amber) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 22%, transparent)', color: 'var(--accent-amber)' }}
-              >
-                <span className="flex items-center gap-2 text-sm font-semibold">
-                  <Bell className="h-4 w-4" strokeWidth={1.75} />
-                  Purchasing Change Requests
-                </span>
-                <span className="text-xs">View requested and completed changes →</span>
-              </button>
 
               {(selectedInvoice as any).ocr_confidence_score !== undefined && (selectedInvoice as any).ocr_confidence_score !== null && (
                 <div className="rounded-xl p-4" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
@@ -2162,49 +2421,29 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* On Hold Indicator — batch threshold or pre-post check */}
-              {selectedInvoice.status === (InvoiceStatus.ON_HOLD as any) && (() => {
-                const isBatchThreshold = selectedInvoice.exceptions?.some(
-                  (e: any) => e.reason === 'BATCH_THRESHOLD_NOT_MET' && (e.status === 'PENDING' || e.status === 'OPEN')
-                );
-                return (
-                  <div
-                    className="p-3 rounded-xl"
-                    style={{
-                      background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)',
-                      border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)',
-                    }}
-                  >
-                    <p className="text-xs font-medium" style={{ color: 'var(--accent-amber)' }}>
-                      {isBatchThreshold ? 'On Hold — Batch Threshold' : 'On Hold — Pre-Post Check Failed'}
-                    </p>
-                    <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>
-                      {isBatchThreshold
-                        ? 'Held until vendor cumulative reaches $100. Another invoice for this vendor will release this batch.'
-                        : 'Amount variance or other issue detected during pre-post validation. Review the active exceptions and release hold when resolved.'}
-                    </p>
-                  </div>
-                );
-              })()}
-
-              {/* Exceptions summary in overview — only show active (PENDING/OPEN) exceptions */}
-              {selectedInvoice.exceptions && selectedInvoice.exceptions.some(e => e.status === 'PENDING' || e.status === 'OPEN') && (
-                <div className="p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}>
-                  <p className="text-sm font-semibold mb-2" style={{ color: 'var(--accent-red)' }}>Active Exceptions</p>
-                  {selectedInvoice.exceptions.filter(e => e.status === 'PENDING' || e.status === 'OPEN').map((exc) => (
-                    <p key={exc.id} className="text-xs" style={{ color: 'var(--accent-red)' }}>
-                      {exc.reason}: {exc.detail}
-                    </p>
-                  ))}
+              {/* Batch Threshold Indicator */}
+              {selectedInvoice.status === (InvoiceStatus.ON_HOLD as any) && (
+                <div
+                  className="p-3 rounded-xl"
+                  style={{
+                    background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)',
+                    border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)',
+                  }}
+                >
+                  <p className="text-xs font-medium" style={{ color: 'var(--accent-amber)' }}>On Hold — Batch Threshold</p>
+                  <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>
+                    Held until vendor cumulative reaches $100. Another invoice for this vendor will release this batch.
+                  </p>
                 </div>
               )}
-              {/* Waived/resolved exceptions — show as informational, not actionable */}
-              {selectedInvoice.exceptions && selectedInvoice.exceptions.some(e => e.status === 'WAIVED' || e.status === 'RESOLVED') && (
-                <div className="p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-green) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-green) 15%, transparent)' }}>
-                  <p className="text-sm font-semibold mb-2" style={{ color: 'var(--accent-green)' }}>Resolved Exceptions</p>
-                  {selectedInvoice.exceptions.filter(e => e.status === 'WAIVED' || e.status === 'RESOLVED').map((exc) => (
-                    <p key={exc.id} className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                      <span style={{ color: 'var(--accent-green)', fontWeight: 600 }}>{exc.status}</span> — {exc.reason}: {exc.detail}
+
+              {/* Exceptions summary in overview */}
+              {selectedInvoice.exceptions && selectedInvoice.exceptions.length > 0 && (
+                <div className="p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}>
+                  <p className="text-sm font-semibold mb-2" style={{ color: 'var(--accent-red)' }}>Exceptions</p>
+                  {selectedInvoice.exceptions.map((exc) => (
+                    <p key={exc.id} className="text-xs" style={{ color: 'var(--accent-red)' }}>
+                      {exc.reason}: {exc.detail}
                     </p>
                   ))}
                 </div>
@@ -2245,24 +2484,6 @@ export default function Dashboard() {
                 >
                   <Edit className="h-4 w-4 mr-2" strokeWidth={1.75} />
                   Edit Invoice
-                </button>
-              )}
-
-              {/* Request Bank Info Update Button — for non-accounting roles */}
-              {user && !canEditBankInfo && (selectedInvoice as any).vendor_id && (
-                <button
-                  onClick={handleRequestBankUpdate}
-                  className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
-                  style={{
-                    background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)',
-                    color: 'var(--accent-amber)',
-                    border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)',
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-amber) 15%, transparent)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-amber) 10%, transparent)'; }}
-                >
-                  <Send className="h-4 w-4 mr-2" strokeWidth={1.75} />
-                  Request Bank Info Update
                 </button>
               )}
 
@@ -2311,21 +2532,8 @@ export default function Dashboard() {
                 </button>
               )}
 
-              {/* Approve & Advance Button — for invoices in VALIDATION_PENDING (after resolve).
-                  Coordinator can approve directly: creates approval request + signs as coordinator in one click. */}
-              {selectedInvoice.status === (InvoiceStatus.VALIDATION_PENDING as any) && user && hasPermission(user.role, 'canRequestApproval') && hasPermission(user.role, 'canApprove') && (
-                <button
-                  onClick={() => handleResolveAndApprove(selectedInvoice.id)}
-                  disabled={requestingApproval}
-                  className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-semibold text-sm"
-                  style={requestingApproval ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--accent-lime)', color: 'var(--text-inverse)', boxShadow: '0 0 16px color-mix(in srgb, var(--accent-lime) 25%, transparent)' }}
-                >
-                  {requestingApproval ? <Loader2 className="h-4 w-4 mr-2 animate-spin" strokeWidth={1.75} /> : <CheckCircle className="h-4 w-4 mr-2" strokeWidth={1.75} />}
-                  {requestingApproval ? 'Approving...' : 'Approve'}
-                </button>
-              )}
-              {/* Request Approval Button — for VALIDATION_PENDING when user can request but NOT approve (e.g. IT_ADMIN) */}
-              {selectedInvoice.status === (InvoiceStatus.VALIDATION_PENDING as any) && user && hasPermission(user.role, 'canRequestApproval') && !hasPermission(user.role, 'canApprove') && (
+              {/* Request Approval Button — for invoices in VALIDATION_PENDING that need manual approval trigger */}
+              {selectedInvoice.status === (InvoiceStatus.VALIDATION_PENDING as any) && user && hasPermission(user.role, 'canRequestApproval') && (
                 <button
                   onClick={handleRequestApproval}
                   disabled={requestingApproval}
@@ -2584,10 +2792,10 @@ export default function Dashboard() {
                 </div>
               )}
 
-              {selectedInvoice.exceptions && selectedInvoice.exceptions.some(e => e.status === 'PENDING' || e.status === 'OPEN') && (
+              {selectedInvoice.exceptions && selectedInvoice.exceptions.length > 0 && (
                 <div className="mt-4 p-4 rounded-lg" style={{ background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}>
-                  <p className="text-sm font-semibold mb-2" style={{ color: 'var(--accent-red)' }}>Active Exceptions</p>
-                  {selectedInvoice.exceptions.filter(e => e.status === 'PENDING' || e.status === 'OPEN').map((exc) => (
+                  <p className="text-sm font-semibold mb-2" style={{ color: 'var(--accent-red)' }}>Exceptions</p>
+                  {selectedInvoice.exceptions.map((exc) => (
                     <p key={exc.id} className="text-xs" style={{ color: 'var(--accent-red)' }}>
                       {exc.reason}: {exc.detail}
                     </p>
@@ -2770,7 +2978,6 @@ export default function Dashboard() {
                   { label: 'Vendor Name', field: 'vendor_name_raw', type: 'text' },
                   { label: 'Invoice Number', field: 'invoice_number', type: 'text' },
                   { label: 'Invoice Date', field: 'invoice_date', type: 'date' },
-                  { label: 'Actual Date Received', field: 'invoice_received_date', type: 'date' },
                   { label: 'Due Date', field: 'due_date', type: 'date' },
                   { label: 'Amount', field: 'total_amount', type: 'number' },
                   { label: 'Currency', field: 'currency', type: 'text' },
@@ -2841,9 +3048,9 @@ export default function Dashboard() {
                   { label: 'Original Currency', field: 'invoice_currency_original', type: 'text' },
                 ]},
                 { title: 'Bank Details', fields: [
-                  { label: 'Bank Name', field: 'bank_name', type: 'text', locked: !canEditBankInfo },
-                  { label: 'SWIFT Code', field: 'swift_code', type: 'text', locked: !canEditBankInfo },
-                  { label: 'Account Number', field: 'account_number', type: 'text', locked: !canEditBankInfo },
+                  { label: 'Bank Name', field: 'bank_name', type: 'text' },
+                  { label: 'SWIFT Code', field: 'swift_code', type: 'text' },
+                  { label: 'Account Number', field: 'account_number', type: 'text' },
                 ]},
                 { title: 'Shipping & Dates', fields: [
                   { label: 'Ship To', field: 'ship_to', type: 'text' },
@@ -2868,10 +3075,9 @@ export default function Dashboard() {
                   </button>
                   {!isCollapsed && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
-                      {section.fields.map(({ label, field, type, options, locked }: any) => (
+                      {section.fields.map(({ label, field, type, options }: any) => (
                         <div key={field}>
                           <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
-                            {locked && <Lock className="h-3 w-3 inline mr-1" style={{ color: 'var(--text-subtle)' }} />}
                             {label}
                           </label>
                           {type === 'select' ? (
@@ -2890,8 +3096,7 @@ export default function Dashboard() {
                               type={type}
                               value={editFormData[field] || ''}
                               onChange={(e) => handleEditChange(field, e.target.value)}
-                              disabled={locked}
-                              className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                              className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
                               style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
                             />
                           )}
@@ -2955,232 +3160,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Invoice Change Requests / Change History Modal */}
-      {showChangeRequestsModal && selectedInvoice && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[60] animate-backdrop">
-          <div className="max-w-2xl w-full mx-4 max-h-[85vh] overflow-hidden rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
-            <div className="p-5 flex items-start justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
-              <div>
-                <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Purchasing Change Requests</h3>
-                <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
-                  Invoice {selectedInvoice.invoice_number} · requested corrections and recorded changes
-                </p>
-              </div>
-              <button
-                onClick={() => { setShowChangeRequestsModal(false); setChangeRequestData(null); }}
-                className="p-2 rounded-lg"
-                style={{ color: 'var(--text-muted)' }}
-              >
-                <X className="h-5 w-5" strokeWidth={1.75} />
-              </button>
-            </div>
-            <div className="p-5 overflow-y-auto max-h-[68vh]">
-              {loadingChangeRequests ? (
-                <div className="flex items-center justify-center py-12 gap-2" style={{ color: 'var(--text-muted)' }}>
-                  <Loader2 className="h-5 w-5 animate-spin" /> Loading change history…
-                </div>
-              ) : (() => {
-                const requests = (changeRequestData?.workflow_actions || [])
-                  .filter((item: any) => item.action === 'RETURNED_FOR_CORRECTION')
-                  .map((item: any) => ({ ...item, kind: 'REQUEST' }));
-                const completedChanges = (changeRequestData?.audit_logs || [])
-                  .filter((item: any) => item.action === 'INVOICE_UPDATED')
-                  .map((item: any) => ({ ...item, kind: 'CHANGE', reason: item.note }));
-                const history = [...requests, ...completedChanges].sort(
-                  (a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-                );
-                return history.length > 0 ? (
-                  <div className="space-y-3">
-                    {history.map((item: any) => (
-                      <div key={`${item.kind}-${item.id}`} className="p-4 rounded-xl" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
-                        <div className="flex items-center justify-between gap-3 mb-2">
-                          <span
-                            className="px-2 py-1 rounded-full text-[11px] font-semibold"
-                            style={{
-                              background: item.kind === 'REQUEST' ? 'color-mix(in srgb, var(--accent-amber) 12%, transparent)' : 'color-mix(in srgb, var(--accent-lime) 12%, transparent)',
-                              color: item.kind === 'REQUEST' ? 'var(--accent-amber)' : 'var(--accent-lime)',
-                            }}
-                          >
-                            {item.kind === 'REQUEST' ? 'CHANGE REQUESTED' : 'CHANGES RECORDED'}
-                          </span>
-                          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                            {new Date(item.created_at).toLocaleString()}
-                          </span>
-                        </div>
-                        <p className="text-sm whitespace-pre-wrap" style={{ color: 'var(--text-primary)' }}>
-                          {item.reason || item.note || 'No details provided'}
-                        </p>
-                        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                          <span>By: {item.performed_by || 'System'}</span>
-                          {item.performed_by_role && <span>Role: {item.performed_by_role.replace(/_/g, ' ')}</span>}
-                          {item.from_stage && <span>{item.from_stage.replace(/_/g, ' ')} → {(item.to_stage || '').replace(/_/g, ' ')}</span>}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-center py-12">
-                    <CheckCircle className="h-8 w-8 mx-auto mb-3" style={{ color: 'var(--accent-lime)' }} />
-                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>No change requests recorded</p>
-                    <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Purchasing requests and completed field changes will appear here.</p>
-                  </div>
-                );
-              })()}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Bank Update Request Modal */}
-      {showBankRequestModal && selectedInvoice && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-backdrop">
-          <div className="max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
-            <div className="p-6">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Request Bank Info Update</h3>
-                  <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Vendor: {selectedInvoice.vendor?.name}</p>
-                </div>
-                <button
-                  onClick={() => {
-                    setShowBankRequestModal(false);
-                    setBankRequestData({ bank_name: '', swift_code: '', account_number: '', reason: '' });
-                    setBankRequestAttachment(null);
-                  }}
-                  className="transition-colors"
-                  style={{ color: 'var(--text-muted)' }}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
-                >
-                  <X className="h-5 w-5" strokeWidth={1.75} />
-                </button>
-              </div>
-              <div className="px-3 py-2 mb-4 rounded-xl text-xs flex items-start gap-2" style={{ background: 'color-mix(in srgb, var(--accent-amber) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)', color: 'var(--text-secondary)' }}>
-                <Send className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" style={{ color: 'var(--accent-amber)' }} />
-                <span>This request will be sent to the Accounting team for review. Fill in the proposed bank details and a reason for the update.</span>
-              </div>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Proposed Bank Name</label>
-                  <input
-                    type="text"
-                    value={bankRequestData.bank_name}
-                    onChange={(e) => setBankRequestData({ ...bankRequestData, bank_name: e.target.value })}
-                    placeholder="e.g. HSBC HK"
-                    className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
-                    style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Proposed SWIFT Code</label>
-                  <input
-                    type="text"
-                    value={bankRequestData.swift_code}
-                    onChange={(e) => setBankRequestData({ ...bankRequestData, swift_code: e.target.value })}
-                    placeholder="e.g. HSBCHKHH"
-                    className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
-                    style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Proposed Account Number</label>
-                  <input
-                    type="text"
-                    value={bankRequestData.account_number}
-                    onChange={(e) => setBankRequestData({ ...bankRequestData, account_number: e.target.value })}
-                    placeholder="e.g. 123-456789-001"
-                    className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
-                    style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Reason for Update <span style={{ color: 'var(--accent-red)' }}>*</span></label>
-                  <textarea
-                    value={bankRequestData.reason}
-                    onChange={(e) => setBankRequestData({ ...bankRequestData, reason: e.target.value })}
-                    placeholder="Explain why the bank information needs to be updated..."
-                    rows={3}
-                    className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm resize-none"
-                    style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Attachment (Bank Letter / Verification Email)</label>
-                  <div className="space-y-2">
-                    {bankRequestAttachment ? (
-                      <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
-                        <div className="p-2 rounded-lg flex-shrink-0" style={{ background: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)' }}>
-                          <FileText className="h-4 w-4" style={{ color: 'var(--accent-purple)' }} strokeWidth={1.75} />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{bankRequestAttachment.name}</p>
-                          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{(bankRequestAttachment.size / 1024).toFixed(1)} KB</p>
-                        </div>
-                        <button
-                          onClick={() => setBankRequestAttachment(null)}
-                          className="p-1.5 rounded-lg transition-colors flex-shrink-0"
-                          style={{ color: 'var(--text-muted)' }}
-                          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-red)'; e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-red) 10%, transparent)'; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = ''; }}
-                        >
-                          <X className="h-4 w-4" strokeWidth={1.75} />
-                        </button>
-                      </div>
-                    ) : (
-                      <label
-                        className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl cursor-pointer transition-colors text-sm"
-                        style={{ background: 'var(--bg-elevated)', border: '1px dashed var(--border-color)', color: 'var(--text-muted)' }}
-                        onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent-purple)'; e.currentTarget.style.color = 'var(--accent-purple)'; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border-color)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
-                      >
-                        <Paperclip className="h-4 w-4" strokeWidth={1.75} />
-                        <span>Click to upload (PDF, JPG, PNG — max 10MB)</span>
-                        <input
-                          type="file"
-                          accept=".pdf,.jpg,.jpeg,.png"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file) setBankRequestAttachment(file);
-                          }}
-                          className="hidden"
-                        />
-                      </label>
-                    )}
-                  </div>
-                </div>
-              </div>
-              <div className="mt-6 flex justify-end space-x-3">
-                <button
-                  onClick={() => {
-                    setShowBankRequestModal(false);
-                    setBankRequestData({ bank_name: '', swift_code: '', account_number: '', reason: '' });
-                    setBankRequestAttachment(null);
-                  }}
-                  className="px-4 py-2 transition-colors text-sm"
-                  style={{ color: 'var(--text-secondary)' }}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={submitBankUpdateRequest}
-                  disabled={submittingBankRequest}
-                  className="px-4 py-2 rounded-xl transition-colors disabled:cursor-not-allowed flex items-center gap-2 text-sm font-semibold"
-                  style={submittingBankRequest
-                    ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' }
-                    : { background: 'var(--accent-amber)', color: 'var(--bg-base)' }
-                  }
-                >
-                  <Send className="h-4 w-4" strokeWidth={1.75} />
-                  {submittingBankRequest ? 'Sending...' : 'Send Request'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Toast Notifications */}
       <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
         {toasts.map((toast) => (
@@ -3226,6 +3205,6 @@ export default function Dashboard() {
 
       {/* Upload Invoice Modal */}
       <UploadInvoiceModal isOpen={showUploadModal} onClose={() => setShowUploadModal(false)} />
-    </>
+    </div>
   );
 }

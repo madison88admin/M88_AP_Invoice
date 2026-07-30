@@ -113,6 +113,9 @@ export interface MockSignature {
   signatory_name: string;
   signed_at?: string;
   signature_type: 'DIGITAL' | 'MANUAL';
+  approval_status?: string;
+  invalidated_at?: string;
+  invalidation_reason?: string;
 }
 
 export interface MockException {

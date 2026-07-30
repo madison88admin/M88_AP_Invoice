@@ -1,6 +1,6 @@
 import { InvoiceStatus, OrderType, calcWorkingHoursElapsed } from '@ap-invoice/shared';
 import { formatCurrency, formatDate } from '../lib/utils';
-import { FileText, Calendar, DollarSign, Eye, Check, Flag } from 'lucide-react';
+import { FileText, Calendar, DollarSign, Eye, Check, Flag, Clock } from 'lucide-react';
 import { MockInvoice } from '../lib/mockData';
 import { POValidationBadge } from './POValidationBadge';
 import { Skeleton } from './ui/Skeleton';
@@ -39,7 +39,7 @@ const orderTypeColors: Record<OrderType, { bg: string; color: string }> = {
   SAMPLE: { bg: 'color-mix(in srgb, var(--accent-violet) 10%, transparent)', color: 'var(--accent-violet)' },
 };
 
-function getSLAStatus(invoice: MockInvoice): { label: string; bg: string; color: string } | null {
+function getSLAStatus(invoice: MockInvoice): { label: string; bg: string; color: string; hoursRemaining: number } | null {
   const timestamps = (invoice as any).stage_timestamps || [];
   const current = timestamps.find((t: any) => t.stage === invoice.status && !t.exited_at);
   if (!current || !current.sla_hours) return null;
@@ -47,8 +47,9 @@ function getSLAStatus(invoice: MockInvoice): { label: string; bg: string; color:
   const now = new Date();
   const elapsedHours = calcWorkingHoursElapsed(enteredAt, now);
   const hoursRemaining = current.sla_hours - elapsedHours;
-  if (hoursRemaining <= 0) return { label: 'Overdue', bg: 'var(--accent-red)', color: 'var(--text-inverse)' };
-  if (hoursRemaining <= 24) return { label: 'Due soon', bg: 'var(--accent-amber)', color: 'var(--text-primary)' };
+  if (hoursRemaining <= 0) return { label: 'SLA Overdue', bg: 'var(--accent-red)', color: 'var(--text-inverse)', hoursRemaining: 0 };
+  if (hoursRemaining <= 24) return { label: `SLA ${Math.round(hoursRemaining)}h left`, bg: 'var(--accent-amber)', color: 'var(--text-primary)', hoursRemaining };
+  if (hoursRemaining <= 48) return { label: `SLA ${Math.round(hoursRemaining)}h left`, bg: 'color-mix(in srgb, var(--accent-blue) 12%, transparent)', color: 'var(--accent-blue)', hoursRemaining };
   return null;
 }
 
@@ -116,7 +117,10 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
               Qty
             </th>
             <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
-              Date Due
+              Invoice Date
+            </th>
+            <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+              Actual Date Received
             </th>
             <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
               Amount
@@ -216,6 +220,12 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
                   {invoice.invoice_date ? formatDate(invoice.invoice_date) : '—'}
                 </div>
               </td>
+              <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--text-muted)' }}>
+                <div className="flex items-center">
+                  <Clock className="h-4 w-4 mr-2" style={{ color: 'var(--accent-blue)' }} strokeWidth={1.75} />
+                  {invoice.invoice_received_date ? formatDate(invoice.invoice_received_date) : '—'}
+                </div>
+              </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
                 <div className="flex items-center">
                   <DollarSign className="h-4 w-4 mr-1" style={{ color: 'var(--text-muted)' }} strokeWidth={1.75} />
@@ -266,7 +276,8 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
                   {(() => {
                     const sla = getSLAStatus(invoice);
                     return sla ? (
-                      <span className="px-2 py-0.5 inline-flex text-[10px] leading-4 font-semibold rounded-full w-fit" style={{ background: sla.bg, color: sla.color }}>
+                      <span className="px-2 py-0.5 inline-flex text-[10px] leading-4 font-semibold rounded-full w-fit items-center gap-1" style={{ background: sla.bg, color: sla.color }}>
+                        <Clock className="h-2.5 w-2.5" strokeWidth={2.5} />
                         {sla.label}
                       </span>
                     ) : null;

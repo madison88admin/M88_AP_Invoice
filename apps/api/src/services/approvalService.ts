@@ -35,31 +35,51 @@ interface BrandValidationResult {
 /**
  * Validate brand information for Tier 2+ invoices using KNOWN_BRANDS table
  */
-function validateBrandForApproval(brandCode: string | null | undefined): BrandValidationResult {
-  if (!brandCode) {
+function validateBrandForApproval(
+  brandCode: string | null | undefined,
+  brandName?: string | null,
+  explicitTier?: BrandTier | null
+): BrandValidationResult {
+  const knownByCode = brandCode ? KNOWN_BRANDS[brandCode.toUpperCase()] : undefined;
+  const knownByName = brandName
+    ? Object.values(KNOWN_BRANDS).find(
+        known => known.name.toLowerCase() === brandName.trim().toLowerCase()
+      )
+    : undefined;
+  const known = knownByCode || knownByName;
+
+  if (known) {
     return {
-      tier: BrandTier.OTHER, // placeholder, won't be used if needsException
-      brandName: null,
-      needsException: true,
-      exceptionDetail: "No brand could be extracted from this invoice's PO reference. Please confirm brand and tier manually."
+      tier: known.tier,
+      brandName: known.name,
+      needsException: false
     };
   }
 
-  const known = KNOWN_BRANDS[brandCode.toUpperCase()];
+  // A manually confirmed brand tier is enough to select the correct MLO route,
+  // even when a new brand code has not been added to KNOWN_BRANDS yet.
+  if (explicitTier) {
+    return {
+      tier: explicitTier,
+      brandName: brandName || null,
+      needsException: false
+    };
+  }
 
-  if (!known) {
+  if (!brandCode && !brandName) {
     return {
       tier: BrandTier.OTHER, // placeholder, won't be used if needsException
       brandName: null,
       needsException: true,
-      exceptionDetail: `Unrecognized brand code '${brandCode}' — please confirm brand and tier manually, or add ${brandCode} to the brand code table if this is a new brand.`
+      exceptionDetail: 'Approval routing needs a Brand or a manually confirmed Brand Tier (TOP_10 or OTHER).'
     };
   }
 
   return {
-    tier: known.tier,
-    brandName: known.name,
-    needsException: false
+    tier: BrandTier.OTHER,
+    brandName: null,
+    needsException: true,
+    exceptionDetail: `Brand '${brandCode || brandName}' is not in the routing table. Select Brand Tier TOP_10 or OTHER to continue.`
   };
 }
 
@@ -73,7 +93,8 @@ function validateBrandForApproval(brandCode: string | null | undefined): BrandVa
 export function determineApprovalRoute(
   amount: number,
   brandName?: string,
-  brandCode?: string
+  brandCode?: string,
+  brandTier?: BrandTier
 ): ApprovalRouteStep[] {
   const tier = determineApprovalTier(amount);
   const route: ApprovalRouteStep[] = [];
@@ -83,7 +104,7 @@ export function determineApprovalRoute(
   route.push({ role: SignatoryRole.PURCHASING_MANAGER, assignee_name: 'Any Purchasing Manager', sla_days: SLA_LIMITS.PURCHASING_MANAGER_DAYS });
 
   if (tier >= 2) {
-    const brandValidation = validateBrandForApproval(brandCode);
+    const brandValidation = validateBrandForApproval(brandCode, brandName, brandTier);
     if (brandValidation.needsException) {
       throw new AppError(brandValidation.exceptionDetail!, 400);
     }
@@ -156,7 +177,23 @@ async function isAutoApprovalEligible(invoice: any): Promise<{ eligible: boolean
  * Sets invoice to PENDING_COORDINATOR and creates signature records
  * For low-risk Planning Tier invoices, auto-approves directly to APPROVED
  */
+const approvalRequestInFlight = new Map<string, Promise<any>>();
+
 export async function createApprovalRequest(
+  invoiceId: string,
+  userId: string,
+  options?: { fromExceptionResolution?: boolean }
+) {
+  const existing = approvalRequestInFlight.get(invoiceId);
+  if (existing) return existing;
+
+  const task = createApprovalRequestInternal(invoiceId, userId, options)
+    .finally(() => approvalRequestInFlight.delete(invoiceId));
+  approvalRequestInFlight.set(invoiceId, task);
+  return task;
+}
+
+async function createApprovalRequestInternal(
   invoiceId: string,
   userId: string,
   options?: { fromExceptionResolution?: boolean }
@@ -183,34 +220,36 @@ export async function createApprovalRequest(
   const brandCode = invoice.brand_code || undefined;
   let approvalRoute: ApprovalRouteStep[];
   try {
-    approvalRoute = determineApprovalRoute(amount, brandName, brandCode);
+    approvalRoute = determineApprovalRoute(
+      amount,
+      brandName,
+      brandCode,
+      (invoice.brand_tier || undefined) as BrandTier | undefined
+    );
   } catch (routeError: any) {
-    // When called from exception resolution, don't re-flag (creates infinite loop).
-    // Instead, throw so the caller can handle it — the invoice stays in VALIDATION_PENDING.
-    if (options?.fromExceptionResolution) {
-      await prisma.auditLog.create({
-        data: {
-          invoice_id: invoiceId,
-          action: 'APPROVAL_REQUEST_FAILED',
-          performed_by: userId,
-          note: `Approval request could not be created: ${routeError.message}. Invoice remains in VALIDATION_PENDING — please update brand_code and manually request approval.`,
-        },
-      });
-      throw routeError;
-    }
-    // Missing or unrecognized brand for Tier 2+ — flag as exception instead of silently failing
+    // Never leave a successfully validated invoice stuck in VALIDATION_PENDING.
+    // Route failures become one actionable, de-duplicated exception.
     await prisma.invoice.update({
       where: { id: invoiceId },
       data: { status: InvoiceStatus.EXCEPTION_FLAGGED as any },
     });
     await inAppNotificationService.notifyStageTransition(invoiceId, invoice.invoice_number, invoice.vendor?.name || 'Unknown', '', 'EXCEPTION');
-    await prisma.exception.create({
-      data: {
+    const existingRouteException = await prisma.exception.findFirst({
+      where: {
         invoice_id: invoiceId,
-        reason: ExceptionReason.MISSING_PO_REFERENCE as any,
-        detail: routeError.message || 'Approval route could not be determined. Please confirm brand/tier.',
+        reason: ExceptionReason.MISSING_BRAND_TIER as any,
+        status: 'PENDING' as any,
       },
     });
+    if (!existingRouteException) {
+      await prisma.exception.create({
+        data: {
+          invoice_id: invoiceId,
+          reason: ExceptionReason.MISSING_BRAND_TIER as any,
+          detail: routeError.message || 'Approval route could not be determined. Confirm Brand Tier.',
+        },
+      });
+    }
     await prisma.auditLog.create({
       data: {
         invoice_id: invoiceId,
@@ -222,6 +261,20 @@ export async function createApprovalRequest(
     return [{ exception_flagged: true, invoice_id: invoiceId }];
   }
   const tier = determineApprovalTier(amount);
+
+  // Make repeated approval requests idempotent. OCR-detected document
+  // signatures are source evidence; only workflow signatures count here.
+  const activeWorkflowSignatures = (invoice.signatures || []).filter((signature: any) =>
+    !signature.ocr_detected &&
+    signature.invoice_revision === invoice.revision &&
+    signature.approval_status !== 'SUPERSEDED'
+  );
+  const routeAlreadyInitialized = approvalRoute.every(step =>
+    activeWorkflowSignatures.some((signature: any) => signature.signatory_role === step.role)
+  );
+  if (routeAlreadyInitialized) {
+    return activeWorkflowSignatures;
+  }
 
   // Check auto-approval eligibility for low-risk Planning Tier invoices
   const autoApproval = await isAutoApprovalEligible(invoice);
@@ -323,6 +376,15 @@ export async function createApprovalRequest(
   const now = new Date();
 
   for (const step of approvalRoute) {
+    const existingWorkflowSignature = activeWorkflowSignatures.find(
+      (signature: any) => signature.signatory_role === step.role
+    );
+    if (existingWorkflowSignature) {
+      createdSignatures.push(existingWorkflowSignature);
+      if (existingWorkflowSignature.signed_at) autoSignedRoles.push(step.role);
+      continue;
+    }
+
     // Look for an existing OCR-detected signature matching this role
     const ocrMatch = ocrSignatures.find((sig: any) => {
       if (sig.signatory_role === step.role) return true;
@@ -582,7 +644,8 @@ export async function approveInvoice(
     const approvalRoute = determineApprovalRoute(
       Number(invoice.total_amount),
       invoice.brand || undefined,
-      invoice.brand_code || undefined
+      invoice.brand_code || undefined,
+      (invoice.brand_tier || undefined) as BrandTier | undefined
     );
     routeOrder = approvalRoute.map((step) => step.role);
   } catch {
@@ -853,6 +916,24 @@ export async function returnInvoice(
       performed_by: userId,
       note: `Returned by ${userRole} to ${target.signatory_role}. Reason: ${reason.trim()}`,
     },
+  });
+  await inAppNotificationService.create({
+    invoice_id: invoiceId,
+    invoice_number: invoice.invoice_number,
+    vendor_name: invoice.vendor?.name || 'Unknown',
+    title: 'Invoice Change Requested',
+    message: `${userRole.replace(/_/g, ' ')} requested changes: ${reason.trim()}`,
+    type: 'warning',
+    category: 'approval',
+    target_role: ({
+      COORDINATOR: 'PURCHASING_COORDINATOR',
+      PURCHASING_MANAGER: 'PURCHASING_MANAGER',
+      MLO_ACCOUNT_HOLDER: 'MLO_ACCOUNT_HOLDER',
+      MLO_PLANNING_MANAGER: 'PLANNING_MANAGER',
+      SR_MANAGER_GLOBAL_PRODUCTION: 'SR_MANAGER_GLOBAL_PRODUCTION',
+      MS_POLLY: 'MS_POLLY',
+      PRESIDENT: 'PRESIDENT',
+    } as Record<string, string>)[target.signatory_role] as any,
   });
   await inAppNotificationService.notifyStageTransition(
     invoiceId, invoice.invoice_number, invoice.vendor?.name || 'Unknown', invoice.status, targetStatus, target.signatory_role

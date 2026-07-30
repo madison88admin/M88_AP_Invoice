@@ -7,7 +7,7 @@ const statusGuide: Record<InvoiceStatus, { label: string; description: string; n
   [InvoiceStatus.RECEIVED]: { label: 'Received', description: 'Invoice uploaded but not yet processed.', nextSteps: 'OCR will extract data, then validation runs.', color: 'bg-amber-500' },
   [InvoiceStatus.OCR_PROCESSING]: { label: 'OCR Processing', description: 'System is reading invoice data.', nextSteps: 'Wait for extraction to complete.', color: 'bg-purple-500' },
   [InvoiceStatus.VALIDATION_PENDING]: { label: 'Validation Pending', description: 'Waiting for coordinator validation.', nextSteps: 'Coordinator reviews and runs validation.', color: 'bg-blue-500' },
-  [InvoiceStatus.EXCEPTION_FLAGGED]: { label: 'Exception Flagged', description: 'Validation found issues.', nextSteps: 'Resolve exceptions or waive them, then re-validate.', color: 'bg-red-500' },
+  [InvoiceStatus.EXCEPTION_FLAGGED]: { label: 'Exception Flagged', description: 'Validation found issues.', nextSteps: 'Resolve or waive all active exceptions. The system automatically re-validates and either advances the invoice or shows one consolidated updated list.', color: 'bg-red-500' },
   [InvoiceStatus.ON_HOLD]: { label: 'On Hold', description: 'Held by batch threshold rule.', nextSteps: 'Another invoice for same vendor reaching $100 total releases this.', color: 'bg-yellow-500' },
   [InvoiceStatus.PENDING_COORDINATOR]: { label: 'Pending Coordinator', description: 'Awaiting coordinator approval.', nextSteps: 'Coordinator approves, then moves to manager.', color: 'bg-amber-500' },
   [InvoiceStatus.PENDING_MANAGER]: { label: 'Pending Manager', description: 'Awaiting purchasing manager approval.', nextSteps: 'Manager approves, then moves to MLO.', color: 'bg-amber-500' },

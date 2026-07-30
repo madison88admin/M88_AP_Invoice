@@ -1,7 +1,8 @@
 import { useState, useCallback } from 'react';
-import { Upload, FileText, X, Sparkles, CheckCircle, AlertTriangle, Save } from 'lucide-react';
+import { Upload, FileText, X, Sparkles, CheckCircle, AlertTriangle, Save, Lock, XCircle } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { invoiceApi } from '../lib/api';
+import { useAuth } from '../contexts/AuthContext';
 
 interface UploadInvoiceModalProps {
   isOpen: boolean;
@@ -9,6 +10,7 @@ interface UploadInvoiceModalProps {
 }
 
 export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceModalProps) {
+  const { user } = useAuth();
   console.log('UploadInvoiceModal render, isOpen:', isOpen);
   const queryClient = useQueryClient();
   const [file, setFile] = useState<File | null>(null);
@@ -48,8 +50,11 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
     priority: 'medium' as 'low' | 'medium' | 'high',
   });
   const [originalFormData, setOriginalFormData] = useState<typeof formData | null>(null);
+  const [multiInvoiceItems, setMultiInvoiceItems] = useState<any[]>([]);
+  const [activeMultiInvoiceIndex, setActiveMultiInvoiceIndex] = useState(0);
   const [correctionSaved, setCorrectionSaved] = useState(false);
   const [isSavingCorrection, setIsSavingCorrection] = useState(false);
+  const [accountingPreapproved, setAccountingPreapproved] = useState(false);
 
   const handleFileSelect = useCallback(async (selectedFile: File) => {
     console.log('[DEBUG] File selected:', selectedFile.name, selectedFile.size);
@@ -61,6 +66,75 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
       const response = await invoiceApi.upload(selectedFile);
       console.log('[DEBUG] Frontend OCR response:', response.data);
       console.log('[DEBUG] Response structure:', JSON.stringify(response.data, null, 2));
+
+      const mapExtractionToForm = (extraction: any): typeof formData => ({
+        vendorName: extraction.vendor_name || '',
+        invoiceNumber: extraction.invoice_number || '',
+        invoiceDate: extraction.invoice_date || '',
+        dueDate: extraction.due_date || '',
+        amount: extraction.amount?.toString() || extraction.total_amount?.toString() || '',
+        currency: extraction.currency || 'USD',
+        documentType: (extraction.document_type || '') as '' | 'PI' | 'INV' | 'CI' | 'SI' | 'STATEMENT',
+        category: extraction.category || '',
+        brand: extraction.brand || '',
+        brandTier: (extraction.brand_tier || '') as '' | 'TOP_10' | 'OTHER',
+        season: extraction.season || '',
+        orderType: (extraction.order_type || '') as '' | 'BULK' | 'SMS' | 'SAMPLE',
+        poNumber: extraction.po_number || '',
+        mpoNumber: extraction.mpo_number || '',
+        qtyShipped: extraction.qty_shipped?.toString() || '',
+        paymentTerms: extraction.payment_terms || '',
+        bankName: extraction.bank_details?.bank_name || extraction.bank_name || '',
+        swiftCode: extraction.bank_details?.swift_code || extraction.swift_code || '',
+        accountNumber: extraction.bank_details?.account_number || extraction.account_number || '',
+        notes: '',
+        priority: (extraction.is_urgent ? 'high' : 'medium') as 'low' | 'medium' | 'high',
+      });
+
+      if (response.data.success && response.data.is_multi_invoice && Array.isArray(response.data.results)) {
+        const pageRanges = response.data.multi_invoice_detection?.page_ranges || [];
+        const items = response.data.results
+          .filter((result: any) => result.success && result.extraction)
+          .map((result: any, index: number) => {
+            const extractedFormData = mapExtractionToForm(result.extraction);
+            return {
+              ...result,
+              selected: true,
+              formData: extractedFormData,
+              originalFormData: JSON.parse(JSON.stringify(extractedFormData)),
+              ocrRawData: {
+                extraction: result.extraction,
+                bank_info: result.extraction.bank_details || {},
+                signatures: result.extraction.signatures || [],
+                multi_invoice_source: {
+                  original_file_name: selectedFile.name,
+                  split_index: index,
+                  page_range: pageRanges[index]?.pages,
+                  invoice_count: response.data.invoice_count,
+                },
+              },
+              pageRange: pageRanges[index],
+              matchedVendorId: result.vendor_match?.vendor_id || null,
+              extractedBrandCode: result.extraction.brand_code || result.extraction.brand || null,
+            };
+          });
+
+        if (items.length > 0) {
+          const first = items[0];
+          setMultiInvoiceItems(items);
+          setActiveMultiInvoiceIndex(0);
+          setFormData(first.formData);
+          setOriginalFormData(first.originalFormData);
+          setOcrRawData(first.ocrRawData);
+          setPoValidation(first.po_validation || null);
+          setConsensus(first.consensus || null);
+          setMatchedVendorId(first.matchedVendorId);
+          setExtractedBrandCode(first.extractedBrandCode);
+          setRequiresManualVendorAssignment(!first.matchedVendorId);
+          setCorrectionSaved(false);
+          return;
+        }
+      }
 
       if (response.data.success && response.data.extraction) {
         const extraction = response.data.extraction;
@@ -99,28 +173,11 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
         const formattedDate = extraction.invoice_date || '';
         const formattedDueDate = extraction.due_date || '';
 
-        const extractedFormData: typeof formData = {
-          vendorName: extraction.vendor_name || '',
-          invoiceNumber: extraction.invoice_number || '',
+        const extractedFormData = {
+          ...mapExtractionToForm(extraction),
           invoiceDate: formattedDate,
           dueDate: formattedDueDate,
-          amount: extraction.amount?.toString() || '',
-          currency: extraction.currency || 'USD',
-          documentType: (extraction.document_type || '') as '' | 'PI' | 'INV' | 'CI' | 'SI' | 'STATEMENT',
-          category: extraction.category || '',
           brand: brandToUse,
-          brandTier: (extraction.brand_tier || '') as '' | 'TOP_10' | 'OTHER',
-          season: extraction.season || '',
-          orderType: (extraction.order_type || '') as '' | 'BULK' | 'SMS' | 'SAMPLE',
-          poNumber: extraction.po_number || '',
-          mpoNumber: extraction.mpo_number || '',
-          qtyShipped: extraction.qty_shipped?.toString() || '',
-          paymentTerms: extraction.payment_terms || '',
-          bankName: extraction.bank_details?.bank_name || '',
-          swiftCode: extraction.bank_details?.swift_code || '',
-          accountNumber: extraction.bank_details?.account_number || '',
-          notes: '',
-          priority: (extraction.is_urgent ? 'high' : 'medium') as 'low' | 'medium' | 'high',
         };
         setFormData(extractedFormData);
         setOriginalFormData(JSON.parse(JSON.stringify(extractedFormData)));
@@ -179,6 +236,33 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
     setIsDragging(false);
   }, []);
 
+  const selectMultiInvoice = (index: number) => {
+    const updatedItems = multiInvoiceItems.map((item, itemIndex) =>
+      itemIndex === activeMultiInvoiceIndex
+        ? { ...item, formData: { ...formData }, ocrRawData, po_validation: poValidation, consensus }
+        : item
+    );
+    const target = updatedItems[index];
+    if (!target) return;
+    setMultiInvoiceItems(updatedItems);
+    setActiveMultiInvoiceIndex(index);
+    setFormData(target.formData);
+    setOriginalFormData(target.originalFormData);
+    setOcrRawData(target.ocrRawData);
+    setPoValidation(target.po_validation || null);
+    setConsensus(target.consensus || null);
+    setMatchedVendorId(target.matchedVendorId);
+    setExtractedBrandCode(target.extractedBrandCode);
+    setRequiresManualVendorAssignment(!target.matchedVendorId);
+    setCorrectionSaved(false);
+  };
+
+  const toggleMultiInvoice = (index: number) => {
+    setMultiInvoiceItems(items => items.map((item, itemIndex) =>
+      itemIndex === index ? { ...item, selected: !item.selected } : item
+    ));
+  };
+
   const handleUpload = async () => {
     if (!file) return;
 
@@ -186,6 +270,113 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
     setUploadProgress(50);
 
     try {
+      const buildInvoicePayload = (
+        sourceForm: typeof formData,
+        sourceOcrRawData: any,
+        sourceVendorId: string | null,
+        sourcePoValidation: any,
+        sourceBrandCode: string | null
+      ) => {
+        const sourceDocumentType = sourceForm.documentType;
+        const sourceInvoiceType =
+          sourceDocumentType === 'PI' ? 'PROFORMA' :
+          sourceDocumentType === 'INV' ? 'INVOICE' :
+          sourceDocumentType === 'CI' ? 'COMMERCIAL' :
+          sourceDocumentType === 'SI' ? 'SALES' :
+          sourceDocumentType === 'STATEMENT' ? 'STATEMENT' :
+          'INVOICE';
+        const sourceExt = sourceOcrRawData?.extraction || {};
+        return {
+          invoice_number: sourceForm.invoiceNumber,
+          invoice_date: sourceForm.invoiceDate || undefined,
+          due_date: sourceForm.dueDate || undefined,
+          invoice_received_date: new Date().toISOString(),
+          date_range_start: sourceExt.date_range_start || undefined,
+          date_range_end: sourceExt.date_range_end || undefined,
+          vendor_id: sourceVendorId || undefined,
+          vendor_name_raw: sourceForm.vendorName,
+          total_amount: parseFloat(sourceForm.amount),
+          invoice_currency_original: sourceExt.invoice_currency_original || sourceExt.currency || undefined,
+          exchange_rate_to_usd: sourceExt.exchange_rate_to_usd || undefined,
+          currency: sourceForm.currency,
+          payment_terms: sourceForm.paymentTerms || undefined,
+          incoterm: sourceExt.incoterm || undefined,
+          subtotal: sourceExt.subtotal || undefined,
+          tax_amount: sourceExt.tax_amount || undefined,
+          discount_amount: sourceExt.discount_amount || undefined,
+          bank_charges: sourceExt.bank_charges || 0,
+          freight_charges: sourceExt.freight_charges || 0,
+          additional_charges: sourceExt.additional_charges || 0,
+          ship_to: sourceExt.ship_to || undefined,
+          sold_to: sourceExt.sold_to || undefined,
+          invoice_type: sourceInvoiceType,
+          category: sourceForm.category || sourceExt.category || 'TRIMS',
+          order_type: sourceForm.orderType || undefined,
+          brand: sourceForm.brand || undefined,
+          brand_code: sourceBrandCode || undefined,
+          season: sourceForm.season || undefined,
+          qty_shipped: sourceForm.qtyShipped ? parseFloat(sourceForm.qtyShipped) : sourceExt.qty_shipped || undefined,
+          mpo_number: sourceForm.mpoNumber || undefined,
+          customer_po_number: sourceForm.poNumber || undefined,
+          bill_to_entity: sourceExt.bill_to_entity || 'MADISON_88_LTD',
+          is_handwritten: sourceExt.is_handwritten || false,
+          is_urgent: sourceForm.priority === 'high' || sourceExt.is_urgent || false,
+          priority_flag: sourceForm.priority === 'high' || sourceExt.is_urgent || false,
+          priority_pay_date: sourceExt.priority_pay_date || undefined,
+          bank_name: sourceForm.bankName || undefined,
+          swift_code: sourceForm.swiftCode || undefined,
+          account_number: sourceForm.accountNumber || undefined,
+          ocr_confidence_score: sourceExt.ocr_confidence_score || undefined,
+          signatures: sourceExt.signatures || undefined,
+          source: 'MANUAL_UPLOAD',
+          po_validation: sourcePoValidation || undefined,
+          ocr_raw_data: sourceOcrRawData || undefined,
+          accounting_preapproved: user?.role === 'ACCOUNTING_ASSOCIATE' && accountingPreapproved,
+          approval_evidence_confirmed: user?.role === 'ACCOUNTING_ASSOCIATE' && accountingPreapproved,
+        };
+      };
+
+      if (multiInvoiceItems.length > 0) {
+        const currentItems = multiInvoiceItems.map((item, index) =>
+          index === activeMultiInvoiceIndex
+            ? { ...item, formData: { ...formData }, ocrRawData, po_validation: poValidation, consensus }
+            : item
+        );
+        const selectedItems = currentItems.filter(item => item.selected);
+        if (selectedItems.length === 0) throw new Error('Select at least one detected invoice.');
+
+        const invalidItem = selectedItems.find(item =>
+          !item.formData.vendorName || !item.formData.invoiceNumber || !item.formData.amount
+        );
+        if (invalidItem) {
+          throw new Error('Each selected invoice needs a vendor, invoice number, and amount.');
+        }
+
+        const createdIds: string[] = [];
+        for (let index = 0; index < selectedItems.length; index++) {
+          const item = selectedItems[index];
+          setUploadProgress(50 + Math.round(((index + 1) / selectedItems.length) * 45));
+          const response = await invoiceApi.create(buildInvoicePayload(
+            item.formData,
+            item.ocrRawData,
+            item.matchedVendorId,
+            item.po_validation,
+            item.extractedBrandCode
+          ));
+          if (response.data?.id) createdIds.push(response.data.id);
+        }
+        setCreatedInvoiceId(createdIds[0] || null);
+        setMultiInvoiceItems(currentItems);
+        setUploadProgress(100);
+        queryClient.invalidateQueries({ queryKey: ['invoices'] });
+        queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
+        setTimeout(() => {
+          setUploadComplete(true);
+          setIsUploading(false);
+        }, 500);
+        return;
+      }
+
       const documentType = formData.documentType;
       const invoiceType =
         documentType === 'PI' ? 'PROFORMA' :
@@ -221,7 +412,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
         ship_to: ext.ship_to || undefined,
         sold_to: ext.sold_to || undefined,
         invoice_type: invoiceType,
-        category: ext.category || 'TRIMS',
+        category: formData.category || ext.category || 'TRIMS',
         order_type: formData.orderType || undefined,
         brand: formData.brand || undefined,
         brand_code: extractedBrandCode || undefined,
@@ -242,6 +433,8 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
         source: 'MANUAL_UPLOAD',
         po_validation: poValidation || undefined,
         ocr_raw_data: ocrRawData || undefined,
+        accounting_preapproved: user?.role === 'ACCOUNTING_ASSOCIATE' && accountingPreapproved,
+        approval_evidence_confirmed: user?.role === 'ACCOUNTING_ASSOCIATE' && accountingPreapproved,
       };
 
       const response = await invoiceApi.create(invoicePayload);
@@ -372,6 +565,8 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
       priority: 'medium',
     });
     setOriginalFormData(null);
+    setMultiInvoiceItems([]);
+    setActiveMultiInvoiceIndex(0);
     setCorrectionSaved(false);
     setIsSavingCorrection(false);
     setUploadProgress(0);
@@ -382,6 +577,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
     setMatchedVendorId(null);
     setExtractedBrandCode(null);
     setCreatedInvoiceId(null);
+    setAccountingPreapproved(false);
   };
 
   const handleClose = () => {
@@ -576,6 +772,62 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
             {/* Form Fields */}
             {file && !isExtracting && (
               <div className="space-y-4" style={{ marginBottom: '24px' }}>
+                {multiInvoiceItems.length > 0 && (
+                  <div
+                    style={{
+                      padding: '14px',
+                      borderRadius: '12px',
+                      border: '1px solid color-mix(in srgb, var(--accent-purple) 35%, transparent)',
+                      background: 'color-mix(in srgb, var(--accent-purple) 7%, transparent)',
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                      <div>
+                        <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                          {multiInvoiceItems.length} invoices detected
+                        </p>
+                        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                          Review every invoice. Uncheck an item to exclude it from submission.
+                        </p>
+                      </div>
+                      <span className="text-xs" style={{ color: 'var(--accent-purple)' }}>
+                        Invoice {activeMultiInvoiceIndex + 1} of {multiInvoiceItems.length}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {multiInvoiceItems.map((item, index) => (
+                        <div
+                          key={`${item.split_index ?? index}-${item.pageRange?.pages ?? index}`}
+                          className="rounded-lg p-3"
+                          style={{
+                            border: index === activeMultiInvoiceIndex
+                              ? '1px solid var(--accent-purple)'
+                              : '1px solid var(--border-color)',
+                            background: index === activeMultiInvoiceIndex ? 'var(--bg-card-hover)' : 'var(--bg-card)',
+                          }}
+                        >
+                          <button type="button" onClick={() => selectMultiInvoice(index)} className="w-full text-left">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                {item.formData.invoiceNumber || `Invoice ${index + 1}`}
+                              </span>
+                              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                Pages {item.pageRange?.pages || '?'}
+                              </span>
+                            </div>
+                            <div className="text-[11px] truncate mt-1" style={{ color: 'var(--text-muted)' }}>
+                              {item.formData.vendorName || 'Vendor requires review'} · {item.formData.currency} {item.formData.amount || '—'}
+                            </div>
+                          </button>
+                          <label className="flex items-center gap-2 mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                            <input type="checkbox" checked={item.selected} onChange={() => toggleMultiInvoice(index)} />
+                            Include as separate invoice
+                          </label>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {/* Consensus Extraction Confidence — DISPLAY ONLY */}
                 {consensus && (
                   <div
@@ -598,12 +850,12 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                      <span style={{ fontSize: '16px' }}>
+                      <span style={{ display: 'flex', alignItems: 'center' }}>
                         {consensus.overall_status === 'APPROVED'
-                          ? '✅'
+                          ? <CheckCircle className="h-4 w-4" style={{ color: 'var(--accent-lime)' }} strokeWidth={2} />
                           : consensus.overall_status === 'REVIEW_REQUIRED'
-                            ? '⚠️'
-                            : '🔴'}
+                            ? <AlertTriangle className="h-4 w-4" style={{ color: 'var(--accent-amber)' }} strokeWidth={2} />
+                            : <XCircle className="h-4 w-4" style={{ color: 'var(--accent-red)' }} strokeWidth={2} />}
                       </span>
                       <span
                         style={{
@@ -631,8 +883,8 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                     {consensus.conflicts && consensus.conflicts.length > 0 && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '8px' }}>
                         {consensus.conflicts.map((conflict: any, i: number) => (
-                          <div key={i} style={{ fontSize: '11px', color: 'var(--accent-red)' }}>
-                            {conflict.severity === 'CRITICAL' ? '🔴' : '⚠️'} {conflict.reason}
+                          <div key={i} style={{ fontSize: '11px', color: 'var(--accent-red)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            {conflict.severity === 'CRITICAL' ? <XCircle className="h-3 w-3 flex-shrink-0" strokeWidth={2} /> : <AlertTriangle className="h-3 w-3 flex-shrink-0" strokeWidth={2} />} {conflict.reason}
                           </div>
                         ))}
                       </div>
@@ -660,12 +912,12 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                      <span style={{ fontSize: '16px' }}>
+                      <span style={{ display: 'flex', alignItems: 'center' }}>
                         {(poValidation.mode === 'AST_ISOLATED' && poValidation.skipped)
-                          ? '🔒'
+                          ? <Lock className="h-4 w-4" style={{ color: 'var(--accent-blue)' }} strokeWidth={2} />
                           : poValidation.validation_result?.status === 'AUTO_APPROVED'
-                            ? '✅'
-                            : '⚠️'}
+                            ? <CheckCircle className="h-4 w-4" style={{ color: 'var(--accent-lime)' }} strokeWidth={2} />
+                            : <AlertTriangle className="h-4 w-4" style={{ color: 'var(--accent-red)' }} strokeWidth={2} />}
                       </span>
                       <span style={{ fontSize: '13px', color: (poValidation.mode === 'AST_ISOLATED' && poValidation.skipped) ? 'var(--accent-blue)' : poValidation.validation_result?.status === 'AUTO_APPROVED' ? 'var(--accent-lime)' : 'var(--accent-red)' }}>
                         {(poValidation.mode === 'AST_ISOLATED' && poValidation.skipped)
@@ -963,13 +1215,32 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                     }}
                   >
                     <option value="" style={{ background: 'var(--input-bg)' }}>Select category</option>
-                    <option value="Trims" style={{ background: 'var(--input-bg)' }}>Trims</option>
-                    <option value="Yarn" style={{ background: 'var(--input-bg)' }}>Yarn</option>
-                    <option value="Sample" style={{ background: 'var(--input-bg)' }}>Sample</option>
-                    <option value="Shipping" style={{ background: 'var(--input-bg)' }}>Shipping</option>
-                    <option value="Lab" style={{ background: 'var(--input-bg)' }}>Lab</option>
+                    <option value="TRIMS" style={{ background: 'var(--input-bg)' }}>Trims</option>
+                    <option value="YARN_FABRIC" style={{ background: 'var(--input-bg)' }}>Yarn / Fabric</option>
+                    <option value="SAMPLE_PROTO" style={{ background: 'var(--input-bg)' }}>Sample</option>
+                    <option value="SHIPPING_FREIGHT" style={{ background: 'var(--input-bg)' }}>Shipping / Freight</option>
+                    <option value="LAB_TESTING" style={{ background: 'var(--input-bg)' }}>Lab Testing</option>
+                    <option value="FACTORY_AUDIT" style={{ background: 'var(--input-bg)' }}>Factory Audit</option>
+                    <option value="CONSULTATION" style={{ background: 'var(--input-bg)' }}>Consulting</option>
                   </select>
                 </div>
+
+                {user?.role === 'ACCOUNTING_ASSOCIATE' && (
+                  <label className="flex items-start gap-3 p-4 rounded-xl" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
+                    <input
+                      type="checkbox"
+                      checked={accountingPreapproved}
+                      onChange={(event) => setAccountingPreapproved(event.target.checked)}
+                      className="mt-1"
+                    />
+                    <span>
+                      <span className="block text-sm font-medium">Already signed and approved</span>
+                      <span className="block text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                        For Lab Testing, Shipping, Factory Audit, or Consulting only. Skips NextGen and purchasing approval, then sends the invoice directly to Accounting posting.
+                      </span>
+                    </span>
+                  </label>
+                )}
 
                 {/* Row 5: Brand | Brand Tier */}
                 <div className="grid grid-cols-2 gap-4">
@@ -1406,20 +1677,22 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                       </button>
                       <button
                         onClick={handleUpload}
-                        disabled={!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount || !formData.mpoNumber}
+                        disabled={!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount}
                         style={{
                           padding: '10px 24px',
                           background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))',
                           border: 'none',
                           borderRadius: '10px',
                           color: 'var(--text-inverse)',
-                          cursor: (!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount || !formData.mpoNumber) ? 'not-allowed' : 'pointer',
-                          opacity: (!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount || !formData.mpoNumber) ? 0.4 : 1,
-                          boxShadow: (!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount || !formData.mpoNumber) ? 'none' : '0 0 20px color-mix(in srgb, var(--accent-purple) 45%, transparent)',
+                          cursor: (!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount) ? 'not-allowed' : 'pointer',
+                          opacity: (!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount) ? 0.4 : 1,
+                          boxShadow: (!file || !formData.vendorName || !formData.invoiceNumber || !formData.amount) ? 'none' : '0 0 20px color-mix(in srgb, var(--accent-purple) 45%, transparent)',
                           transition: 'all 150ms ease',
                         }}
                       >
-                        Upload Invoice
+                        {multiInvoiceItems.length > 0
+                          ? `Upload ${multiInvoiceItems.filter(item => item.selected).length} Invoices`
+                          : 'Upload Invoice'}
                       </button>
                     </div>
                   ) : (

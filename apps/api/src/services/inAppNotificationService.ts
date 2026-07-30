@@ -45,21 +45,24 @@ class InAppNotificationService {
   ) {
     const stageMessages: Record<string, { title: string; message: string; type: 'info' | 'success' | 'warning' | 'error' }> = {
       RECEIVED: { title: 'Invoice Received', message: `Invoice ${invoiceNumber} from ${vendorName} has arrived and is pending validation.`, type: 'info' },
+      OCR_PROCESSING: { title: 'OCR Processing', message: `Invoice ${invoiceNumber} is being processed by OCR.`, type: 'info' },
+      VALIDATION_PENDING: { title: 'Validation Pending', message: `Invoice ${invoiceNumber} is awaiting validation.`, type: 'info' },
       VALIDATED: { title: 'Invoice Validated', message: `Invoice ${invoiceNumber} passed validation and is ready for approval.`, type: 'success' },
       PENDING_COORDINATOR: { title: 'Awaiting Coordinator', message: `Invoice ${invoiceNumber} requires Purchasing Coordinator approval.`, type: 'info' },
-      PENDING_PURCHASING_MGR: { title: 'Awaiting Purchasing Manager', message: `Invoice ${invoiceNumber} requires Purchasing Manager approval.`, type: 'info' },
-      PENDING_MLO: { title: 'Awaiting MLO Account Holder', message: `Invoice ${invoiceNumber} requires MLO Account Holder approval.`, type: 'info' },
-      PENDING_PLANNING_MGR: { title: 'Awaiting Planning Manager', message: `Invoice ${invoiceNumber} requires Planning Manager approval.`, type: 'info' },
+      PENDING_MANAGER: { title: 'Awaiting Purchasing Manager', message: `Invoice ${invoiceNumber} requires Purchasing Manager approval.`, type: 'info' },
+      PENDING_MLO_ACCOUNT_HOLDER: { title: 'Awaiting MLO Account Holder', message: `Invoice ${invoiceNumber} requires MLO Account Holder approval.`, type: 'info' },
+      PENDING_MLO_PLANNING_MANAGER: { title: 'Awaiting Planning Manager', message: `Invoice ${invoiceNumber} requires Planning Manager approval.`, type: 'info' },
       PENDING_SR_MANAGER: { title: 'Awaiting Sr. Manager', message: `Invoice ${invoiceNumber} requires Sr. Manager Global Production approval.`, type: 'info' },
-      PENDING_MS_POLLY: { title: 'Awaiting Ms. Polly', message: `Invoice ${invoiceNumber} requires Ms. Polly's approval.`, type: 'info' },
-      PENDING_PRESIDENT: { title: 'Awaiting President', message: `Invoice ${invoiceNumber} requires President's approval.`, type: 'warning' },
+      PENDING_POLLY: { title: 'Awaiting Ms. Polly', message: `Invoice ${invoiceNumber} requires Ms. Polly's approval.`, type: 'info' },
       PENDING_ACCOUNTING: { title: 'Awaiting Accounting', message: `Invoice ${invoiceNumber} is ready for accounting review and QuickBooks posting.`, type: 'info' },
       APPROVED: { title: 'Invoice Approved', message: `Invoice ${invoiceNumber} has been fully approved.`, type: 'success' },
       POSTED_TO_QB: { title: 'Posted to QuickBooks', message: `Invoice ${invoiceNumber} has been posted to QuickBooks.`, type: 'success' },
       PAYMENT_SCHEDULED: { title: 'Payment Scheduled', message: `Payment for invoice ${invoiceNumber} has been scheduled.`, type: 'success' },
       PAID: { title: 'Invoice Paid', message: `Invoice ${invoiceNumber} has been paid.`, type: 'success' },
+      PAYMENT_CONFIRMATION_SENT: { title: 'Payment Confirmation Sent', message: `Payment confirmation for invoice ${invoiceNumber} has been sent to the vendor.`, type: 'success' },
       REJECTED: { title: 'Invoice Rejected', message: `Invoice ${invoiceNumber} has been rejected.`, type: 'error' },
-      EXCEPTION: { title: 'Exception Raised', message: `Invoice ${invoiceNumber} has exceptions requiring review.`, type: 'warning' },
+      EXCEPTION_FLAGGED: { title: 'Exception Raised', message: `Invoice ${invoiceNumber} has exceptions requiring review.`, type: 'warning' },
+      ON_HOLD: { title: 'Invoice On Hold', message: `Invoice ${invoiceNumber} has been put on hold.`, type: 'warning' },
     };
 
     const stageInfo = stageMessages[newStatus] || {
@@ -71,21 +74,24 @@ class InAppNotificationService {
     // Determine target role based on the new status
     const roleMap: Record<string, UserRole | null> = {
       RECEIVED: UserRole.PURCHASING_COORDINATOR,
+      OCR_PROCESSING: UserRole.PURCHASING_COORDINATOR,
+      VALIDATION_PENDING: UserRole.PURCHASING_COORDINATOR,
       VALIDATED: UserRole.PURCHASING_COORDINATOR,
       PENDING_COORDINATOR: UserRole.PURCHASING_COORDINATOR,
-      PENDING_PURCHASING_MGR: UserRole.PURCHASING_MANAGER,
-      PENDING_MLO: UserRole.MLO_ACCOUNT_HOLDER,
-      PENDING_PLANNING_MGR: UserRole.PLANNING_MANAGER,
+      PENDING_MANAGER: UserRole.PURCHASING_MANAGER,
+      PENDING_MLO_ACCOUNT_HOLDER: UserRole.MLO_ACCOUNT_HOLDER,
+      PENDING_MLO_PLANNING_MANAGER: UserRole.PLANNING_MANAGER,
       PENDING_SR_MANAGER: UserRole.SR_MANAGER_GLOBAL_PRODUCTION,
-      PENDING_MS_POLLY: UserRole.MS_POLLY,
-      PENDING_PRESIDENT: UserRole.PRESIDENT,
+      PENDING_POLLY: UserRole.MS_POLLY,
       PENDING_ACCOUNTING: UserRole.ACCOUNTING_SUPERVISOR,
       APPROVED: UserRole.ACCOUNTING_SUPERVISOR,
       POSTED_TO_QB: UserRole.ACCOUNTING_ASSOCIATE,
       PAYMENT_SCHEDULED: UserRole.ACCOUNTING_SUPERVISOR,
       PAID: null, // everyone
+      PAYMENT_CONFIRMATION_SENT: null, // everyone
       REJECTED: UserRole.PURCHASING_COORDINATOR,
-      EXCEPTION: UserRole.PURCHASING_COORDINATOR,
+      EXCEPTION_FLAGGED: UserRole.PURCHASING_COORDINATOR,
+      ON_HOLD: UserRole.PURCHASING_COORDINATOR,
     };
 
     const targetRole = nextRole ? (nextRole as UserRole) : (roleMap[newStatus] || null);

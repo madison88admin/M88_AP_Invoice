@@ -1069,7 +1069,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
     invoice_type: ((extracted as any).is_statement && extracted.invoice_type !== 'STATEMENT')
       ? InvoiceType.STATEMENT as any
       : (extracted.invoice_type as InvoiceType || InvoiceType.INVOICE),
-    category: InvoiceCategory.TRIMS,
+    category: inferServiceInvoiceCategory(extracted),
     order_type: poParsed.order_type as OrderType | undefined,
     brand: poParsed.brand_code ? (TOP_10_BRANDS[poParsed.brand_code] || poParsed.brand_code) : (extracted as any).brand || undefined,
     brand_code: poParsed.brand_code || extracted.brand_code || undefined,
@@ -1117,4 +1117,32 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
     sample_charge: (extracted as any).sample_charge || undefined,
     min_order_charge: (extracted as any).min_order_charge || undefined,
   };
+}
+
+export function inferServiceInvoiceCategory(extracted: any): InvoiceCategory {
+  const searchable = [
+    extracted?.vendor_name,
+    extracted?.invoice_number,
+    extracted?.description,
+    extracted?.raw_text,
+    extracted?.rawText,
+    ...(Array.isArray(extracted?.line_items)
+      ? extracted.line_items.flatMap((line: any) => [line?.description, line?.material_name])
+      : []),
+  ].filter(Boolean).join(' ').toUpperCase();
+
+  if (/\b(FACTORY\s+AUDIT|AUDIT\s+(?:FEE|SERVICE|INSPECTION))\b/.test(searchable)) {
+    return InvoiceCategory.FACTORY_AUDIT;
+  }
+  if (/\b(CONSULT(?:ING|ATION)?|PROFESSIONAL\s+SERVICE)\b/.test(searchable)) {
+    return InvoiceCategory.CONSULTATION;
+  }
+  if (/\b(SF\s*EXPRESS|FEDEX|DHL|FREIGHT|SHIPPING|COURIER)\b/.test(searchable)) {
+    return InvoiceCategory.SHIPPING_FREIGHT;
+  }
+  if (/\b(QIMA|IDFL|LAB(?:ORATORY)?|LAB\s+TESTING|TESTING\s+(?:FEE|SERVICE))\b/.test(searchable)) {
+    return InvoiceCategory.LAB_TESTING;
+  }
+
+  return InvoiceCategory.TRIMS;
 }

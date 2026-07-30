@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Upload, FileText, AlertCircle, CheckCircle, X, ArrowLeft, Save } from 'lucide-react';
 import { invoiceApi, vendorApi } from '../lib/api';
 import { InvoiceType, InvoiceCategory, PaymentTerms, BillToEntity } from '@ap-invoice/shared';
+import { useAuth } from '../contexts/AuthContext';
 
 interface OCRResult {
   invoice_number: string;
@@ -79,6 +80,7 @@ interface OCRResult {
 }
 
 export default function InvoiceUpload() {
+  const { user } = useAuth();
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [ocrResult, setOcrResult] = useState<OCRResult | null>(null);
@@ -90,6 +92,7 @@ export default function InvoiceUpload() {
   const [correctionSaved, setCorrectionSaved] = useState(false);
   const [vendorSuggestions, setVendorSuggestions] = useState<any[]>([]);
   const [selectedVendor, setSelectedVendor] = useState<string>('');
+  const [accountingPreapproved, setAccountingPreapproved] = useState(false);
 
   const handleFileSelect = useCallback((selectedFile: File) => {
     setFile(selectedFile);
@@ -98,6 +101,7 @@ export default function InvoiceUpload() {
     setVendorMatch(null);
     setRequiresManualVendor(false);
     setSuccess(false);
+    setAccountingPreapproved(false);
   }, []);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -140,6 +144,21 @@ export default function InvoiceUpload() {
 
   const handleConfirm = async () => {
     if (!ocrResult) return;
+    const accountingUpload = user?.role === 'ACCOUNTING_ASSOCIATE';
+    const allowedAccountingCategories = [
+      InvoiceCategory.LAB_TESTING,
+      InvoiceCategory.SHIPPING_FREIGHT,
+      InvoiceCategory.FACTORY_AUDIT,
+      InvoiceCategory.CONSULTATION,
+    ];
+    if (accountingUpload && !allowedAccountingCategories.includes(ocrResult.category)) {
+      setError('Select Lab Testing, Shipping / Freight, Factory Audit, or Consultation before confirming.');
+      return;
+    }
+    if (accountingUpload && !accountingPreapproved) {
+      setError('Confirm that the invoice is already signed and approved.');
+      return;
+    }
     if (ocrResult.document_classification && !ocrResult.document_classification.payable_candidate &&
         !window.confirm(`This file was classified as ${ocrResult.document_classification.document_type}. Save it as an invoice record anyway?`)) {
       return;
@@ -203,6 +222,8 @@ export default function InvoiceUpload() {
         source_document_type: ocrResult.source_document_type,
         structured_source_format: ocrResult.structured_source_format,
         document_layout_fingerprint: ocrResult.document_layout_fingerprint,
+        accounting_preapproved: accountingUpload && accountingPreapproved,
+        approval_evidence_confirmed: accountingUpload && accountingPreapproved,
       });
 
       setSuccess(true);
@@ -670,6 +691,23 @@ export default function InvoiceUpload() {
             />
           </div>
 
+          {user?.role === 'ACCOUNTING_ASSOCIATE' && (
+            <label className="flex items-start gap-3 p-4 rounded-xl" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
+              <input
+                type="checkbox"
+                checked={accountingPreapproved}
+                onChange={(event) => setAccountingPreapproved(event.target.checked)}
+                className="mt-1"
+              />
+              <span>
+                <span className="block text-sm font-medium">Already signed and approved</span>
+                <span className="block text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                  Available only for Lab Testing, Shipping / Freight, Factory Audit, or Consultation. This sends the invoice directly to Accounting posting.
+                </span>
+              </span>
+            </label>
+          )}
+
           {requiresManualVendor && (
             <div className="p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}>
               <label className="block text-sm font-medium mb-2" style={{ color: 'var(--accent-amber)' }}>
@@ -701,14 +739,14 @@ export default function InvoiceUpload() {
           <div className="flex gap-4">
             <button
               onClick={handleConfirm}
-              disabled={uploading || (requiresManualVendor && !selectedVendor)}
+              disabled={uploading || (requiresManualVendor && !selectedVendor) || (user?.role === 'ACCOUNTING_ASSOCIATE' && !accountingPreapproved)}
               className="flex-1 py-3 rounded-xl transition-colors disabled:cursor-not-allowed text-sm font-semibold"
-              style={uploading || (requiresManualVendor && !selectedVendor)
+              style={uploading || (requiresManualVendor && !selectedVendor) || (user?.role === 'ACCOUNTING_ASSOCIATE' && !accountingPreapproved)
                 ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' }
                 : { background: 'var(--accent-lime)', color: 'var(--bg-base)' }
               }
-              onMouseEnter={(e) => { if (!(uploading || (requiresManualVendor && !selectedVendor))) e.currentTarget.style.background = 'var(--accent-lime-hover)'; }}
-              onMouseLeave={(e) => { if (!(uploading || (requiresManualVendor && !selectedVendor))) e.currentTarget.style.background = 'var(--accent-lime)'; }}
+              onMouseEnter={(e) => { if (!(uploading || (requiresManualVendor && !selectedVendor) || (user?.role === 'ACCOUNTING_ASSOCIATE' && !accountingPreapproved))) e.currentTarget.style.background = 'var(--accent-lime-hover)'; }}
+              onMouseLeave={(e) => { if (!(uploading || (requiresManualVendor && !selectedVendor) || (user?.role === 'ACCOUNTING_ASSOCIATE' && !accountingPreapproved))) e.currentTarget.style.background = 'var(--accent-lime)'; }}
             >
               {uploading ? 'Confirming...' : 'Confirm & Create Invoice'}
             </button>

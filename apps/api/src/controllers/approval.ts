@@ -18,12 +18,6 @@ export const requestApproval = async (
   try {
     const { id } = req.params;
     const approvals = await createApprovalRequest(id, req.user!.id);
-    await logAudit({
-      invoice_id: id,
-      performed_by: req.user!.id,
-      action: 'APPROVAL_REQUESTED',
-      note: `Approval requested by ${req.user!.role}`,
-    });
     res.json({ message: 'Approval request created', approvals });
   } catch (error) {
     next(error);
@@ -60,12 +54,6 @@ export const approveInvoiceController = async (
       req.user!.role,
       effectiveSignerName
     );
-    await logAudit({
-      invoice_id: id,
-      performed_by: req.user!.id,
-      action: 'INVOICE_APPROVED',
-      note: `Approved by ${req.user!.role}${effectiveSignerName ? ` (${effectiveSignerName})` : ''}`,
-    });
     res.json(result);
   } catch (error) {
     next(error);
@@ -86,12 +74,6 @@ export const rejectInvoiceController = async (
       req.user!.role,
       reason
     );
-    await logAudit({
-      invoice_id: id,
-      performed_by: req.user!.id,
-      action: 'INVOICE_REJECTED',
-      note: `Rejected by ${req.user!.role}. Reason: ${reason || 'No reason provided'}`,
-    });
     res.json(result);
   } catch (error) {
     next(error);

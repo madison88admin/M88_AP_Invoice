@@ -11,7 +11,7 @@ export const createInvoice = async (
 ) => {
   try {
     const invoiceData = req.body;
-    const invoice = await invoiceService.createInvoice(invoiceData, req.user!.id);
+    const invoice = await invoiceService.createInvoice(invoiceData, req.user!.id, req.user!.role);
     res.status(201).json(invoice);
   } catch (error) {
     next(error);

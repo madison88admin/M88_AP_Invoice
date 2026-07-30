@@ -1,6 +1,7 @@
 import PDFParser from 'pdf2json';
 import { PDFDocument } from 'pdf-lib';
 import { logger } from '../utils/logger';
+import { extractTextWithOpenDataLoader } from './openDataLoaderService';
 
 export interface InvoicePageRange {
   startPage: number; // 0-indexed
@@ -18,6 +19,15 @@ export interface MultiInvoiceDetectionResult {
   totalPages: number;
 }
 
+function normalizePageText(text: string): string {
+  // Some PDFs expose every glyph as a separate token ("I n v o i c e").
+  // Rejoin long runs while preserving normal word spacing elsewhere.
+  return text
+    .replace(/(?:\b[A-Za-z0-9]\s+){3,}[A-Za-z0-9]\b/g, match => match.replace(/\s+/g, ''))
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 /**
  * Extract text per page from a PDF buffer using pdf2json.
  */
@@ -28,13 +38,13 @@ function extractTextPerPage(fileBuffer: Buffer): Promise<string[]> {
     pdfParser.on('pdfParser_dataReady', (pdfData: any) => {
       try {
         const pages: string[] = pdfData.Pages.map((page: any) =>
-          page.Texts.map((t: any) => {
+          normalizePageText(page.Texts.map((t: any) => {
             try {
               return decodeURIComponent(t.R[0].T);
             } catch {
               return t.R[0].T;
             }
-          }).join(' ')
+          }).join(' '))
         );
         resolve(pages);
       } catch (e) {
@@ -50,13 +60,50 @@ function extractTextPerPage(fileBuffer: Buffer): Promise<string[]> {
   });
 }
 
+async function enrichWeakPagesWithOCR(fileBuffer: Buffer, pages: string[]): Promise<string[]> {
+  const weakIndices = pages
+    .map((text, index) => ({ text, index }))
+    .filter(page =>
+      page.text.trim().length < 20 ||
+      (!isInvoiceStartPage(page.text) && !extractInvoiceNumberFromPage(page.text))
+    )
+    .map(page => page.index);
+  if (weakIndices.length === 0) return pages;
+
+  const maxPages = Math.max(1, Number(process.env.MULTI_INVOICE_OCR_PAGE_LIMIT || 60));
+  if (pages.length > maxPages) {
+    logger.warn(`[MultiInvoiceDetector] Skipping page OCR: ${pages.length} pages exceeds limit ${maxPages}`);
+    return pages;
+  }
+
+  const sourcePdf = await PDFDocument.load(fileBuffer);
+  const enriched = [...pages];
+  // Keep concurrency deliberately low because OCR conversion is CPU and memory intensive.
+  for (let offset = 0; offset < weakIndices.length; offset += 2) {
+    const batch = weakIndices.slice(offset, offset + 2);
+    await Promise.all(batch.map(async pageIndex => {
+      try {
+        const singlePagePdf = await PDFDocument.create();
+        const [page] = await singlePagePdf.copyPages(sourcePdf, [pageIndex]);
+        singlePagePdf.addPage(page);
+        const pageBuffer = Buffer.from(await singlePagePdf.save());
+        const extracted = await extractTextWithOpenDataLoader(pageBuffer);
+        if (extracted?.trim()) enriched[pageIndex] = normalizePageText(extracted);
+      } catch (error) {
+        logger.warn(`[MultiInvoiceDetector] OCR fallback failed for page ${pageIndex + 1}`);
+      }
+    }));
+  }
+  return enriched;
+}
+
 /**
  * Extract a potential invoice number from page text.
  * Looks for common invoice number patterns.
  */
 function extractInvoiceNumberFromPage(text: string): string | null {
   const patterns = [
-    /(?:Invoice\s*(?:No|Number|#)\s*[:.]?\s*)([A-Z0-9][A-Z0-9\-\/]{2,20})/i,
+    /(?:Invoice\s*(?:No|Nº|N°|Number|#)\s*[:.]?\s*)([A-Z0-9][A-Z0-9\-\/]{2,30})/i,
     /(?:Inv\.?\s*(?:No|Number|#)\s*[:.]?\s*)([A-Z0-9][A-Z0-9\-\/]{2,20})/i,
     /(?:Bill\s*(?:No|Number|#)\s*[:.]?\s*)([A-Z0-9][A-Z0-9\-\/]{2,20})/i,
     /(?:Tax\s*Invoice\s*(?:No|Number|#)\s*[:.]?\s*)([A-Z0-9][A-Z0-9\-\/]{2,20})/i,
@@ -66,7 +113,11 @@ function extractInvoiceNumberFromPage(text: string): string | null {
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match && match[1]) {
-      return match[1].trim();
+      const cleaned = match[1]
+        .trim()
+        .replace(/\d{1,2}(?:JANUARY|FEBRUARY|MARCH|APRIL|MAY|JUNE|JULY|AUGUST|SEPTEMBER|OCTOBER|NOVEMBER|DECEMBER).*$/i, '')
+        .replace(/(?:DATE|PAGE|TOTAL|SEE).*$/i, '');
+      return cleaned || match[1].trim();
     }
   }
   return null;
@@ -136,6 +187,7 @@ export async function detectMultiInvoice(fileBuffer: Buffer): Promise<MultiInvoi
 
   try {
     pages = await extractTextPerPage(fileBuffer);
+    pages = await enrichWeakPagesWithOCR(fileBuffer, pages);
   } catch (err) {
     logger.warn('[MultiInvoiceDetector] Failed to extract text per page:', err);
     return {
@@ -194,7 +246,11 @@ export async function detectMultiInvoice(fileBuffer: Buffer): Promise<MultiInvoi
           // Only split if the vendor also changes
           const currentVendor = extractVendorFromPage(pageText);
           const prevVendor = extractVendorFromPage(pages[i - 1]);
-          if (currentVendor && prevVendor && currentVendor !== prevVendor) {
+          const previousFirst200 = pages[i - 1].substring(0, 200).toUpperCase();
+          if (
+            (currentVendor && prevVendor && currentVendor !== prevVendor) ||
+            (!previousFirst200.includes('INVOICE') && first200.indexOf('INVOICE') < 80)
+          ) {
             invoiceStarts.push(i);
           }
         }

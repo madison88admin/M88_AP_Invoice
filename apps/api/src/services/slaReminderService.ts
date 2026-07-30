@@ -2,6 +2,7 @@ import prisma from '../config/database';
 import { InvoiceStatus, SLA_LIMITS, calcWorkingHoursElapsed } from '@ap-invoice/shared';
 import { logger } from '../utils/logger';
 import { sendEmail } from './notificationService';
+import { getInvoiceSLAStart } from '../utils/slaTime';
 
 // SLA thresholds in hours per stage — derived from SLA_LIMITS
 const SLA_THRESHOLDS: Partial<Record<InvoiceStatus, number>> = {
@@ -62,7 +63,7 @@ export async function checkAndSendSLAReminders(): Promise<SLAReminderResult> {
 
     for (const stage of activeStages) {
       const slaHours = SLA_THRESHOLDS[stage.stage as InvoiceStatus] || (SLA_LIMITS.ACCOUNTING_DAYS * 24);
-      const enteredAt = new Date(stage.entered_at);
+      const enteredAt = getInvoiceSLAStart(stage.invoice, stage.entered_at);
       const now = new Date();
       const elapsedHours = calcWorkingHoursElapsed(enteredAt, now);
       const remainingHours = slaHours - elapsedHours;
@@ -316,7 +317,7 @@ export async function getSLACountdown(invoiceId: string): Promise<{
   }
 
   const slaHours = SLA_THRESHOLDS[activeStage.stage as InvoiceStatus] || (SLA_LIMITS.ACCOUNTING_DAYS * 24);
-  const enteredAt = new Date(activeStage.entered_at);
+  const enteredAt = getInvoiceSLAStart(activeStage.invoice, activeStage.entered_at);
   const now = new Date();
   const elapsedHours = calcWorkingHoursElapsed(enteredAt, now);
   const remainingHours = slaHours - elapsedHours;

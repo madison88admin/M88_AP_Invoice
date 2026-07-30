@@ -1,18 +1,34 @@
 import { useState, ReactNode } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useMockData } from '../contexts/MockDataContext';
 import { ThemeToggle } from './ThemeToggle';
+import NotificationBell from './NotificationBell';
 import SidebarItem from './ui/SidebarItem';
 import {
   LayoutDashboard, FileText, CheckSquare, AlertTriangle, Building2,
   Package, BarChart3, FileSearch, Users, Settings, ChevronLeft,
-  Menu, X, LogOut,
+  Menu, X, LogOut, Upload, Pause, ScanSearch, Activity, Gauge,
+  ClipboardList,
 } from 'lucide-react';
 
 interface AppLayoutProps {
   children: ReactNode;
   title: string;
   icon?: ReactNode;
+}
+
+interface NavItem {
+  icon: any;
+  label: string;
+  path: string;
+  roles?: string[];
+  badgeKey?: string;
+}
+
+interface NavGroup {
+  label: string;
+  items: NavItem[];
 }
 
 export default function AppLayout({ children, title, icon }: AppLayoutProps) {
@@ -24,37 +40,101 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
 
   const currentPath = location.pathname;
 
-  const navItems: { icon: any; label: string; path: string; roles?: string[] }[] = [
-    { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
-    { icon: FileText, label: 'Invoice Repository', path: '/repository' },
-    { icon: CheckSquare, label: 'Approvals', path: '/approvals', roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'PLANNING_MANAGER', 'SR_MANAGER_GLOBAL_PRODUCTION', 'MS_POLLY', 'ACCOUNTING_SUPERVISOR'] },
-    { icon: AlertTriangle, label: 'Exceptions', path: '/exceptions', roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN'] },
-    { icon: Building2, label: 'Vendors', path: '/vendors', roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE'] },
-    { icon: Package, label: 'Batches', path: '/payment-batches', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR'] },
-    { icon: BarChart3, label: 'Reports', path: '/reports', roles: ['PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR'] },
-    { icon: FileSearch, label: 'Review', path: '/accounting-review', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR'] },
-    { icon: Users, label: 'User Management', path: '/users', roles: ['IT_ADMIN', 'SUPERADMIN'] },
-    { icon: Settings, label: 'System Configuration', path: '/settings', roles: ['IT_ADMIN', 'SUPERADMIN'] },
+  const navGroups: NavGroup[] = [
+    {
+      label: 'Overview',
+      items: [
+        { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
+        { icon: FileText, label: 'Invoice Repository', path: '/repository' },
+        { icon: Upload, label: 'Upload Invoice', path: '/upload', roles: ['PURCHASING_COORDINATOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'] },
+      ],
+    },
+    {
+      label: 'Workflow',
+      items: [
+        { icon: ScanSearch, label: 'Purchasing Workbench', path: '/purchasing-workbench', roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN'] },
+        { icon: CheckSquare, label: 'Approvals', path: '/approvals', roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'PLANNING_MANAGER', 'SR_MANAGER_GLOBAL_PRODUCTION', 'MS_POLLY', 'ACCOUNTING_SUPERVISOR'], badgeKey: 'approvals' },
+        { icon: AlertTriangle, label: 'Exceptions', path: '/exceptions', roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN'], badgeKey: 'exceptions' },
+        { icon: Pause, label: 'On-Hold Queue', path: '/on-hold-queue', roles: ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'] },
+      ],
+    },
+    {
+      label: 'Accounting',
+      items: [
+        { icon: Package, label: 'Payment Batches', path: '/payment-batches', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'batches' },
+        { icon: FileSearch, label: 'Accounting Review', path: '/accounting-review', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'review' },
+        { icon: Building2, label: 'Vendors', path: '/vendors', roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'] },
+      ],
+    },
+    {
+      label: 'Analytics',
+      items: [
+        { icon: BarChart3, label: 'Reports', path: '/reports', roles: ['PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'ACCOUNTING_ASSOCIATE'] },
+        { icon: Gauge, label: 'SLA Analytics', path: '/sla-analytics', roles: ['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'ACCOUNTING_ASSOCIATE'] },
+        { icon: Activity, label: 'Extraction Analytics', path: '/extraction-analytics', roles: ['PURCHASING_COORDINATOR', 'IT_ADMIN', 'ACCOUNTING_SUPERVISOR'] },
+      ],
+    },
+    {
+      label: 'Admin',
+      items: [
+        { icon: ClipboardList, label: 'Audit Logs', path: '/audit-logs', roles: ['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'ACCOUNTING_ASSOCIATE'] },
+        { icon: Users, label: 'User Management', path: '/users', roles: ['IT_ADMIN', 'SUPERADMIN'] },
+        { icon: Settings, label: 'System Configuration', path: '/settings', roles: ['IT_ADMIN', 'SUPERADMIN'] },
+      ],
+    },
   ];
 
-  const visibleNavItems = navItems.filter(item => !item.roles || (user && item.roles.includes(user.role)));
+  // Compute badges from mock data
+  const { invoices, vendors, paymentBatches } = useMockData();
+  const badges: Record<string, number> = {
+    approvals: invoices.filter(i => ['PENDING_MANAGER', 'PENDING_MLO_PLANNING_MANAGER', 'PENDING_SR_MANAGER', 'PENDING_POLLY'].includes(i.status)).length,
+    exceptions: invoices.filter(i => i.exceptions.some(e => e.status === 'OPEN')).length,
+    batches: paymentBatches.filter(b => b.status === 'DRAFT').length,
+    review: invoices.filter(i => ['PENDING_ACCOUNTING', 'APPROVED', 'POSTED_TO_QB', 'PAID'].includes(i.status)).length,
+  };
+
+  const visibleGroups = navGroups.map(group => ({
+    ...group,
+    items: group.items.filter(item => {
+      if (user?.role === 'SUPERADMIN') {
+        return item.path === '/' || item.label === 'Audit Logs' || item.label === 'User Management' || item.label === 'System Configuration';
+      }
+      return !item.roles || item.roles.includes(user?.role || '') || user?.role === 'IT_ADMIN';
+    }),
+  })).filter(group => group.items.length > 0);
 
   const handleNavClick = (path: string) => {
     setMobileSidebarOpen(false);
     navigate(path);
   };
 
+  const renderNavItems = (items: NavItem[], collapsed: boolean) => (
+    items.map((item) => (
+      <SidebarItem
+        key={item.path}
+        icon={item.icon}
+        label={item.label}
+        active={currentPath === item.path}
+        badge={item.badgeKey ? badges[item.badgeKey] : undefined}
+        collapsed={collapsed}
+        onClick={() => handleNavClick(item.path)}
+      />
+    ))
+  );
+
   const sidebarNav = (
-    <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-      {visibleNavItems.map((item) => (
-        <SidebarItem
-          key={item.path}
-          icon={item.icon}
-          label={item.label}
-          active={currentPath === item.path}
-          collapsed={sidebarCollapsed}
-          onClick={() => handleNavClick(item.path)}
-        />
+    <nav className="flex-1 px-3 py-2 overflow-y-auto min-h-0">
+      {visibleGroups.map((group, gIdx) => (
+        <div key={group.label} className={gIdx > 0 ? 'mt-4' : ''}>
+          {!sidebarCollapsed && (
+            <div className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+              {group.label}
+            </div>
+          )}
+          <div className="space-y-0.5">
+            {renderNavItems(group.items, sidebarCollapsed)}
+          </div>
+        </div>
       ))}
     </nav>
   );
@@ -115,16 +195,16 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-              {visibleNavItems.map((item) => (
-                <SidebarItem
-                  key={item.path}
-                  icon={item.icon}
-                  label={item.label}
-                  active={currentPath === item.path}
-                  collapsed={false}
-                  onClick={() => handleNavClick(item.path)}
-                />
+            <nav className="flex-1 px-3 py-2 overflow-y-auto min-h-0">
+              {visibleGroups.map((group, gIdx) => (
+                <div key={group.label} className={gIdx > 0 ? 'mt-4' : ''}>
+                  <div className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                    {group.label}
+                  </div>
+                  <div className="space-y-0.5">
+                    {renderNavItems(group.items, false)}
+                  </div>
+                </div>
               ))}
             </nav>
           </aside>
@@ -132,9 +212,9 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
       )}
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden z-10">
+      <div className="flex-1 flex flex-col overflow-hidden z-10 my-4 mr-4 ml-0 md:ml-0">
         {/* Top Header */}
-        <header className="px-4 md:px-6 py-4">
+        <header className="px-4 md:px-6 py-3 flex-shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <button
@@ -144,31 +224,25 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
               >
                 <Menu className="h-5 w-5" strokeWidth={1.75} />
               </button>
-              {icon}
               <div>
-                <h1 className="text-xl md:text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
+                <h1 className="text-lg md:text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
                   {title}
                 </h1>
-                {user && (
-                  <span className="inline-block mt-1 px-3 py-1 text-xs font-medium rounded-full" style={{ background: 'var(--bg-card-hover)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>
-                    {user.role.replace(/_/g, ' ')}
-                  </span>
-                )}
               </div>
             </div>
             <div className="flex items-center gap-2 md:gap-3">
+              <NotificationBell />
               <ThemeToggle />
               {user && (
-                <div className="flex items-center gap-2 md:gap-3 px-2 md:px-3 py-2 rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+                <div className="flex items-center gap-2 md:gap-3 px-2 md:px-3 py-1.5 rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
                   <div className="flex items-center gap-2">
-                    <div className="p-2 rounded-xl flex-shrink-0" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}>
-                      <span className="text-sm font-semibold" style={{ color: 'var(--text-inverse)' }}>
+                    <div className="p-1.5 rounded-lg flex-shrink-0" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}>
+                      <span className="text-xs font-semibold" style={{ color: 'var(--text-inverse)' }}>
                         {user.name.split(' ').map((n: string) => n[0]).join('')}
                       </span>
                     </div>
                     <div className="text-left hidden sm:block">
                       <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{user.name}</p>
-                      <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{user.title || user.role.replace(/_/g, ' ')}</p>
                     </div>
                   </div>
                   <button
@@ -191,7 +265,7 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
         </header>
 
         {/* Page Content */}
-        <main className="flex-1 overflow-y-auto px-4 md:px-6 pb-6">
+        <main className="flex-1 overflow-y-auto px-4 md:px-6 pt-2 pb-6 min-h-0">
           <div className="animate-page-in">
             {children}
           </div>

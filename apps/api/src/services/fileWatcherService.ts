@@ -22,6 +22,7 @@ import prisma from '../config/database';
 import { inAppNotificationService } from './inAppNotificationService';
 import { detectMultiInvoice, splitPdfByPageRanges } from './multiInvoiceDetector';
 import { sanitizeInvoiceType, sanitizeCategory } from '../utils/enumSanitizer';
+import { parseMPOReference } from '../utils/mpoReference';
 
 const INCOMING_DIR = process.env.WATCHER_INCOMING_DIR || '/incoming-invoices';
 const PROCESSING_DIR = process.env.WATCHER_PROCESSING_DIR || '/incoming-invoices/processing';
@@ -277,11 +278,33 @@ async function processSingleInvoiceBuffer(
         ...(ocrResult.date_range_start ? { date_range_start: new Date(ocrResult.date_range_start) } : {}),
         ...(ocrResult.date_range_end ? { date_range_end: new Date(ocrResult.date_range_end) } : {}),
     };
+    // Add invoice lines from OCR extraction if present
+    const ocrLineItems = (ocrResult as any).line_items;
+    if (Array.isArray(ocrLineItems) && ocrLineItems.length > 0) {
+      const parsedMpo = ocrResult.mpo_number ? parseMPOReference(ocrResult.mpo_number) : { baseMpo: null, orderSequence: null, materialCode: null };
+      baseData.invoice_lines = {
+        create: ocrLineItems.map((line: any, index: number) => ({
+          line_number: Number(line.line_number || index + 1),
+          description: line.description || line.material_name || null,
+          mpo_base_number: line.mpo_base_number || parsedMpo.baseMpo || null,
+          mpo_order_sequence: line.mpo_order_sequence || parsedMpo.orderSequence || null,
+          material_code: line.material_code || line.item_code || parsedMpo.materialCode || null,
+          material_name: line.material_name || line.description || null,
+          quantity: line.quantity != null ? Number(line.quantity) : null,
+          unit_price: line.unit_price != null ? Number(line.unit_price) : null,
+          line_amount: line.line_amount != null ? Number(line.line_amount) : (line.total_amount != null ? Number(line.total_amount) : null),
+          match_status: 'PENDING',
+        })),
+      };
+    }
+
     const invoice = await prisma.invoice.create({
       data: baseData,
-      include: { vendor: true },
+      include: { vendor: true, invoice_lines: true },
     });
     invoiceId = invoice.id;
+
+    logger.info(`[File Watcher] Saved invoice ${invoice.invoice_number} with ${invoice.invoice_lines?.length || 0} line items`);
 
     // Create signature records
     if (ocrResult.signatures && ocrResult.signatures.length > 0) {

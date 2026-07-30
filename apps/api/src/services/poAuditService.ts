@@ -4,17 +4,25 @@
  * PO validation runs after upload completes — never blocks upload flow
  */
 
-import { NextGenService, NextGenPOData } from './nextGenService';
+import {
+  InvoiceComparisonLine,
+  NextGenLineComparison,
+  NextGenService,
+  NextGenPOData,
+  NextGenValidationStatus,
+} from './nextGenService';
 
 export type POValidationStatus =
   | 'PENDING'      // audit not started yet
   | 'RUNNING'      // currently checking NextGen
-  | 'MATCHED'      // amount within 2%, all fields match
-  | 'WARNING'      // 2-5% variance
+  | 'MATCH'
   | 'MISMATCH'     // >5% variance or field mismatch
-  | 'NOT_FOUND'    // PO/MPO not found in NextGen
+  | 'LINE_NOT_FOUND'
+  | 'PO_NOT_FOUND'
+  | 'NEXTGEN_UNAVAILABLE'
+  | 'MANUAL_REVIEW'
   | 'SKIPPED'      // no PO/MPO number in invoice
-  | 'ERROR';       // NextGen unreachable
+  | 'ERROR';
 
 export interface POChangeRecord {
   changed_at: Date;
@@ -31,6 +39,7 @@ export interface POAuditResult {
     po_number: string;
     vendor_name: string;
     amount: number;
+    currency?: string;
     brand: string;
     season: string;
     order_type: string;
@@ -41,9 +50,15 @@ export interface POAuditResult {
     brand_match: boolean;
     season_match: boolean;
     order_type_match: boolean;
+    currency_match?: boolean;
+    invoice_amount?: number;
+    nextgen_amount?: number;
+    amount_difference?: number;
     variance_pct?: number;
+    line_comparisons?: NextGenLineComparison[];
     differences: string[];
   };
+  reason?: string;
   po_changes?: POChangeRecord[];
   error?: string;
 }
@@ -52,6 +67,7 @@ export interface POAuditInput {
   po_number?: string;
   mpo_number?: string;
   amount: number;
+  currency?: string;
   vendor_name: string;
   brand?: string;
   season?: string;
@@ -59,6 +75,7 @@ export interface POAuditInput {
   mpo_order_sequence?: string;
   material_code?: string;
   material_name?: string;
+  line_items?: InvoiceComparisonLine[];
 }
 
 // In-memory store (replace with DB later)
@@ -118,32 +135,21 @@ export class POAuditService {
         mpo_order_sequence: invoiceData.mpo_order_sequence,
         material_code: invoiceData.material_code,
         material_name: invoiceData.material_name,
+        currency: invoiceData.currency,
+        line_items: invoiceData.line_items,
       });
 
       if (!result.po_found) {
         auditStore.set(auditId, {
           invoice_id: auditId,
-          status: 'NOT_FOUND',
+          status: 'PO_NOT_FOUND',
           checked_at: new Date(),
           error: `PO ${poNumber} not found in NextGen`,
         });
         return;
       }
 
-      // Calculate variance
-      const variance = result.nextgen_data?.amount
-        ? Math.abs(invoiceData.amount - result.nextgen_data.amount) / result.nextgen_data.amount
-        : null;
-
-      // Determine status based on variance thresholds
-      let status: POValidationStatus = 'MATCHED';
-      if (variance !== null) {
-        if (variance > 0.05) status = 'MISMATCH';
-        else if (variance > 0.02) status = 'WARNING';
-      }
-
-      // If NextGen says no match but variance is within threshold, still warn
-      if (!result.is_match && status === 'MATCHED') status = 'WARNING';
+      const status = (result.status || (result.is_match ? 'MATCH' : 'MISMATCH')) as NextGenValidationStatus;
 
       // Detect PO changes by comparing with previous snapshot
       const poKey = invoiceData.mpo_number || invoiceData.po_number || auditId;
@@ -182,6 +188,7 @@ export class POAuditService {
               po_number: result.nextgen_data.po_number || poNumber,
               vendor_name: result.nextgen_data.vendor_name || '',
               amount: result.nextgen_data.amount || 0,
+              currency: result.nextgen_data.currency || '',
               brand: result.nextgen_data.brand || '',
               season: result.nextgen_data.season || '',
               order_type: result.nextgen_data.order_type || '',
@@ -189,8 +196,8 @@ export class POAuditService {
           : undefined,
         comparison: {
           ...result.comparison,
-          variance_pct: variance !== null ? Math.round(variance * 1000) / 10 : 0,
         },
+        reason: result.reason,
         po_changes: poChanges.length > 0 ? poChanges : undefined,
       });
     } catch (error) {
@@ -228,7 +235,7 @@ export class POAuditService {
       this.runAudit(auditId, invoiceData)
         .then(() => {
           const result = auditStore.get(auditId);
-          if (result?.status === 'NOT_FOUND' && attempt < maxAttempts) {
+          if ((result?.status === 'PO_NOT_FOUND' || result?.status === 'NEXTGEN_UNAVAILABLE') && attempt < maxAttempts) {
             const nextDelay = Math.min(delayMs * 2, 600000); // cap at 10 minutes
             console.log(`[POAuditService] PO not found for ${auditId}, retrying in ${nextDelay / 1000}s (attempt ${attempt}/${maxAttempts})`);
             this.scheduleAudit(auditId, invoiceData, nextDelay, attempt + 1, maxAttempts);

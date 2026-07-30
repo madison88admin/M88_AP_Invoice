@@ -23,7 +23,7 @@ import PurchasingWorkbench from './components/PurchasingWorkbench';
 import ProtectedRoute from './components/ProtectedRoute';
 import NotFound from './components/NotFound';
 import AppLayout from './components/AppLayout';
-import { FileText, CheckSquare, AlertTriangle, Building2, Package, BarChart3, FileSearch, Users, Settings, Upload, FileSearch as AuditIcon } from 'lucide-react';
+import { FileText, CheckSquare, AlertTriangle, Building2, Package, BarChart3, FileSearch, Users, Settings, Upload, FileSearch as AuditIcon, LayoutDashboard } from 'lucide-react';
 
 function App() {
   return (
@@ -36,12 +36,16 @@ function App() {
                 <Route path="/login" element={<Login />} />
                 <Route path="/" element={
                   <ProtectedRoute>
-                    <Dashboard />
+                    <AppLayout title="Dashboard" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}><LayoutDashboard className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
+                      <Dashboard />
+                    </AppLayout>
                   </ProtectedRoute>
                 } />
                 <Route path="/dashboard" element={
                   <ProtectedRoute>
-                    <Dashboard />
+                    <AppLayout title="Dashboard" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}><LayoutDashboard className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
+                      <Dashboard />
+                    </AppLayout>
                   </ProtectedRoute>
                 } />
                 <Route path="/upload" element={

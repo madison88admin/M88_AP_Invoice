@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import { mapNextGenMPOLine } from './nextGenService';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mapNextGenMPOLine, nextGenService } from './nextGenService';
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe('mapNextGenMPOLine', () => {
   it('maps the confirmed live NextGen MPO-line field names', () => {
@@ -40,5 +45,81 @@ describe('mapNextGenMPOLine', () => {
     const line = mapNextGenMPOLine({ Quantity: 1050, LinePurchasePrice: 52.5 });
     expect(line.unit_price).toBe(0.05);
     expect(line.total_amount).toBe(52.5);
+  });
+
+  it('falls back to MPOLIGridRead when FormLinesGridRead is unavailable', async () => {
+    const service = nextGenService as any;
+    service.useMock = false;
+    const postForm = vi.spyOn(service, 'postForm')
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        Data: [{
+          OrderId: 18544,
+          LineItem: 1,
+          CommodityExternalReference: 'ZVT000123',
+          Quantity: 1050,
+          PurchasePrice: 0.05,
+          LinePurchasePrice: 52.5,
+        }],
+      });
+
+    const result = await service.fetchMPOLinesWithStatus(18544);
+
+    expect(postForm.mock.calls.map(call => call[0])).toEqual([
+      '/MaterialPurchaseOrder/FormLinesGridRead',
+      '/MaterialPurchaseOrder/MPOLIGridRead',
+    ]);
+    expect(result).toMatchObject({
+      available: true,
+      source: 'MPOLIGridRead',
+      lines: [{ order_id: 18544, item_code: 'ZVT000123', quantity: 1050, unit_price: 0.05, total_amount: 52.5 }],
+    });
+  });
+
+  it('marks line data unavailable when both NextGen line endpoints fail', async () => {
+    const service = nextGenService as any;
+    service.useMock = false;
+    vi.spyOn(service, 'postForm').mockResolvedValue(null);
+
+    await expect(service.fetchMPOLinesWithStatus(18544)).resolves.toEqual({
+      lines: [],
+      available: false,
+    });
+  });
+
+  it('forces a fresh login and retries a form request once after HTTP 500', async () => {
+    const service = nextGenService as any;
+    service.useMock = false;
+    service.sessionCookie = 'stale-cookie';
+    service.cookieObtainedAt = Date.now();
+    const login = vi.spyOn(service, 'login').mockImplementation(async () => {
+      service.sessionCookie = 'fresh-cookie';
+      service.cookieObtainedAt = Date.now();
+      return true;
+    });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('', { status: 500 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ Data: [{ OrderId: 18544 }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await service.postForm(
+      '/MaterialPurchaseOrder/FormLinesGridRead',
+      new URLSearchParams({ OrderId: '18544' })
+    );
+
+    expect(login).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][1].headers.Cookie).toBe('fresh-cookie');
+    expect(result).toEqual({ Data: [{ OrderId: 18544 }] });
+  });
+
+  it('blocks non-allowlisted and lookalike NextGen write paths', () => {
+    const service = nextGenService as any;
+    expect(() => service.assertReadOnly('/MaterialPurchaseOrder/EditSave')).toThrow(/READ-ONLY/);
+    expect(() => service.assertReadOnly('/MaterialPurchaseOrder/Delete')).toThrow(/READ-ONLY/);
+    expect(() => service.assertReadOnly('/MaterialPurchaseOrder/GetById?id=18544')).not.toThrow();
   });
 });

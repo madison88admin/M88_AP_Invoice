@@ -11,6 +11,7 @@ import { matchMPOLines } from '../utils/mpoLineMatching';
 export interface ValidationResult {
   passed: boolean;
   reason?: ExceptionReason;
+  code?: 'NEXTGEN_UNAVAILABLE';
   message: string;
   detail?: string;
 }
@@ -127,15 +128,16 @@ export async function validateInvoice(invoiceId: string): Promise<InvoiceValidat
     },
   });
 
-  // Fetch previously resolved/waived exceptions so we don't re-create them
-  const previouslyHandled = await prisma.exception.findMany({
+  // Waived reasons are explicitly accepted. Resolved reasons must be checked
+  // again so a still-broken rule is not permanently suppressed.
+  const previouslyWaived = await prisma.exception.findMany({
     where: {
       invoice_id: invoiceId,
-      status: { in: ['RESOLVED', 'WAIVED'] } as any,
+      status: 'WAIVED' as any,
     },
     select: { reason: true },
   });
-  const handledReasons = new Set(previouslyHandled.map(e => e.reason as string));
+  const waivedReasons = new Set(previouslyWaived.map(e => e.reason as string));
 
   const results: ValidationResult[] = [];
   const exceptions: Array<{ reason: ExceptionReason; detail: string }> = [];
@@ -271,8 +273,31 @@ export async function validateInvoice(invoiceId: string): Promise<InvoiceValidat
 
   const passed = results.every(r => r.passed);
 
-  // Create exception records for failed validations (skip previously resolved/waived)
-  const newExceptions = exceptions.filter(exc => !handledReasons.has(exc.reason as string));
+  // Present every problem for a reason in one exception instead of revealing
+  // same-category failures one at a time across repeated validation cycles.
+  const consolidatedExceptions = Array.from(
+    exceptions.reduce((byReason, exception) => {
+      const reason = exception.reason as string;
+      const existing = byReason.get(reason);
+      if (existing) {
+        if (exception.detail && !existing.details.includes(exception.detail)) {
+          existing.details.push(exception.detail);
+        }
+      } else {
+        byReason.set(reason, {
+          reason: exception.reason,
+          details: exception.detail ? [exception.detail] : [],
+        });
+      }
+      return byReason;
+    }, new Map<string, { reason: ExceptionReason; details: string[] }>()).values()
+  ).map(exception => ({
+    reason: exception.reason,
+    detail: exception.details.join(' | '),
+  }));
+  const newExceptions = consolidatedExceptions.filter(
+    exception => !waivedReasons.has(exception.reason as string)
+  );
 
   if (newExceptions.length > 0) {
     for (const exc of newExceptions) {
@@ -290,12 +315,20 @@ export async function validateInvoice(invoiceId: string): Promise<InvoiceValidat
       where: { id: invoiceId },
       data: { status: InvoiceStatus.EXCEPTION_FLAGGED as any },
     });
-  } else if (exceptions.length > 0 && newExceptions.length === 0) {
-    // All failing rules were previously resolved/waived — proceed to VALIDATION_PENDING
+  } else if (consolidatedExceptions.length > 0 && newExceptions.length === 0) {
+    // All currently failing reasons were explicitly waived.
     await prisma.invoice.update({
       where: { id: invoiceId },
       data: { status: InvoiceStatus.VALIDATION_PENDING as any },
     });
+
+    // A waiver is an explicit acceptance of the failing rule, so continue the
+    // same approval routing used by a clean validation result.
+    try {
+      await createApprovalRequest(invoiceId, 'system', { fromExceptionResolution: true });
+    } catch (error) {
+      logger.error('Failed to create approval request after waived validation exceptions:', error);
+    }
   } else {
     // Batch threshold check: hold invoices below $100 cumulative per vendor
     const batchCheck = await checkBatchThreshold(invoiceId);
@@ -981,6 +1014,16 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
         reason: ExceptionReason.PO_NOT_FOUND,
         message: `PO ${poRef} not found in NextGen`,
         detail: `Referenced PO/MPO ${poRef} could not be found in NextGen. The system will keep checking; re-validate once the PO is available.`,
+      };
+    }
+
+    if (po.line_items_available === false) {
+      return {
+        passed: false,
+        reason: ExceptionReason.PO_NOT_FOUND,
+        code: 'NEXTGEN_UNAVAILABLE',
+        message: 'NEXTGEN_UNAVAILABLE: MPO line data could not be retrieved',
+        detail: `NextGen found ${baseMpo}, but both line-item endpoints were unavailable. Quantity, price, and amount validation was deferred for retry/manual review.`,
       };
     }
 

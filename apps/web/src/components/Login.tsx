@@ -37,7 +37,9 @@ export default function Login() {
     setError('');
     setLoading(true);
 
-    const success = await login(email, password);
+    // Normal accounts authenticate against NextGen. In local development, allow
+    // the backend-controlled demo route as a fallback for the listed demo users.
+    const success = await login(email, password) || await demoLogin(email, password);
     if (success) {
       navigate('/dashboard');
     } else {

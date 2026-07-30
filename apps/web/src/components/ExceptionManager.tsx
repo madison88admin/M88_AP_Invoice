@@ -89,6 +89,12 @@ export default function ExceptionManager() {
       if (result?.approvalWarning) {
         setApprovalWarning(result.approvalWarning);
       }
+      if (result?.revalidation) {
+        showToast(
+          result.revalidation.message,
+          result.revalidation.passed ? 'success' : 'warning'
+        );
+      }
     } catch (error: any) {
       console.error('Failed to resolve exception:', error);
       const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to resolve exception';
@@ -107,6 +113,12 @@ export default function ExceptionManager() {
       setWaiverReason('');
       if (res.data?.approvalWarning) {
         setApprovalWarning(res.data.approvalWarning);
+      }
+      if (res.data?.revalidation) {
+        showToast(
+          res.data.revalidation.message,
+          res.data.revalidation.passed ? 'success' : 'warning'
+        );
       }
     } catch (error: any) {
       console.error('Failed to waive exception:', error);

@@ -254,7 +254,7 @@
 }
 
 .animate-slide-in-left {
-  animation: slideInLeft 0.3s ease-out forwards;
+  animation: slideInLeft 0.3s ease-out;
 }
 
 @keyframes scaleIn {
@@ -272,19 +272,19 @@
 }
 
 .animate-fade-in-up {
-  animation: fadeInUp 0.4s ease-out forwards;
+  animation: fadeInUp 0.4s ease-out;
 }
 
 .animate-slide-in-right {
-  animation: slideInRight 0.3s ease-out forwards;
+  animation: slideInRight 0.3s ease-out;
 }
 
 .animate-scale-in {
-  animation: scaleIn 0.25s ease-out forwards;
+  animation: scaleIn 0.25s ease-out;
 }
 
 .animate-stagger {
-  animation: staggerIn 0.35s ease-out forwards;
+  animation: staggerIn 0.35s ease-out;
   opacity: 0;
 }
 
@@ -364,7 +364,7 @@
   }
 }
 .animate-modal-in {
-  animation: modalIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: modalIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* Staggered list items */
@@ -379,7 +379,7 @@
   }
 }
 .animate-list-item {
-  animation: listStaggerIn 0.3s ease-out forwards;
+  animation: listStaggerIn 0.3s ease-out;
   opacity: 0;
 }
 
@@ -403,7 +403,7 @@
   }
 }
 .animate-page-in {
-  animation: pageIn 0.3s ease-out forwards;
+  animation: pageIn 0.3s ease-out;
 }
 
 /* Empty state bounce */

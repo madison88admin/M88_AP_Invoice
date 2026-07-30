@@ -2,8 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, Archive, Clock, Search } from 'lucide-react';
 import { invoiceApi } from '../lib/api';
+import { useAuth } from '../contexts/AuthContext';
+import { isInvoiceActionableForRole } from '../lib/roleAccess';
 
 export default function InvoiceRepository() {
+  const { user } = useAuth();
   const [invoices, setInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -21,7 +24,8 @@ export default function InvoiceRepository() {
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
     return invoices.filter((invoice) => {
-      if (status && invoice.status !== status) return false;
+      if (!status && !isInvoiceActionableForRole(invoice, user?.role || '')) return false;
+      if (status && status !== '__ALL__' && invoice.status !== status) return false;
       if (!term) return true;
       return [
         invoice.invoice_number,
@@ -33,7 +37,7 @@ export default function InvoiceRepository() {
         invoice.payments?.[0]?.batch_id,
       ].some((value) => String(value || '').toLowerCase().includes(term));
     });
-  }, [invoices, search, status]);
+  }, [invoices, search, status, user?.role]);
 
   const openTimeline = async (invoiceId: string) => {
     setTimelineLoading(true);
@@ -54,7 +58,8 @@ export default function InvoiceRepository() {
             <input value={search} onChange={(event) => setSearch(event.target.value)} className="w-full py-2 bg-transparent outline-none text-sm" placeholder="Invoice, vendor, MPO, material, batch" />
           </label>
           <select value={status} onChange={(event) => setStatus(event.target.value)} className="px-3 py-2 rounded-xl text-sm" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}>
-            <option value="">All lifecycle statuses</option>
+            <option value="">My active invoices</option>
+            <option value="__ALL__">All invoices / history</option>
             {statuses.map((item) => <option key={item} value={item}>{String(item).replace(/_/g, ' ')}</option>)}
           </select>
         </div>
@@ -86,7 +91,7 @@ export default function InvoiceRepository() {
                   </td>
                 </tr>
               ))}
-              {!loading && filtered.length === 0 && <tr><td colSpan={8} className="p-10 text-center" style={{ color: 'var(--text-muted)' }}>No invoices match the filters.</td></tr>}
+              {!loading && filtered.length === 0 && <tr><td colSpan={8} className="p-10 text-center" style={{ color: 'var(--text-muted)' }}>{status ? 'No invoices match the filters.' : 'No invoices currently require your action. Use the status filter to view history.'}</td></tr>}
               {loading && <tr><td colSpan={8} className="p-10 text-center" style={{ color: 'var(--text-muted)' }}>Loading repository...</td></tr>}
             </tbody>
           </table>

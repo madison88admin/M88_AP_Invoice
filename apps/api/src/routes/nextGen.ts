@@ -1,5 +1,5 @@
 import express, { Router } from 'express';
-import { nextGenService } from '../services/nextGenService';
+import { getNextGenMetrics, nextGenService } from '../services/nextGenService';
 import { authenticate, authorize } from '../middleware/auth';
 import { UserRole } from '@ap-invoice/shared';
 
@@ -156,6 +156,20 @@ router.get('/status', devBypassAdmin, async (req, res) => {
     console.error('Error checking NextGen status:', error);
     res.status(500).json({ error: 'Failed to check NextGen status' });
   }
+});
+
+router.get('/metrics', devBypassAdmin, (_req, res) => {
+  res.json({
+    ...getNextGenMetrics(),
+    thresholds: {
+      max_concurrent_requests: Number(process.env.NEXTGEN_MAX_CONCURRENT_REQUESTS || 2),
+      request_delay_ms: Number(process.env.NEXTGEN_REQUEST_DELAY_MS || 150),
+      failure_threshold: Number(process.env.NEXTGEN_FAILURE_THRESHOLD || 5),
+      cooldown_ms: Number(process.env.NEXTGEN_COOLDOWN_MS || 60000),
+      amount_tolerance_percent: Number(process.env.NEXTGEN_AMOUNT_TOLERANCE_PERCENT || 5),
+      unit_price_tolerance: Number(process.env.NEXTGEN_UNIT_PRICE_TOLERANCE || 0.01),
+    },
+  });
 });
 
 /**

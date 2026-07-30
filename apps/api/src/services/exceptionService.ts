@@ -1,14 +1,80 @@
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { ExceptionStatus, ExceptionReason, InvoiceStatus } from '@ap-invoice/shared';
-import { createApprovalRequest } from './approvalService';
 import { logger } from '../utils/logger';
+import { validateInvoice } from './validationService';
+
+export interface ExceptionRevalidation {
+  triggered: boolean;
+  passed: boolean;
+  status: string;
+  exception_count: number;
+  message: string;
+}
+
+const revalidationInFlight = new Map<string, Promise<ExceptionRevalidation>>();
+
+async function revalidateAfterExceptionsHandled(
+  invoiceId: string,
+  userId: string
+): Promise<ExceptionRevalidation> {
+  const existing = revalidationInFlight.get(invoiceId);
+  if (existing) return existing;
+
+  const task = (async () => {
+    await prisma.auditLog.create({
+      data: {
+        invoice_id: invoiceId,
+        action: 'AUTO_REVALIDATION_STARTED',
+        performed_by: userId,
+        note: 'All active exceptions handled. Running one consolidated validation pass.',
+      },
+    });
+
+    await validateInvoice(invoiceId);
+    const [invoice, pendingExceptions] = await Promise.all([
+      prisma.invoice.findUnique({ where: { id: invoiceId }, select: { status: true } }),
+      prisma.exception.findMany({
+        where: { invoice_id: invoiceId, status: ExceptionStatus.PENDING as any },
+        select: { reason: true, detail: true },
+      }),
+    ]);
+    const pendingCount = pendingExceptions.length;
+    const status = String(invoice?.status || InvoiceStatus.VALIDATION_PENDING);
+    const passed =
+      pendingCount === 0 &&
+      status !== InvoiceStatus.EXCEPTION_FLAGGED &&
+      status !== InvoiceStatus.VALIDATION_PENDING;
+    const message = passed
+      ? 'Revalidation passed. The invoice advanced to the approval workflow.'
+      : pendingExceptions.some(exception => exception.reason === ExceptionReason.MISSING_BRAND_TIER)
+        ? `Validation passed, but approval routing needs attention: ${
+            pendingExceptions.find(exception => exception.reason === ExceptionReason.MISSING_BRAND_TIER)?.detail
+          }`
+      : pendingCount > 0
+        ? `Revalidation found ${pendingCount} consolidated exception(s). Review the complete updated list.`
+        : 'Validation passed, but approval routing could not advance. Review the invoice routing details.';
+
+    await prisma.auditLog.create({
+      data: {
+        invoice_id: invoiceId,
+        action: 'AUTO_REVALIDATION_COMPLETED',
+        performed_by: userId,
+        note: `${message} Status: ${status}.`,
+      },
+    });
+    return { triggered: true, passed, status, exception_count: pendingCount, message };
+  })().finally(() => revalidationInFlight.delete(invoiceId));
+
+  revalidationInFlight.set(invoiceId, task);
+  return task;
+}
 
 export async function resolveException(
   exceptionId: string,
   resolution: string,
   userId: string
-): Promise<{ exception: any; approvalWarning?: string }> {
+): Promise<{ exception: any; approvalWarning?: string; revalidation?: ExceptionRevalidation }> {
   const exception = await prisma.exception.findUnique({
     where: { id: exceptionId },
     include: { invoice: true },
@@ -51,44 +117,19 @@ export async function resolveException(
     },
   });
 
-  // If no remaining exceptions and invoice is in EXCEPTION_FLAGGED status, update to VALIDATION_PENDING
-  if (remainingExceptions === 0) {
-    const invoice = await prisma.invoice.findUnique({
-      where: { id: exception.invoice_id },
-    });
-
-    if (invoice && invoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any)) {
-      await prisma.invoice.update({
-        where: { id: exception.invoice_id },
-        data: { status: InvoiceStatus.VALIDATION_PENDING as any },
-      });
-
-      await prisma.auditLog.create({
-        data: {
-          invoice_id: exception.invoice_id,
-          action: 'STATUS_CHANGED',
-          performed_by: userId,
-          note: 'Invoice status changed from EXCEPTION_FLAGGED to VALIDATION_PENDING after all exceptions resolved',
-        },
-      });
-
-      // Auto-proceed to approval workflow now that all exceptions are resolved
-      let approvalWarning: string | undefined;
-      try {
-        await createApprovalRequest(exception.invoice_id, userId, { fromExceptionResolution: true });
-        await prisma.auditLog.create({
-          data: {
-            invoice_id: exception.invoice_id,
-            action: 'APPROVAL_REQUESTED',
-            performed_by: userId,
-            note: 'Approval request auto-created after exception resolution',
-          },
-        });
-      } catch (err: any) {
-        logger.error(`Failed to auto-create approval request for invoice ${exception.invoice_id} after exception resolution:`, err);
-        approvalWarning = `All exceptions resolved, but approval request could not be created: ${err.message}. The invoice is now in VALIDATION_PENDING — please update the brand_code and manually request approval.`;
-      }
-      return { exception: updatedException, approvalWarning };
+  if (
+    remainingExceptions === 0 &&
+    exception.invoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any)
+  ) {
+    try {
+      const revalidation = await revalidateAfterExceptionsHandled(exception.invoice_id, userId);
+      return { exception: updatedException, revalidation };
+    } catch (err: any) {
+      logger.error(`Automatic revalidation failed for invoice ${exception.invoice_id}:`, err);
+      return {
+        exception: updatedException,
+        approvalWarning: `Exception resolved, but automatic revalidation failed: ${err.message}. Please retry validation.`,
+      };
     }
   }
 
@@ -194,27 +235,11 @@ export async function autoResolveLowRiskExceptions(invoiceId: string): Promise<{
     where: { invoice_id: invoiceId, status: ExceptionStatus.PENDING as any },
   });
 
-  // If all exceptions resolved, move invoice from EXCEPTION_FLAGGED to VALIDATION_PENDING
   if (remainingCount === 0 && invoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any)) {
-    await prisma.invoice.update({
-      where: { id: invoiceId },
-      data: { status: InvoiceStatus.VALIDATION_PENDING as any },
-    });
-
-    await prisma.auditLog.create({
-      data: {
-        invoice_id: invoiceId,
-        action: 'STATUS_CHANGED',
-        performed_by: 'system',
-        note: `Auto-resolved all ${resolvedCount} exception(s). Status: EXCEPTION_FLAGGED → VALIDATION_PENDING`,
-      },
-    });
-
-    // Auto-proceed to approval workflow
     try {
-      await createApprovalRequest(invoiceId, 'system', { fromExceptionResolution: true });
+      await revalidateAfterExceptionsHandled(invoiceId, 'system');
     } catch (err: any) {
-      logger.error(`Failed to auto-create approval request for invoice ${invoiceId} after auto-resolve:`, err);
+      logger.error(`Automatic revalidation failed for invoice ${invoiceId} after auto-resolve:`, err);
     }
   }
 
@@ -258,7 +283,7 @@ export async function waiveException(
   exceptionId: string,
   waiverReason: string,
   userId: string
-): Promise<{ exception: any; approvalWarning?: string }> {
+): Promise<{ exception: any; approvalWarning?: string; revalidation?: ExceptionRevalidation }> {
   const exception = await prisma.exception.findUnique({
     where: { id: exceptionId },
     include: { invoice: true },
@@ -304,44 +329,19 @@ export async function waiveException(
     },
   });
 
-  // If no pending exceptions and invoice is in EXCEPTION_FLAGGED status, update to VALIDATION_PENDING
-  if (pendingExceptions === 0) {
-    const invoice = await prisma.invoice.findUnique({
-      where: { id: exception.invoice_id },
-    });
-
-    if (invoice && invoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any)) {
-      await prisma.invoice.update({
-        where: { id: exception.invoice_id },
-        data: { status: InvoiceStatus.VALIDATION_PENDING as any },
-      });
-
-      await prisma.auditLog.create({
-        data: {
-          invoice_id: exception.invoice_id,
-          action: 'STATUS_CHANGED',
-          performed_by: userId,
-          note: 'Invoice status changed from EXCEPTION_FLAGGED to VALIDATION_PENDING after all exceptions resolved/waived',
-        },
-      });
-
-      // Auto-proceed to approval workflow now that all exceptions are waived
-      let approvalWarning: string | undefined;
-      try {
-        await createApprovalRequest(exception.invoice_id, userId, { fromExceptionResolution: true });
-        await prisma.auditLog.create({
-          data: {
-            invoice_id: exception.invoice_id,
-            action: 'APPROVAL_REQUESTED',
-            performed_by: userId,
-            note: 'Approval request auto-created after exception waiver',
-          },
-        });
-      } catch (err: any) {
-        logger.error(`Failed to auto-create approval request for invoice ${exception.invoice_id} after exception waiver:`, err);
-        approvalWarning = `All exceptions waived, but approval request could not be created: ${err.message}. The invoice is now in VALIDATION_PENDING — please update the brand_code and manually request approval.`;
-      }
-      return { exception: updatedException, approvalWarning };
+  if (
+    pendingExceptions === 0 &&
+    exception.invoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any)
+  ) {
+    try {
+      const revalidation = await revalidateAfterExceptionsHandled(exception.invoice_id, userId);
+      return { exception: updatedException, revalidation };
+    } catch (err: any) {
+      logger.error(`Automatic revalidation failed for invoice ${exception.invoice_id} after waiver:`, err);
+      return {
+        exception: updatedException,
+        approvalWarning: `Exception waived, but automatic revalidation failed: ${err.message}. Please retry validation.`,
+      };
     }
   }
 

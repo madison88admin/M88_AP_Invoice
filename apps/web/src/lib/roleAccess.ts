@@ -24,7 +24,7 @@ export const ROLE_PERMISSIONS = {
     canPost: true,
     canSchedulePayment: true,
     canManagePaymentBatches: true,
-    canUpload: false,
+    canUpload: true,
     canValidate: false,
     canRequestApproval: false,
     canViewAllInvoices: false,
@@ -280,4 +280,31 @@ export function filterInvoicesByRole(invoices: any[], role: string): any[] {
     (accessibleStages.includes(inv.status) || accessibleStages.includes(inv.current_stage)) &&
     (threshold === 0 || Number(inv.total_amount) > threshold)
   );
+}
+
+// Repository default view: show only invoices on which this role can act now.
+// Completed/passed-on invoices remain available through explicit repository filters.
+export function isInvoiceActionableForRole(invoice: any, role: string): boolean {
+  if (!invoice || !role) return false;
+
+  const status = String(invoice.status || '');
+  const currentApproverRole = String(invoice.current_approver_role || '');
+
+  if (['POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID', 'PAYMENT_CONFIRMATION_SENT'].includes(status)) {
+    return false;
+  }
+
+  if (currentApproverRole) {
+    return currentApproverRole === role;
+  }
+
+  switch (role) {
+    case 'PURCHASING_COORDINATOR':
+      return ['VALIDATION_PENDING', 'EXCEPTION_FLAGGED', 'ON_HOLD', 'PENDING_COORDINATOR'].includes(status);
+    case 'ACCOUNTING_ASSOCIATE':
+    case 'ACCOUNTING_SUPERVISOR':
+      return ['PENDING_ACCOUNTING', 'APPROVED'].includes(status);
+    default:
+      return ROLE_STAGE_ACCESS[role]?.includes(status) || false;
+  }
 }

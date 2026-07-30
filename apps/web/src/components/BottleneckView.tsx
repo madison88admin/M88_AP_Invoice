@@ -58,20 +58,20 @@ export default function BottleneckView() {
       currency: inv.currency,
       status: inv.status,
       current_stage: inv.current_stage,
-      stage_entered_at: inv.stage_timestamps.find(st => st.stage === inv.current_stage)?.entered_at,
+      stage_entered_at: inv.invoice_received_date || inv.created_at || inv.stage_timestamps.find(st => st.stage === inv.current_stage)?.entered_at,
     }));
 
     const atRisk = invoices.filter(inv => {
       const currentStage = inv.stage_timestamps.find(st => !st.exited_at);
       if (!currentStage) return false;
-      const enteredAt = new Date(currentStage.entered_at);
+      const enteredAt = new Date(inv.invoice_received_date || inv.created_at || currentStage.entered_at);
       const now = new Date();
       const elapsedHours = calcWorkingHoursElapsed(enteredAt, now);
       const remainingHours = currentStage.sla_hours - elapsedHours;
       return remainingHours <= 48 && remainingHours > 0;
     }).map(inv => {
       const currentStage = inv.stage_timestamps.find(st => !st.exited_at)!;
-      const enteredAt = new Date(currentStage.entered_at);
+      const enteredAt = new Date(inv.invoice_received_date || inv.created_at || currentStage.entered_at);
       const now = new Date();
       const elapsedHours = calcWorkingHoursElapsed(enteredAt, now);
       const remainingHours = currentStage.sla_hours - elapsedHours;

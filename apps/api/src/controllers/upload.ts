@@ -742,6 +742,7 @@ async function processSingleInvoice(
           po_number: madisonResult.po_number || undefined,
           mpo_number: madisonResult.mpo_number || undefined,
           amount: madisonResult.amount || 0,
+          currency: madisonResult.currency || 'USD',
           vendor_name: madisonResult.vendor_name || '',
           brand: madisonResult.brand || undefined,
           season: madisonResult.season || undefined,
@@ -749,6 +750,15 @@ async function processSingleInvoice(
           mpo_order_sequence: (madisonResult as any).mpo_order_sequence,
           material_code: madisonResult.material_code || undefined,
           material_name: madisonResult.material_name || undefined,
+          line_items: ((madisonResult as any).line_items || []).map((line: any, index: number) => ({
+            line_number: line.line_number || index + 1,
+            mpo_order_sequence: line.mpo_order_sequence,
+            material_code: line.material_code || line.item_code || line.sku,
+            material_name: line.material_name || line.description,
+            quantity: Number(line.quantity || 0),
+            unit_price: Number(line.unit_price || line.unitPrice || 0),
+            line_amount: Number(line.line_amount || line.extended_price || line.amount || 0),
+          })),
         },
         2000
       );
@@ -766,6 +776,16 @@ async function processSingleInvoice(
           mpo_order_sequence: (madisonResult as any).mpo_order_sequence,
           material_code: madisonResult.material_code || undefined,
           material_name: madisonResult.material_name || undefined,
+          currency: madisonResult.currency || 'USD',
+          line_items: ((madisonResult as any).line_items || []).map((line: any, index: number) => ({
+            line_number: line.line_number || index + 1,
+            mpo_order_sequence: line.mpo_order_sequence,
+            material_code: line.material_code || line.item_code || line.sku,
+            material_name: line.material_name || line.description,
+            quantity: Number(line.quantity || 0),
+            unit_price: Number(line.unit_price || line.unitPrice || 0),
+            line_amount: Number(line.line_amount || line.extended_price || line.amount || 0),
+          })),
         });
 
         // Use new validation agent for enhanced validation
@@ -1127,6 +1147,8 @@ export const confirmOCR = async (
       po_audit_id,
       qty_shipped,
       line_items,
+      accounting_preapproved,
+      approval_evidence_confirmed,
     } = req.body;
 
     // Import invoice service dynamically to avoid circular dependency
@@ -1189,8 +1211,11 @@ export const confirmOCR = async (
         bank_name: bank_info?.bank_name,
         swift_code: bank_info?.swift_code,
         account_number: bank_info?.account_usd || bank_info?.account_number,
+        accounting_preapproved,
+        approval_evidence_confirmed,
       },
-      req.user!.id
+      req.user!.id,
+      req.user!.role
     );
 
     // DSRS v7.3: transfer async PO audit result from upload session to invoice id

@@ -28,11 +28,22 @@ interface MockDataContextType {
   approveInvoice: (id: string, signerName: string) => Promise<void>;
   rejectInvoice: (id: string, reason: string) => Promise<void>;
   postToQuickBooks: (id: string) => Promise<void>;
-  resolveException: (invoiceId: string, exceptionId: string, resolution: string) => Promise<{ approvalWarning?: string } | void>;
+  resolveException: (invoiceId: string, exceptionId: string, resolution: string) => Promise<ExceptionActionResult | void>;
   createPaymentBatch: (paymentIds: string[]) => Promise<void>;
   getInvoicesByStatus: (status: InvoiceStatus) => MockInvoice[];
   getInvoicesByStage: (stage: string) => MockInvoice[];
   getInvoicesByBrandTier: (brandTier: string) => MockInvoice[];
+}
+
+interface ExceptionActionResult {
+  approvalWarning?: string;
+  revalidation?: {
+    triggered: boolean;
+    passed: boolean;
+    status: string;
+    exception_count: number;
+    message: string;
+  };
 }
 
 const MockDataContext = createContext<MockDataContextType | undefined>(undefined);
@@ -102,6 +113,9 @@ const apiInvoiceToMock = (invoice: any): MockInvoice => {
       signatory_name: s.signatory_name || '',
       signed_at: s.signed_at ? dateToString(s.signed_at) : undefined,
       signature_type: s.signature_type || 'DIGITAL',
+      approval_status: s.approval_status || 'PENDING',
+      invalidated_at: s.invalidated_at ? dateToString(s.invalidated_at) : undefined,
+      invalidation_reason: s.invalidation_reason || undefined,
     })),
     exceptions: (invoice.exceptions || []).map((e: any) => ({
       id: e.id || '',
@@ -261,7 +275,7 @@ export const MockDataProvider = ({ children }: MockDataProviderProps) => {
   );
 
   const resolveException = useCallback(
-    async (_invoiceId: string, exceptionId: string, resolution: string): Promise<{ approvalWarning?: string } | void> => {
+    async (_invoiceId: string, exceptionId: string, resolution: string): Promise<ExceptionActionResult | void> => {
       const res = await exceptionApi.resolve(exceptionId, resolution);
       await refresh();
       return res.data;

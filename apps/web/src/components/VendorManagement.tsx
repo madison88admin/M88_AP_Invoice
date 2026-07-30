@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { Building2, Search, Plus, Edit, Trash2, ArrowLeft, Building, Save, X } from 'lucide-react';
+import { Building2, Search, Plus, Edit, Trash2, ArrowLeft, Building, Save, X, Lock, Send, Paperclip, FileText } from 'lucide-react';
 import { MockVendor } from '../lib/mockData';
 import { vendorApi } from '../lib/api';
 
@@ -18,8 +18,14 @@ export default function VendorManagement() {
   const [editingVendor, setEditingVendor] = useState<Partial<MockVendor>>({});
   const [saving, setSaving] = useState(false);
   const [isAddMode, setIsAddMode] = useState(false);
+  const [showBankRequestModal, setShowBankRequestModal] = useState(false);
+  const [bankRequestData, setBankRequestData] = useState({ bank_name: '', swift_code: '', account_number: '', reason: '' });
+  const [bankRequestAttachment, setBankRequestAttachment] = useState<File | null>(null);
+  const [submittingRequest, setSubmittingRequest] = useState(false);
 
-  const canAddVendor = user && ['PURCHASING_COORDINATOR', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role);
+  const canAddVendor = user && ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE'].includes(user.role);
+  const canEditBankInfo = user && ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role);
+  const canEditVendor = user && ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role);
 
   const handleAdd = () => {
     setIsAddMode(true);
@@ -121,6 +127,39 @@ export default function VendorManagement() {
     });
   };
 
+  const handleRequestBankUpdate = (vendor: MockVendor) => {
+    setBankRequestData({
+      bank_name: vendor.bank_name || '',
+      swift_code: vendor.swift_code || '',
+      account_number: vendor.account_number || '',
+      reason: '',
+    });
+    setBankRequestAttachment(null);
+    setShowBankRequestModal(true);
+  };
+
+  const submitBankUpdateRequest = async () => {
+    if (!selectedVendor) return;
+    if (!bankRequestData.reason.trim()) {
+      showToast('Please provide a reason for the bank update request', 'error');
+      return;
+    }
+    try {
+      setSubmittingRequest(true);
+      await vendorApi.requestBankUpdate(selectedVendor.id, bankRequestData, bankRequestAttachment);
+      showToast('Bank update request sent to Accounting team', 'success');
+      setShowBankRequestModal(false);
+      setBankRequestData({ bank_name: '', swift_code: '', account_number: '', reason: '' });
+      setBankRequestAttachment(null);
+    } catch (error: any) {
+      console.error('Failed to submit bank update request:', error);
+      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to send request';
+      showToast(msg, 'error');
+    } finally {
+      setSubmittingRequest(false);
+    }
+  };
+
   return (
     <div>
           {/* Search and Filter */}
@@ -188,7 +227,7 @@ export default function VendorManagement() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        {user && ['PURCHASING_COORDINATOR', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'].includes(user.role) && (
+                        {canEditVendor && (
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -253,6 +292,18 @@ export default function VendorManagement() {
                     <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Account Number</p>
                     <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedVendor.account_number || 'N/A'}</p>
                   </div>
+                  {!canEditBankInfo && (
+                    <button
+                      onClick={() => handleRequestBankUpdate(selectedVendor)}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-200"
+                      style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--accent-amber)' }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-amber) 10%, transparent)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--bg-elevated)'; }}
+                    >
+                      <Send className="h-4 w-4" strokeWidth={1.75} />
+                      Request Bank Info Update
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -329,35 +380,53 @@ export default function VendorManagement() {
                   </div>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Bank Name</label>
+                  <div className="flex items-center gap-2 mb-1">
+                    <label className="block text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Bank Name</label>
+                    {!canEditBankInfo && !isAddMode && <Lock className="h-3 w-3" style={{ color: 'var(--text-subtle)' }} />}
+                  </div>
                   <input
                     type="text"
                     value={editingVendor.bank_name || ''}
                     onChange={(e) => setEditingVendor({ ...editingVendor, bank_name: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                    disabled={!canEditBankInfo && !isAddMode}
+                    className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm disabled:opacity-60 disabled:cursor-not-allowed"
                     style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>SWIFT Code</label>
+                  <div className="flex items-center gap-2 mb-1">
+                    <label className="block text-xs font-medium" style={{ color: 'var(--text-muted)' }}>SWIFT Code</label>
+                    {!canEditBankInfo && !isAddMode && <Lock className="h-3 w-3" style={{ color: 'var(--text-subtle)' }} />}
+                  </div>
                   <input
                     type="text"
                     value={editingVendor.swift_code || ''}
                     onChange={(e) => setEditingVendor({ ...editingVendor, swift_code: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                    disabled={!canEditBankInfo && !isAddMode}
+                    className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm disabled:opacity-60 disabled:cursor-not-allowed"
                     style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Account Number</label>
+                  <div className="flex items-center gap-2 mb-1">
+                    <label className="block text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Account Number</label>
+                    {!canEditBankInfo && !isAddMode && <Lock className="h-3 w-3" style={{ color: 'var(--text-subtle)' }} />}
+                  </div>
                   <input
                     type="text"
                     value={editingVendor.account_number || ''}
                     onChange={(e) => setEditingVendor({ ...editingVendor, account_number: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                    disabled={!canEditBankInfo && !isAddMode}
+                    className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm disabled:opacity-60 disabled:cursor-not-allowed"
                     style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
                   />
                 </div>
+                {!canEditBankInfo && !isAddMode && (
+                  <div className="px-3 py-2 rounded-xl text-xs flex items-start gap-2" style={{ background: 'color-mix(in srgb, var(--accent-amber) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)', color: 'var(--text-secondary)' }}>
+                    <Lock className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" style={{ color: 'var(--accent-amber)' }} />
+                    <span>Bank information is managed by the Accounting team. Use the "Request Bank Info Update" button in the vendor detail panel to request changes.</span>
+                  </div>
+                )}
               </div>
               <div className="mt-6 flex justify-end space-x-3">
                 <button
@@ -385,6 +454,155 @@ export default function VendorManagement() {
                 >
                   <Save className="h-4 w-4" strokeWidth={1.75} />
                   {saving ? 'Saving...' : isAddMode ? 'Add Vendor' : 'Save Changes'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bank Update Request Modal */}
+      {showBankRequestModal && selectedVendor && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-backdrop">
+          <div className="max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Request Bank Info Update</h3>
+                  <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Vendor: {selectedVendor.name}</p>
+                </div>
+                <button
+                  onClick={() => {
+                    setShowBankRequestModal(false);
+                    setBankRequestData({ bank_name: '', swift_code: '', account_number: '', reason: '' });
+                  }}
+                  className="transition-colors"
+                  style={{ color: 'var(--text-muted)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
+                >
+                  <X className="h-5 w-5" strokeWidth={1.75} />
+                </button>
+              </div>
+              <div className="px-3 py-2 mb-4 rounded-xl text-xs flex items-start gap-2" style={{ background: 'color-mix(in srgb, var(--accent-amber) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)', color: 'var(--text-secondary)' }}>
+                <Send className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" style={{ color: 'var(--accent-amber)' }} />
+                <span>This request will be sent to the Accounting team for review. Fill in the proposed bank details and a reason for the update.</span>
+              </div>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Proposed Bank Name</label>
+                  <input
+                    type="text"
+                    value={bankRequestData.bank_name}
+                    onChange={(e) => setBankRequestData({ ...bankRequestData, bank_name: e.target.value })}
+                    placeholder="e.g. HSBC HK"
+                    className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                    style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Proposed SWIFT Code</label>
+                  <input
+                    type="text"
+                    value={bankRequestData.swift_code}
+                    onChange={(e) => setBankRequestData({ ...bankRequestData, swift_code: e.target.value })}
+                    placeholder="e.g. HSBCHKHH"
+                    className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                    style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Proposed Account Number</label>
+                  <input
+                    type="text"
+                    value={bankRequestData.account_number}
+                    onChange={(e) => setBankRequestData({ ...bankRequestData, account_number: e.target.value })}
+                    placeholder="e.g. 123-456789-001"
+                    className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                    style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Reason for Update <span style={{ color: 'var(--accent-red)' }}>*</span></label>
+                  <textarea
+                    value={bankRequestData.reason}
+                    onChange={(e) => setBankRequestData({ ...bankRequestData, reason: e.target.value })}
+                    placeholder="Explain why the bank information needs to be updated..."
+                    rows={3}
+                    className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm resize-none"
+                    style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Attachment (Bank Letter / Verification Email)</label>
+                  <div className="space-y-2">
+                    {bankRequestAttachment ? (
+                      <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
+                        <div className="p-2 rounded-lg flex-shrink-0" style={{ background: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)' }}>
+                          <FileText className="h-4 w-4" style={{ color: 'var(--accent-purple)' }} strokeWidth={1.75} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{bankRequestAttachment.name}</p>
+                          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{(bankRequestAttachment.size / 1024).toFixed(1)} KB</p>
+                        </div>
+                        <button
+                          onClick={() => setBankRequestAttachment(null)}
+                          className="p-1.5 rounded-lg transition-colors flex-shrink-0"
+                          style={{ color: 'var(--text-muted)' }}
+                          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-red)'; e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-red) 10%, transparent)'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = ''; }}
+                        >
+                          <X className="h-4 w-4" strokeWidth={1.75} />
+                        </button>
+                      </div>
+                    ) : (
+                      <label
+                        className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl cursor-pointer transition-colors text-sm"
+                        style={{ background: 'var(--bg-elevated)', border: '1px dashed var(--border-color)', color: 'var(--text-muted)' }}
+                        onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent-purple)'; e.currentTarget.style.color = 'var(--accent-purple)'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border-color)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
+                      >
+                        <Paperclip className="h-4 w-4" strokeWidth={1.75} />
+                        <span>Click to upload (PDF, JPG, PNG — max 10MB)</span>
+                        <input
+                          type="file"
+                          accept=".pdf,.jpg,.jpeg,.png"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) setBankRequestAttachment(file);
+                          }}
+                          className="hidden"
+                        />
+                      </label>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="mt-6 flex justify-end space-x-3">
+                <button
+                  onClick={() => {
+                    setShowBankRequestModal(false);
+                    setBankRequestData({ bank_name: '', swift_code: '', account_number: '', reason: '' });
+                    setBankRequestAttachment(null);
+                  }}
+                  className="px-4 py-2 transition-colors text-sm"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={submitBankUpdateRequest}
+                  disabled={submittingRequest}
+                  className="px-4 py-2 rounded-xl transition-colors disabled:cursor-not-allowed flex items-center gap-2 text-sm font-semibold"
+                  style={submittingRequest
+                    ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' }
+                    : { background: 'var(--accent-amber)', color: 'var(--bg-base)' }
+                  }
+                >
+                  <Send className="h-4 w-4" strokeWidth={1.75} />
+                  {submittingRequest ? 'Sending...' : 'Send Request'}
                 </button>
               </div>
             </div>

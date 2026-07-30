@@ -3,12 +3,98 @@ import { parseMPOReference } from '../utils/mpoReference';
 import { matchMPOLines } from '../utils/mpoLineMatching';
 
 // Timeout helper for fetch calls — prevents indefinite hangs
-const FETCH_TIMEOUT_MS = 30000; // 30 seconds
-function fetchWithTimeout(url: string, options: RequestInit = {}): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  return fetch(url, { ...options, signal: controller.signal })
-    .finally(() => clearTimeout(timeoutId));
+const FETCH_TIMEOUT_MS = Math.max(1000, Number(process.env.NEXTGEN_REQUEST_TIMEOUT_MS || 30000));
+const MAX_CONCURRENT_REQUESTS = Math.max(1, Number(process.env.NEXTGEN_MAX_CONCURRENT_REQUESTS || 2));
+const REQUEST_DELAY_MS = Math.max(0, Number(process.env.NEXTGEN_REQUEST_DELAY_MS || 150));
+const SERVER_RETRY_DELAY_MS = Math.max(0, Number(process.env.NEXTGEN_RETRY_DELAY_MS || 300));
+const AMOUNT_TOLERANCE_PERCENT = Math.max(0, Number(process.env.NEXTGEN_AMOUNT_TOLERANCE_PERCENT || 5));
+const AMOUNT_WARNING_PERCENT = Math.min(
+  AMOUNT_TOLERANCE_PERCENT,
+  Math.max(0, Number(process.env.NEXTGEN_AMOUNT_WARNING_PERCENT || 2))
+);
+const UNIT_PRICE_TOLERANCE = Math.max(0, Number(process.env.NEXTGEN_UNIT_PRICE_TOLERANCE || 0.01));
+const FAILURE_THRESHOLD = Math.max(1, Number(process.env.NEXTGEN_FAILURE_THRESHOLD || 5));
+const COOLDOWN_MS = Math.max(1000, Number(process.env.NEXTGEN_COOLDOWN_MS || 60000));
+let activeRequests = 0;
+const requestWaiters: Array<() => void> = [];
+const nextGenMetrics = {
+  requests_total: 0,
+  requests_succeeded: 0,
+  requests_failed: 0,
+  retries: 0,
+  fallback_used: 0,
+  nextgen_unavailable: 0,
+  consecutive_failures: 0,
+  cooldown_until: 0,
+  last_success_at: null as string | null,
+  last_failure_at: null as string | null,
+};
+
+export function getNextGenMetrics() {
+  return {
+    ...nextGenMetrics,
+    cooldown_active: Date.now() < nextGenMetrics.cooldown_until,
+    cooldown_until: nextGenMetrics.cooldown_until
+      ? new Date(nextGenMetrics.cooldown_until).toISOString()
+      : null,
+    alert: nextGenMetrics.nextgen_unavailable >= 3
+      ? 'HIGH_NEXTGEN_UNAVAILABLE'
+      : null,
+  };
+}
+
+function delay(ms: number): Promise<void> {
+  return ms > 0 ? new Promise(resolve => setTimeout(resolve, ms)) : Promise.resolve();
+}
+
+async function acquireRequestSlot(): Promise<void> {
+  if (activeRequests >= MAX_CONCURRENT_REQUESTS) {
+    await new Promise<void>(resolve => requestWaiters.push(resolve));
+  }
+  activeRequests++;
+}
+
+function releaseRequestSlot(): void {
+  activeRequests--;
+  requestWaiters.shift()?.();
+}
+
+async function fetchWithTimeout(url: string, options: RequestInit = {}): Promise<Response> {
+  if (Date.now() < nextGenMetrics.cooldown_until) {
+    throw new Error('NEXTGEN_COOLDOWN_ACTIVE');
+  }
+  await acquireRequestSlot();
+  try {
+    await delay(REQUEST_DELAY_MS);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    nextGenMetrics.requests_total++;
+    const response = await fetch(url, { ...options, signal: controller.signal })
+      .finally(() => clearTimeout(timeoutId));
+    if (response.ok) {
+      nextGenMetrics.requests_succeeded++;
+      nextGenMetrics.consecutive_failures = 0;
+      nextGenMetrics.last_success_at = new Date().toISOString();
+    } else {
+      nextGenMetrics.requests_failed++;
+      nextGenMetrics.consecutive_failures++;
+      nextGenMetrics.last_failure_at = new Date().toISOString();
+      if (nextGenMetrics.consecutive_failures >= FAILURE_THRESHOLD) {
+        nextGenMetrics.cooldown_until = Date.now() + COOLDOWN_MS;
+      }
+    }
+    return response;
+  } catch (error) {
+    nextGenMetrics.requests_failed++;
+    nextGenMetrics.consecutive_failures++;
+    nextGenMetrics.last_failure_at = new Date().toISOString();
+    if (nextGenMetrics.consecutive_failures >= FAILURE_THRESHOLD) {
+      nextGenMetrics.cooldown_until = Date.now() + COOLDOWN_MS;
+    }
+    throw error;
+  } finally {
+    releaseRequestSlot();
+  }
 }
 
 // ─── MPO Header Cache ──────────────────────────────────────────────────────
@@ -55,8 +141,47 @@ export interface NextGenPOData {
     received_quantity?: number;
     remaining_quantity?: number;
   }>;
+  /** False means the line endpoints failed; [] must not be treated as valid zero lines. */
+  line_items_available?: boolean;
+  line_items_source?: 'FormLinesGridRead' | 'MPOLIGridRead';
   matched_line_items?: NextGenPOData['line_items'];
   match_level?: 'MPO_HEADER' | 'MPO_LINE' | 'MATERIAL_LINE';
+}
+
+export interface NextGenLineFetchResult {
+  lines: NextGenPOData['line_items'];
+  available: boolean;
+  source?: NextGenPOData['line_items_source'];
+}
+
+export type NextGenValidationStatus =
+  | 'MATCH'
+  | 'MISMATCH'
+  | 'LINE_NOT_FOUND'
+  | 'PO_NOT_FOUND'
+  | 'NEXTGEN_UNAVAILABLE'
+  | 'MANUAL_REVIEW';
+
+export interface InvoiceComparisonLine {
+  line_number?: number;
+  mpo_order_sequence?: string;
+  material_code?: string;
+  material_name?: string;
+  quantity?: number;
+  unit_price?: number;
+  line_amount?: number;
+}
+
+export interface NextGenLineComparison {
+  invoice_line_number?: number;
+  status: NextGenValidationStatus;
+  match_level: 'MPO_HEADER' | 'MPO_LINE' | 'MATERIAL_LINE';
+  matched_mpo_line?: string;
+  matched_material?: string;
+  quantity?: { invoice: number; nextgen: number; difference: number; match: boolean };
+  unit_price?: { invoice: number; nextgen: number; difference: number; match: boolean };
+  amount?: { invoice: number; nextgen: number; difference: number; variance_pct: number; match: boolean };
+  reason?: string;
 }
 
 /** Convert the actual NextGen MPO-line payload into stable AP validation fields. */
@@ -119,6 +244,8 @@ function defaultGridRequest(overrides?: Partial<KendoGridRequest>): KendoGridReq
 export interface POComparisonResult {
   po_found: boolean;
   is_match: boolean;
+  status?: NextGenValidationStatus;
+  reason?: string;
   nextgen_data?: NextGenPOData;
   comparison: {
     amount_match: boolean;
@@ -126,6 +253,12 @@ export interface POComparisonResult {
     brand_match: boolean;
     season_match: boolean;
     order_type_match: boolean;
+    currency_match?: boolean;
+    invoice_amount?: number;
+    nextgen_amount?: number;
+    amount_difference?: number;
+    variance_pct?: number;
+    line_comparisons?: NextGenLineComparison[];
     differences: string[];
   };
 }
@@ -164,6 +297,18 @@ export class NextGenService {
       NextGenService.instance = new NextGenService();
     }
     return NextGenService.instance;
+  }
+
+  private async refreshSessionForPagination(page: number): Promise<void> {
+    // Live NextGen sessions can expire during long grid scans even though the
+    // authentication cookie's nominal lifetime is much longer.
+    if (page > 1 && (page - 1) % 3 === 0) {
+      logger.info(`Refreshing NextGen session before MPO pagination page ${page}`);
+      const loggedIn = await this.login();
+      if (!loggedIn) {
+        throw new Error(`Unable to refresh NextGen session before MPO pagination page ${page}`);
+      }
+    }
   }
 
   // ─── Cookie-based Session Auth (ASP.NET Forms Authentication) ────────────
@@ -274,7 +419,8 @@ export class NextGenService {
   ];
 
   private assertReadOnly(path: string): void {
-    const isAllowed = NextGenService.READ_PATHS.some(p => path.startsWith(p));
+    const pathname = path.split('?')[0];
+    const isAllowed = NextGenService.READ_PATHS.includes(pathname);
     if (!isAllowed) {
       throw new Error(
         `NextGen service is READ-ONLY. Path "${path}" is not in the allowed list. ` +
@@ -503,7 +649,7 @@ export class NextGenService {
       if (!loggedIn) return null;
     }
 
-    const response = await fetchWithTimeout(`${this.baseUrl}${path}`, {
+    const execute = () => fetchWithTimeout(`${this.baseUrl}${path}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -512,48 +658,43 @@ export class NextGenService {
       body: body.toString(),
     });
 
-    if (response.status === 401 || response.status === 403) {
-      const loggedIn = await this.login();
-      if (!loggedIn) return null;
-      const retry = await fetchWithTimeout(`${this.baseUrl}${path}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Cookie': this.sessionCookie!,
-        },
-        body: body.toString(),
-      });
-      if (!retry.ok) return null;
-      const retryText = await retry.text();
-      if (retryText.includes('Log In - VisionPLM') || retryText.includes('<!doctype html>')) return null;
-      try { return JSON.parse(retryText) as T; } catch { return null; }
-    }
+    const parseResponse = async (response: Response): Promise<T | null> => {
+      if (!response.ok) return null;
+      const responseText = await response.text();
+      if (responseText.includes('Log In - VisionPLM') || responseText.includes('<!doctype html>')) {
+        return null;
+      }
+      try { return JSON.parse(responseText) as T; } catch { return null; }
+    };
 
-    if (!response.ok) {
+    let response = await execute();
+    let responseText: string | null = null;
+    if (response.ok) {
+      responseText = await response.text();
+      const isLoginPage = responseText.includes('Log In - VisionPLM') || responseText.includes('<!doctype html>');
+      if (!isLoginPage) {
+        try { return JSON.parse(responseText) as T; } catch { return null; }
+      }
+      logger.warn(`NextGen postForm ${path} returned login page, forcing a fresh session...`);
+    } else if (response.status >= 500) {
+      logger.warn(`NextGen postForm ${path} returned ${response.status}, forcing a fresh session and retrying once...`);
+    } else if (response.status === 401 || response.status === 403) {
+      logger.warn(`NextGen postForm session expired for ${path} (${response.status}), re-logging in...`);
+    } else {
       logger.error(`NextGen postForm ${path} returned ${response.status}`);
       return null;
     }
 
-    const responseText = await response.text();
-    if (responseText.includes('Log In - VisionPLM') || responseText.includes('<!doctype html>')) {
-      logger.warn(`NextGen postForm ${path} returned login page, re-logging in...`);
-      const loggedIn = await this.login();
-      if (!loggedIn) return null;
-      const retry = await fetchWithTimeout(`${this.baseUrl}${path}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Cookie': this.sessionCookie!,
-        },
-        body: body.toString(),
-      });
-      if (!retry.ok) return null;
-      const retryText = await retry.text();
-      if (retryText.includes('Log In - VisionPLM') || retryText.includes('<!doctype html>')) return null;
-      try { return JSON.parse(retryText) as T; } catch { return null; }
+    await delay(SERVER_RETRY_DELAY_MS);
+    nextGenMetrics.retries++;
+    const loggedIn = await this.login();
+    if (!loggedIn) return null;
+    response = await execute();
+    const parsed = await parseResponse(response);
+    if (parsed === null) {
+      logger.error(`NextGen postForm ${path} failed after forced re-login (status ${response.status})`);
     }
-
-    try { return JSON.parse(responseText) as T; } catch { return null; }
+    return parsed;
   }
 
   // ─── PO Mapping ─────────────────────────────────────────────────────────────
@@ -648,12 +789,19 @@ export class NextGenService {
         return header;
       }
 
+      // fetchPOByMPO already resolves the numeric OrderId and loads its lines.
+      if (header.line_items_available !== undefined) {
+        return header;
+      }
+
       // Use mpo_number as the ID for lines fetch
-      const lines = await this.fetchMPOLines(header.mpo_number);
+      const lineResult = await this.fetchMPOLinesWithStatus(header.mpo_number);
 
       return {
         ...header,
-        line_items: lines ?? [],
+        line_items: lineResult.lines,
+        line_items_available: lineResult.available,
+        line_items_source: lineResult.source,
       };
     } catch (error) {
       logger.error(`Error fetching full PO by MPO ${mpoNumber} from NextGen:`, error);
@@ -786,27 +934,35 @@ export class NextGenService {
     }
 
     // If a fetch is already in progress, wait for it instead of starting another
-    if (mpoCacheFetchPromise) {
+    if (!mpoNumber && mpoCacheFetchPromise) {
       logger.info('MPO cache: waiting for in-progress fetch');
       return mpoCacheFetchPromise;
     }
 
     // Start a fresh fetch (with cache wrapper)
-    mpoCacheFetchPromise = this._fetchAllMPOHeadersUncached(mpoNumber).then(headers => {
-      mpoHeaderCache = headers;
-      mpoCacheTimestamp = Date.now();
-      mpoCacheFetchPromise = null;
-      logger.info(`MPO cache: populated with ${headers.length} headers`);
-      return headers;
-    }).catch(err => {
-      mpoCacheFetchPromise = null;
-      throw err;
+    const fetchPromise = this._fetchAllMPOHeadersUncached(mpoNumber).then(result => {
+      if (result.complete) {
+        mpoHeaderCache = result.headers;
+        mpoCacheTimestamp = Date.now();
+        logger.info(`MPO cache: populated with ${result.headers.length} complete headers`);
+      } else {
+        logger.info(`MPO targeted lookup returned ${result.headers.length} headers; global cache not updated`);
+      }
+      return result.headers;
     });
 
-    return mpoCacheFetchPromise;
+    if (!mpoNumber) {
+      mpoCacheFetchPromise = fetchPromise.finally(() => {
+        mpoCacheFetchPromise = null;
+      });
+      return mpoCacheFetchPromise;
+    }
+    return fetchPromise;
   }
 
-  private async _fetchAllMPOHeadersUncached(mpoNumber?: string): Promise<any[]> {
+  private async _fetchAllMPOHeadersUncached(
+    mpoNumber?: string
+  ): Promise<{ headers: any[]; complete: boolean }> {
     const PAGE_SIZE = 500;
 
     // If we have a specific MPO number, try a direct filtered search first
@@ -846,7 +1002,7 @@ export class NextGenService {
             );
             if (hasMatch) {
               logger.info(`MPO ${mpoNumber}: Filter search found ${filteredItems.length} results using "${fmt}"`);
-              return filteredItems;
+              return { headers: filteredItems, complete: false };
             }
           }
         } catch (e) {
@@ -866,13 +1022,14 @@ export class NextGenService {
     });
     const total: number = first?.Total || first?.total || 0;
     const firstItems: any[] = first?.Data || first?.data || [];
-    if (firstItems.length === 0) return [];
+    if (firstItems.length === 0) return { headers: [], complete: total === 0 };
 
     // If target is on page 1 or no mpoNumber given, return all pages
     if (!mpoNumber || total <= PAGE_SIZE) {
       const all = [...firstItems];
       let page = 2;
       while (all.length < total) {
+        await this.refreshSessionForPagination(page);
         const r = await this.post<any>('/MaterialPurchaseOrder/MPOGridRead', {
           page,
           pageSize: PAGE_SIZE,
@@ -884,7 +1041,10 @@ export class NextGenService {
         all.push(...items);
         page++;
       }
-      return all;
+      if (all.length < total) {
+        throw new Error(`Incomplete MPO cache refresh: expected ${total} headers, received ${all.length}`);
+      }
+      return { headers: all, complete: true };
     }
 
     // Server ignores sort direction — MPOs appear in natural DB insertion order.
@@ -915,6 +1075,7 @@ export class NextGenService {
         results.push(...firstItems);
         continue;
       }
+      await this.refreshSessionForPagination(p);
       const r = await this.post<any>('/MaterialPurchaseOrder/MPOGridRead', {
         page: p,
         pageSize: PAGE_SIZE,
@@ -941,6 +1102,7 @@ export class NextGenService {
       const allResults = [...firstItems];
       let page = 2;
       while (allResults.length < total) {
+        await this.refreshSessionForPagination(page);
         const r = await this.post<any>('/MaterialPurchaseOrder/MPOGridRead', {
           page,
           pageSize: PAGE_SIZE,
@@ -950,10 +1112,13 @@ export class NextGenService {
         if (pageData.length === 0) break;
         page++;
       }
-      return allResults;
+      if (allResults.length < total) {
+        throw new Error(`Incomplete MPO cache refresh: expected ${total} headers, received ${allResults.length}`);
+      }
+      return { headers: allResults, complete: true };
     }
 
-    return results;
+    return { headers: results, complete: false };
   }
 
   /**
@@ -962,8 +1127,8 @@ export class NextGenService {
   private async buildMPOData(match: any, mpoNumber: string): Promise<NextGenPOData> {
     const orderId = match.Id;
     logger.info(`MPO ${mpoNumber} resolved to OrderId ${orderId} (Name: ${match.Name})`);
-    const lines = await this.fetchMPOLines(orderId);
-    const calculatedTotal = lines.reduce((sum, li) => sum + (li.total_amount || 0), 0);
+    const lineResult = await this.fetchMPOLinesWithStatus(orderId);
+    const calculatedTotal = lineResult.lines.reduce((sum, li) => sum + (li.total_amount || 0), 0);
     return {
       po_number: match.Name || mpoNumber,
       mpo_number: match.Name || mpoNumber,
@@ -976,7 +1141,9 @@ export class NextGenService {
       season: match.RangeName || match.Season || '',
       order_type: this.parseOrderType(match.TemplateName || ''),
       status: match.StatusName || '',
-      line_items: lines,
+      line_items: lineResult.lines,
+      line_items_available: lineResult.available,
+      line_items_source: lineResult.source,
     };
   }
 
@@ -1012,8 +1179,14 @@ export class NextGenService {
             if (mapped && (mapped.po_number || mapped.mpo_number || mapped.vendor_name)) {
               logger.info(`MPO ${mpoNumber}: Fast path succeeded via GetById`);
               // Fetch lines separately
-              const lines = await this.fetchMPOLines(orderId);
-              return { ...mapped, line_items: lines ?? [], mpo_number: mapped.mpo_number || lookupMpo };
+              const lineResult = await this.fetchMPOLinesWithStatus(orderId);
+              return {
+                ...mapped,
+                line_items: lineResult.lines,
+                line_items_available: lineResult.available,
+                line_items_source: lineResult.source,
+                mpo_number: mapped.mpo_number || lookupMpo,
+              };
             }
           }
         }
@@ -1242,8 +1415,13 @@ export class NextGenService {
    * Endpoint: POST /MaterialPurchaseOrder/FormLinesGridRead (form-encoded)
    */
   async fetchMPOLines(orderId: number | string): Promise<any[]> {
+    const result = await this.fetchMPOLinesWithStatus(orderId);
+    return result.lines;
+  }
+
+  async fetchMPOLinesWithStatus(orderId: number | string): Promise<NextGenLineFetchResult> {
     try {
-      if (this.useMock) return [];
+      if (this.useMock) return { lines: [], available: false };
 
       const body = new URLSearchParams({
         sort: '',
@@ -1257,13 +1435,36 @@ export class NextGenService {
       const result = await this.postForm<any>(
         '/MaterialPurchaseOrder/FormLinesGridRead', body
       );
-      if (!result) return [];
+      if (result) {
+        const items = result?.Data || result?.data || [];
+        return {
+          lines: (Array.isArray(items) ? items : []).map(mapNextGenMPOLine),
+          available: true,
+          source: 'FormLinesGridRead',
+        };
+      }
 
-      const items = result?.Data || result?.data || [];
-      return (Array.isArray(items) ? items : []).map(mapNextGenMPOLine);
+      logger.warn(`NextGen FormLinesGridRead unavailable for OrderId ${orderId}; trying MPOLIGridRead fallback`);
+      nextGenMetrics.fallback_used++;
+      const fallback = await this.postForm<any>(
+        '/MaterialPurchaseOrder/MPOLIGridRead', body
+      );
+      if (fallback) {
+        const items = fallback?.Data || fallback?.data || [];
+        return {
+          lines: (Array.isArray(items) ? items : []).map(mapNextGenMPOLine),
+          available: true,
+          source: 'MPOLIGridRead',
+        };
+      }
+
+      logger.error(`NextGen line data unavailable for OrderId ${orderId} after primary and fallback requests`);
+      nextGenMetrics.nextgen_unavailable++;
+      return { lines: [], available: false };
     } catch (error) {
       logger.error(`Error fetching MPO lines for OrderId ${orderId}:`, error);
-      return [];
+      nextGenMetrics.nextgen_unavailable++;
+      return { lines: [], available: false };
     }
   }
 
@@ -1283,6 +1484,8 @@ export class NextGenService {
       mpo_order_sequence?: string;
       material_code?: string;
       material_name?: string;
+      currency?: string;
+      line_items?: InvoiceComparisonLine[];
     }
   ): Promise<POComparisonResult> {
     const poNumber = invoiceData.po_number || invoiceData.mpo_number;
@@ -1291,6 +1494,8 @@ export class NextGenService {
       return {
         po_found: false,
         is_match: false,
+        status: 'PO_NOT_FOUND',
+        reason: 'No PO/MPO number provided',
         comparison: {
           amount_match: false,
           vendor_match: false,
@@ -1314,6 +1519,8 @@ export class NextGenService {
       return {
         po_found: false,
         is_match: false,
+        status: 'PO_NOT_FOUND',
+        reason: 'PO not found in NextGen',
         comparison: {
           amount_match: false,
           vendor_match: false,
@@ -1321,6 +1528,24 @@ export class NextGenService {
           season_match: false,
           order_type_match: false,
           differences: ['PO not found in NextGen'],
+        },
+      };
+    }
+
+    if (nextgenData.line_items_available === false) {
+      return {
+        po_found: true,
+        is_match: false,
+        status: 'NEXTGEN_UNAVAILABLE',
+        reason: 'MPO line data could not be retrieved',
+        nextgen_data: nextgenData,
+        comparison: {
+          amount_match: false,
+          vendor_match: false,
+          brand_match: false,
+          season_match: false,
+          order_type_match: false,
+          differences: ['NEXTGEN_UNAVAILABLE: MPO line data could not be retrieved; comparison deferred'],
         },
       };
     }
@@ -1339,6 +1564,8 @@ export class NextGenService {
       return {
         po_found: true,
         is_match: false,
+        status: lineResolution.error === 'AMBIGUOUS_MATERIAL' ? 'MANUAL_REVIEW' : 'LINE_NOT_FOUND',
+        reason: lineResolution.error,
         nextgen_data: { ...nextgenData, matched_line_items: lineResolution.lines, match_level: lineResolution.matchLevel },
         comparison: {
           amount_match: false,
@@ -1359,6 +1586,68 @@ export class NextGenService {
       matched_line_items: targetLines,
       match_level: hasLineSelector ? lineResolution.matchLevel : 'MPO_HEADER',
     };
+    const lineComparisons: NextGenLineComparison[] = [];
+    for (const invoiceLine of invoiceData.line_items || []) {
+      const resolution = matchMPOLines(nextgenData.line_items || [], {
+        orderSequence: invoiceLine.mpo_order_sequence,
+        materialCode: invoiceLine.material_code,
+        materialName: invoiceLine.material_name,
+      });
+      if (resolution.error || resolution.lines.length !== 1) {
+        lineComparisons.push({
+          invoice_line_number: invoiceLine.line_number,
+          status: resolution.error === 'AMBIGUOUS_MATERIAL' || resolution.lines.length > 1
+            ? 'MANUAL_REVIEW'
+            : 'LINE_NOT_FOUND',
+          match_level: resolution.matchLevel,
+          reason: resolution.error === 'AMBIGUOUS_MATERIAL' || resolution.lines.length > 1
+            ? 'More than one NextGen material line matched'
+            : 'Invoice line could not be resolved to one NextGen line',
+        });
+        continue;
+      }
+
+      const nextGenLine = resolution.lines[0];
+      const quantityDifference = Number(invoiceLine.quantity || 0) - Number(nextGenLine.quantity || 0);
+      const unitPriceDifference = Number(invoiceLine.unit_price || 0) - Number(nextGenLine.unit_price || 0);
+      const amountDifference = Number(invoiceLine.line_amount || 0) - Number(nextGenLine.total_amount || 0);
+      const amountVariance = Number(nextGenLine.total_amount || 0) > 0
+        ? Math.abs(amountDifference) / Number(nextGenLine.total_amount) * 100
+        : 0;
+      const quantityMatch = Math.abs(quantityDifference) < 0.0001;
+      const unitPriceMatch = Math.abs(unitPriceDifference) <= UNIT_PRICE_TOLERANCE;
+      const lineAmountMatch = amountVariance <= AMOUNT_TOLERANCE_PERCENT;
+
+      lineComparisons.push({
+        invoice_line_number: invoiceLine.line_number,
+        status: quantityMatch && unitPriceMatch && lineAmountMatch ? 'MATCH' : 'MISMATCH',
+        match_level: resolution.matchLevel,
+        matched_mpo_line: nextGenLine.line_reference,
+        matched_material: nextGenLine.item_code || nextGenLine.material_name,
+        quantity: {
+          invoice: Number(invoiceLine.quantity || 0),
+          nextgen: Number(nextGenLine.quantity || 0),
+          difference: quantityDifference,
+          match: quantityMatch,
+        },
+        unit_price: {
+          invoice: Number(invoiceLine.unit_price || 0),
+          nextgen: Number(nextGenLine.unit_price || 0),
+          difference: unitPriceDifference,
+          match: unitPriceMatch,
+        },
+        amount: {
+          invoice: Number(invoiceLine.line_amount || 0),
+          nextgen: Number(nextGenLine.total_amount || 0),
+          difference: amountDifference,
+          variance_pct: Number(amountVariance.toFixed(2)),
+          match: lineAmountMatch,
+        },
+        reason: quantityMatch && unitPriceMatch && lineAmountMatch
+          ? 'Invoice line matches NextGen quantity, unit price, and amount'
+          : 'One or more line values differ from NextGen',
+      });
+    }
 
     // Compare fields
     const differences: string[] = [];
@@ -1372,11 +1661,23 @@ export class NextGenService {
     const amountDiff = comparisonAmount > 0
       ? Math.abs(invoiceData.amount - comparisonAmount) / comparisonAmount
       : 0;
-    amountMatch = amountDiff <= 0.02; // Strict match: within 2%
-    if (amountDiff > 0.05) {
+    amountMatch = amountDiff * 100 <= AMOUNT_TOLERANCE_PERCENT;
+    if (amountDiff * 100 > AMOUNT_TOLERANCE_PERCENT) {
       differences.push(`Amount mismatch: Invoice $${invoiceData.amount.toFixed(2)} vs PO line $${comparisonAmount.toFixed(2)} (${(amountDiff * 100).toFixed(1)}% variance)`);
-    } else if (amountDiff > 0.02) {
+    } else if (amountDiff * 100 > AMOUNT_WARNING_PERCENT) {
       differences.push(`Amount variance warning: Invoice $${invoiceData.amount.toFixed(2)} vs PO line $${comparisonAmount.toFixed(2)} (${(amountDiff * 100).toFixed(1)}% variance)`);
+    }
+
+    const invoiceCurrency = String(invoiceData.currency || '').trim().toUpperCase();
+    const nextGenCurrency = String(nextgenData.currency || '').trim().toUpperCase();
+    const currencyMatch = !invoiceCurrency || !nextGenCurrency || invoiceCurrency === nextGenCurrency;
+    if (!currencyMatch) {
+      differences.push(`Currency mismatch: Invoice ${invoiceCurrency} vs PO ${nextGenCurrency}`);
+    }
+    for (const line of lineComparisons) {
+      if (line.status !== 'MATCH') {
+        differences.push(`Line ${line.invoice_line_number ?? '?'}: ${line.reason || line.status}`);
+      }
     }
 
     // Vendor comparison (fuzzy matching for full company names)
@@ -1430,11 +1731,26 @@ export class NextGenService {
       differences.push(`Order type mismatch: Invoice "${invOrderType}" vs PO "${poOrderType}"`);
     }
 
-    const isMatch = amountMatch && vendorMatch && brandMatch && seasonMatch && orderTypeMatch;
+    const hasManualReview = lineComparisons.some(line => line.status === 'MANUAL_REVIEW');
+    const hasLineNotFound = lineComparisons.some(line => line.status === 'LINE_NOT_FOUND');
+    const hasLineMismatch = lineComparisons.some(line => line.status === 'MISMATCH');
+    const isMatch = amountMatch && currencyMatch && vendorMatch && brandMatch && seasonMatch && orderTypeMatch
+      && lineComparisons.every(line => line.status === 'MATCH');
+    const status: NextGenValidationStatus = hasManualReview
+      ? 'MANUAL_REVIEW'
+      : hasLineNotFound
+        ? 'LINE_NOT_FOUND'
+        : isMatch
+          ? 'MATCH'
+          : hasLineMismatch || differences.length
+            ? 'MISMATCH'
+            : 'MANUAL_REVIEW';
 
     return {
       po_found: true,
       is_match: isMatch,
+      status,
+      reason: isMatch ? 'Invoice matches NextGen' : differences.join('; '),
       nextgen_data: resolvedNextGenData,
       comparison: {
         amount_match: amountMatch,
@@ -1442,6 +1758,12 @@ export class NextGenService {
         brand_match: brandMatch,
         season_match: seasonMatch,
         order_type_match: orderTypeMatch,
+        currency_match: currencyMatch,
+        invoice_amount: invoiceData.amount,
+        nextgen_amount: comparisonAmount,
+        amount_difference: invoiceData.amount - comparisonAmount,
+        variance_pct: Number((amountDiff * 100).toFixed(2)),
+        line_comparisons: lineComparisons,
         differences,
       },
     };

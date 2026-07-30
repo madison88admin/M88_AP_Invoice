@@ -23,7 +23,14 @@ function isValidInvoiceSource(value: any): value is InvoiceSource {
   return value && Object.values(InvoiceSource).includes(value as InvoiceSource);
 }
 
-export const createInvoice = async (invoiceData: any, userId: string) => {
+const ACCOUNTING_PREAPPROVED_CATEGORIES = new Set([
+  'LAB_TESTING',
+  'SHIPPING_FREIGHT',
+  'FACTORY_AUDIT',
+  'CONSULTATION',
+]);
+
+export const createInvoice = async (invoiceData: any, userId: string, userRole?: string) => {
   const {
     invoice_number,
     invoice_date,
@@ -77,7 +84,25 @@ export const createInvoice = async (invoiceData: any, userId: string) => {
     source_document_type,
     structured_source_format,
     document_layout_fingerprint,
+    accounting_preapproved,
+    approval_evidence_confirmed,
   } = invoiceData;
+
+  const isAccountingPreapproved = accounting_preapproved === true;
+  if (userRole === 'ACCOUNTING_ASSOCIATE' && !isAccountingPreapproved) {
+    throw new AppError('Accounting Associate uploads must be confirmed as already signed and approved', 400);
+  }
+  if (isAccountingPreapproved) {
+    if (userRole !== 'ACCOUNTING_ASSOCIATE') {
+      throw new AppError('Only an Accounting Associate can use the pre-approved accounting upload path', 403);
+    }
+    if (!ACCOUNTING_PREAPPROVED_CATEGORIES.has(String(category || ''))) {
+      throw new AppError('Pre-approved accounting upload is limited to Lab Testing, Shipping, Factory Audit, and Consulting invoices', 400);
+    }
+    if (approval_evidence_confirmed !== true) {
+      throw new AppError('Confirm that the attached invoice already contains the required approver signatures', 400);
+    }
+  }
 
   // Validate required fields
   if (!invoice_number || String(invoice_number).trim() === '') {
@@ -119,6 +144,9 @@ export const createInvoice = async (invoiceData: any, userId: string) => {
     if (matched) {
       resolvedVendorId = matched.vendor_id;
     } else {
+      if (!['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR'].includes(userRole || '')) {
+        throw new AppError('Vendor is not in the master list. Accounting must add the vendor before this invoice can be created.', 400);
+      }
       const newVendor = await prisma.vendor.create({
         data: {
           name: vendorName.trim(),
@@ -191,7 +219,8 @@ export const createInvoice = async (invoiceData: any, userId: string) => {
       qb_account_class,
       vendor_name_raw: vendor_name_raw || '',
       source: source || 'MANUAL_UPLOAD',
-      status: InvoiceStatus.RECEIVED as any,
+      status: (isAccountingPreapproved ? InvoiceStatus.PENDING_ACCOUNTING : InvoiceStatus.RECEIVED) as any,
+      current_approver_role: null,
       po_validation: po_validation || undefined,
       ocr_raw_data: ocr_raw_data || undefined,
       bank_name: bank_name || undefined,
@@ -242,25 +271,33 @@ export const createInvoice = async (invoiceData: any, userId: string) => {
       invoice_id: invoice.id,
       performed_by: userId,
       action: 'INVOICE_CREATED',
-      note: `Invoice ${invoice_number} created`,
+      note: isAccountingPreapproved
+        ? `Pre-approved ${category} invoice ${invoice_number} uploaded by Accounting; existing signed approval evidence confirmed; purchasing approval and NextGen validation skipped`
+        : `Invoice ${invoice_number} created`,
     },
   });
 
   // Notify: new invoice arrived
   await inAppNotificationService.notifyStageTransition(
-    invoice.id, String(invoice_number), vendor_name_raw || 'Unknown', '', 'RECEIVED'
+    invoice.id,
+    String(invoice_number),
+    vendor_name_raw || 'Unknown',
+    '',
+    isAccountingPreapproved ? 'PENDING_ACCOUNTING' : 'RECEIVED'
   );
 
-  // Auto-trigger validation in background (non-blocking) so invoice creation returns quickly
-  setImmediate(async () => {
-    try {
-      const { validateInvoice } = await import('./validationService');
-      await validateInvoice(invoice.id);
-      console.log('[AutoValidation] Completed for invoice:', invoice.id);
-    } catch (error) {
-      console.error('[AutoValidation] Failed after invoice creation:', error);
-    }
-  });
+  if (!isAccountingPreapproved) {
+    // Auto-trigger validation in background (non-blocking) so invoice creation returns quickly
+    setImmediate(async () => {
+      try {
+        const { validateInvoice } = await import('./validationService');
+        await validateInvoice(invoice.id);
+        console.log('[AutoValidation] Completed for invoice:', invoice.id);
+      } catch (error) {
+        console.error('[AutoValidation] Failed after invoice creation:', error);
+      }
+    });
+  }
 
   // Return the created invoice immediately (without waiting for validation)
   return invoice;

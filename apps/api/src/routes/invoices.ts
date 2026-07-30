@@ -18,7 +18,7 @@ router.use(authenticate);
 // Invoice upload endpoints (auth + role required)
 router.post('/upload', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), upload.single('file'), uploadController.uploadInvoice);
 router.post('/upload-madison', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), upload.single('file'), uploadController.uploadMadisonInvoice);
-router.post('/upload-madison-async', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), upload.single('file'), uploadController.uploadMadisonInvoiceAsync);
+router.post('/upload-madison-async', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), upload.single('file'), uploadController.uploadMadisonInvoiceAsync);
 router.get('/upload-jobs/:jobId', uploadController.getUploadJobStatus);
 
 // DSRS v7.3 async PO audit polling endpoint — informational only, non-blocking
@@ -30,7 +30,7 @@ router.get('/:id/po-status', async (req, res, next) => {
     next(error);
   }
 });
-router.post('/:id/confirm-ocr', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), uploadController.confirmOCR);
+router.post('/:id/confirm-ocr', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), uploadController.confirmOCR);
 router.post('/:id/correct-extraction', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), correctionController.saveCorrection);
 router.post('/corrections', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), correctionController.saveStandaloneCorrection);
 router.post('/corrections/similar', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), correctionController.getSimilarCorrections);
@@ -48,7 +48,7 @@ router.post('/:id/send-payment-confirmation', authorize(UserRole.ACCOUNTING_ASSO
 router.post('/:id/check-nextgen', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), validationController.checkNextGenAsyncController);
 router.post('/:id/check-nextgen-sync', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), validationController.checkNextGenChangesController);
 router.get('/jobs/:jobId', validationController.getJobStatusController);
-router.post('/', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), invoiceController.createInvoice);
+router.post('/', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), invoiceController.createInvoice);
 router.get('/', invoiceController.getInvoices);
 router.get('/:id', invoiceController.getInvoiceById);
 router.patch('/:id/status', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), invoiceController.updateInvoiceStatus);

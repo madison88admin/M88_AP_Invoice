@@ -55,6 +55,7 @@ const generalLimiter = rateLimit({
   max: 300,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'development',
   message: { error: { message: 'Too many requests, please try again later.', status: 429 } },
 });
 
@@ -64,6 +65,7 @@ const uploadLimiter = rateLimit({
   max: 30,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'development',
   message: { error: { message: 'Upload limit exceeded, please try again later.', status: 429 } },
 });
 

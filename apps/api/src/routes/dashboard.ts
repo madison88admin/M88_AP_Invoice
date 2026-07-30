@@ -4,6 +4,7 @@ import { InvoiceStatus, InvoiceType, UserRole, calcWorkingHoursElapsed } from '@
 import { authenticate } from '../middleware/auth';
 import { getPaidPIMissingCI } from '../services/piFollowUpService';
 import { getSLACountdown } from '../services/slaReminderService';
+import { getInvoiceSLAStart } from '../utils/slaTime';
 
 const router: Router = express.Router();
 
@@ -293,7 +294,7 @@ async function getAtRiskInvoices() {
 
   for (const stage of activeStages) {
     const slaHours = stage.sla_hours;
-    const enteredAt = new Date(stage.entered_at);
+    const enteredAt = getInvoiceSLAStart(stage.invoice, stage.entered_at);
     const elapsedHours = calcWorkingHoursElapsed(enteredAt, now);
     const remainingHours = slaHours - elapsedHours;
 

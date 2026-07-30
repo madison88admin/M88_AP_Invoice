@@ -1,6 +1,7 @@
 import prisma from '../config/database';
 import { InvoiceStatus, calcWorkingHoursElapsed } from '@ap-invoice/shared';
 import { logger } from '../utils/logger';
+import { getInvoiceSLAStart } from '../utils/slaTime';
 
 export interface StageCycleTime {
   stage: string;
@@ -219,7 +220,7 @@ class SLAAnalyticsService {
         }
         const entry = stageMap.get(stageName)!;
         entry.count++;
-        const elapsed = calcWorkingHoursElapsed(new Date(s.entered_at), new Date());
+        const elapsed = calcWorkingHoursElapsed(getInvoiceSLAStart(s.invoice, s.entered_at), new Date());
         entry.durations.push(elapsed);
         if (s.is_breached) entry.breached++;
       }
@@ -238,7 +239,7 @@ class SLAAnalyticsService {
           invoice_number: s.invoice.invoice_number,
           vendor_name: s.invoice.vendor?.name || 'Unknown',
           stage: s.stage as string,
-          elapsed_hours: Math.round(calcWorkingHoursElapsed(new Date(s.entered_at), new Date()) * 10) / 10,
+          elapsed_hours: Math.round(calcWorkingHoursElapsed(getInvoiceSLAStart(s.invoice, s.entered_at), new Date()) * 10) / 10,
           amount: Number(s.invoice.total_amount),
         }))
         .sort((a, b) => b.elapsed_hours - a.elapsed_hours)

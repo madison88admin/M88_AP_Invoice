@@ -218,6 +218,7 @@ async function processSingleInvoiceBuffer(
 
   // Step 7: Save to database
   let invoiceId: string | null = null;
+  let finalPdfPath: string | null = null;
   try {
     const baseData: any = {
         invoice_number: effectiveInvoiceNumber,
@@ -225,6 +226,7 @@ async function processSingleInvoiceBuffer(
         due_date: ocrResult.due_date ? new Date(ocrResult.due_date) : null,
         invoice_received_date: new Date(),
         vendor_id: effectiveVendorId,
+        pdf_path: processingPath,
         vendor_name_raw: ocrResult.vendor_name,
         total_amount: ocrResult.total_amount,
         currency: ocrResult.currency,
@@ -377,7 +379,7 @@ async function processSingleInvoiceBuffer(
         );
 
         if (!validationResult.passed && validationResult.exceptions.length > 0) {
-          if (splitIndex === undefined) safeMove(processingPath, MANUAL_REVIEW_DIR);
+          if (splitIndex === undefined) await safeMoveAndUpdatePdfPath(processingPath, MANUAL_REVIEW_DIR, invoiceId);
           logger.info(`[File Watcher] ${fileName}${partLabel} → ManualReview (validation exceptions)`);
           return;
         }
@@ -395,20 +397,20 @@ async function processSingleInvoiceBuffer(
             detail: `Validation error during file watcher processing: ${validationError instanceof Error ? validationError.message : String(validationError)}`,
           },
         });
-        if (splitIndex === undefined) safeMove(processingPath, MANUAL_REVIEW_DIR);
+        if (splitIndex === undefined) await safeMoveAndUpdatePdfPath(processingPath, MANUAL_REVIEW_DIR, invoiceId);
         return;
       }
     }
 
     // No vendor match → ManualReview (but invoice is saved in DB with EXCEPTION_FLAGGED)
     if (isVendorUnknown) {
-      if (splitIndex === undefined) safeMove(processingPath, MANUAL_REVIEW_DIR);
+      if (splitIndex === undefined) await safeMoveAndUpdatePdfPath(processingPath, MANUAL_REVIEW_DIR, invoiceId);
       logger.info(`[File Watcher] ${fileName}${partLabel} → ManualReview (vendor not found, invoice saved as EXCEPTION_FLAGGED)`);
       return;
     }
 
     // Step 9: Move to Processed (only for single invoice — multi-invoice moves original in processFile)
-    if (splitIndex === undefined) safeMove(processingPath, PROCESSED_DIR);
+    if (splitIndex === undefined) await safeMoveAndUpdatePdfPath(processingPath, PROCESSED_DIR, invoiceId);
     logger.info(`[File Watcher] ${fileName}${partLabel} → Processed ✅`);
   } catch (err) {
     logger.error(`[File Watcher] DB save failed for ${fileName}${partLabel}:`, err);
@@ -475,8 +477,9 @@ async function pollIncomingDirectory(): Promise<void> {
 
 /**
  * Safely move a file to a target directory, handling name collisions.
+ * Returns the final target path, or null if the move failed.
  */
-function safeMove(sourcePath: string, targetDir: string): void {
+function safeMove(sourcePath: string, targetDir: string): string | null {
   try {
     if (!fs.existsSync(targetDir)) {
       fs.mkdirSync(targetDir, { recursive: true });
@@ -492,9 +495,33 @@ function safeMove(sourcePath: string, targetDir: string): void {
     }
 
     fs.renameSync(sourcePath, targetPath);
+    return targetPath;
   } catch (err) {
     logger.error(`[File Watcher] Failed to move ${sourcePath} → ${targetDir}:`, err);
+    return null;
   }
+}
+
+/**
+ * Move a file and update the invoice's pdf_path with the final destination.
+ */
+async function safeMoveAndUpdatePdfPath(
+  sourcePath: string,
+  targetDir: string,
+  invoiceId: string | null
+): Promise<string | null> {
+  const finalPath = safeMove(sourcePath, targetDir);
+  if (finalPath && invoiceId) {
+    try {
+      await prisma.invoice.update({
+        where: { id: invoiceId },
+        data: { pdf_path: finalPath },
+      });
+    } catch (err) {
+      logger.warn(`[File Watcher] Failed to update pdf_path for invoice ${invoiceId}:`, err);
+    }
+  }
+  return finalPath;
 }
 
 /**

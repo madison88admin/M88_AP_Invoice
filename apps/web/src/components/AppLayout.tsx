@@ -8,7 +8,7 @@ import SidebarItem from './ui/SidebarItem';
 import {
   LayoutDashboard, FileText, CheckSquare, AlertTriangle, Building2,
   Package, BarChart3, FileSearch, Users, Settings, ChevronLeft,
-  Menu, X, LogOut, Upload, Pause, ScanSearch, Activity, Gauge,
+  Menu, X, LogOut, Upload, Pause, Activity, Gauge,
   ClipboardList,
 } from 'lucide-react';
 
@@ -24,6 +24,7 @@ interface NavItem {
   path: string;
   roles?: string[];
   badgeKey?: string;
+  badgeColor?: 'lime' | 'red' | 'amber' | 'blue' | 'purple';
 }
 
 interface NavGroup {
@@ -44,26 +45,25 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
     {
       label: 'Overview',
       items: [
-        { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
-        { icon: FileText, label: 'Invoice Repository', path: '/repository' },
+        { icon: LayoutDashboard, label: 'Dashboard', path: '/', badgeKey: 'dashboard', badgeColor: 'blue' },
+        { icon: FileText, label: 'Invoice Repository', path: '/repository', badgeKey: 'repository', badgeColor: 'purple' },
         { icon: Upload, label: 'Upload Invoice', path: '/upload', roles: ['PURCHASING_COORDINATOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'] },
       ],
     },
     {
       label: 'Workflow',
       items: [
-        { icon: ScanSearch, label: 'Purchasing Workbench', path: '/purchasing-workbench', roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN'] },
-        { icon: CheckSquare, label: 'Approvals', path: '/approvals', roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'PLANNING_MANAGER', 'SR_MANAGER_GLOBAL_PRODUCTION', 'MS_POLLY', 'ACCOUNTING_SUPERVISOR'], badgeKey: 'approvals' },
-        { icon: AlertTriangle, label: 'Exceptions', path: '/exceptions', roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN'], badgeKey: 'exceptions' },
-        { icon: Pause, label: 'On-Hold Queue', path: '/on-hold-queue', roles: ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'] },
+        { icon: CheckSquare, label: 'Approvals', path: '/approvals', roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'PLANNING_MANAGER', 'SR_MANAGER_GLOBAL_PRODUCTION', 'MS_POLLY', 'ACCOUNTING_SUPERVISOR'], badgeKey: 'approvals', badgeColor: 'red' },
+        { icon: AlertTriangle, label: 'Exceptions', path: '/exceptions', roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN'], badgeKey: 'exceptions', badgeColor: 'amber' },
+        { icon: Pause, label: 'On-Hold Queue', path: '/on-hold-queue', roles: ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'], badgeKey: 'onhold', badgeColor: 'amber' },
       ],
     },
     {
       label: 'Accounting',
       items: [
-        { icon: Package, label: 'Payment Batches', path: '/payment-batches', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'batches' },
-        { icon: FileSearch, label: 'Accounting Review', path: '/accounting-review', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'review' },
-        { icon: Building2, label: 'Vendors', path: '/vendors', roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'] },
+        { icon: Package, label: 'Payment Batches', path: '/payment-batches', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'batches', badgeColor: 'lime' },
+        { icon: FileSearch, label: 'Accounting Review', path: '/accounting-review', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'review', badgeColor: 'blue' },
+        { icon: Building2, label: 'Vendors', path: '/vendors', roles: ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'] },
       ],
     },
     {
@@ -87,10 +87,14 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
   // Compute badges from mock data
   const { invoices, vendors, paymentBatches } = useMockData();
   const badges: Record<string, number> = {
-    approvals: invoices.filter(i => ['PENDING_MANAGER', 'PENDING_MLO_PLANNING_MANAGER', 'PENDING_SR_MANAGER', 'PENDING_POLLY'].includes(i.status)).length,
-    exceptions: invoices.filter(i => i.exceptions.some(e => e.status === 'OPEN')).length,
+    dashboard: invoices.filter(i => ['RECEIVED', 'VALIDATION_PENDING', 'EXCEPTION_FLAGGED'].includes(i.status)).length,
+    repository: invoices.length,
+    workbench: invoices.filter(i => ['VALIDATION_PENDING', 'EXCEPTION_FLAGGED'].includes(i.status)).length,
+    approvals: invoices.filter(i => ['PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_MLO_ACCOUNT_HOLDER', 'PENDING_MLO_PLANNING_MANAGER', 'PENDING_SR_MANAGER', 'PENDING_POLLY'].includes(i.status)).length,
+    exceptions: invoices.filter(i => i.exceptions.some(e => e.status === 'OPEN' || e.status === 'PENDING')).length,
+    onhold: invoices.filter(i => i.status === 'ON_HOLD').length,
     batches: paymentBatches.filter(b => b.status === 'DRAFT').length,
-    review: invoices.filter(i => ['PENDING_ACCOUNTING', 'APPROVED', 'POSTED_TO_QB', 'PAID'].includes(i.status)).length,
+    review: invoices.filter(i => ['PENDING_ACCOUNTING', 'APPROVED', 'POSTED_TO_QB', 'PAID', 'PAYMENT_SCHEDULED'].includes(i.status)).length,
   };
 
   const visibleGroups = navGroups.map(group => ({
@@ -116,6 +120,7 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
         label={item.label}
         active={currentPath === item.path}
         badge={item.badgeKey ? badges[item.badgeKey] : undefined}
+        badgeColor={item.badgeColor}
         collapsed={collapsed}
         onClick={() => handleNavClick(item.path)}
       />

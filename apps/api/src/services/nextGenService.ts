@@ -349,17 +349,19 @@ export class NextGenService {
       const antiForgeryCookie = pageCookies.map((c: string) => c.split(';')[0]).join('; ');
 
       // Step 2: POST /Account/Login with credentials + anti-forgery token
+      // Browser sends FrReturnUrl=/ cookie — include it for successful auth
       const loginBody = new URLSearchParams({
         '__RequestVerificationToken': antiForgeryToken,
-        'Username': this.username,
+        'UserName': this.username,
         'Password': this.password,
+        'FromAdobeIllustrator': 'False',
       });
 
       const loginRes = await fetchWithTimeout(`${this.baseUrl}/Account/Login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
-          'Cookie': antiForgeryCookie,
+          'Cookie': `${antiForgeryCookie}; FrReturnUrl=/`,
         },
         body: loginBody.toString(),
         redirect: 'manual',
@@ -865,8 +867,48 @@ export class NextGenService {
       return null;
     }
     try {
+      // Try MPOGridRead with filter first (faster than EntityBrowserList)
+      const normalizedMPO = mpoNumber.replace(/^MPO/i, '').replace(/^0+/, '');
+      const mpoWithPrefix = `MPO${normalizedMPO.padStart(6, '0')}`;
+      const mpoWithPrefixShort = `MPO${normalizedMPO}`;
+
+      const filterFormats = [mpoNumber, mpoWithPrefix, mpoWithPrefixShort];
+      for (const fmt of filterFormats) {
+        try {
+          const filtered = await this.post<any>('/MaterialPurchaseOrder/MPOGridRead', {
+            page: 1,
+            pageSize: 50,
+            sort: [{ field: 'Name', dir: 'desc' }],
+            filter: {
+              logic: 'or',
+              filters: [
+                { field: 'Name', operator: 'eq', value: fmt },
+                { field: 'Name', operator: 'contains', value: fmt },
+              ],
+            },
+          });
+          const items: any[] = filtered?.Data || filtered?.data || [];
+          if (items.length > 0 && items.length < 500) {
+            const match = items.find((i: any) =>
+              i.Name === mpoNumber || i.Name === mpoWithPrefix ||
+              i.Name === mpoWithPrefixShort || i.Name?.includes(normalizedMPO)
+            );
+            if (match) {
+              const orderId = match?.Id || match?.OrderId || match?.id || null;
+              if (orderId) {
+                logger.info(`MPO ${mpoNumber}: GridRead filter found OrderId ${orderId} using "${fmt}"`);
+                return Number(orderId);
+              }
+            }
+          }
+        } catch (e) {
+          // Try next format
+        }
+      }
+
+      // Fall back to EntityBrowserList
       const result = await this.get<any>(
-        `/MaterialPurchaseOrder/GetEntityBrowserList` 
+        `/MaterialPurchaseOrder/GetEntityBrowserList`
       );
       const items = result?.Data || result?.data || result || [];
       if (!Array.isArray(items)) return null;
@@ -1903,6 +1945,23 @@ export class NextGenService {
    */
   async debugGetMPOList(): Promise<any> {
     return this.get<any>('/MaterialPurchaseOrder/GetEntityBrowserList');
+  }
+
+  /**
+   * Preload the full MPO header cache at startup.
+   * Fetches all 15,000+ MPO headers so subsequent lookups are instant.
+   * This runs in the background and takes ~30-60 seconds.
+   */
+  async preloadMPOCache(): Promise<void> {
+    const start = Date.now();
+    logger.info('[MPO Cache] Pre-loading all MPO headers from NextGen...');
+    try {
+      const headers = await this.fetchAllMPOHeaders();
+      const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+      logger.info(`[MPO Cache] Pre-loaded ${headers.length} MPO headers in ${elapsed}s`);
+    } catch (error) {
+      logger.error('[MPO Cache] Pre-load failed:', error);
+    }
   }
 }
 

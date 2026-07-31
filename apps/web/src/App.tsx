@@ -19,7 +19,7 @@ import OnHoldQueue from './components/OnHoldQueue';
 import UserManagement from './components/UserManagement';
 import SettingsPage from './components/SettingsPage';
 import InvoiceRepository from './components/InvoiceRepository';
-import PurchasingWorkbench from './components/PurchasingWorkbench';
+
 import ProtectedRoute from './components/ProtectedRoute';
 import NotFound from './components/NotFound';
 import AppLayout from './components/AppLayout';
@@ -143,13 +143,6 @@ function App() {
                   <ProtectedRoute>
                     <AppLayout title="Invoice Repository" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}><FileText className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
                       <InvoiceRepository />
-                    </AppLayout>
-                  </ProtectedRoute>
-                } />
-                <Route path="/purchasing-workbench" element={
-                  <ProtectedRoute>
-                    <AppLayout title="Purchasing Workbench" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}><Package className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
-                      <PurchasingWorkbench />
                     </AppLayout>
                   </ProtectedRoute>
                 } />

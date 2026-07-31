@@ -20,6 +20,7 @@ import dashboardRoutes from './routes/dashboard';
 import analyticsRoutes from './routes/analytics';
 import bankMatchingRoutes from './routes/bankMatching';
 import nextGenRoutes from './routes/nextGen';
+import { nextGenService } from './services/nextGenService';
 import piFollowUpRoutes from './routes/piFollowUp';
 import slaReminderRoutes from './routes/slaReminder';
 import systemRoutes from './routes/system';
@@ -250,6 +251,15 @@ const startServer = async () => {
     startFileWatcher(fileWatcherIntervalSec).catch((err) => {
       logger.error('Failed to start file watcher:', err);
     });
+
+    // Pre-load MPO cache from NextGen (fetches all 15,000+ headers once at startup)
+    // This makes subsequent MPO lookups instant instead of 30+ seconds each
+    if (process.env.NEXTGEN_USERNAME && process.env.NEXTGEN_PASSWORD) {
+      logger.info('Pre-loading MPO cache from NextGen...');
+      nextGenService.preloadMPOCache().catch((err) => {
+        logger.error('MPO cache pre-load failed (will fetch on demand):', err instanceof Error ? err.message : String(err));
+      });
+    }
 
     // SLA reminder scheduler — runs every hour
     const SLA_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour

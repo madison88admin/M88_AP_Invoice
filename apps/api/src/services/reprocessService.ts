@@ -8,6 +8,8 @@ import { getGraphClient } from './sharePointService';
 import { extractMadisonInvoiceFields, AST_SINGLE_SOURCE_MODE } from './madisonInvoiceExtractor';
 import { analyzeInvoice } from './ocrService';
 import { matchVendor, matchOrCreateVendor } from './vendorMatchingService';
+import fs from 'fs';
+import path from 'path';
 import { fieldDecisionEngine } from './fieldDecisionEngine';
 import { geminiOCRService } from './geminiOCRService';
 import { qwenOCRService } from './qwenOCRService';
@@ -199,12 +201,23 @@ export async function reprocessInvoices(
 }
 
 /**
- * Download the original PDF for an invoice from SharePoint.
+ * Download the original PDF for an invoice.
+ * Tries local pdf_path first, then falls back to SharePoint/raw_file_url.
  */
 async function downloadInvoicePdf(invoice: any): Promise<Buffer> {
+  // 1. Try local pdf_path first (fastest — no network needed)
+  if (invoice.pdf_path) {
+    if (fs.existsSync(invoice.pdf_path)) {
+      logger.info(`[ReExtract] Using local pdf_path: ${invoice.pdf_path}`);
+      return fs.readFileSync(invoice.pdf_path);
+    }
+    logger.warn(`[ReExtract] pdf_path exists in DB but file not found on disk: ${invoice.pdf_path}`);
+  }
+
+  // 2. Fall back to SharePoint or raw_file_url
   const sharepointUrl = invoice.sharepoint_folder_url || invoice.raw_file_url;
   if (!sharepointUrl) {
-    throw new AppError('No SharePoint URL or raw file URL found for this invoice — cannot re-download PDF', 400);
+    throw new AppError('No pdf_path, SharePoint URL, or raw file URL found for this invoice — cannot re-download PDF', 400);
   }
 
   // Extract file path from SharePoint URL

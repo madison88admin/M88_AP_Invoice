@@ -164,6 +164,8 @@ export interface MockVendor {
   brand_code?: string;
   brand_name?: string;
   brand_tier?: BrandTier;
+  beneficiary_name?: string;
+  classification?: string;
 }
 
 export interface MockPaymentBatch {

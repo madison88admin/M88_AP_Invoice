@@ -137,39 +137,9 @@ export function determineApprovalRoute(
  * Invoices below the batch threshold are held ON_HOLD and never reach this function.
  */
 async function isAutoApprovalEligible(invoice: any): Promise<{ eligible: boolean; reason?: string }> {
-  const amount = Number(invoice.total_amount);
-  const tier = determineApprovalTier(amount);
-
-  // Only Planning Tier invoices are eligible
-  if (tier !== 1) {
-    return { eligible: false, reason: `Tier ${tier} requires manual approval` };
-  }
-
-  // Vendor must have verified bank details
-  if (!invoice.vendor?.bank_verified_at) {
-    return { eligible: false, reason: 'Vendor bank not verified' };
-  }
-
-  // OCR confidence must be ≥ 90%
-  const ocrConfidence = invoice.ocr_confidence_score ? Number(invoice.ocr_confidence_score) : 0;
-  if (ocrConfidence < 0.90) {
-    return { eligible: false, reason: `OCR confidence ${Math.round(ocrConfidence * 100)}% below 90% threshold` };
-  }
-
-  // Must not be a duplicate
-  if (invoice.is_duplicate) {
-    return { eligible: false, reason: 'Invoice flagged as duplicate' };
-  }
-
-  // Check for any unresolved exceptions
-  const exceptions = await prisma.exception.findMany({
-    where: { invoice_id: invoice.id, status: 'PENDING' as any },
-  });
-  if (exceptions.length > 0) {
-    return { eligible: false, reason: `${exceptions.length} unresolved exception(s)` };
-  }
-
-  return { eligible: true };
+  // Auto-approval disabled: ALL invoices must go through Purchasing Coordinator for validation
+  // regardless of amount, OCR confidence, or vendor bank verification status.
+  return { eligible: false, reason: 'Auto-approval disabled — all invoices require coordinator validation' };
 }
 
 /**
@@ -283,6 +253,33 @@ async function createApprovalRequestInternal(
     activeWorkflowSignatures.some((signature: any) => signature.signatory_role === step.role)
   );
   if (routeAlreadyInitialized) {
+    // If route is already initialized but invoice is still in VALIDATION_PENDING,
+    // it means a previous request-approval call crashed before updating the status.
+    // Fix: update the status to the first unsigned approver's stage.
+    if (invoice.status === InvoiceStatus.VALIDATION_PENDING) {
+      logger.warn(`Invoice ${invoiceId} has signatures but status is still VALIDATION_PENDING — fixing status`);
+      const firstUnsigned = activeWorkflowSignatures.find((sig: any) => !sig.signed_at);
+      if (firstUnsigned) {
+        const fixStatus = mapSignatoryRoleToPendingStatus(firstUnsigned.signatory_role as SignatoryRole);
+        await prisma.invoice.update({
+          where: { id: invoiceId },
+          data: {
+            status: fixStatus as any,
+            approval_tier: tier,
+            current_approver_role: firstUnsigned.signatory_role,
+          },
+        });
+        await prisma.stageTimestamp.create({
+          data: {
+            invoice_id: invoiceId,
+            stage: fixStatus as any,
+            entered_at: new Date(),
+            sla_hours: SLA_LIMITS.COORDINATOR_DAYS * 24,
+          },
+        });
+        logger.info(`Fixed invoice ${invoiceId} status to ${fixStatus}`);
+      }
+    }
     return activeWorkflowSignatures;
   }
 
@@ -375,12 +372,14 @@ async function createApprovalRequestInternal(
 
   // Check for OCR-detected signatures already on the invoice document
   // These are signatures extracted from the PDF during OCR processing
+  // NOTE: COORDINATOR role is NEVER auto-skipped — all invoices must go through
+  // Purchasing Coordinator for manual validation, even if the PDF is already signed.
   const ocrSignatures = (invoice.signatures || []).filter(
     (sig: any) => sig.ocr_detected && sig.signed_at
   );
 
   // Create signature records for each step in the route
-  // Auto-sign any step that has a matching OCR-detected signature on the document
+  // Auto-sign any step (except COORDINATOR) that has a matching OCR-detected signature on the document
   const createdSignatures: any[] = [];
   const autoSignedRoles: string[] = [];
   const now = new Date();
@@ -392,6 +391,23 @@ async function createApprovalRequestInternal(
     if (existingWorkflowSignature) {
       createdSignatures.push(existingWorkflowSignature);
       if (existingWorkflowSignature.signed_at) autoSignedRoles.push(step.role);
+      continue;
+    }
+
+    // Skip auto-signing for COORDINATOR — always requires manual validation
+    if (step.role === SignatoryRole.COORDINATOR) {
+      const sig = await prisma.signature.create({
+        data: {
+          invoice_id: invoiceId,
+          signatory_role: step.role as any,
+          signatory_name: '',
+          signature_type: SignatureType.DIGITAL as any,
+          signed_at: null,
+          invoice_revision: invoice.revision,
+          approval_status: 'PENDING',
+        },
+      });
+      createdSignatures.push(sig);
       continue;
     }
 

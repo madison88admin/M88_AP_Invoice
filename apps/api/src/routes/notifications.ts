@@ -47,4 +47,27 @@ router.patch('/mark-all-read', async (req: AuthRequest, res: Response, next: Nex
   }
 });
 
+// Create a notification (for testing)
+router.post('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { title, message, type, category, target_role, invoice_id, invoice_number, vendor_name } = req.body;
+    if (!title || !message) {
+      return res.status(400).json({ error: 'title and message are required' });
+    }
+    const notification = await inAppNotificationService.create({
+      title,
+      message,
+      type: type || 'info',
+      category: category || 'stage',
+      target_role: target_role || null,
+      invoice_id,
+      invoice_number,
+      vendor_name,
+    });
+    res.json(notification);
+  } catch (error) {
+    next(error);
+  }
+});
+
 export default router;

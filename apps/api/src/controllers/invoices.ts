@@ -18,6 +18,19 @@ export const createInvoice = async (
   }
 };
 
+export const getDistinctPaymentTerms = async (
+  _req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const terms = await invoiceService.getDistinctPaymentTerms();
+    res.json(terms);
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const getInvoices = async (
   req: AuthRequest,
   res: Response,
@@ -120,6 +133,115 @@ export const deleteInvoice = async (
       req.user!.id,
       req.user!.role,
       req.user!.name
+    );
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const requestBankDetailsChange = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { field, current_value, requested_value, reason } = req.body;
+    if (!field || !requested_value || !reason) {
+      throw new AppError('Field, requested_value, and reason are required', 400);
+    }
+    const file = (req as any).file;
+    const attachment = file ? {
+      filename: file.originalname,
+      data: file.buffer,
+      mimetype: file.mimetype,
+    } : undefined;
+    const result = await invoiceService.requestBankDetailsChange(
+      req.params.id,
+      { field, current_value, requested_value, reason },
+      req.user!.id,
+      req.user!.name,
+      attachment
+    );
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getBankChangeRequests = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const result = await invoiceService.getBankChangeRequests();
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getBankChangeRequestsForInvoice = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const result = await invoiceService.getBankChangeRequestsForInvoice(req.params.id);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const downloadBankChangeAttachment = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const result = await invoiceService.getBankChangeAttachment(req.params.requestId);
+    if (!result) {
+      throw new AppError('Attachment not found', 404);
+    }
+    res.setHeader('Content-Type', result.attachment_mimetype || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${result.attachment_filename}"`);
+    res.send(result.attachment_data);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const approveBankChangeRequest = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const result = await invoiceService.approveBankChangeRequest(
+      req.params.requestId,
+      req.user!.id,
+      req.user!.name
+    );
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const rejectBankChangeRequest = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { reason } = req.body;
+    const result = await invoiceService.rejectBankChangeRequest(
+      req.params.requestId,
+      req.user!.id,
+      req.user!.name,
+      reason
     );
     res.json(result);
   } catch (error) {

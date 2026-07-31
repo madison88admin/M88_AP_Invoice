@@ -1,6 +1,6 @@
 import { InvoiceStatus, OrderType, calcWorkingHoursElapsed } from '@ap-invoice/shared';
 import { formatCurrency, formatDate } from '../lib/utils';
-import { FileText, Calendar, DollarSign, Eye, Check, Flag, Clock } from 'lucide-react';
+import { FileText, Calendar, DollarSign, Eye, Check, Flag, Clock, Zap, AlertTriangle, PenTool } from 'lucide-react';
 import { MockInvoice } from '../lib/mockData';
 import { POValidationBadge } from './POValidationBadge';
 import { Skeleton } from './ui/Skeleton';
@@ -51,6 +51,22 @@ function getSLAStatus(invoice: MockInvoice): { label: string; bg: string; color:
   if (hoursRemaining <= 24) return { label: `SLA ${Math.round(hoursRemaining)}h left`, bg: 'var(--accent-amber)', color: 'var(--text-primary)', hoursRemaining };
   if (hoursRemaining <= 48) return { label: `SLA ${Math.round(hoursRemaining)}h left`, bg: 'color-mix(in srgb, var(--accent-blue) 12%, transparent)', color: 'var(--accent-blue)', hoursRemaining };
   return null;
+}
+
+function getDueDateStatus(invoice: MockInvoice): { isOverdue: boolean; isNear: boolean; daysRemaining: number } {
+  if (!invoice.due_date) return { isOverdue: false, isNear: false, daysRemaining: 0 };
+  const paidStatuses: InvoiceStatus[] = [InvoiceStatus.PAID, InvoiceStatus.PAYMENT_CONFIRMATION_SENT, InvoiceStatus.REJECTED];
+  if (paidStatuses.includes(invoice.status as InvoiceStatus)) return { isOverdue: false, isNear: false, daysRemaining: 0 };
+  const dueDate = new Date(invoice.due_date);
+  dueDate.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diffDays = Math.floor((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+  return {
+    isOverdue: diffDays < 0,
+    isNear: diffDays >= 0 && diffDays <= 3,
+    daysRemaining: diffDays,
+  };
 }
 
 export default function InvoiceTable({ invoices, onInvoiceClick, loading = false, emptyHint = 'default' }: InvoiceTableProps) {
@@ -146,21 +162,24 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
           </tr>
         </thead>
         <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
-          {sortedInvoices.map((invoice, index) => (
+          {sortedInvoices.map((invoice, index) => {
+            const dueStatus = getDueDateStatus(invoice);
+            const isUrgentRow = invoice.is_urgent || dueStatus.isOverdue || dueStatus.isNear;
+            return (
             <tr
               key={invoice.id}
-              className="cursor-pointer group transition-colors duration-150 animate-fade-in"
+              className={`cursor-pointer group transition-colors duration-150 animate-fade-in ${dueStatus.isNear && !dueStatus.isOverdue ? 'animate-pulse-due' : ''}`}
               style={{
                 backgroundColor: index % 2 === 0 ? 'transparent' : 'var(--bg-card-hover)',
-                borderLeft: '3px solid transparent',
+                borderLeft: invoice.is_urgent ? '3px solid var(--accent-red)' : dueStatus.isOverdue ? '3px solid var(--accent-red)' : dueStatus.isNear ? '3px solid var(--accent-amber)' : '3px solid transparent',
                 animationDelay: `${index * 30}ms`,
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.borderLeftColor = 'var(--accent-lime)';
+                e.currentTarget.style.borderLeftColor = isUrgentRow ? (invoice.is_urgent || dueStatus.isOverdue ? 'var(--accent-red)' : 'var(--accent-amber)') : 'var(--accent-lime)';
                 e.currentTarget.style.background = 'var(--bg-card-hover)';
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.borderLeftColor = 'transparent';
+                e.currentTarget.style.borderLeftColor = invoice.is_urgent ? 'var(--accent-red)' : dueStatus.isOverdue ? 'var(--accent-red)' : dueStatus.isNear ? 'var(--accent-amber)' : 'transparent';
                 e.currentTarget.style.background = index % 2 === 0 ? 'transparent' : 'var(--bg-card-hover)';
               }}
               onClick={() => onInvoiceClick?.(invoice)}
@@ -169,7 +188,35 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
                 <input type="checkbox" className="rounded" style={{ accentColor: 'var(--accent-lime)' }} />
               </td>
               <td className="px-4 py-4 whitespace-nowrap" style={{ width: '32px' }}>
-                {/* Priority flag column */}
+                <div className="flex flex-col items-center gap-1">
+                  {invoice.is_urgent && (
+                    <div
+                      className="animate-pulse-urgent rounded-full flex items-center justify-center"
+                      style={{ width: '20px', height: '20px', background: 'var(--accent-red)' }}
+                      title="Urgent — needs immediate attention"
+                    >
+                      <Zap className="h-3 w-3" style={{ color: 'white' }} strokeWidth={2.5} fill="white" />
+                    </div>
+                  )}
+                  {invoice.priority_flag && !invoice.is_urgent && (
+                    <div
+                      className="rounded-full flex items-center justify-center"
+                      style={{ width: '20px', height: '20px', background: 'color-mix(in srgb, var(--accent-amber) 15%, transparent)', border: '1px solid var(--accent-amber)' }}
+                      title="Priority Flag"
+                    >
+                      <Flag className="h-3 w-3" style={{ color: 'var(--accent-amber)' }} strokeWidth={2.5} />
+                    </div>
+                  )}
+                  {invoice.is_handwritten && (
+                    <div
+                      className="rounded-full flex items-center justify-center"
+                      style={{ width: '20px', height: '20px', background: 'color-mix(in srgb, var(--accent-violet) 15%, transparent)', border: '1px solid var(--accent-violet)' }}
+                      title="Handwritten invoice"
+                    >
+                      <PenTool className="h-3 w-3" style={{ color: 'var(--accent-violet)' }} strokeWidth={2.5} />
+                    </div>
+                  )}
+                </div>
               </td>
               <td className="px-6 py-4 whitespace-nowrap">
                 <div className="flex items-center">
@@ -282,6 +329,22 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
                       </span>
                     ) : null;
                   })()}
+                  {(() => {
+                    if (!dueStatus.isOverdue && !dueStatus.isNear) return null;
+                    return (
+                      <span
+                        className={`px-2 py-0.5 inline-flex text-[10px] leading-4 font-semibold rounded-full w-fit items-center gap-1 ${dueStatus.isNear ? 'animate-pulse-due' : ''}`}
+                        style={{
+                          background: dueStatus.isOverdue ? 'var(--accent-red)' : 'color-mix(in srgb, var(--accent-amber) 15%, transparent)',
+                          color: dueStatus.isOverdue ? 'var(--text-inverse)' : 'var(--accent-amber)',
+                          border: dueStatus.isOverdue ? 'none' : '1px solid var(--accent-amber)',
+                        }}
+                      >
+                        <AlertTriangle className="h-2.5 w-2.5" strokeWidth={2.5} />
+                        {dueStatus.isOverdue ? `Overdue ${Math.abs(dueStatus.daysRemaining)}d` : `Due in ${dueStatus.daysRemaining}d`}
+                      </span>
+                    );
+                  })()}
                 </div>
               </td>
               <td className="px-6 py-4 whitespace-nowrap" style={{ width: '160px' }} onClick={(e) => e.stopPropagation()}>
@@ -345,7 +408,8 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
                 </div>
               </td>
             </tr>
-          ))}
+            );
+          })}
           {sortedInvoices.length === 0 && (
             <tr>
               <td colSpan={18} className="px-6 py-12 text-center">

@@ -361,7 +361,7 @@ export default function ExceptionManager() {
                         <div className="text-sm" style={{ color: 'var(--text-primary)' }}>{selectedException.resolved_by}</div>
                       </div>
                     )}
-                    {(selectedException.status === 'OPEN' || selectedException.status === 'PENDING') && user && ['PURCHASING_COORDINATOR', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'].includes(user.role) && (
+                    {(selectedException.status === 'OPEN' || selectedException.status === 'PENDING') && user && ['PURCHASING_COORDINATOR', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role) && (
                       <div className="space-y-2 pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
                         <button
                           onClick={() => navigate('/', { state: { selectedInvoiceId: selectedInvoice.id } })}

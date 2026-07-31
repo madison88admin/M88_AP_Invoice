@@ -234,6 +234,34 @@
   }
 }
 
+@keyframes pulse-urgent {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5);
+  }
+  50% {
+    transform: scale(1.08);
+    box-shadow: 0 0 0 6px rgba(239, 68, 68, 0);
+  }
+}
+
+@keyframes pulse-due {
+  0%, 100% {
+    background-color: color-mix(in srgb, var(--accent-amber) 8%, transparent);
+  }
+  50% {
+    background-color: color-mix(in srgb, var(--accent-amber) 18%, transparent);
+  }
+}
+
+.animate-pulse-urgent {
+  animation: pulse-urgent 1.5s ease-in-out infinite;
+}
+
+.animate-pulse-due {
+  animation: pulse-due 2s ease-in-out infinite;
+}
+
 .animate-shimmer {
   animation: shimmer 1.5s ease-in-out infinite;
 }
@@ -272,20 +300,19 @@
 }
 
 .animate-fade-in-up {
-  animation: fadeInUp 0.4s ease-out;
+  animation: fadeInUp 0.4s ease-out both;
 }
 
 .animate-slide-in-right {
-  animation: slideInRight 0.3s ease-out;
+  animation: slideInRight 0.3s ease-out both;
 }
 
 .animate-scale-in {
-  animation: scaleIn 0.25s ease-out;
+  animation: scaleIn 0.25s ease-out both;
 }
 
 .animate-stagger {
-  animation: staggerIn 0.35s ease-out;
-  opacity: 0;
+  animation: staggerIn 0.35s ease-out both;
 }
 
 .animate-shimmer-bg {
@@ -379,8 +406,7 @@
   }
 }
 .animate-list-item {
-  animation: listStaggerIn 0.3s ease-out;
-  opacity: 0;
+  animation: listStaggerIn 0.3s ease-out both;
 }
 
 /* Card hover lift */

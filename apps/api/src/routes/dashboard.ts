@@ -32,7 +32,7 @@ router.get('/role', async (req: any, res) => {
       },
       [UserRole.PURCHASING_COORDINATOR]: {
         title: 'Purchasing validation queue',
-        primaryHref: '/purchasing-workbench',
+        primaryHref: '/repository',
         statuses: [InvoiceStatus.RECEIVED, InvoiceStatus.VALIDATION_PENDING, InvoiceStatus.EXCEPTION_FLAGGED, InvoiceStatus.REJECTED, InvoiceStatus.ON_HOLD],
       },
       [UserRole.PURCHASING_MANAGER]: {

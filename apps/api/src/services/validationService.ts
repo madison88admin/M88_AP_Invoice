@@ -24,6 +24,7 @@ export interface InvoiceValidationResult {
     reason: ExceptionReason;
     detail?: string;
   }>;
+  allExceptionsHandled?: boolean;
 }
 
 // Late submission thresholds
@@ -258,7 +259,7 @@ export async function validateInvoice(
     exceptions.push({ reason: ExceptionReason.HANDWRITTEN_DOCUMENT, detail: templateResult.detail || '' });
   }
 
-  // RULE 17 — PO cross-check via NextGen (amount, quantity, vendor)
+  // RULE 17 — MPO cross-check via NextGen (amount, quantity, vendor)
   const poResult = await validatePOAgainstNextGen(invoice);
   results.push(poResult);
   if (!poResult.passed) {
@@ -377,6 +378,7 @@ export async function validateInvoice(
     passed,
     results,
     exceptions,
+    allExceptionsHandled: consolidatedExceptions.length > 0 && newExceptions.length === 0,
   };
 }
 
@@ -713,6 +715,48 @@ async function validateBankDetails(invoice: any): Promise<ValidationResult> {
     };
   }
 
+  // Compare bank name (fuzzy match — OCR may abbreviate)
+  const vendorBankName = invoice.vendor.bank_name || '';
+  if (vendorBankName && invoiceBank.bank_name) {
+    const normalizeBankName = (name: string) => name.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const vendorBankNorm = normalizeBankName(vendorBankName);
+    const ocrBankNorm = normalizeBankName(invoiceBank.bank_name);
+    // Check if one contains the other (fuzzy match for abbreviations)
+    if (vendorBankNorm && ocrBankNorm && vendorBankNorm.length > 3 && ocrBankNorm.length > 3) {
+      const isMatch = vendorBankNorm.includes(ocrBankNorm) || ocrBankNorm.includes(vendorBankNorm)
+        || (vendorBankNorm.substring(0, 10) === ocrBankNorm.substring(0, 10));
+      if (!isMatch) {
+        return {
+          passed: false,
+          reason: ExceptionReason.BANK_DETAIL_MISMATCH,
+          message: 'Bank name does not match vendor records',
+          detail: `OCR Bank: "${invoiceBank.bank_name}" vs Vendor Bank: "${vendorBankName}"`,
+        };
+      }
+    }
+  }
+
+  // Compare beneficiary name if OCR extracted it
+  const ocrBeneficiary = (invoice as any).ocr_raw_data?.bank_info?.beneficiary_name || (invoice as any).beneficiary_name || '';
+  const vendorBeneficiary = invoice.vendor.beneficiary_name || '';
+  if (vendorBeneficiary && ocrBeneficiary) {
+    const normalizeName = (name: string) => name.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const vendorBenNorm = normalizeName(vendorBeneficiary);
+    const ocrBenNorm = normalizeName(ocrBeneficiary);
+    if (vendorBenNorm && ocrBenNorm && vendorBenNorm.length > 3 && ocrBenNorm.length > 3) {
+      const isMatch = vendorBenNorm.includes(ocrBenNorm) || ocrBenNorm.includes(vendorBenNorm)
+        || (vendorBenNorm.substring(0, 15) === ocrBenNorm.substring(0, 15));
+      if (!isMatch) {
+        return {
+          passed: false,
+          reason: ExceptionReason.BANK_DETAIL_MISMATCH,
+          message: 'Beneficiary name does not match vendor records',
+          detail: `OCR Beneficiary: "${ocrBeneficiary}" vs Vendor Beneficiary: "${vendorBeneficiary}"`,
+        };
+      }
+    }
+  }
+
   return {
     passed: true,
     message: 'Bank details match vendor records',
@@ -963,7 +1007,7 @@ async function checkMissingBankInfo(invoice: any): Promise<ValidationResult> {
   };
 }
 
-// RULE 17 — PO cross-check via NextGen (fetch-only)
+// RULE 17 — MPO cross-check via NextGen (fetch-only)
 // FIX 4: Only validate if MPO matches. If MPO mismatch → skip validation, do not compare vendor/brand.
 async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult> {
   // STATEMENT type — skip PO amount matching entirely.
@@ -975,13 +1019,13 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
     };
   }
 
-  const poRef = invoice.mpo_number || invoice.po_number;
+  const poRef = invoice.mpo_number;
 
-  // No PO reference on invoice — skip (not all invoices have POs)
+  // No MPO reference on invoice — skip (validation uses MPO only, not PO)
   if (!poRef) {
     return {
       passed: true,
-      message: 'No PO/MPO reference — skipping NextGen check',
+      message: 'No MPO reference — skipping NextGen check',
     };
   }
 
@@ -993,15 +1037,13 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
   const materialName = invoice.material_name || rawData.material_name;
 
   try {
-    // Fetch PO from NextGen (read-only)
+    // Fetch PO from NextGen using MPO only (read-only)
     // Pass material_code as additional hint for fuzzy matching
-    let po = invoice.mpo_number
-      ? await nextGenService.fetchPOByMPO(baseMpo, {
-          vendor_name: invoice.vendor?.name,
-          amount: Number(invoice.total_amount),
-          material_code: materialCode,
-        })
-      : await nextGenService.fetchPOByNumber(invoice.po_number);
+    let po = await nextGenService.fetchPOByMPO(baseMpo, {
+      vendor_name: invoice.vendor?.name,
+      amount: Number(invoice.total_amount),
+      material_code: materialCode,
+    });
 
     // Fallback: If PO not found by MPO/PO number, try searching by material name
     if (!po && materialName) {
@@ -1016,14 +1058,14 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
       }
     }
 
-    // If PO not found, keep the invoice in a pending PO state instead of silently skipping.
-    // The user can re-validate once the PO/MPO is added to NextGen.
+    // If MPO not found, keep the invoice in a pending PO state instead of silently skipping.
+    // The user can re-validate once the MPO is added to NextGen.
     if (!po) {
       return {
         passed: false,
         reason: ExceptionReason.PO_NOT_FOUND,
-        message: `PO ${poRef} not found in NextGen`,
-        detail: `Referenced PO/MPO ${poRef} could not be found in NextGen. The system will keep checking; re-validate once the PO is available.`,
+        message: `MPO ${poRef} not found in NextGen`,
+        detail: `Referenced MPO ${poRef} could not be found in NextGen. The system will keep checking; re-validate once the MPO is available.`,
       };
     }
 
@@ -1198,21 +1240,21 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
       return {
         passed: false,
         reason: ExceptionReason.AMOUNT_MISMATCH,
-        message: `Invoice does not match PO ${poRef} in NextGen`,
+        message: `Invoice does not match MPO ${poRef} in NextGen`,
         detail: differences.join('; '),
       };
     }
 
     return {
       passed: true,
-      message: `${matchLevel === 'MATERIAL_LINE' ? `Material ${requestedMaterialCode || requestedMaterialName}` : `PO ${poRef}`} verified in NextGen — amount, quantity, and vendor match`,
+      message: `${matchLevel === 'MATERIAL_LINE' ? `Material ${requestedMaterialCode || requestedMaterialName}` : `MPO ${poRef}`} verified in NextGen — amount, quantity, and vendor match`,
     };
   } catch (error) {
     // NextGen unavailable — log warning but don't block validation
-    logger.warn(`NextGen PO check failed for ${poRef}: ${error instanceof Error ? error.message : 'unknown error'}`);
+    logger.warn(`NextGen MPO check failed for ${poRef}: ${error instanceof Error ? error.message : 'unknown error'}`);
     return {
       passed: true,
-      message: `NextGen unavailable — PO ${poRef} check deferred to pre-post stage`,
+      message: `NextGen unavailable — MPO ${poRef} check deferred to pre-post stage`,
     };
   }
 }

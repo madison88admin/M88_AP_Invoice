@@ -69,7 +69,7 @@ describe('exception workflow smoke test', () => {
     );
 
     expect(validateInvoiceMock).toHaveBeenCalledTimes(1);
-    expect(validateInvoiceMock).toHaveBeenCalledWith(flaggedInvoice.id);
+    expect(validateInvoiceMock).toHaveBeenCalledWith(flaggedInvoice.id, { skipAutoAdvance: true });
     expect(result.revalidation).toMatchObject({
       triggered: true,
       passed: true,

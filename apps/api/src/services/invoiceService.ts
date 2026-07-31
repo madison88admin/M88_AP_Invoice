@@ -305,18 +305,40 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
 
 const PAYMENT_STAGES = ['POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID', 'PAYMENT_CONFIRMATION_SENT'];
 
+const ALL_STAGES = [
+  'RECEIVED', 'VALIDATION_PENDING', 'EXCEPTION_FLAGGED', 'ON_HOLD',
+  'PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_MLO_ACCOUNT_HOLDER',
+  'PENDING_MLO_PLANNING_MANAGER', 'PENDING_SR_MANAGER', 'PENDING_POLLY',
+  'APPROVED', 'PENDING_ACCOUNTING', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED',
+  'PAID', 'PAYMENT_CONFIRMATION_SENT', 'REJECTED',
+];
+
 const ROLE_STAGE_ACCESS: Record<string, string[]> = {
   SUPERADMIN: [],
   ACCOUNTING_ASSOCIATE: ['VALIDATION_PENDING', 'APPROVED', 'PENDING_ACCOUNTING', 'ON_HOLD', ...PAYMENT_STAGES],
   ACCOUNTING_SUPERVISOR: ['VALIDATION_PENDING', 'PENDING_ACCOUNTING', 'APPROVED', 'ON_HOLD', ...PAYMENT_STAGES],
-  PURCHASING_COORDINATOR: ['VALIDATION_PENDING', 'EXCEPTION_FLAGGED', 'PENDING_COORDINATOR', 'ON_HOLD', ...PAYMENT_STAGES],
-  PURCHASING_MANAGER: ['PENDING_MANAGER', ...PAYMENT_STAGES],
+  PURCHASING_COORDINATOR: ALL_STAGES,
+  PURCHASING_MANAGER: ALL_STAGES,
   MLO_ACCOUNT_HOLDER: ['PENDING_MLO_ACCOUNT_HOLDER', 'PENDING_MLO_PLANNING_MANAGER', ...PAYMENT_STAGES],
   PLANNING_MANAGER: ['PENDING_MLO_PLANNING_MANAGER', ...PAYMENT_STAGES],
   SR_MANAGER_GLOBAL_PRODUCTION: ['PENDING_SR_MANAGER', ...PAYMENT_STAGES],
   MS_POLLY: ['PENDING_POLLY', ...PAYMENT_STAGES],
   PRESIDENT: ['PENDING_ACCOUNTING', ...PAYMENT_STAGES],
   IT_ADMIN: [],
+};
+
+export const getDistinctPaymentTerms = async (): Promise<string[]> => {
+  const results = await prisma.invoice.findMany({
+    where: { payment_terms: { not: null } },
+    select: { payment_terms: true },
+    distinct: ['payment_terms'],
+  });
+  // Filter out null/empty and sort
+  const terms = results
+    .map((r) => r.payment_terms)
+    .filter((t): t is string => !!t && t.trim().length > 0)
+    .sort((a, b) => a.localeCompare(b));
+  return [...new Set(terms)];
 };
 
 export const getInvoices = async (filters: any, userRole?: string) => {
@@ -449,6 +471,20 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
   const allowedRoles = ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'];
   if (!allowedRoles.includes(userRole)) {
     throw new AppError('Not authorized to edit invoice data', 403);
+  }
+
+  // Bank details (bank_name, swift_code, account_number) can only be edited by
+  // Accounting roles + IT_ADMIN + SUPERADMIN. Purchasing/Managers must request a change.
+  const bankDetailFields = ['bank_name', 'swift_code', 'account_number'];
+  const canEditBankDetails = ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN'].includes(userRole);
+  if (!canEditBankDetails) {
+    const bankChanges = bankDetailFields.filter(f => invoiceData[f] !== undefined && invoiceData[f] !== existing[f as keyof typeof existing]);
+    if (bankChanges.length > 0) {
+      throw new AppError(
+        `Bank details (${bankChanges.join(', ')}) can only be edited by Accounting. Please submit a Bank Details Change Request instead.`,
+        403
+      );
+    }
   }
 
   // Prevent editing invoices that are already posted or paid
@@ -868,4 +904,186 @@ export const deleteInvoice = async (id: string, userId: string, userRole: string
   });
 
   return { id, deleted: true, invoice_number: existing.invoice_number };
+};
+
+export const requestBankDetailsChange = async (
+  invoiceId: string,
+  request: { field: string; current_value: string; requested_value: string; reason: string },
+  userId: string,
+  userName: string,
+  attachment?: { filename: string; data: Buffer; mimetype: string }
+) => {
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    include: { vendor: true },
+  });
+  if (!invoice) {
+    throw new AppError('Invoice not found', 404);
+  }
+
+  const allowedFields = ['bank_name', 'swift_code', 'account_number'];
+  if (!allowedFields.includes(request.field)) {
+    throw new AppError(`Invalid bank field: ${request.field}. Allowed: ${allowedFields.join(', ')}`, 400);
+  }
+
+  // Create BankChangeRequest record with attachment
+  const bankChangeRequest = await prisma.bankChangeRequest.create({
+    data: {
+      invoice_id: invoiceId,
+      field: request.field,
+      current_value: request.current_value || null,
+      requested_value: request.requested_value,
+      reason: request.reason,
+      attachment_filename: attachment?.filename || null,
+      attachment_data: attachment?.data || null,
+      attachment_mimetype: attachment?.mimetype || null,
+      requested_by: userName,
+      requested_by_id: userId,
+      status: 'PENDING',
+    },
+  });
+
+  // Create audit log
+  await logAudit({
+    invoice_id: invoiceId,
+    performed_by: userId,
+    action: 'BANK_DETAILS_CHANGE_REQUESTED',
+    note: `Bank details change requested by ${userName}.\nField: ${request.field}\nCurrent: "${request.current_value || '—'}"\nRequested: "${request.requested_value}"\nReason: ${request.reason}${attachment ? `\nAttachment: ${attachment.filename}` : ''}`,
+  });
+
+  // Notify Accounting team
+  await inAppNotificationService.create({
+    invoice_id: invoiceId,
+    invoice_number: invoice.invoice_number,
+    vendor_name: invoice.vendor?.name || invoice.vendor_name_raw || 'Unknown',
+    title: 'Bank Details Change Request',
+    message: `${userName} requested a change to ${request.field} for invoice ${invoice.invoice_number} (${invoice.vendor?.name || invoice.vendor_name_raw}).\nCurrent: "${request.current_value || '—'}"\nRequested: "${request.requested_value}"\nReason: ${request.reason}${attachment ? `\nAttachment: ${attachment.filename}` : ''}`,
+    type: 'warning',
+    category: 'exception',
+    target_role: 'ACCOUNTING_SUPERVISOR' as any,
+  });
+
+  return {
+    success: true,
+    message: 'Bank details change request submitted. Accounting has been notified.',
+    request: {
+      id: bankChangeRequest.id,
+      invoice_id: invoiceId,
+      invoice_number: invoice.invoice_number,
+      field: request.field,
+      current_value: request.current_value,
+      requested_value: request.requested_value,
+      reason: request.reason,
+      requested_by: userName,
+      has_attachment: !!attachment,
+      attachment_filename: attachment?.filename || null,
+    },
+  };
+};
+
+export const getBankChangeRequestsForInvoice = async (invoiceId: string) => {
+  const requests = await prisma.bankChangeRequest.findMany({
+    where: { invoice_id: invoiceId },
+    orderBy: { created_at: 'desc' },
+  });
+  return requests.map((r: any) => ({
+    id: r.id,
+    invoice_id: r.invoice_id,
+    field: r.field,
+    current_value: r.current_value,
+    requested_value: r.requested_value,
+    reason: r.reason,
+    requested_by: r.requested_by,
+    status: r.status,
+    has_attachment: !!r.attachment_data,
+    attachment_filename: r.attachment_filename,
+    created_at: r.created_at,
+  }));
+};
+
+export const getBankChangeAttachment = async (requestId: string) => {
+  const req = await prisma.bankChangeRequest.findUnique({
+    where: { id: requestId },
+    select: { attachment_filename: true, attachment_data: true, attachment_mimetype: true },
+  });
+  if (!req || !req.attachment_data) return null;
+  return req;
+};
+
+export const approveBankChangeRequest = async (requestId: string, userId: string, userName: string) => {
+  const req = await prisma.bankChangeRequest.findUnique({
+    where: { id: requestId },
+    include: { invoice: { include: { vendor: true } } },
+  });
+  if (!req) throw new AppError('Bank change request not found', 404);
+  if (req.status !== 'PENDING') throw new AppError(`Request already ${req.status}`, 400);
+
+  // Update the invoice with the new bank detail
+  await prisma.invoice.update({
+    where: { id: req.invoice_id },
+    data: { [req.field]: req.requested_value },
+  });
+
+  // Mark request as approved
+  await prisma.bankChangeRequest.update({
+    where: { id: requestId },
+    data: { status: 'APPROVED', reviewed_by: userName, reviewed_at: new Date() },
+  });
+
+  await logAudit({
+    invoice_id: req.invoice_id,
+    performed_by: userId,
+    action: 'BANK_DETAILS_CHANGE_APPROVED',
+    note: `Bank details change approved by ${userName}.\nField: ${req.field}\nNew value: "${req.requested_value}"`,
+  });
+
+  return { success: true, message: 'Bank details updated and request approved.' };
+};
+
+export const rejectBankChangeRequest = async (requestId: string, userId: string, userName: string, reason?: string) => {
+  const req = await prisma.bankChangeRequest.findUnique({
+    where: { id: requestId },
+  });
+  if (!req) throw new AppError('Bank change request not found', 404);
+  if (req.status !== 'PENDING') throw new AppError(`Request already ${req.status}`, 400);
+
+  await prisma.bankChangeRequest.update({
+    where: { id: requestId },
+    data: { status: 'REJECTED', reviewed_by: userName, reviewed_at: new Date() },
+  });
+
+  await logAudit({
+    invoice_id: req.invoice_id,
+    performed_by: userId,
+    action: 'BANK_DETAILS_CHANGE_REJECTED',
+    note: `Bank details change rejected by ${userName}.${reason ? `\nReason: ${reason}` : ''}`,
+  });
+
+  return { success: true, message: 'Bank change request rejected.' };
+};
+
+export const getBankChangeRequests = async () => {
+  const requests = await prisma.bankChangeRequest.findMany({
+    orderBy: { created_at: 'desc' },
+    take: 100,
+    include: { invoice: { include: { vendor: true } } },
+  });
+
+  return requests.map((r: any) => ({
+    id: r.id,
+    invoice_id: r.invoice_id,
+    invoice_number: r.invoice?.invoice_number || 'Unknown',
+    vendor_name: r.invoice?.vendor?.name || r.invoice?.vendor_name_raw || 'Unknown',
+    field: r.field,
+    current_value: r.current_value,
+    requested_value: r.requested_value,
+    reason: r.reason,
+    requested_by: r.requested_by,
+    status: r.status,
+    reviewed_by: r.reviewed_by,
+    reviewed_at: r.reviewed_at,
+    has_attachment: !!r.attachment_data,
+    attachment_filename: r.attachment_filename,
+    created_at: r.created_at,
+  }));
 };

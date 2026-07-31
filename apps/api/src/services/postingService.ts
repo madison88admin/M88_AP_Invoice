@@ -639,6 +639,93 @@ export async function releaseFromHold(invoiceId: string, userId: string) {
   return { message: 'Invoice released from hold', invoice_id: invoiceId };
 }
 
+/**
+ * Manually put an invoice ON_HOLD for batch threshold reasons.
+ * Used by Accounting Associate when an invoice doesn't meet the $100 minimum
+ * cumulative amount for a vendor. The invoice stays on hold until more invoices
+ * for the same vendor arrive and the cumulative reaches the threshold.
+ */
+export async function holdInvoiceForBatchThreshold(invoiceId: string, userId: string, reason?: string) {
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    include: { vendor: true, exceptions: { where: { status: 'PENDING' as any } } },
+  });
+
+  if (!invoice) {
+    throw new AppError('Invoice not found', 404);
+  }
+
+  if (invoice.status === InvoiceStatus.ON_HOLD as any) {
+    throw new AppError('Invoice is already on hold', 400);
+  }
+
+  // Only allow holding invoices that are in a pre-payment stage
+  const holdableStatuses = [
+    InvoiceStatus.VALIDATION_PENDING,
+    InvoiceStatus.APPROVED,
+    InvoiceStatus.PENDING_ACCOUNTING,
+    InvoiceStatus.PENDING_COORDINATOR,
+    InvoiceStatus.PENDING_MANAGER,
+    InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER,
+    InvoiceStatus.PENDING_SR_MANAGER,
+  ];
+
+  if (!holdableStatuses.includes(invoice.status as any)) {
+    throw new AppError(`Cannot hold invoice in status ${invoice.status}`, 400);
+  }
+
+  const previousStatus = invoice.status;
+
+  // Update invoice status to ON_HOLD
+  await prisma.invoice.update({
+    where: { id: invoiceId },
+    data: { status: InvoiceStatus.ON_HOLD as any },
+  });
+
+  // Create batch threshold exception
+  const holdReason = reason || `Manually held by Accounting — vendor cumulative amount below $100 batch threshold.`;
+  await prisma.exception.create({
+    data: {
+      invoice_id: invoiceId,
+      reason: ExceptionReason.BATCH_THRESHOLD_NOT_MET as any,
+      detail: holdReason,
+    },
+  });
+
+  // Log the hold action
+  await prisma.auditLog.create({
+    data: {
+      invoice_id: invoiceId,
+      action: 'MANUAL_HOLD',
+      performed_by: userId,
+      note: `Invoice manually put ON_HOLD by Accounting Associate. Previous status: ${previousStatus}. Reason: ${holdReason}`,
+    },
+  });
+
+  // Send notification
+  try {
+    await inAppNotificationService.notifyStageTransition(
+      invoiceId,
+      invoice.invoice_number,
+      invoice.vendor?.name || 'Unknown',
+      previousStatus,
+      InvoiceStatus.ON_HOLD as any
+    );
+  } catch (err) {
+    logger.error('Failed to send on-hold notification:', err);
+  }
+
+  logger.info(`Invoice ${invoiceId} manually held by ${userId}. Previous status: ${previousStatus}`);
+
+  return {
+    message: 'Invoice put on hold for batch threshold',
+    invoice_id: invoiceId,
+    previous_status: previousStatus,
+    vendor: invoice.vendor?.name,
+    amount: Number(invoice.total_amount),
+  };
+}
+
 export async function getScheduledPayments() {
   const scheduledPayments = await prisma.payment.findMany({
     where: {

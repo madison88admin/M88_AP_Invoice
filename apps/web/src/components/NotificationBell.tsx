@@ -1,11 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Bell, CheckCircle, AlertTriangle, XCircle, X } from 'lucide-react';
 import { notificationApi } from '../lib/api';
+import { useToast } from '../contexts/ToastContext';
 
 export default function NotificationBell() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const shownNotificationIds = useRef<Set<string>>(new Set());
+  const isInitialLoad = useRef(true);
+  const { toast } = useToast();
 
   const fetchNotifications = async () => {
     try {
@@ -13,12 +17,77 @@ export default function NotificationBell() {
         notificationApi.getAll(20).catch(() => ({ data: [] })),
         notificationApi.getUnreadCount().catch(() => ({ data: { count: 0 } })),
       ]);
-      setNotifications(notifRes.data || []);
-      setUnreadCount(countRes.data?.count || 0);
+      const newNotifs = notifRes.data || [];
+      const newCount = countRes.data?.count || 0;
+      setNotifications(newNotifs);
+      setUnreadCount(newCount);
+
+      // Fire notifications for new unread items (skip on initial load)
+      // Uses browser Notification API when user is NOT on the site (tab hidden/minimized)
+      // Falls back to in-app toast when user IS on the site
+      if (!isInitialLoad.current) {
+        const isPageHidden = document.hidden || document.visibilityState === 'hidden';
+
+        for (const n of newNotifs) {
+          if (!n.is_read && !shownNotificationIds.current.has(n.id)) {
+            shownNotificationIds.current.add(n.id);
+
+            // 1. Browser notification — only when page is NOT visible
+            if (isPageHidden && 'Notification' in window && Notification.permission === 'granted') {
+              try {
+                const browserNotif = new Notification(n.title || 'AP Invoice Notification', {
+                  body: n.message || '',
+                  icon: '/favicon.ico',
+                  tag: n.id,
+                });
+                browserNotif.onclick = () => {
+                  window.focus();
+                  browserNotif.close();
+                };
+                setTimeout(() => browserNotif.close(), 8000);
+              } catch {
+                // ignore
+              }
+            }
+
+            // 2. In-app toast — only when page IS visible (user is on the site)
+            if (!isPageHidden) {
+              const typeMap: Record<string, 'success' | 'warning' | 'error' | 'info'> = {
+                success: 'success',
+                warning: 'warning',
+                error: 'error',
+                info: 'info',
+              };
+              toast.add({
+                title: n.title || 'New Notification',
+                description: n.message || '',
+                type: typeMap[n.type] || 'info',
+                action: n.invoice_number ? {
+                  label: 'View',
+                  onClick: () => window.open(`/?invoiceId=${n.invoice_id}`, '_self'),
+                } : undefined,
+              });
+            }
+          }
+        }
+      }
+
+      // After initial load, mark all current notification IDs as "seen"
+      if (isInitialLoad.current) {
+        newNotifs.forEach((n: any) => shownNotificationIds.current.add(n.id));
+        isInitialLoad.current = false;
+      }
     } catch {
       // silent fail
     }
   };
+
+  // Request notification permission on mount
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
+  }, []);
 
   useEffect(() => {
     fetchNotifications();

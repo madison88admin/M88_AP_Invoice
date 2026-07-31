@@ -7,6 +7,7 @@ import {
   processPayment,
   getScheduledPayments,
   releaseFromHold,
+  holdInvoiceForBatchThreshold,
 } from '../services/postingService';
 import { logAudit } from '../services/auditLogService';
 import { sendPaymentConfirmationToSupplier } from '../services/notificationService';
@@ -101,6 +102,21 @@ export const releaseFromHoldController = async (
   try {
     const { id } = req.params;
     const result = await releaseFromHold(id, req.user!.id);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const holdInvoiceController = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+    const result = await holdInvoiceForBatchThreshold(id, req.user!.id, reason);
     res.json(result);
   } catch (error) {
     next(error);

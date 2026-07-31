@@ -128,7 +128,7 @@ export async function resolveException(
   ) {
     try {
       // Resolve = coordinator fixed the issue. Re-validate but DON'T auto-advance.
-      // The invoice stays in VALIDATION_PENDING until the coordinator explicitly approves.
+      // The invoice stays in VALIDATION_PENDING until the coordinator explicitly clicks "Request Approval".
       const revalidation = await revalidateAfterExceptionsHandled(exception.invoice_id, userId, { autoAdvance: false });
       return { exception: updatedException, revalidation };
     } catch (err: any) {

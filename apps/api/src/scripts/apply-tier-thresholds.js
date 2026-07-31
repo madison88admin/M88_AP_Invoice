@@ -216,8 +216,9 @@ async function main() {
       // 7. Create stage timestamp for the new stage
       const slaMap = {
         PENDING_ACCOUNTING: 168, // 7 days
-        PENDING_MLO_PLANNING_MANAGER: 96, // 4 days
-        PENDING_SR_MANAGER: 168, // 7 days
+        PENDING_MLO_ACCOUNT_HOLDER: 48, // 2 days
+        PENDING_MLO_PLANNING_MANAGER: 48, // 2 days
+        PENDING_SR_MANAGER: 72, // 3 days
         PENDING_POLLY: 168, // 7 days
       };
 

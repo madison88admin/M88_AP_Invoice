@@ -12,18 +12,25 @@ const router = Router() as Router;
  * These accounts are intentionally NOT authenticated against NextGen.
  */
 const DEMO_USERS = [
-  { email: 'wyssa.martinez@madison88.com', name: 'Wyssa', role: 'ACCOUNTING_ASSOCIATE', password: 'madison88' },
-  { email: 'al@madison88.com', name: 'AL', role: 'ACCOUNTING_SUPERVISOR', password: 'madison88' },
-  { email: 'joy.yco@madison88.com', name: 'Joy', role: 'PURCHASING_COORDINATOR', password: 'madison88' },
-  { email: 'maricon.alvarez@madison88.com', name: 'Maricon', role: 'PURCHASING_COORDINATOR', password: 'madison88' },
-  { email: 'maricar.tanaleon@madison88.com', name: 'Maricar', role: 'PURCHASING_MANAGER', password: 'madison88' },
-  { email: 'maryann.delmonte@madison88.com', name: 'Maryann', role: 'PURCHASING_MANAGER', password: 'madison88' },
   { email: 'edwin.garcia@madison88.com', name: 'Edwin', role: 'PLANNING_MANAGER', password: 'madison88', brand_scope: 'TOP_10' as const },
   { email: 'glecie.yumena@madison88.com', name: 'Glecie', role: 'PLANNING_MANAGER', password: 'madison88', brand_scope: 'OTHER' as const },
   { email: 'maryan.untiveros@madison88.com', name: 'Maryan', role: 'MLO_ACCOUNT_HOLDER', password: 'madison88' },
   { email: 'lindsey.castro@madison88.com', name: 'Lindsey', role: 'SR_MANAGER_GLOBAL_PRODUCTION', password: 'madison88' },
   { email: 'polly.madison@madison88.com', name: 'Polly', role: 'MS_POLLY', password: 'madison88' },
   { email: 'jc@madison88.com', name: 'JC', role: 'SUPERADMIN', password: 'madison88' },
+  // Live accounts — short email aliases
+  { email: 'meann@madison88.com', name: 'Meann', role: 'PURCHASING_MANAGER', password: 'madison88' },
+  { email: 'maricar@madison88.com', name: 'Maricar', role: 'PURCHASING_MANAGER', password: 'madison88' },
+  { email: 'maricon@madison88.com', name: 'Maricon', role: 'PURCHASING_COORDINATOR', password: 'madison88' },
+  { email: 'pamela@madison88.com', name: 'Pamela', role: 'PURCHASING_COORDINATOR', password: 'madison88' },
+  { email: 'sarah@madison88.com', name: 'Sarah', role: 'PURCHASING_COORDINATOR', password: 'madison88' },
+  { email: 'april@madison88.com', name: 'April', role: 'PURCHASING_COORDINATOR', password: 'madison88' },
+  { email: 'jasmine@madison88.com', name: 'Jasmine', role: 'PURCHASING_COORDINATOR', password: 'madison88' },
+  { email: 'earl@madison88.com', name: 'Earl', role: 'PURCHASING_COORDINATOR', password: 'madison88' },
+  { email: 'mjsantiago@madison88.com', name: 'MJ Santiago', role: 'PURCHASING_COORDINATOR', password: 'madison88' },
+  { email: 'joy@madison88.com', name: 'Joy', role: 'PURCHASING_COORDINATOR', password: 'madison88' },
+  { email: 'wyssa@madison88.com', name: 'Wyssa', role: 'ACCOUNTING_ASSOCIATE', password: 'madison88' },
+  { email: 'Aldrin@madison88.com', name: 'Aldrin', role: 'ACCOUNTING_SUPERVISOR', password: 'madison88' },
 ];
 
 const isDemoLoginEnabled = () => process.env.ENABLE_DEMO_LOGIN === 'true' || process.env.NODE_ENV === 'development';
@@ -86,18 +93,25 @@ function getRoleForUsername(username: string): UserRole {
   const defaultMap: Record<string, string> = {
     'Glecie': 'PLANNING_MANAGER',
     'Edwin': 'PLANNING_MANAGER',
-    'Joy': 'PURCHASING_COORDINATOR',
-    'Maricon': 'PURCHASING_COORDINATOR',
-    'Maricar': 'PURCHASING_MANAGER',
-    'Maryann': 'PURCHASING_MANAGER',
     'Maryan': 'MLO_ACCOUNT_HOLDER',
-    'Wyssa': 'ACCOUNTING_ASSOCIATE',
-    'Al': 'ACCOUNTING_SUPERVISOR',
+    'Aldrin': 'ACCOUNTING_SUPERVISOR',
     'Lindsey': 'SR_MANAGER_GLOBAL_PRODUCTION',
     'Chris': 'CFO',
     'Polly': 'MS_POLLY',
     'Paul': 'IT_ADMIN',
     'Jc': 'SUPERADMIN',
+    'Meann': 'PURCHASING_MANAGER',
+    'Maricar': 'PURCHASING_MANAGER',
+    'Maricon': 'PURCHASING_COORDINATOR',
+    'Pamela': 'PURCHASING_COORDINATOR',
+    'Sarah': 'PURCHASING_COORDINATOR',
+    'April': 'PURCHASING_COORDINATOR',
+    'Jasmine': 'PURCHASING_COORDINATOR',
+    'Earl': 'PURCHASING_COORDINATOR',
+    'Mjsantiago': 'PURCHASING_COORDINATOR',
+    'Mj': 'PURCHASING_COORDINATOR',
+    'Joy': 'PURCHASING_COORDINATOR',
+    'Wyssa': 'ACCOUNTING_ASSOCIATE',
   };
 
   const normalized = username.trim();

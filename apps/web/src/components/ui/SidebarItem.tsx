@@ -7,11 +7,12 @@ interface SidebarItemProps {
   label: string;
   active?: boolean;
   badge?: number | string;
+  badgeColor?: 'lime' | 'red' | 'amber' | 'blue' | 'purple';
   onClick?: () => void;
   collapsed?: boolean;
 }
 
-export default function SidebarItem({ icon: Icon, label, active, badge, onClick, collapsed }: SidebarItemProps) {
+export default function SidebarItem({ icon: Icon, label, active, badge, badgeColor = 'lime', onClick, collapsed }: SidebarItemProps) {
   const [hovered, setHovered] = useState(false);
 
   const buttonStyle: React.CSSProperties = active
@@ -53,9 +54,9 @@ export default function SidebarItem({ icon: Icon, label, active, badge, onClick,
             <span
               className="flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] font-bold"
               style={{
-                background: 'color-mix(in srgb, var(--accent-lime) 15%, transparent)',
-                color: 'var(--accent-lime)',
-                border: '1px solid color-mix(in srgb, var(--accent-lime) 20%, transparent)',
+                background: `color-mix(in srgb, var(--accent-${badgeColor}) 15%, transparent)`,
+                color: `var(--accent-${badgeColor})`,
+                border: `1px solid color-mix(in srgb, var(--accent-${badgeColor}) 20%, transparent)`,
               }}
             >
               {badge}

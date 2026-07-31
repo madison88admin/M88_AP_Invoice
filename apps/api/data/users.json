@@ -1,65 +1,5 @@
 [
   {
-    "id": "1",
-    "name": "Wyssa",
-    "email": "wyssa.martinez@madison88.com",
-    "role": "ACCOUNTING_ASSOCIATE",
-    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
-    "active": true,
-    "createdAt": "2026-07-10T06:29:26.220Z",
-    "updatedAt": "2026-07-10T06:29:26.220Z"
-  },
-  {
-    "id": "2",
-    "name": "AL",
-    "email": "al@madison88.com",
-    "role": "ACCOUNTING_SUPERVISOR",
-    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
-    "active": true,
-    "createdAt": "2026-07-10T06:29:26.220Z",
-    "updatedAt": "2026-07-10T06:29:26.220Z"
-  },
-  {
-    "id": "3",
-    "name": "Joy",
-    "email": "joy.yco@madison88.com",
-    "role": "PURCHASING_COORDINATOR",
-    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
-    "active": true,
-    "createdAt": "2026-07-10T06:29:26.220Z",
-    "updatedAt": "2026-07-10T06:29:26.220Z"
-  },
-  {
-    "id": "4",
-    "name": "Maricon",
-    "email": "maricon.alvarez@madison88.com",
-    "role": "PURCHASING_COORDINATOR",
-    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
-    "active": true,
-    "createdAt": "2026-07-10T06:29:26.220Z",
-    "updatedAt": "2026-07-10T06:29:26.220Z"
-  },
-  {
-    "id": "5",
-    "name": "Maricar",
-    "email": "maricar.tanaleon@madison88.com",
-    "role": "PURCHASING_MANAGER",
-    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
-    "active": true,
-    "createdAt": "2026-07-10T06:29:26.220Z",
-    "updatedAt": "2026-07-10T06:29:26.220Z"
-  },
-  {
-    "id": "6",
-    "name": "Maryann",
-    "email": "maryann.delmonte@madison88.com",
-    "role": "PURCHASING_MANAGER",
-    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
-    "active": true,
-    "createdAt": "2026-07-10T06:29:26.220Z",
-    "updatedAt": "2026-07-10T06:29:26.220Z"
-  },
-  {
     "id": "7",
     "name": "Maryan",
     "email": "maryan.untiveros@madison88.com",
@@ -118,5 +58,125 @@
     "active": true,
     "createdAt": "2026-07-10T06:29:26.220Z",
     "updatedAt": "2026-07-10T06:29:26.220Z"
+  },
+  {
+    "id": "ms8krwritud3",
+    "name": "Meann",
+    "email": "meann@madison88.com",
+    "role": "PURCHASING_MANAGER",
+    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
+    "active": true,
+    "createdAt": "2026-07-31T06:42:19.421Z",
+    "updatedAt": "2026-07-31T06:42:19.421Z"
+  },
+  {
+    "id": "ms8krwrktcwg",
+    "name": "Maricar",
+    "email": "maricar@madison88.com",
+    "role": "PURCHASING_MANAGER",
+    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
+    "active": true,
+    "createdAt": "2026-07-31T06:42:19.421Z",
+    "updatedAt": "2026-07-31T06:42:19.421Z"
+  },
+  {
+    "id": "ms8krwrktny2",
+    "name": "Maricon",
+    "email": "maricon@madison88.com",
+    "role": "PURCHASING_COORDINATOR",
+    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
+    "active": true,
+    "createdAt": "2026-07-31T06:42:19.421Z",
+    "updatedAt": "2026-07-31T06:42:19.421Z"
+  },
+  {
+    "id": "ms8krwrkft78",
+    "name": "Pamela",
+    "email": "pamela@madison88.com",
+    "role": "PURCHASING_COORDINATOR",
+    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
+    "active": true,
+    "createdAt": "2026-07-31T06:42:19.421Z",
+    "updatedAt": "2026-07-31T06:42:19.421Z"
+  },
+  {
+    "id": "ms8krwrkpk2f",
+    "name": "Sarah",
+    "email": "sarah@madison88.com",
+    "role": "PURCHASING_COORDINATOR",
+    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
+    "active": true,
+    "createdAt": "2026-07-31T06:42:19.421Z",
+    "updatedAt": "2026-07-31T06:42:19.421Z"
+  },
+  {
+    "id": "ms8krwrk5z8c",
+    "name": "April",
+    "email": "april@madison88.com",
+    "role": "PURCHASING_COORDINATOR",
+    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
+    "active": true,
+    "createdAt": "2026-07-31T06:42:19.421Z",
+    "updatedAt": "2026-07-31T06:42:19.421Z"
+  },
+  {
+    "id": "ms8krwrkofi5",
+    "name": "Jasmine",
+    "email": "jasmine@madison88.com",
+    "role": "PURCHASING_COORDINATOR",
+    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
+    "active": true,
+    "createdAt": "2026-07-31T06:42:19.421Z",
+    "updatedAt": "2026-07-31T06:42:19.421Z"
+  },
+  {
+    "id": "ms8krwrkrsvo",
+    "name": "Earl",
+    "email": "earl@madison88.com",
+    "role": "PURCHASING_COORDINATOR",
+    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
+    "active": true,
+    "createdAt": "2026-07-31T06:42:19.421Z",
+    "updatedAt": "2026-07-31T06:42:19.421Z"
+  },
+  {
+    "id": "ms8krwrkxh1f",
+    "name": "MJ Santiago",
+    "email": "mjsantiago@madison88.com",
+    "role": "PURCHASING_COORDINATOR",
+    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
+    "active": true,
+    "createdAt": "2026-07-31T06:42:19.421Z",
+    "updatedAt": "2026-07-31T06:42:19.421Z"
+  },
+  {
+    "id": "ms8krwrk2two",
+    "name": "Joy",
+    "email": "joy@madison88.com",
+    "role": "PURCHASING_COORDINATOR",
+    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
+    "active": true,
+    "createdAt": "2026-07-31T06:42:19.421Z",
+    "updatedAt": "2026-07-31T06:42:19.421Z"
+  },
+  {
+    "id": "ms8krwrkh2b4",
+    "name": "Wyssa",
+    "email": "wyssa@madison88.com",
+    "role": "ACCOUNTING_ASSOCIATE",
+    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
+    "active": true,
+    "createdAt": "2026-07-31T06:42:19.421Z",
+    "updatedAt": "2026-07-31T06:42:19.421Z"
+  },
+  {
+    "id": "ms8krwrlja3o",
+    "name": "Aldrin",
+    "email": "Aldrin@madison88.com",
+    "role": "ACCOUNTING_SUPERVISOR",
+    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
+    "active": true,
+    "createdAt": "2026-07-31T06:42:19.421Z",
+    "updatedAt": "2026-07-31T06:46:01.465Z"
   }
 ]

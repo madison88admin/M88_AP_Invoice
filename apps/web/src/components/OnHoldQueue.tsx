@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Pause, AlertTriangle, Clock, Download } from 'lucide-react';
-import { onHoldQueueApi } from '../lib/api';
+import { ArrowLeft, Pause, AlertTriangle, Clock, Download, Unlock, Loader2 } from 'lucide-react';
+import { onHoldQueueApi, invoiceApi } from '../lib/api';
+import { useAuth } from '../contexts/AuthContext';
+import { hasPermission } from '../lib/roleAccess';
 
 interface HoldQueueItem {
   id: string;
@@ -48,9 +50,11 @@ const reasonLabels: Record<string, string> = {
 };
 
 export default function OnHoldQueue() {
+  const { user } = useAuth();
   const [data, setData] = useState<HoldQueueResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>('ALL');
+  const [releasingId, setReleasingId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchQueue();
@@ -65,6 +69,20 @@ export default function OnHoldQueue() {
       console.error('Failed to fetch on-hold queue:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRelease = async (invoiceId: string, invoiceNumber: string) => {
+    if (!window.confirm(`Release invoice ${invoiceNumber} from hold?`)) return;
+    try {
+      setReleasingId(invoiceId);
+      await invoiceApi.releaseHold(invoiceId);
+      await fetchQueue();
+    } catch (error: any) {
+      console.error('Failed to release invoice:', error);
+      alert(error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to release invoice');
+    } finally {
+      setReleasingId(null);
     }
   };
 
@@ -149,6 +167,9 @@ export default function OnHoldQueue() {
                   <th className="text-left p-3 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>HOLD REASON</th>
                   <th className="text-right p-3 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>HOLD DURATION</th>
                   <th className="text-center p-3 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>URGENT</th>
+                  {user && hasPermission(user.role, 'canHoldInvoice') && (
+                    <th className="text-center p-3 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>ACTIONS</th>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -189,11 +210,32 @@ export default function OnHoldQueue() {
                           </span>
                         )}
                       </td>
+                      {user && hasPermission(user.role, 'canHoldInvoice') && (
+                        <td className="p-3 text-center">
+                          {item.status === 'ON_HOLD' && (
+                            <button
+                              onClick={() => handleRelease(item.id, item.invoice_number)}
+                              disabled={releasingId === item.id}
+                              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+                              style={{
+                                background: 'color-mix(in srgb, var(--accent-green) 10%, transparent)',
+                                color: 'var(--accent-green)',
+                                border: '1px solid color-mix(in srgb, var(--accent-green) 20%, transparent)',
+                                opacity: releasingId === item.id ? 0.5 : 1,
+                                cursor: releasingId === item.id ? 'not-allowed' : 'pointer',
+                              }}
+                            >
+                              {releasingId === item.id ? <Loader2 className="h-3 w-3 animate-spin" strokeWidth={1.75} /> : <Unlock className="h-3 w-3" strokeWidth={1.75} />}
+                              Release
+                            </button>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
                 {(!data?.items || data.items.length === 0) && (
-                  <tr><td colSpan={7} className="p-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>No invoices on hold</td></tr>
+                  <tr><td colSpan={user && hasPermission(user.role, 'canHoldInvoice') ? 8 : 7} className="p-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>No invoices on hold</td></tr>
                 )}
               </tbody>
             </table>

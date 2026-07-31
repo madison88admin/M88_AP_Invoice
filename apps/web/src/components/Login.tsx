@@ -1,15 +1,9 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { LayoutDashboard, Lock, Mail, Loader2, ArrowRight, Shield, Zap, FileCheck, Building2 } from 'lucide-react';
+import { LayoutDashboard, Lock, Mail, Loader2, ArrowRight, Shield, Zap, FileCheck, Building2, Eye, EyeOff } from 'lucide-react';
 
 const QUICK_LOGINS = [
-  { label: 'Wyssa', role: 'Accounting Associate', email: 'wyssa.martinez@madison88.com', password: 'madison88' },
-  { label: 'AL', role: 'Accounting Supervisor', email: 'al@madison88.com', password: 'madison88' },
-  { label: 'Joy', role: 'Coordinator', email: 'joy.yco@madison88.com', password: 'madison88' },
-  { label: 'Maricon', role: 'Coordinator', email: 'maricon.alvarez@madison88.com', password: 'madison88' },
-  { label: 'Maricar', role: 'Manager', email: 'maricar.tanaleon@madison88.com', password: 'madison88' },
-  { label: 'Maryann', role: 'Manager', email: 'maryann.delmonte@madison88.com', password: 'madison88' },
   { label: 'Maryan', role: 'MLO Account Holder', email: 'maryan.untiveros@madison88.com', password: 'madison88' },
   { label: 'Edwin', role: 'Planning Mgr', email: 'edwin.garcia@madison88.com', password: 'madison88' },
   { label: 'Glecie', role: 'Planning Mgr', email: 'glecie.yumena@madison88.com', password: 'madison88' },
@@ -27,6 +21,7 @@ const FEATURES = [
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { login, demoLogin } = useAuth();
@@ -175,10 +170,10 @@ export default function Login() {
                   <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 h-5 w-5 transition-colors" style={{ color: 'var(--text-muted)' }} />
                   <input
                     id="password"
-                    type="password"
+                    type={showPassword ? 'text' : 'password'}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full pl-11 pr-4 py-3 rounded-xl focus:outline-none transition-all text-sm"
+                    className="w-full pl-11 pr-11 py-3 rounded-xl focus:outline-none transition-all text-sm"
                     style={{
                       background: 'var(--input-bg)',
                       border: '1px solid var(--input-border)',
@@ -189,6 +184,17 @@ export default function Login() {
                     placeholder="••••••••"
                     required
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3.5 top-1/2 -translate-y-1/2 transition-colors"
+                    style={{ color: 'var(--text-muted)' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
+                    tabIndex={-1}
+                  >
+                    {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                  </button>
                 </div>
               </div>
 

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { InvoiceStatus, InvoiceCategory, InvoiceType, calcWorkingHoursElapsed } from '@ap-invoice/shared';
-import { invoiceApi, notificationApi } from '../lib/api';
+import { invoiceApi, notificationApi, vendorApi } from '../lib/api';
 import InvoiceTable from './InvoiceTable';
 import UploadInvoiceModal from './UploadInvoiceModal';
 import BottleneckView from './BottleneckView';
@@ -9,17 +9,15 @@ import AuditLogViewer from './AuditLogViewer';
 import PipelineTracker from './PipelineTracker';
 import MyTasksWidget from './MyTasksWidget';
 import StatusGuide from './StatusGuide';
-import RoleDashboardPanel from './RoleDashboardPanel';
 import StatCard from './ui/StatCard';
 import AuditTile from './ui/AuditTile';
-import SidebarItem from './ui/SidebarItem';
 import { ThemeToggle } from './ThemeToggle';
 import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { MockInvoice } from '../lib/mockData';
 import { hasPermission, filterInvoicesByRole, canUserApproveStatus, isWithinRoleThreshold } from '../lib/roleAccess';
 import { cn } from '../lib/utils';
-import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, ChevronRight, LogOut, Edit, Unlock, Users, Loader2, Menu, X, Trash2 } from 'lucide-react';
+import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, ChevronRight, LogOut, Edit, Unlock, Pause, Users, Loader2, Menu, X, Trash2, Landmark, Paperclip, Upload } from 'lucide-react';
 import { Skeleton, SkeletonBar } from './ui/Skeleton';
 
 // Custom hook for number count-up animation
@@ -132,6 +130,9 @@ export default function Dashboard() {
   const [validationResult, setValidationResult] = useState<any>(null);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
+  const [showReturnModal, setShowReturnModal] = useState(false);
+  const [returnReason, setReturnReason] = useState('');
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editFormData, setEditFormData] = useState<any>({});
   const [savingEdit, setSavingEdit] = useState(false);
@@ -144,6 +145,7 @@ export default function Dashboard() {
     type: undefined as InvoiceType | undefined,
     brand: undefined as string | undefined,
     brand_code: undefined as string | undefined,
+    vendorId: undefined as string | undefined,
     search: undefined as string | undefined,
     dateFrom: undefined as string | undefined,
     dateTo: undefined as string | undefined,
@@ -155,6 +157,15 @@ export default function Dashboard() {
   const [toasts, setToasts] = useState<{ id: string; message: string; type: 'success' | 'error' | 'warning' | 'info' }[]>([]);
   const [countUpStarted, setCountUpStarted] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
+  const [showBankChangeModal, setShowBankChangeModal] = useState(false);
+  const [bankChangeField, setBankChangeField] = useState('');
+  const [bankChangeValue, setBankChangeValue] = useState('');
+  const [bankChangeReason, setBankChangeReason] = useState('');
+  const [bankChangeAttachment, setBankChangeAttachment] = useState<File | null>(null);
+  const [submittingBankChange, setSubmittingBankChange] = useState(false);
+  const [invoiceBankRequests, setInvoiceBankRequests] = useState<any[]>([]);
+  const [showHoldModal, setShowHoldModal] = useState(false);
+  const [holdReason, setHoldReason] = useState('Vendor cumulative amount below $100 batch threshold');
   const [loading, setLoading] = useState(true);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -166,6 +177,8 @@ export default function Dashboard() {
   const [editCollapsed, setEditCollapsed] = useState<Record<string, boolean>>({});
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [quickFilter, setQuickFilter] = useState<'all' | 'returned' | 'urgent'>('all');
+  const [paymentTermsOptions, setPaymentTermsOptions] = useState<string[]>([]);
+  const [vendorList, setVendorList] = useState<{ id: string; name: string }[]>([]);
   const [poAuditSummary, setPoAuditSummary] = useState({
     matched: 0,
     warnings: 0,
@@ -252,6 +265,7 @@ export default function Dashboard() {
     if (filters.type && inv.invoice_type !== filters.type) return false;
     if (filters.brand && inv.brand !== filters.brand) return false;
     if (filters.brand_code && inv.brand_code !== filters.brand_code) return false;
+    if (filters.vendorId && inv.vendor_id !== filters.vendorId) return false;
     if (filters.search) {
       const term = filters.search.toLowerCase();
       const searchable = [
@@ -335,6 +349,15 @@ export default function Dashboard() {
     setCurrentPage(1);
   }, [filters]);
 
+  // Fetch vendor list for filter dropdown
+  useEffect(() => {
+    if (vendorList.length === 0) {
+      vendorApi.getAll()
+        .then((res) => setVendorList((res.data || []).map((v: any) => ({ id: v.id, name: v.name }))))
+        .catch(() => {});
+    }
+  }, []);
+
   // Clamp the current page so it can never exceed the available pages.
   const safePage = Math.min(currentPage, totalPages);
   const startIndex = (safePage - 1) * invoicesPerPage;
@@ -352,8 +375,10 @@ export default function Dashboard() {
   // Auto-select invoice when navigated from Exception Manager with selectedInvoiceId
   useEffect(() => {
     const state = location.state as { selectedInvoiceId?: string } | null;
-    if (state?.selectedInvoiceId && invoices.length > 0) {
-      const target = invoices.find(inv => inv.id === state.selectedInvoiceId);
+    const queryId = new URLSearchParams(location.search).get('invoiceId');
+    const targetId = state?.selectedInvoiceId || queryId;
+    if (targetId && invoices.length > 0) {
+      const target = invoices.find(inv => inv.id === targetId);
       if (target) {
         setDetailTab('overview');
         setSelectedInvoice(target);
@@ -361,7 +386,7 @@ export default function Dashboard() {
         navigate('/', { replace: true, state: {} });
       }
     }
-  }, [location.state, invoices, navigate]);
+  }, [location.state, location.search, invoices, navigate]);
 
   // Compute PO audit summary dynamically from each invoice's NextGen validation result.
   useEffect(() => {
@@ -468,6 +493,20 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, []);
 
+  // Fetch bank change requests for the selected invoice
+  useEffect(() => {
+    if (!selectedInvoice) {
+      setInvoiceBankRequests([]);
+      return;
+    }
+    invoiceApi.getBankChangeRequests()
+      .then((res) => {
+        const all = res.data || [];
+        setInvoiceBankRequests(all.filter((r: any) => r.invoice_id === selectedInvoice.id));
+      })
+      .catch(() => setInvoiceBankRequests([]));
+  }, [selectedInvoice?.id]);
+
   const handleMarkAllRead = async () => {
     try {
       await notificationApi.markAllAsRead();
@@ -500,6 +539,13 @@ export default function Dashboard() {
       await refresh();
       const updatedInvoice = await invoiceApi.getById(selectedInvoice.id);
       setSelectedInvoice(updatedInvoice.data);
+      if (response.data?.allExceptionsHandled) {
+        showToast('Validation complete — all exceptions resolved/waived, invoice advanced to approval', 'success');
+      } else if (response.data?.passed) {
+        showToast('Validation passed — invoice advanced to approval', 'success');
+      } else {
+        showToast('Validation failed — please resolve exceptions', 'warning');
+      }
     } catch (error: any) {
       console.error('Failed to validate invoice:', error);
       const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to validate invoice';
@@ -550,6 +596,11 @@ export default function Dashboard() {
   const handleOpenEdit = async () => {
     if (!selectedInvoice) return;
     const invoice = selectedInvoice as any;
+    // Fetch payment terms for dropdown (always refresh in case new terms were added)
+    try {
+      const res = await invoiceApi.getPaymentTerms();
+      setPaymentTermsOptions(res.data || []);
+    } catch { /* ignore — fallback to empty options */ }
     setEditFormData({
       invoice_number: invoice.invoice_number || '',
       invoice_date: invoice.invoice_date ? new Date(invoice.invoice_date).toISOString().split('T')[0] : '',
@@ -611,6 +662,9 @@ export default function Dashboard() {
       const parseNum = (val: string) => (val === '' || val === undefined || val === null) ? undefined : parseFloat(val);
       const parseString = (val: string) => (val === '' || val === undefined || val === null) ? undefined : val;
 
+      // Remove bank fields from payload if user can't edit them — backend will reject anyway
+      const canEditBank = user ? hasPermission(user.role, 'canEditBankDetails') : false;
+
       const payload = {
         vendor_name_raw: parseString(editFormData.vendor_name_raw),
         invoice_number: parseString(editFormData.invoice_number),
@@ -632,9 +686,9 @@ export default function Dashboard() {
         edit_reason: parseString(editFormData.edit_reason),
         qty_shipped: parseNum(editFormData.qty_shipped),
         payment_terms: parseString(editFormData.payment_terms),
-        bank_name: parseString(editFormData.bank_name),
-        swift_code: parseString(editFormData.swift_code),
-        account_number: parseString(editFormData.account_number),
+        bank_name: canEditBank ? parseString(editFormData.bank_name) : undefined,
+        swift_code: canEditBank ? parseString(editFormData.swift_code) : undefined,
+        account_number: canEditBank ? parseString(editFormData.account_number) : undefined,
         ship_to: parseString(editFormData.ship_to),
         sold_to: parseString(editFormData.sold_to),
         subtotal: parseNum(editFormData.subtotal),
@@ -648,9 +702,9 @@ export default function Dashboard() {
         incoterm: parseString(editFormData.incoterm),
         category: parseString(editFormData.category),
         bill_to_entity: parseString(editFormData.bill_to_entity),
-        is_handwritten: editFormData.is_handwritten || undefined,
-        is_urgent: editFormData.is_urgent || undefined,
-        priority_flag: editFormData.priority_flag || undefined,
+        is_handwritten: editFormData.is_handwritten === true ? true : editFormData.is_handwritten === false ? false : undefined,
+        is_urgent: editFormData.is_urgent === true ? true : editFormData.is_urgent === false ? false : undefined,
+        priority_flag: editFormData.priority_flag === true ? true : editFormData.priority_flag === false ? false : undefined,
         priority_pay_date: parseString(editFormData.priority_pay_date),
         date_range_start: parseString(editFormData.date_range_start),
         date_range_end: parseString(editFormData.date_range_end),
@@ -665,6 +719,32 @@ export default function Dashboard() {
       showToast(error?.response?.data?.message || error?.response?.data?.error?.message || 'Failed to update invoice', 'error');
     } finally {
       setSavingEdit(false);
+    }
+  };
+
+  const handleRequestBankChange = async () => {
+    if (!selectedInvoice || !bankChangeField || !bankChangeValue.trim() || !bankChangeReason.trim()) return;
+    setSubmittingBankChange(true);
+    try {
+      const currentValue = String((editFormData as any)[bankChangeField] || '');
+      const response = await invoiceApi.requestBankChange(selectedInvoice.id, {
+        field: bankChangeField,
+        current_value: currentValue,
+        requested_value: bankChangeValue,
+        reason: bankChangeReason,
+        attachment: bankChangeAttachment || undefined,
+      });
+      showToast(response.data?.message || 'Bank details change request submitted', 'success');
+      setShowBankChangeModal(false);
+      setBankChangeField('');
+      setBankChangeValue('');
+      setBankChangeReason('');
+      setBankChangeAttachment(null);
+    } catch (error: any) {
+      console.error('Failed to submit bank change request:', error);
+      showToast(error?.response?.data?.message || error?.response?.data?.error?.message || 'Failed to submit request', 'error');
+    } finally {
+      setSubmittingBankChange(false);
     }
   };
 
@@ -687,22 +767,22 @@ export default function Dashboard() {
 
   const handleReturnForCorrection = async () => {
     if (!selectedInvoice) return;
-    const reason = window.prompt('Reason for returning this invoice to the previous approver:');
-    if (!reason?.trim()) return;
+    if (!returnReason.trim()) return;
     try {
-      await invoiceApi.returnForCorrection(selectedInvoice.id, reason.trim());
+      await invoiceApi.returnForCorrection(selectedInvoice.id, returnReason.trim());
       showToast('Invoice returned to the previous approver', 'success');
       await refresh();
       setSelectedInvoice(null);
     } catch (error: any) {
       showToast(error?.response?.data?.error?.message || 'Failed to return invoice', 'error');
+    } finally {
+      setShowReturnModal(false);
+      setReturnReason('');
     }
   };
 
   const handleDeleteInvoice = async () => {
     if (!selectedInvoice) return;
-    const confirmed = window.confirm(`Are you sure you want to delete invoice "${selectedInvoice.invoice_number}"? This action cannot be undone.`);
-    if (!confirmed) return;
     try {
       await invoiceApi.delete(selectedInvoice.id);
       showToast(`Invoice ${selectedInvoice.invoice_number} deleted successfully`, 'success');
@@ -711,6 +791,8 @@ export default function Dashboard() {
     } catch (error: any) {
       const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to delete invoice';
       showToast(msg, 'error');
+    } finally {
+      setShowDeleteModal(false);
     }
   };
 
@@ -747,6 +829,31 @@ export default function Dashboard() {
       showToast(msg, 'error');
     } finally {
       setPosting(false);
+    }
+  };
+
+  const [holdingInvoice, setHoldingInvoice] = useState(false);
+
+  const handleHoldForBatchThreshold = () => {
+    setHoldReason('Vendor cumulative amount below $100 batch threshold');
+    setShowHoldModal(true);
+  };
+
+  const confirmHoldForBatchThreshold = async () => {
+    if (!selectedInvoice) return;
+    try {
+      setHoldingInvoice(true);
+      await invoiceApi.holdForBatchThreshold(selectedInvoice.id, holdReason || undefined);
+      showToast('Invoice put on hold for batch threshold', 'success');
+      setShowHoldModal(false);
+      await refresh();
+      setSelectedInvoice(null);
+    } catch (error: any) {
+      console.error('Failed to hold invoice:', error);
+      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to hold invoice';
+      showToast(msg, 'error');
+    } finally {
+      setHoldingInvoice(false);
     }
   };
 
@@ -1332,334 +1439,8 @@ export default function Dashboard() {
   const kpis = getRoleSpecificKPIs();
 
   return (
-    <div className="flex h-screen relative" style={{ background: 'var(--bg-base)' }}>
-
-      {/* Sidebar - Floating rounded card */}
-      <aside className={`${sidebarCollapsed ? 'w-20' : 'w-64'} m-4 flex flex-col flex-shrink-0 transition-all duration-300 hidden md:flex z-10 rounded-3xl`} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.35)' }}>
-        {/* Logo */}
-        <div className="p-5" style={{ borderBottom: '1px solid var(--border-color)' }}>
-          <div className="flex items-center gap-3">
-            <img src="/madison-logo.png" alt="Madison 88" className="h-10 w-auto flex-shrink-0" />
-          </div>
-        </div>
-
-        {/* Navigation */}
-        <nav className="flex-1 p-3 space-y-1">
-          <SidebarItem
-            icon={LayoutDashboard}
-            label="Dashboard"
-            active
-            collapsed={sidebarCollapsed}
-          />
-          <SidebarItem icon={FileText} label="Invoice Repository" collapsed={sidebarCollapsed} onClick={() => navigate('/repository')} />
-          {user && [
-            'PURCHASING_COORDINATOR',
-            'PURCHASING_MANAGER',
-            'PLANNING_MANAGER',
-            'SR_MANAGER_GLOBAL_PRODUCTION',
-            'MS_POLLY',
-            'ACCOUNTING_SUPERVISOR'
-          ].includes(user.role) && (
-            <SidebarItem
-              icon={CheckSquare}
-              label="Approvals"
-              badge={awaitingApprovalCount.count}
-              collapsed={sidebarCollapsed}
-              onClick={() => navigate('/approvals')}
-            />
-          )}
-          {user && ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN'].includes(user.role) && (
-            <SidebarItem
-              icon={AlertTriangle}
-              label="Exceptions"
-              badge={exceptionsCount.count}
-              collapsed={sidebarCollapsed}
-              onClick={() => navigate('/exceptions')}
-            />
-          )}
-          {user && ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE'].includes(user.role) && (
-            <SidebarItem
-              icon={Building2}
-              label="Vendors"
-              badge={vendorsPendingVerification}
-              collapsed={sidebarCollapsed}
-              onClick={() => navigate('/vendors')}
-            />
-          )}
-          {user && ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
-            <SidebarItem
-              icon={Package}
-              label="Batches"
-              badge={draftBatchCount}
-              collapsed={sidebarCollapsed}
-              onClick={() => navigate('/payment-batches')}
-            />
-          )}
-          {user && ['PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
-            <SidebarItem
-              icon={BarChart3}
-              label="Reports"
-              collapsed={sidebarCollapsed}
-              onClick={() => navigate('/reports')}
-            />
-          )}
-          {user && ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
-            <SidebarItem
-              icon={FileSearch}
-              label="Review"
-              badge={reviewPendingCount}
-              collapsed={sidebarCollapsed}
-              onClick={() => navigate('/accounting-review')}
-            />
-          )}
-          {user && (user.role === 'IT_ADMIN' || user.role === 'SUPERADMIN') && (
-            <SidebarItem
-              icon={Users}
-              label="User Management"
-              collapsed={sidebarCollapsed}
-              onClick={() => navigate('/users')}
-            />
-          )}
-          {user && (user.role === 'IT_ADMIN' || user.role === 'SUPERADMIN') && (
-            <SidebarItem
-              icon={Settings}
-              label="System Configuration"
-              collapsed={sidebarCollapsed}
-              onClick={() => navigate('/settings')}
-            />
-          )}
-        </nav>
-
-        {/* Collapse Toggle */}
-        <div className="p-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-          <button
-            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-            className="flex items-center justify-center w-full p-2 rounded-lg transition-all duration-200"
-            style={{ transition: 'all 200ms ease' }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'var(--bg-card-hover)';
-              const svg = e.currentTarget.querySelector('svg');
-              if (svg) svg.style.transform = sidebarCollapsed ? 'rotate(0deg)' : 'rotate(180deg)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'transparent';
-              const svg = e.currentTarget.querySelector('svg');
-              if (svg) svg.style.transform = sidebarCollapsed ? 'rotate(180deg)' : 'rotate(0deg)';
-            }}
-          >
-            {sidebarCollapsed ? (
-              <ChevronLeft className="h-5 w-5" style={{ transform: 'rotate(180deg)', transition: 'transform 200ms ease' }} />
-            ) : (
-              <ChevronLeft className="h-5 w-5" style={{ transform: 'rotate(0deg)', transition: 'transform 200ms ease' }} />
-            )}
-          </button>
-        </div>
-      </aside>
-
-      {/* Mobile Sidebar Drawer */}
-      {mobileSidebarOpen && (
-        <div className="md:hidden fixed inset-0 z-50">
-          <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.5)' }} onClick={() => setMobileSidebarOpen(false)} />
-          <aside className="absolute left-0 top-0 bottom-0 w-64 flex flex-col animate-slide-in-left" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}>
-            <div className="p-5 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
-              <img src="/madison-logo.png" alt="Madison 88" className="h-10 w-auto flex-shrink-0" />
-              <button onClick={() => setMobileSidebarOpen(false)} className="p-2 rounded-lg" style={{ color: 'var(--text-muted)' }}>
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-              <SidebarItem icon={LayoutDashboard} label="Dashboard" active collapsed={false} onClick={() => setMobileSidebarOpen(false)} />
-              <SidebarItem icon={FileText} label="Invoice Repository" collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/repository'); }} />
-              {user && ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'PLANNING_MANAGER', 'SR_MANAGER_GLOBAL_PRODUCTION', 'MS_POLLY', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
-                <SidebarItem icon={CheckSquare} label="Approvals" badge={awaitingApprovalCount.count} collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/approvals'); }} />
-              )}
-              {user && ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN'].includes(user.role) && (
-                <SidebarItem icon={AlertTriangle} label="Exceptions" badge={exceptionsCount.count} collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/exceptions'); }} />
-              )}
-              {user && ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE'].includes(user.role) && (
-                <SidebarItem icon={Building2} label="Vendors" badge={vendorsPendingVerification} collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/vendors'); }} />
-              )}
-              {user && ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
-                <SidebarItem icon={Package} label="Batches" badge={draftBatchCount} collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/payment-batches'); }} />
-              )}
-              {user && ['PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
-                <SidebarItem icon={BarChart3} label="Reports" collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/reports'); }} />
-              )}
-              {user && ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
-                <SidebarItem icon={FileSearch} label="Review" badge={reviewPendingCount} collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/accounting-review'); }} />
-              )}
-              {user && (user.role === 'IT_ADMIN' || user.role === 'SUPERADMIN') && (
-                <SidebarItem icon={Users} label="User Management" collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/users'); }} />
-              )}
-              {user && (user.role === 'IT_ADMIN' || user.role === 'SUPERADMIN') && (
-                <SidebarItem icon={Settings} label="System Configuration" collapsed={false} onClick={() => { setMobileSidebarOpen(false); navigate('/settings'); }} />
-              )}
-            </nav>
-          </aside>
-        </div>
-      )}
-
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden z-10">
-        {/* Top Header */}
-        <header className="px-4 md:px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => setMobileSidebarOpen(true)}
-                className="md:hidden p-2 rounded-xl transition-colors"
-                style={{ color: 'var(--text-muted)', background: 'var(--bg-card)' }}
-              >
-                <Menu className="h-5 w-5" strokeWidth={1.75} />
-              </button>
-              <div>
-                <h1 className="text-xl md:text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
-                  {user ? `Welcome, ${user.name.split(' ')[0]}` : 'Dashboard'}
-                </h1>
-              {user && (
-                <span className="inline-block mt-1 px-3 py-1 text-xs font-medium rounded-full" style={{ background: 'var(--bg-card-hover)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>
-                  {user.role.replace(/_/g, ' ')}
-                </span>
-              )}
-              </div>
-            </div>
-            <div className="flex items-center gap-2 md:gap-3">
-              {/* Notification Bell */}
-              <div className="relative">
-                <button
-                  onClick={() => setShowNotifications(!showNotifications)}
-                  className="relative p-2.5 rounded-xl transition-colors" style={{ color: 'var(--text-muted)' }}
-                  title="Notifications"
-                >
-                  <Bell className="h-5 w-5" strokeWidth={1.75} />
-                  {unreadCount > 0 && (
-                    <span className="absolute top-1 right-1 min-w-4 h-4 px-1 rounded-full text-[10px] font-bold flex items-center justify-center" style={{ background: 'var(--accent-red)', color: 'white' }}>
-                      {unreadCount > 99 ? '99+' : unreadCount}
-                    </span>
-                  )}
-                </button>
-                {showNotifications && (
-                  <div className="absolute right-0 top-full mt-2 w-[calc(100vw-2rem)] max-w-96 rounded-2xl z-50 overflow-hidden" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
-                    <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Notifications</h3>
-                        {unreadCount > 0 && (
-                          <span className="px-2 py-0.5 text-[10px] font-bold rounded-full" style={{ background: 'var(--accent-red)', color: 'white' }}>{unreadCount} new</span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {unreadCount > 0 && (
-                          <button onClick={handleMarkAllRead} className="text-xs font-medium transition-colors" style={{ color: 'var(--accent-blue)' }}
-                            onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.7'; }}
-                            onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}>
-                            Mark all read
-                          </button>
-                        )}
-                        <button onClick={() => setShowNotifications(false)} className="text-sm" style={{ color: 'var(--text-muted)' }}>Close</button>
-                      </div>
-                    </div>
-                    <div className="max-h-96 overflow-y-auto" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-                      {notifications.length > 0 ? (
-                        notifications.map((n) => {
-                          const iconMap: Record<string, any> = {
-                            success: CheckCircle,
-                            warning: AlertTriangle,
-                            error: XCircle,
-                            info: Bell,
-                          };
-                          const colorMap: Record<string, string> = {
-                            success: 'var(--accent-lime)',
-                            warning: 'var(--accent-amber)',
-                            error: 'var(--accent-red)',
-                            info: 'var(--accent-blue)',
-                          };
-                          const Icon = iconMap[n.type] || Bell;
-                          const color = colorMap[n.type] || 'var(--accent-blue)';
-                          const timeAgo = (() => {
-                            const diff = Date.now() - new Date(n.created_at).getTime();
-                            const mins = Math.floor(diff / 60000);
-                            if (mins < 1) return 'just now';
-                            if (mins < 60) return `${mins}m ago`;
-                            const hrs = Math.floor(mins / 60);
-                            if (hrs < 24) return `${hrs}h ago`;
-                            const days = Math.floor(hrs / 24);
-                            return `${days}d ago`;
-                          })();
-                          return (
-                            <div key={n.id} className="p-4 cursor-pointer transition-colors" style={{ borderBottom: '1px solid var(--border-subtle)', background: n.is_read ? 'transparent' : 'color-mix(in srgb, var(--accent-blue) 4%, transparent)' }}
-                              onClick={() => { if (!n.is_read) handleMarkRead(n.id); }}
-                              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
-                              onMouseLeave={(e) => { e.currentTarget.style.background = n.is_read ? 'transparent' : 'color-mix(in srgb, var(--accent-blue) 4%, transparent)'; }}>
-                              <div className="flex items-start gap-3">
-                                <div className="p-2 rounded-xl flex-shrink-0" style={{ background: `color-mix(in srgb, ${color} 10%, transparent)`, border: `1px solid color-mix(in srgb, ${color} 20%, transparent)` }}>
-                                  <Icon className="h-4 w-4" style={{ color }} strokeWidth={1.75} />
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center justify-between gap-2">
-                                    <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{n.title}</p>
-                                    {!n.is_read && <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: 'var(--accent-blue)' }} />}
-                                  </div>
-                                  <p className="text-xs mt-0.5 line-clamp-2" style={{ color: 'var(--text-muted)' }}>{n.message}</p>
-                                  <div className="flex items-center gap-2 mt-1.5">
-                                    <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{timeAgo}</span>
-                                    {n.invoice_number && (
-                                      <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'var(--bg-card-hover)', color: 'var(--text-muted)' }}>{n.invoice_number}</span>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })
-                      ) : (
-                        <div className="p-8 text-center">
-                          <Bell className="h-8 w-8 mx-auto mb-2 opacity-30" style={{ color: 'var(--text-muted)' }} />
-                          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No notifications yet</p>
-                          <p className="text-xs mt-1" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>Stage transitions and updates will appear here</p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-              {/* Theme Toggle */}
-              <ThemeToggle />
-              {/* User Info */}
-              {user && (
-                <div className="flex items-center gap-2 md:gap-3 px-2 md:px-3 py-2 rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
-                  <div className="flex items-center gap-2">
-                    <div className="p-2 rounded-xl flex-shrink-0" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}>
-                      <span className="text-sm font-semibold" style={{ color: 'var(--text-inverse)' }}>
-                        {user.name.split(' ').map(n => n[0]).join('')}
-                      </span>
-                    </div>
-                    <div className="text-left hidden sm:block">
-                      <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{user.name}</p>
-                      <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{user.title || user.role.replace(/_/g, ' ')}</p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => {
-                      logout();
-                      navigate('/login');
-                    }}
-                    className="p-2 rounded-xl transition-colors"
-                    style={{ color: 'var(--text-muted)' }}
-                    onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent'; }}
-                    title="Logout"
-                  >
-                    <LogOut className="h-4 w-4" strokeWidth={1.75} />
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </header>
-
-        {/* Main Content Area */}
-        <main className="flex-1 overflow-auto p-4 md:p-6 pb-24 md:pb-6">
-          {/* Primary Action Bar */}
+    <div>
+      {/* Primary Action Bar */}
           <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Dashboard</h2>
@@ -1691,10 +1472,6 @@ export default function Dashboard() {
                 </button>
               )}
             </div>
-          </div>
-
-          <div className="mb-6">
-            <RoleDashboardPanel />
           </div>
 
           {/* KPI Cards */}
@@ -1930,7 +1707,7 @@ export default function Dashboard() {
                   Advanced
                 </button>
                 <button
-                  onClick={() => setFilters({ status: undefined, category: undefined, type: undefined, brand: undefined, brand_code: undefined, search: undefined, dateFrom: undefined, dateTo: undefined, agingBucket: undefined })}
+                  onClick={() => setFilters({ status: undefined, category: undefined, type: undefined, brand: undefined, brand_code: undefined, vendorId: undefined, search: undefined, dateFrom: undefined, dateTo: undefined, agingBucket: undefined })}
                   disabled={activeFilterCount === 0}
                   className="h-9 w-full md:w-auto px-4 rounded-full transition-colors text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed"
                   style={activeFilterCount > 0
@@ -1986,6 +1763,17 @@ export default function Dashboard() {
                     <option value="On Running" style={{ background: 'var(--input-bg)' }}>On Running</option>
                     <option value="Prana" style={{ background: 'var(--input-bg)' }}>Prana</option>
                     <option value="Other" style={{ background: 'var(--input-bg)' }}>Other brands</option>
+                  </select>
+                  <select
+                    value={filters.vendorId || ''}
+                    onChange={(e) => setFilters({ ...filters, vendorId: e.target.value || undefined })}
+                    className="h-9 w-full md:w-auto px-4 rounded-full focus:outline-none text-sm appearance-none cursor-pointer transition-all"
+                    style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)', maxWidth: '220px' }}
+                  >
+                    <option value="" style={{ background: 'var(--input-bg)' }}>All Vendors</option>
+                    {vendorList.map((v) => (
+                      <option key={v.id} value={v.id} style={{ background: 'var(--input-bg)' }}>{v.name}</option>
+                    ))}
                   </select>
                   <select
                     value={filters.brand_code || ''}
@@ -2260,8 +2048,6 @@ export default function Dashboard() {
               </div>
             </div>
           )}
-        </main>
-      </div>
 
       {/* Mobile Bottom Tab Bar */}
       <div className="md:hidden fixed bottom-0 left-0 right-0 backdrop-blur-xl border-t z-50" style={{ background: 'var(--bg-card)', borderTop: '1px solid var(--border-color)' }}>
@@ -2437,17 +2223,209 @@ export default function Dashboard() {
                 </div>
               )}
 
+              {/* MPO & Line Validation */}
+              {selectedInvoice.mpo_number && (
+                <div className="p-4 rounded-xl" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
+                  <p className="text-sm font-semibold mb-3 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+                    <FileSearch className="h-4 w-4" style={{ color: 'var(--accent-blue)' }} strokeWidth={1.75} />
+                    MPO & Line Validation
+                  </p>
+                  <div className="grid grid-cols-2 gap-3 mb-3">
+                    <div>
+                      <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>MPO Number</p>
+                      <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.mpo_number}</p>
+                    </div>
+                    {selectedInvoice.qty_shipped !== undefined && (
+                      <div>
+                        <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Qty Shipped</p>
+                        <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.qty_shipped}</p>
+                      </div>
+                    )}
+                  </div>
+                  {selectedInvoice.po_validation && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>PO Found:</span>
+                        <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={selectedInvoice.po_validation.po_found
+                          ? { background: 'color-mix(in srgb, var(--accent-lime) 15%, transparent)', color: 'var(--accent-lime)' }
+                          : { background: 'color-mix(in srgb, var(--accent-red) 15%, transparent)', color: 'var(--accent-red)' }}>
+                          {selectedInvoice.po_validation.po_found ? 'Yes' : 'No'}
+                        </span>
+                        {selectedInvoice.po_validation.skipped && (
+                          <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: 'color-mix(in srgb, var(--accent-amber) 15%, transparent)', color: 'var(--accent-amber)' }}>Skipped</span>
+                        )}
+                      </div>
+                      {selectedInvoice.po_validation.comparison && (
+                        <div className="grid grid-cols-2 gap-2 mt-2">
+                          {[
+                            { label: 'Vendor', key: 'vendor_match' },
+                            { label: 'Amount', key: 'amount_match' },
+                            { label: 'Brand', key: 'brand_match' },
+                            { label: 'Season', key: 'season_match' },
+                            { label: 'Order Type', key: 'order_type_match' },
+                            { label: 'Currency', key: 'currency_match' },
+                          ].map(({ label, key }) => {
+                            const val = (selectedInvoice.po_validation!.comparison as any)[key];
+                            if (val === undefined || val === null) return null;
+                            return (
+                              <div key={key} className="flex items-center gap-1.5 text-xs">
+                                <span style={{ color: val ? 'var(--accent-lime)' : 'var(--accent-red)' }}>{val ? '✓' : '✗'}</span>
+                                <span style={{ color: 'var(--text-muted)' }}>{label}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {selectedInvoice.po_validation.comparison?.amount_variance_percent !== undefined && (
+                        <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                          Amount Variance: <span style={{ color: Math.abs(selectedInvoice.po_validation.comparison.amount_variance_percent) > 5 ? 'var(--accent-red)' : 'var(--accent-lime)', fontWeight: 600 }}>
+                            {selectedInvoice.po_validation.comparison.amount_variance_percent.toFixed(1)}%
+                          </span>
+                        </div>
+                      )}
+                      {selectedInvoice.po_validation.comparison?.differences && selectedInvoice.po_validation.comparison.differences.length > 0 && (
+                        <div className="mt-2 p-2 rounded-lg" style={{ background: 'color-mix(in srgb, var(--accent-red) 8%, transparent)' }}>
+                          {selectedInvoice.po_validation.comparison.differences.map((diff: string, i: number) => (
+                            <p key={i} className="text-xs" style={{ color: 'var(--accent-red)' }}>• {diff}</p>
+                          ))}
+                        </div>
+                      )}
+                      {selectedInvoice.po_validation.message && (
+                        <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{selectedInvoice.po_validation.message}</p>
+                      )}
+                    </div>
+                  )}
+                  {/* OCR Line Items */}
+                  {selectedInvoice.ocr_raw_data?.extraction?.line_items && Array.isArray(selectedInvoice.ocr_raw_data.extraction.line_items) && selectedInvoice.ocr_raw_data.extraction.line_items.length > 0 && (
+                    <div className="mt-3">
+                      <p className="text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>Extracted Line Items ({selectedInvoice.ocr_raw_data.extraction.line_items.length})</p>
+                      <div className="max-h-40 overflow-y-auto space-y-1">
+                        {selectedInvoice.ocr_raw_data.extraction.line_items.map((line: any, i: number) => (
+                          <div key={i} className="flex items-center justify-between text-xs p-2 rounded-lg" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+                            <div className="flex-1 min-w-0">
+                              <span style={{ color: 'var(--text-primary)' }}>{line.material_name || line.description || line.item_code || `Line ${i + 1}`}</span>
+                              {line.material_code && <span className="ml-2" style={{ color: 'var(--text-muted)' }}>({line.material_code})</span>}
+                            </div>
+                            <div className="flex items-center gap-3 ml-2">
+                              <span style={{ color: 'var(--text-muted)' }}>Qty: {line.quantity || '—'}</span>
+                              <span style={{ color: 'var(--text-secondary)' }}>${Number(line.total_amount || line.extended_price || 0).toFixed(2)}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Bank Details Change Requests */}
+              {invoiceBankRequests.length > 0 && (
+                <div className="p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-blue) 6%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-blue) 20%, transparent)' }}>
+                  <p className="text-sm font-semibold mb-3 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+                    <Landmark className="h-4 w-4" style={{ color: 'var(--accent-blue)' }} strokeWidth={1.75} />
+                    Bank Details Change Requests ({invoiceBankRequests.length})
+                  </p>
+                  <div className="space-y-2">
+                    {invoiceBankRequests.map((req: any) => (
+                      <div key={req.id} className="p-3 rounded-lg" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ background: 'color-mix(in srgb, var(--accent-blue) 12%, transparent)', color: 'var(--accent-blue)' }}>
+                            {req.field === 'bank_name' ? 'Bank Name' : req.field === 'swift_code' ? 'SWIFT Code' : req.field === 'account_number' ? 'Account Number' : req.field}
+                          </span>
+                          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                            {new Date(req.created_at).toLocaleString('en-US', { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 mb-2">
+                          <div>
+                            <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Current</p>
+                            <p className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>{req.current_value || '—'}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Requested</p>
+                            <p className="text-xs font-medium" style={{ color: 'var(--accent-lime)' }}>{req.requested_value || '—'}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between text-xs">
+                          <span style={{ color: 'var(--text-muted)' }}>
+                            <span style={{ color: 'var(--text-secondary)' }}>{req.reason}</span>
+                          </span>
+                          <span style={{ color: 'var(--text-muted)' }}>by {req.requested_by}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Edit History — quick access */}
+              {selectedInvoice.audit_logs && selectedInvoice.audit_logs.filter((log: any) => log.action === 'INVOICE_UPDATED').length > 0 && (
+                <div className="p-4 rounded-xl" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-sm font-semibold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+                      <Edit className="h-4 w-4" style={{ color: 'var(--accent-purple)' }} strokeWidth={1.75} />
+                      Edit History
+                    </p>
+                    <button
+                      onClick={() => setDetailTab('audit')}
+                      className="text-xs font-medium transition-colors"
+                      style={{ color: 'var(--accent-blue)' }}
+                      onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.7'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
+                    >
+                      View Full Audit →
+                    </button>
+                  </div>
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {selectedInvoice.audit_logs
+                      .filter((log: any) => log.action === 'INVOICE_UPDATED')
+                      .slice(-5)
+                      .reverse()
+                      .map((log: any) => (
+                        <div key={log.id} className="p-2 rounded-lg" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>{log.performed_by || 'Unknown'}</span>
+                            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                              {new Date(log.created_at).toLocaleString('en-US', { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                          {log.note && (
+                            <p className="text-xs whitespace-pre-wrap" style={{ color: 'var(--text-secondary)' }}>
+                              {log.note.split('\n').map((line: string, i: number) => (
+                                <span key={i}>{i === 0 ? line : <><br />{line}</>}</span>
+                              ))}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+
               {/* Exceptions summary in overview */}
-              {selectedInvoice.exceptions && selectedInvoice.exceptions.length > 0 && (
-                <div className="p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}>
-                  <p className="text-sm font-semibold mb-2" style={{ color: 'var(--accent-red)' }}>Exceptions</p>
-                  {selectedInvoice.exceptions.map((exc) => (
+              {selectedInvoice.exceptions && selectedInvoice.exceptions.length > 0 && (() => {
+                const activeExcs = selectedInvoice.exceptions.filter((exc) => exc.status === 'OPEN' || exc.status === 'PENDING');
+                const resolvedExcs = selectedInvoice.exceptions.filter((exc) => exc.status === 'RESOLVED' || exc.status === 'WAIVED');
+                const hasActive = activeExcs.length > 0;
+                const accentVar = hasActive ? 'var(--accent-red)' : 'var(--accent-lime)';
+                return (
+                <div className="p-4 rounded-xl" style={{ background: `color-mix(in srgb, ${accentVar} 10%, transparent)`, border: `1px solid color-mix(in srgb, ${accentVar} 20%, transparent)` }}>
+                  <p className="text-sm font-semibold mb-2" style={{ color: accentVar }}>Exceptions</p>
+                  {activeExcs.map((exc) => (
                     <p key={exc.id} className="text-xs" style={{ color: 'var(--accent-red)' }}>
                       {exc.reason}: {exc.detail}
                     </p>
                   ))}
+                  {resolvedExcs.map((exc) => (
+                    <p key={exc.id} className="text-xs flex items-center gap-1" style={{ color: 'var(--accent-lime)' }}>
+                      <CheckCircle className="h-3 w-3" strokeWidth={1.75} />
+                      <span style={{ textDecoration: 'line-through', opacity: 0.7 }}>{exc.reason}: {exc.detail}</span>
+                      <span className="ml-1 px-1.5 py-0.5 text-[10px] rounded-full" style={{ background: 'color-mix(in srgb, var(--accent-lime) 15%, transparent)' }}>{exc.status}</span>
+                    </p>
+                  ))}
                 </div>
-              )}
+                );
+              })()}
 
               {/* Payment Confirmation Sent — read-only label */}
               {selectedInvoice.status === (InvoiceStatus.PAYMENT_CONFIRMATION_SENT as any) && (selectedInvoice as any).confirmation_sent_at && (
@@ -2488,7 +2466,7 @@ export default function Dashboard() {
               )}
 
               {/* Check NextGen Changes Button */}
-              {selectedInvoice.mpo_number && user && ['PURCHASING_COORDINATOR', 'ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'].includes(user.role) && (
+              {selectedInvoice.mpo_number && user && ['PURCHASING_COORDINATOR', 'ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role) && (
                 <button
                   onClick={handleCheckNextGen}
                   disabled={posting}
@@ -2517,7 +2495,7 @@ export default function Dashboard() {
               )}
 
               {/* Resolve Exceptions Button */}
-              {selectedInvoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any) && user && ['PURCHASING_COORDINATOR', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'].includes(user.role) && (
+              {selectedInvoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any) && user && ['PURCHASING_COORDINATOR', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role) && (
                 <button
                   onClick={() => navigate('/exceptions', { state: { selectedInvoiceId: selectedInvoice.id } })}
                   className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl hover:opacity-80 transition-all font-medium text-sm"
@@ -2589,13 +2567,13 @@ export default function Dashboard() {
                     </button>
                   )}
                   {user.role !== 'PURCHASING_COORDINATOR' && (
-                    <button onClick={handleReturnForCorrection} className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl font-medium text-sm" style={{ background: 'color-mix(in srgb, var(--accent-amber) 12%, transparent)', color: 'var(--accent-amber)', border: '1px solid var(--accent-amber)' }}>
+                    <button onClick={() => setShowReturnModal(true)} className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl font-medium text-sm" style={{ background: 'color-mix(in srgb, var(--accent-amber) 12%, transparent)', color: 'var(--accent-amber)', border: '1px solid var(--accent-amber)' }}>
                       Return to Previous Approver
                     </button>
                   )}
                   {['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN', 'ADMIN'].includes(user?.role || '') && (
                     <button
-                      onClick={handleDeleteInvoice}
+                      onClick={() => setShowDeleteModal(true)}
                       className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
                       style={{
                         background: 'color-mix(in srgb, var(--accent-red) 8%, transparent)',
@@ -2651,6 +2629,23 @@ export default function Dashboard() {
                 </button>
               )}
 
+              {/* Hold for Batch Threshold — Accounting can manually hold invoices below $100 vendor cumulative */}
+              {selectedInvoice.status !== (InvoiceStatus.ON_HOLD as any) &&
+                selectedInvoice.status !== (InvoiceStatus.PAID as any) &&
+                selectedInvoice.status !== (InvoiceStatus.REJECTED as any) &&
+                selectedInvoice.status !== (InvoiceStatus.PAYMENT_CONFIRMATION_SENT as any) &&
+                user && hasPermission(user.role, 'canHoldInvoice') && (
+                <button
+                  onClick={handleHoldForBatchThreshold}
+                  disabled={holdingInvoice}
+                  className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
+                  style={holdingInvoice ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'color-mix(in srgb, var(--accent-amber) 15%, transparent)', color: 'var(--accent-amber)', border: '1px solid color-mix(in srgb, var(--accent-amber) 25%, transparent)' }}
+                >
+                  {holdingInvoice ? <Loader2 className="h-4 w-4 mr-2 animate-spin" strokeWidth={1.75} /> : <Pause className="h-4 w-4 mr-2" strokeWidth={1.75} />}
+                  {holdingInvoice ? 'Holding...' : 'Hold for Batch Threshold'}
+                </button>
+              )}
+
               {/* Payment Scheduling */}
               {selectedInvoice.status === (InvoiceStatus.POSTED_TO_QB as any) && user && hasPermission(user.role, 'canSchedulePayment') && (
                 <button
@@ -2694,15 +2689,20 @@ export default function Dashboard() {
             {detailTab === 'validation' && (
             <div className="space-y-4">
               {validationResult && (
-                <div className={`mt-4 p-4 rounded-lg border`} style={{ background: validationResult.passed ? 'color-mix(in srgb, var(--accent-lime) 10%, transparent)' : 'color-mix(in srgb, var(--accent-red) 10%, transparent)', border: `1px solid ${validationResult.passed ? 'color-mix(in srgb, var(--accent-lime) 20%, transparent)' : 'color-mix(in srgb, var(--accent-red) 20%, transparent)'}` }}>
+                <div className={`mt-4 p-4 rounded-lg border`} style={{ background: (validationResult.passed || validationResult.allExceptionsHandled) ? 'color-mix(in srgb, var(--accent-lime) 10%, transparent)' : 'color-mix(in srgb, var(--accent-red) 10%, transparent)', border: `1px solid ${(validationResult.passed || validationResult.allExceptionsHandled) ? 'color-mix(in srgb, var(--accent-lime) 20%, transparent)' : 'color-mix(in srgb, var(--accent-red) 20%, transparent)'}` }}>
                   <div className="flex items-center justify-between mb-3">
-                    <p className="text-sm font-semibold" style={{ color: validationResult.passed ? 'var(--accent-lime)' : 'var(--accent-red)' }}>
-                      {validationResult.passed ? '✓ Validation Passed' : '✗ Validation Failed'}
+                    <p className="text-sm font-semibold" style={{ color: (validationResult.passed || validationResult.allExceptionsHandled) ? 'var(--accent-lime)' : 'var(--accent-red)' }}>
+                      {validationResult.passed ? '✓ Validation Passed' : validationResult.allExceptionsHandled ? '✓ Validation Passed — All Exceptions Resolved/Waived' : '✗ Validation Failed'}
                     </p>
                     <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
                       {validationResult.results.filter((r: any) => r.passed).length}/{validationResult.results.length} rules passed
                     </span>
                   </div>
+                  {validationResult.allExceptionsHandled && !validationResult.passed && (
+                    <div className="mb-3 p-2 rounded-lg text-xs" style={{ background: 'color-mix(in srgb, var(--accent-lime) 8%, transparent)', color: 'var(--accent-lime)' }}>
+                      All failing rules were previously resolved or waived by a coordinator. The invoice has been advanced to the approval workflow.
+                    </div>
+                  )}
 
                   {/* Rule Categories */}
                   <div className="space-y-3">
@@ -2758,10 +2758,10 @@ export default function Dashboard() {
                       </div>
                     </div>
 
-                    {/* NextGen PO Cross-Check - Highlighted */}
+                    {/* NextGen MPO Cross-Check - Highlighted */}
                     <div className={`p-2 rounded border`} style={{ background: validationResult.results[16]?.passed ? 'color-mix(in srgb, var(--accent-lime) 10%, transparent)' : 'color-mix(in srgb, var(--accent-red) 10%, transparent)', border: `1px solid ${validationResult.results[16]?.passed ? 'color-mix(in srgb, var(--accent-lime) 20%, transparent)' : 'color-mix(in srgb, var(--accent-red) 20%, transparent)'}` }}>
                       <p className="text-xs font-medium mb-1 flex items-center" style={{ color: 'var(--text-muted)' }}>
-                        <span className="mr-1">🔗</span> NextGen PO Cross-Check
+                        <span className="mr-1">🔗</span> NextGen MPO Cross-Check
                       </p>
                       <div className="space-y-1">
                         {validationResult.results.slice(16, 17).map((result: any, idx: number) => (
@@ -2792,16 +2792,29 @@ export default function Dashboard() {
                 </div>
               )}
 
-              {selectedInvoice.exceptions && selectedInvoice.exceptions.length > 0 && (
-                <div className="mt-4 p-4 rounded-lg" style={{ background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}>
-                  <p className="text-sm font-semibold mb-2" style={{ color: 'var(--accent-red)' }}>Exceptions</p>
-                  {selectedInvoice.exceptions.map((exc) => (
+              {selectedInvoice.exceptions && selectedInvoice.exceptions.length > 0 && (() => {
+                const activeExcs = selectedInvoice.exceptions.filter((exc) => exc.status === 'OPEN' || exc.status === 'PENDING');
+                const resolvedExcs = selectedInvoice.exceptions.filter((exc) => exc.status === 'RESOLVED' || exc.status === 'WAIVED');
+                const hasActive = activeExcs.length > 0;
+                const accentVar = hasActive ? 'var(--accent-red)' : 'var(--accent-lime)';
+                return (
+                <div className="mt-4 p-4 rounded-lg" style={{ background: `color-mix(in srgb, ${accentVar} 10%, transparent)`, border: `1px solid color-mix(in srgb, ${accentVar} 20%, transparent)` }}>
+                  <p className="text-sm font-semibold mb-2" style={{ color: accentVar }}>Exceptions</p>
+                  {activeExcs.map((exc) => (
                     <p key={exc.id} className="text-xs" style={{ color: 'var(--accent-red)' }}>
                       {exc.reason}: {exc.detail}
                     </p>
                   ))}
+                  {resolvedExcs.map((exc) => (
+                    <p key={exc.id} className="text-xs flex items-center gap-1" style={{ color: 'var(--accent-lime)' }}>
+                      <CheckCircle className="h-3 w-3" strokeWidth={1.75} />
+                      <span style={{ textDecoration: 'line-through', opacity: 0.7 }}>{exc.reason}: {exc.detail}</span>
+                      <span className="ml-1 px-1.5 py-0.5 text-[10px] rounded-full" style={{ background: 'color-mix(in srgb, var(--accent-lime) 15%, transparent)' }}>{exc.status}</span>
+                    </p>
+                  ))}
                 </div>
-              )}
+                );
+              })()}
 
               {!validationResult && (
                 <div className="text-center py-8">
@@ -2859,6 +2872,91 @@ export default function Dashboard() {
                   style={!rejectReason.trim() ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--accent-red)', color: 'var(--text-inverse)' }}
                 >
                   Confirm Rejection
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Return to Previous Approver Modal */}
+      {showReturnModal && (
+        <div className="fixed inset-0 flex items-center justify-center z-50 animate-backdrop" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
+          <div className="max-w-md w-full mx-2 sm:mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+            <div className="p-6">
+              <h3 className="text-lg font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
+                Return to Previous Approver
+              </h3>
+              <p className="text-sm mb-4" style={{ color: 'var(--text-muted)' }}>
+                This will send the invoice back to the previous approver for corrections. Please provide a reason.
+              </p>
+              <textarea
+                value={returnReason}
+                onChange={(e) => setReturnReason(e.target.value)}
+                placeholder="Reason for returning this invoice..."
+                className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                rows={4}
+                autoFocus
+              />
+              <div className="mt-4 flex justify-end space-x-3">
+                <button
+                  onClick={() => { setShowReturnModal(false); setReturnReason(''); }}
+                  className="px-4 py-2 transition-colors text-sm"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleReturnForCorrection}
+                  disabled={!returnReason.trim()}
+                  className="px-4 py-2 rounded-xl transition-colors text-sm font-medium"
+                  style={!returnReason.trim() ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--accent-amber)', color: 'var(--bg-base)' }}
+                >
+                  Return Invoice
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteModal && selectedInvoice && (
+        <div className="fixed inset-0 flex items-center justify-center z-50 animate-backdrop" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
+          <div className="max-w-md w-full mx-2 sm:mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+            <div className="p-6">
+              <div className="flex items-start gap-3 mb-4">
+                <div className="p-2.5 rounded-xl flex-shrink-0" style={{ background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)' }}>
+                  <AlertTriangle className="h-5 w-5" style={{ color: 'var(--accent-red)' }} strokeWidth={1.75} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    Delete Invoice
+                  </h3>
+                  <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>
+                    Are you sure you want to delete invoice <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.invoice_number}</span>? This action cannot be undone.
+                  </p>
+                </div>
+              </div>
+              <div className="flex justify-end space-x-3">
+                <button
+                  onClick={() => setShowDeleteModal(false)}
+                  className="px-4 py-2 transition-colors text-sm"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteInvoice}
+                  className="px-4 py-2 rounded-xl transition-colors text-sm font-medium"
+                  style={{ background: 'var(--accent-red)', color: 'white' }}
+                >
+                  Delete Permanently
                 </button>
               </div>
             </div>
@@ -2991,7 +3089,13 @@ export default function Dashboard() {
                     { value: 'PREPAID', label: 'Prepaid' },
                     { value: 'PROTO_SAMPLE', label: 'Proto Sample' },
                   ] },
-                  { label: 'Payment Terms', field: 'payment_terms', type: 'text' },
+                  { label: 'Payment Terms', field: 'payment_terms', type: 'select', options: [
+                    { value: '', label: '— Select —' },
+                    ...paymentTermsOptions.map((t: string) => ({ value: t, label: t })),
+                    ...((editFormData.payment_terms && !paymentTermsOptions.includes(editFormData.payment_terms))
+                      ? [{ value: editFormData.payment_terms, label: editFormData.payment_terms + ' (current)' }]
+                      : []),
+                  ] },
                   { label: 'Incoterm', field: 'incoterm', type: 'text' },
                 ]},
                 { title: 'Classification', fields: [
@@ -3061,6 +3165,9 @@ export default function Dashboard() {
                 ]},
               ] as any[]).map((section) => {
                 const isCollapsed = editCollapsed[section.title];
+                const isBankSection = section.title === 'Bank Details';
+                const canEditBank = user ? hasPermission(user.role, 'canEditBankDetails') : false;
+                const isReadOnly = isBankSection && !canEditBank;
                 return (
                 <div key={section.title} className="mb-3 rounded-xl overflow-hidden" style={{ border: '1px solid var(--border-color)' }}>
                   <button
@@ -3074,6 +3181,7 @@ export default function Dashboard() {
                     <ChevronRight className="h-4 w-4 transition-transform" style={{ color: 'var(--text-muted)', transform: isCollapsed ? 'rotate(0deg)' : 'rotate(90deg)' }} />
                   </button>
                   {!isCollapsed && (
+                    <>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
                       {section.fields.map(({ label, field, type, options }: any) => (
                         <div key={field}>
@@ -3091,18 +3199,71 @@ export default function Dashboard() {
                                 <option key={opt.value} value={opt.value}>{opt.label}</option>
                               ))}
                             </select>
+                          ) : type === 'datalist' ? (
+                            <>
+                              <input
+                                type="text"
+                                list={`datalist-${field}`}
+                                value={editFormData[field] || ''}
+                                onChange={(e) => handleEditChange(field, e.target.value)}
+                                disabled={isReadOnly}
+                                readOnly={isReadOnly}
+                                className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                                style={{
+                                  background: isReadOnly ? 'var(--bg-base)' : 'var(--bg-elevated)',
+                                  border: '1px solid var(--border-color)',
+                                  color: isReadOnly ? 'var(--text-muted)' : 'var(--text-primary)',
+                                  cursor: isReadOnly ? 'not-allowed' : 'text',
+                                  opacity: isReadOnly ? 0.7 : 1,
+                                }}
+                              />
+                              <datalist id={`datalist-${field}`}>
+                                {options.map((opt: any) => (
+                                  <option key={opt.value} value={opt.value} />
+                                ))}
+                              </datalist>
+                            </>
                           ) : (
                             <input
                               type={type}
                               value={editFormData[field] || ''}
                               onChange={(e) => handleEditChange(field, e.target.value)}
+                              disabled={isReadOnly}
+                              readOnly={isReadOnly}
                               className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
-                              style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                              style={{
+                                background: isReadOnly ? 'var(--bg-base)' : 'var(--bg-elevated)',
+                                border: '1px solid var(--border-color)',
+                                color: isReadOnly ? 'var(--text-muted)' : 'var(--text-primary)',
+                                cursor: isReadOnly ? 'not-allowed' : 'text',
+                                opacity: isReadOnly ? 0.7 : 1,
+                              }}
                             />
                           )}
                         </div>
                       ))}
                     </div>
+                    {isReadOnly && (
+                      <div className="px-4 pb-4">
+                        <div className="p-3 rounded-xl flex items-start gap-2 mb-3" style={{ background: 'color-mix(in srgb, var(--accent-amber) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}>
+                          <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" style={{ color: 'var(--accent-amber)' }} strokeWidth={1.75} />
+                          <p className="text-xs" style={{ color: 'var(--accent-amber)' }}>
+                            Bank details can only be edited by Accounting. Click below to request a change.
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => { setBankChangeField(''); setBankChangeValue(''); setBankChangeReason(''); setBankChangeAttachment(null); setShowBankChangeModal(true); }}
+                          className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all"
+                          style={{ background: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', color: 'var(--accent-blue)', border: '1px solid color-mix(in srgb, var(--accent-blue) 20%, transparent)' }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-blue) 20%, transparent)'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-blue) 10%, transparent)'; }}
+                        >
+                          <Edit className="h-4 w-4" strokeWidth={1.75} />
+                          Request Bank Details Change
+                        </button>
+                      </div>
+                    )}
+                    </>
                   )}
                 </div>
                 );
@@ -3205,6 +3366,217 @@ export default function Dashboard() {
 
       {/* Upload Invoice Modal */}
       <UploadInvoiceModal isOpen={showUploadModal} onClose={() => setShowUploadModal(false)} />
+
+      {/* Hold for Batch Threshold Modal */}
+      {showHoldModal && selectedInvoice && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.5)' }} onClick={() => !holdingInvoice && setShowHoldModal(false)}>
+          <div className="w-full max-w-md rounded-2xl p-6 animate-scale-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 24px 64px rgba(0,0,0,0.3)' }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="rounded-xl p-2.5" style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)' }}>
+                <Pause className="h-5 w-5" style={{ color: 'var(--accent-amber)' }} strokeWidth={1.75} />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Hold for Batch Threshold</h3>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Invoice will be held until vendor cumulative reaches $100</p>
+              </div>
+            </div>
+
+            <div className="space-y-3 mb-4">
+              <div className="rounded-xl p-3" style={{ background: 'var(--bg-elevated)' }}>
+                <div className="flex justify-between text-sm">
+                  <span style={{ color: 'var(--text-muted)' }}>Invoice</span>
+                  <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.invoice_number}</span>
+                </div>
+                <div className="flex justify-between text-sm mt-1">
+                  <span style={{ color: 'var(--text-muted)' }}>Vendor</span>
+                  <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.vendor?.name || 'Unknown'}</span>
+                </div>
+                <div className="flex justify-between text-sm mt-1">
+                  <span style={{ color: 'var(--text-muted)' }}>Amount</span>
+                  <span className="font-medium" style={{ color: 'var(--text-primary)' }}>${Number(selectedInvoice.total_amount || 0).toFixed(2)}</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-muted)' }}>Reason</label>
+                <textarea
+                  value={holdReason}
+                  onChange={(e) => setHoldReason(e.target.value)}
+                  disabled={holdingInvoice}
+                  rows={3}
+                  className="w-full rounded-xl px-3 py-2 text-sm resize-none"
+                  style={{
+                    background: 'var(--bg-elevated)',
+                    border: '1px solid var(--border-color)',
+                    color: 'var(--text-primary)',
+                  }}
+                  placeholder="Enter reason for holding this invoice..."
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowHoldModal(false)}
+                disabled={holdingInvoice}
+                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium transition-all"
+                style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmHoldForBatchThreshold}
+                disabled={holdingInvoice}
+                className="flex-1 flex items-center justify-center px-4 py-2.5 rounded-xl text-sm font-medium transition-all"
+                style={holdingInvoice
+                  ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' }
+                  : { background: 'var(--accent-amber)', color: 'var(--text-inverse)' }}
+              >
+                {holdingInvoice ? <Loader2 className="h-4 w-4 mr-2 animate-spin" strokeWidth={1.75} /> : <Pause className="h-4 w-4 mr-2" strokeWidth={1.75} />}
+                {holdingInvoice ? 'Holding...' : 'Hold Invoice'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bank Details Change Request Modal */}
+      {showBankChangeModal && selectedInvoice && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.5)' }} onClick={() => !submittingBankChange && setShowBankChangeModal(false)}>
+          <div className="w-full max-w-md rounded-2xl p-6 animate-scale-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 24px 64px rgba(0,0,0,0.3)' }} onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Request Bank Details Change</h3>
+            <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>Invoice: {selectedInvoice.invoice_number} — {selectedInvoice.vendor?.name}</p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Field to Change</label>
+                <select
+                  value={bankChangeField}
+                  onChange={(e) => { setBankChangeField(e.target.value); setBankChangeValue(''); }}
+                  className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                  style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                >
+                  <option value="">Select a field...</option>
+                  <option value="bank_name">Bank Name</option>
+                  <option value="swift_code">SWIFT Code</option>
+                  <option value="account_number">Account Number</option>
+                </select>
+              </div>
+
+              {bankChangeField && (
+                <div>
+                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Current Value</label>
+                  <div className="px-3 py-2 rounded-xl text-sm" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
+                    {String((editFormData as any)[bankChangeField] || '—') || '—'}
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Requested New Value</label>
+                <input
+                  type="text"
+                  value={bankChangeValue}
+                  onChange={(e) => setBankChangeValue(e.target.value)}
+                  placeholder="Enter the correct value..."
+                  className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                  style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Reason for Change</label>
+                <textarea
+                  value={bankChangeReason}
+                  onChange={(e) => setBankChangeReason(e.target.value)}
+                  placeholder="Explain why this change is needed..."
+                  rows={3}
+                  className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm resize-none"
+                  style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
+                  Supporting Document <span style={{ color: 'var(--accent-red)' }}>*</span>
+                </label>
+                <div
+                  className="relative rounded-xl transition-all cursor-pointer"
+                  style={{
+                    background: 'var(--bg-elevated)',
+                    border: bankChangeAttachment ? '1px solid var(--accent-lime)' : '2px dashed var(--border-color)',
+                  }}
+                  onClick={() => document.getElementById('bank-change-attachment')?.click()}
+                  onMouseEnter={(e) => { if (!bankChangeAttachment) e.currentTarget.style.borderColor = 'var(--accent-blue)'; }}
+                  onMouseLeave={(e) => { if (!bankChangeAttachment) e.currentTarget.style.borderColor = 'var(--border-color)'; }}
+                >
+                  <input
+                    id="bank-change-attachment"
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png"
+                    style={{ display: 'none' }}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) setBankChangeAttachment(file);
+                    }}
+                  />
+                  {bankChangeAttachment ? (
+                    <div className="flex items-center justify-between px-3 py-2.5">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Paperclip className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--accent-lime)' }} strokeWidth={1.75} />
+                        <span className="text-sm truncate" style={{ color: 'var(--text-primary)' }}>{bankChangeAttachment.name}</span>
+                      </div>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setBankChangeAttachment(null); }}
+                        className="flex-shrink-0 p-1 rounded transition-colors"
+                        style={{ color: 'var(--text-muted)' }}
+                        onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-red)'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
+                      >
+                        <X className="h-4 w-4" strokeWidth={1.75} />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-4 px-3 text-center">
+                      <Upload className="h-5 w-5 mb-1.5" style={{ color: 'var(--text-muted)' }} strokeWidth={1.75} />
+                      <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>Click to upload supporting document</p>
+                      <p className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>PDF, JPG, or PNG (max 10MB)</p>
+                    </div>
+                  )}
+                </div>
+                {!bankChangeAttachment && (
+                  <p className="text-[10px] mt-1" style={{ color: 'var(--accent-amber)' }}>
+                    Attachment is required — e.g. vendor email, bank letter, or invoice copy
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => !submittingBankChange && setShowBankChangeModal(false)}
+                disabled={submittingBankChange}
+                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium transition-all"
+                style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRequestBankChange}
+                disabled={!bankChangeField || !bankChangeValue.trim() || !bankChangeReason.trim() || !bankChangeAttachment || submittingBankChange}
+                className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all"
+                style={!bankChangeField || !bankChangeValue.trim() || !bankChangeReason.trim() || !bankChangeAttachment || submittingBankChange
+                  ? { background: 'var(--bg-elevated)', color: 'var(--text-muted)', cursor: 'not-allowed' }
+                  : { background: 'var(--accent-blue)', color: 'var(--text-inverse)' }}
+              >
+                {submittingBankChange ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.75} /> : <Send className="h-4 w-4" strokeWidth={1.75} />}
+                {submittingBankChange ? 'Submitting...' : 'Submit Request'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
+
   );
 }

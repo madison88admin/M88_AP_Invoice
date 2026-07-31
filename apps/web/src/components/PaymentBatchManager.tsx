@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { Package, Play, X, AlertCircle, CheckCircle, Clock, DollarSign, ArrowLeft, CheckSquare, Calendar, Loader2, Paperclip } from 'lucide-react';
-import { paymentBatchApi } from '../lib/api';
+import { paymentBatchApi, vendorApi } from '../lib/api';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -84,6 +84,7 @@ export default function PaymentBatchManager() {
   const [actionLoading, setActionLoading] = useState(false);
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [filters, setFilters] = useState({ vendorId: '', currency: '', dateFrom: '', dateTo: '', search: '' });
+  const [vendorList, setVendorList] = useState<{ id: string; name: string }[]>([]);
 
   const isAssociate = user?.role === 'ACCOUNTING_ASSOCIATE';
   const isSupervisor = user?.role === 'ACCOUNTING_SUPERVISOR';
@@ -162,7 +163,14 @@ export default function PaymentBatchManager() {
   useEffect(() => {
     const init = async () => {
       setLoading(true);
-      await Promise.all([loadBatches(), loadScheduledPayments()]);
+      await Promise.all([
+        loadBatches(),
+        loadScheduledPayments(),
+        vendorApi.getAll().then((res) => {
+          const vendors = (res.data || []).map((v: any) => ({ id: v.id, name: v.name }));
+          setVendorList(vendors);
+        }).catch(() => setVendorList([])),
+      ]);
       setLoading(false);
     };
     init();
@@ -440,11 +448,11 @@ export default function PaymentBatchManager() {
                 <input value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} placeholder="Invoice, MPO, material, vendor" className="px-3 py-2 rounded-lg text-sm" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }} />
                 <select value={filters.vendorId} onChange={(e) => setFilters({ ...filters, vendorId: e.target.value })} className="px-3 py-2 rounded-lg text-sm" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}>
                   <option value="">All vendors</option>
-                  {Array.from(new Map(scheduledPayments.filter(p => p.invoice.vendor.id).map(p => [p.invoice.vendor.id!, p.invoice.vendor.name])).entries()).map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+                  {vendorList.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
                 </select>
                 <select value={filters.currency} onChange={(e) => setFilters({ ...filters, currency: e.target.value })} className="px-3 py-2 rounded-lg text-sm" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}>
                   <option value="">All currencies</option>
-                  {Array.from(new Set(scheduledPayments.map(p => p.currency))).map(currency => <option key={currency} value={currency}>{currency}</option>)}
+                  {Array.from(new Set([...scheduledPayments.map(p => p.currency), 'USD', 'EUR', 'GBP', 'CNY', 'HKD'])).sort().map(currency => <option key={currency} value={currency}>{currency}</option>)}
                 </select>
                 <input type="date" value={filters.dateFrom} onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value })} className="px-3 py-2 rounded-lg text-sm" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }} />
                 <input type="date" value={filters.dateTo} onChange={(e) => setFilters({ ...filters, dateTo: e.target.value })} className="px-3 py-2 rounded-lg text-sm" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }} />

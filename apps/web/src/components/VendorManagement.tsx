@@ -22,9 +22,9 @@ export default function VendorManagement() {
   const [bankRequestData, setBankRequestData] = useState({ bank_name: '', swift_code: '', account_number: '', reason: '' });
   const [submittingRequest, setSubmittingRequest] = useState(false);
 
-  const canAddVendor = user && ['PURCHASING_COORDINATOR', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role);
+  const canAddVendor = user && ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role);
   const canEditBankInfo = user && ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role);
-  const canEditVendor = user && ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role);
+  const canEditVendor = user && ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role);
 
   const handleAdd = () => {
     setIsAddMode(true);
@@ -47,7 +47,12 @@ export default function VendorManagement() {
 
   const filteredVendors = vendors.filter(vendor =>
     vendor.name.toLowerCase().includes(search.toLowerCase()) ||
-    vendor.name_aliases.some(alias => alias.toLowerCase().includes(search.toLowerCase()))
+    vendor.name_aliases.some(alias => alias.toLowerCase().includes(search.toLowerCase())) ||
+    (vendor.beneficiary_name || '').toLowerCase().includes(search.toLowerCase()) ||
+    (vendor.bank_name || '').toLowerCase().includes(search.toLowerCase()) ||
+    (vendor.swift_code || '').toLowerCase().includes(search.toLowerCase()) ||
+    (vendor.account_number || '').toLowerCase().includes(search.toLowerCase()) ||
+    (vendor.classification || '').toLowerCase().includes(search.toLowerCase())
   );
 
   const handleEdit = (vendor: MockVendor) => {

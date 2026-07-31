@@ -78,6 +78,8 @@ const apiVendorToMock = (vendor: any): MockVendor => ({
   brand_code: vendor.brand_code || undefined,
   brand_name: vendor.brand_name || undefined,
   brand_tier: vendor.brand_tier || undefined,
+  beneficiary_name: vendor.beneficiary_name || undefined,
+  classification: vendor.classification || undefined,
 });
 
 const apiInvoiceToMock = (invoice: any): MockInvoice => {

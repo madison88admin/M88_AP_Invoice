@@ -22,9 +22,28 @@ export const invoiceApi = {
   getAll: (filters?: any) => api.get('/api/invoices', { params: filters }),
   getById: (id: string) => api.get(`/api/invoices/${id}`),
   getTimeline: (id: string) => api.get(`/api/invoices/${id}/timeline`),
+  getPaymentTerms: () => api.get('/api/invoices/metadata/payment-terms'),
   create: (data: any) => api.post('/api/invoices', data),
   updateStatus: (id: string, status: string) => api.patch(`/api/invoices/${id}/status`, { status }),
   update: (id: string, data: any) => api.patch(`/api/invoices/${id}`, data),
+  requestBankChange: (id: string, data: { field: string; current_value: string; requested_value: string; reason: string; attachment?: File }) => {
+    const formData = new FormData();
+    formData.append('field', data.field);
+    formData.append('current_value', data.current_value);
+    formData.append('requested_value', data.requested_value);
+    formData.append('reason', data.reason);
+    if (data.attachment) {
+      formData.append('attachment', data.attachment);
+    }
+    return api.post(`/api/invoices/${id}/request-bank-change`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  getBankChangeRequests: () => api.get('/api/invoices/bank-change-requests'),
+  getBankChangeRequestsForInvoice: (id: string) => api.get(`/api/invoices/${id}/bank-change-requests`),
+  downloadBankChangeAttachment: (requestId: string) => api.get(`/api/invoices/bank-change-requests/${requestId}/attachment`, { responseType: 'blob' }),
+  approveBankChangeRequest: (requestId: string) => api.post(`/api/invoices/bank-change-requests/${requestId}/approve`),
+  rejectBankChangeRequest: (requestId: string, reason?: string) => api.post(`/api/invoices/bank-change-requests/${requestId}/reject`, { reason }),
   upload: async (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
@@ -75,6 +94,7 @@ export const invoiceApi = {
   returnForCorrection: (id: string, reason: string, targetRole?: string) => api.post(`/api/invoices/${id}/return`, { reason, targetRole }),
   post: (id: string, bypassVarianceCheck: boolean = false) => api.post(`/api/invoices/${id}/post`, { bypassVarianceCheck }),
   releaseHold: (id: string) => api.post(`/api/invoices/${id}/release-hold`),
+  holdForBatchThreshold: (id: string, reason?: string) => api.post(`/api/invoices/${id}/hold`, { reason }),
   checkNextGen: async (id: string) => {
     const res = await api.post(`/api/invoices/${id}/check-nextgen`, {}, { timeout: 30000 });
     const jobId = res.data.jobId;

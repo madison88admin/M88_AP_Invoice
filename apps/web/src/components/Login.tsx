@@ -9,7 +9,6 @@ const QUICK_LOGINS = [
   { label: 'Glecie', role: 'Planning Mgr', email: 'glecie.yumena@madison88.com', password: 'madison88' },
   { label: 'Lindsey', role: 'Sr Manager', email: 'lindsey.castro@madison88.com', password: 'madison88' },
   { label: 'Polly', role: 'Ms Polly', email: 'polly.madison@madison88.com', password: 'madison88' },
-  { label: 'JC', role: 'SuperAdmin', email: 'jc@madison88.com', password: 'madison88' },
 ];
 
 const FEATURES = [
@@ -32,9 +31,8 @@ export default function Login() {
     setError('');
     setLoading(true);
 
-    // Normal accounts authenticate against NextGen. In local development, allow
-    // the backend-controlled demo route as a fallback for the listed demo users.
-    const success = await login(email, password) || await demoLogin(email, password);
+    // Login checks DEMO_USERS (live emails) first, then falls back to NextGen
+    const success = await login(email, password);
     if (success) {
       navigate('/dashboard');
     } else {
@@ -49,11 +47,11 @@ export default function Login() {
     setPassword(quickPassword);
     setError('');
     setLoading(true);
-    const success = await demoLogin(quickEmail, quickPassword);
+    const success = await login(quickEmail, quickPassword);
     if (success) {
       navigate('/dashboard');
     } else {
-      setError('Demo login failed or is disabled');
+      setError('Login failed');
     }
     setLoading(false);
   };

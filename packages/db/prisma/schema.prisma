@@ -629,3 +629,18 @@ model Notification {
   @@index([invoice_id])
   @@map("APInvoice_Notification")
 }
+
+model User {
+  id            String   @id @default(uuid())
+  name          String
+  email         String   @unique
+  role          String
+  password_hash String
+  active        Boolean  @default(true)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  @@index([email])
+  @@index([role])
+  @@map("APInvoice_User")
+}

@@ -4,6 +4,8 @@ import { UserRole } from '@ap-invoice/shared';
 import { AppError } from '../middleware/errorHandler';
 import { validateNextGenCredentials } from '../services/nextGenAuthService';
 import { logAudit } from '../services/auditLogService';
+import prisma from '../config/database';
+import crypto from 'crypto';
 
 const router = Router() as Router;
 
@@ -17,7 +19,7 @@ const DEMO_USERS = [
   { email: 'maryan.untiveros@madison88.com', name: 'Maryan', role: 'MLO_ACCOUNT_HOLDER', password: 'madison88' },
   { email: 'lindsey.castro@madison88.com', name: 'Lindsey', role: 'SR_MANAGER_GLOBAL_PRODUCTION', password: 'madison88' },
   { email: 'polly.madison@madison88.com', name: 'Polly', role: 'MS_POLLY', password: 'madison88' },
-  { email: 'jc@madison88.com', name: 'JC', role: 'SUPERADMIN', password: 'madison88' },
+  { email: 'jc@madison88.com', name: 'JC', role: 'SUPERADMIN', password: 'Ar5yG3#4' },
   // Live accounts — short email aliases
   { email: 'meann@madison88.com', name: 'Meann', role: 'PURCHASING_MANAGER', password: 'madison88' },
   { email: 'maricar@madison88.com', name: 'Maricar', role: 'PURCHASING_MANAGER', password: 'madison88' },
@@ -148,14 +150,53 @@ router.post('/login', async (req, res, next) => {
       throw new AppError('Email and password are required', 400);
     }
 
+    if (!process.env.JWT_SECRET) {
+      throw new AppError('JWT_SECRET is not configured', 500);
+    }
+
+    // 1. Check DEMO_USERS (live email accounts) first
+    const demoUser = DEMO_USERS.find(
+      (u) => u.email.toLowerCase() === identifier.toLowerCase() && u.password === password
+    );
+
+    if (demoUser) {
+      await logAudit({
+        performed_by: demoUser.name,
+        action: 'USER_LOGIN',
+        note: `User ${demoUser.name} (${demoUser.email}) logged in as ${demoUser.role}`,
+      });
+      return res.json(buildAuthResponse(demoUser, demoUser.name));
+    }
+
+    // 2. Check database (users created/updated via User Management)
+    const passwordHash = crypto.createHash('sha256').update(password).digest('hex');
+    const dbUser = await prisma.user.findFirst({
+      where: {
+        email: { equals: identifier.toLowerCase(), mode: 'insensitive' },
+        password_hash: passwordHash,
+        active: true,
+      },
+    });
+
+    if (dbUser) {
+      const userObj = {
+        email: dbUser.email,
+        name: dbUser.name,
+        role: dbUser.role,
+      };
+      await logAudit({
+        performed_by: dbUser.name,
+        action: 'USER_LOGIN',
+        note: `User ${dbUser.name} (${dbUser.email}) logged in as ${dbUser.role}`,
+      });
+      return res.json(buildAuthResponse(userObj, dbUser.id));
+    }
+
+    // 3. Fall back to NextGen authentication
     const nextGenUsername = email ? extractUsernameFromEmail(email) : identifier;
     const valid = await validateNextGenCredentials(nextGenUsername, password);
     if (!valid) {
       throw new AppError('Invalid credentials', 401);
-    }
-
-    if (!process.env.JWT_SECRET) {
-      throw new AppError('JWT_SECRET is not configured', 500);
     }
 
     const role = getRoleForUsername(nextGenUsername);

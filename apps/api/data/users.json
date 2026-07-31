@@ -54,10 +54,10 @@
     "name": "JC",
     "email": "jc@madison88.com",
     "role": "SUPERADMIN",
-    "passwordHash": "d36f68eb883a586aef7f91e62eb97b836c614e68f05f248a0b672a7f5a57c0d1",
+    "passwordHash": "14c5ff6087d2c91b27f06cd6c676d5d475f03c77694ba3b20b3c0e96f3f47051",
     "active": true,
     "createdAt": "2026-07-10T06:29:26.220Z",
-    "updatedAt": "2026-07-10T06:29:26.220Z"
+    "updatedAt": "2026-07-31T07:31:00.514Z"
   },
   {
     "id": "ms8krwritud3",

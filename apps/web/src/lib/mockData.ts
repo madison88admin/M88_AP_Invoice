@@ -73,6 +73,16 @@ export interface MockInvoice {
   date_range_end?: string;
   priority_pay_date?: string;
   is_handwritten?: boolean;
+  payments?: {
+    id: string;
+    status: string;
+    payment_date?: string;
+    amount: number;
+    currency: string;
+    reference?: string;
+    bank_used?: string;
+    batch_id?: string;
+  }[];
   po_validation?: {
     po_found: boolean;
     is_match?: boolean;

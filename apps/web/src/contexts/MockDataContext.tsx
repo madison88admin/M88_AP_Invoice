@@ -175,6 +175,16 @@ const apiInvoiceToMock = (invoice: any): MockInvoice => {
     date_range_start: invoice.date_range_start ? dateToString(invoice.date_range_start) : undefined,
     date_range_end: invoice.date_range_end ? dateToString(invoice.date_range_end) : undefined,
     priority_pay_date: invoice.priority_pay_date ? dateToString(invoice.priority_pay_date) : undefined,
+    payments: (invoice.payments || []).map((p: any) => ({
+      id: p.id || '',
+      status: p.status || 'SCHEDULED',
+      payment_date: p.payment_date ? dateToString(p.payment_date) : undefined,
+      amount: Number(p.amount || 0),
+      currency: p.currency || 'USD',
+      reference: p.reference || undefined,
+      bank_used: p.bank_used || undefined,
+      batch_id: p.batch_id || undefined,
+    })),
   };
 };
 

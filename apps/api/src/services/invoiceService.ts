@@ -430,6 +430,7 @@ export const getInvoiceById = async (id: string) => {
       },
       invoice_lines: true,
       workflow_actions: { orderBy: { created_at: 'desc' } },
+      payments: { orderBy: { created_at: 'desc' } },
     },
   });
 

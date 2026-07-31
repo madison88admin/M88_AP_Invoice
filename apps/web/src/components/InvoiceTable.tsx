@@ -150,6 +150,9 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
             <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
               Status
             </th>
+            <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '120px', color: 'var(--text-muted)' }}>
+              Pay Date
+            </th>
             <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '160px', color: 'var(--text-muted)' }}>
               NextGen Validation
             </th>
@@ -346,6 +349,30 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
                     );
                   })()}
                 </div>
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap" style={{ width: '120px' }}>
+                {(() => {
+                  const payments = (invoice as any).payments;
+                  const scheduledPayment = Array.isArray(payments) ? payments.find((p: any) => p.status === 'SCHEDULED' || p.status === 'PAID') : null;
+                  if (!scheduledPayment) return <span className="text-xs" style={{ color: 'var(--text-muted)' }}>—</span>;
+                  const payDate = new Date(scheduledPayment.payment_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+                  const isPaid = scheduledPayment.status === 'PAID';
+                  return (
+                    <span
+                      className="px-2 py-1 inline-flex text-xs font-semibold rounded-full w-fit items-center gap-1"
+                      style={{
+                        background: isPaid
+                          ? 'color-mix(in srgb, var(--accent-lime) 10%, transparent)'
+                          : 'color-mix(in srgb, var(--accent-purple) 10%, transparent)',
+                        color: isPaid ? 'var(--accent-lime)' : 'var(--accent-purple)',
+                        border: `1px solid color-mix(in srgb, ${isPaid ? 'var(--accent-lime)' : 'var(--accent-purple)'} 20%, transparent)`,
+                      }}
+                    >
+                      <Calendar className="h-3 w-3" strokeWidth={2} />
+                      {payDate}
+                    </span>
+                  );
+                })()}
               </td>
               <td className="px-6 py-4 whitespace-nowrap" style={{ width: '160px' }} onClick={(e) => e.stopPropagation()}>
                 <POValidationBadge

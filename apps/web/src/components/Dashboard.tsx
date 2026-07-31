@@ -2207,6 +2207,48 @@ export default function Dashboard() {
                 </div>
               </div>
 
+              {/* Scheduled Payment Date — visible to all users */}
+              {(() => {
+                const payments = (selectedInvoice as any).payments;
+                const scheduledPayment = Array.isArray(payments) ? payments.find((p: any) => p.status === 'SCHEDULED' || p.status === 'PAID') : null;
+                if (!scheduledPayment) return null;
+                const payDate = new Date(scheduledPayment.payment_date).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+                const isPaid = scheduledPayment.status === 'PAID';
+                return (
+                  <div
+                    className="p-3 rounded-xl"
+                    style={{
+                      background: isPaid
+                        ? 'color-mix(in srgb, var(--accent-lime) 10%, transparent)'
+                        : 'color-mix(in srgb, var(--accent-purple) 10%, transparent)',
+                      border: `1px solid color-mix(in srgb, ${isPaid ? 'var(--accent-lime)' : 'var(--accent-purple)'} 20%, transparent)`,
+                    }}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-xs font-semibold" style={{ color: isPaid ? 'var(--accent-lime)' : 'var(--accent-purple)' }}>
+                          {isPaid ? '✓ Payment Executed' : '🗓 Payment Scheduled'}
+                        </p>
+                        <p className="text-sm mt-1 font-medium" style={{ color: 'var(--text-primary)' }}>
+                          {isPaid ? 'Paid on' : 'Scheduled for'}: {payDate}
+                        </p>
+                        {scheduledPayment.reference && (
+                          <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Ref: {scheduledPayment.reference}</p>
+                        )}
+                        {scheduledPayment.bank_used && (
+                          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Bank: {scheduledPayment.bank_used}</p>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <p className="text-lg font-bold" style={{ color: isPaid ? 'var(--accent-lime)' : 'var(--accent-purple)' }}>
+                          {scheduledPayment.currency} {Number(scheduledPayment.amount).toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Batch Threshold Indicator */}
               {selectedInvoice.status === (InvoiceStatus.ON_HOLD as any) && (
                 <div

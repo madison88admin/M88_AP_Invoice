@@ -162,6 +162,8 @@ export enum UserRole {
   CFO = 'CFO',
   PRESIDENT = 'PRESIDENT',
   IT_ADMIN = 'IT_ADMIN',
+  CC_REPORTS = 'CC_REPORTS',
+  INVOICE_UPLOADER = 'INVOICE_UPLOADER',
 }
 
 // ─── INTERFACES ───

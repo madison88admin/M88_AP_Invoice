@@ -33,18 +33,18 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { label: 'Dashboard', path: '/', icon: LayoutDashboard },
-  { label: 'Invoice Repository', path: '/repository', icon: ClipboardList },
+  { label: 'Invoice Repository', path: '/repository', icon: ClipboardList, roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'MLO_ACCOUNT_HOLDER', 'PLANNING_MANAGER', 'SR_MANAGER_GLOBAL_PRODUCTION', 'MS_POLLY', 'PRESIDENT', 'CC_REPORTS'] },
   { label: 'Purchasing Workbench', path: '/purchasing-workbench', icon: ScanSearch, roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN'] },
   { label: 'Approvals', path: '/approvals', icon: CheckSquare, badgeKey: 'approvals' },
   { label: 'Exceptions', path: '/exceptions', icon: AlertTriangle, badgeKey: 'exceptions' },
   { label: 'On-Hold Queue', path: '/on-hold-queue', icon: Pause, roles: ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'] },
   { label: 'Vendors', path: '/vendors', icon: Building2, roles: ['PURCHASING_COORDINATOR', 'IT_ADMIN', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE'], badgeKey: 'vendors' },
   { label: 'Batches', path: '/payment-batches', icon: Package, roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'batches' },
-  { label: 'Reports', path: '/reports', icon: BarChart3, roles: ['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'ACCOUNTING_ASSOCIATE'] },
+  { label: 'Reports', path: '/reports', icon: BarChart3, roles: ['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'ACCOUNTING_ASSOCIATE', 'CC_REPORTS'] },
   { label: 'Review', path: '/accounting-review', icon: FileSearch, roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'review' },
   { label: 'Audit Logs', path: '/audit-logs', icon: ClipboardList, roles: ['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'ACCOUNTING_ASSOCIATE'] },
-  { label: 'SLA Analytics', path: '/sla-analytics', icon: Gauge, roles: ['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'ACCOUNTING_ASSOCIATE'] },
-  { label: 'Extraction Analytics', path: '/extraction-analytics', icon: Activity, roles: ['PURCHASING_COORDINATOR', 'IT_ADMIN', 'ACCOUNTING_SUPERVISOR'] },
+  { label: 'SLA Analytics', path: '/sla-analytics', icon: Gauge, roles: ['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'ACCOUNTING_ASSOCIATE', 'CC_REPORTS'] },
+  { label: 'Extraction Analytics', path: '/extraction-analytics', icon: Activity, roles: ['PURCHASING_COORDINATOR', 'IT_ADMIN', 'ACCOUNTING_SUPERVISOR', 'CC_REPORTS'] },
 ];
 
 export default function Sidebar() {
@@ -64,6 +64,9 @@ export default function Sidebar() {
   const visibleItems = navItems.filter((item) => {
     if (user?.role === 'SUPERADMIN') {
       return item.label === 'Dashboard' || item.label === 'Audit Logs';
+    }
+    if (user?.role === 'INVOICE_UPLOADER') {
+      return item.label === 'Dashboard'; // Upload only — no invoice visibility
     }
     return !item.roles || item.roles.includes(user?.role || '') || user?.role === 'IT_ADMIN';
   });

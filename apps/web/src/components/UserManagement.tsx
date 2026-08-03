@@ -31,6 +31,8 @@ const ROLE_COLORS: Record<string, string> = {
   MS_POLLY: 'var(--accent-violet)',
   CFO: 'var(--accent-purple)',
   PRESIDENT: 'var(--accent-red)',
+  CC_REPORTS: 'var(--accent-blue)',
+  INVOICE_UPLOADER: 'var(--accent-lime)',
 };
 
 function getInitials(name: string): string {
@@ -82,7 +84,7 @@ export default function UserManagement() {
           'SUPERADMIN', 'ADMIN', 'ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR',
           'PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'MLO_ACCOUNT_HOLDER',
           'PLANNING_MANAGER', 'SR_MANAGER_GLOBAL_PRODUCTION', 'MS_POLLY',
-          'CFO', 'PRESIDENT', 'IT_ADMIN',
+          'CFO', 'PRESIDENT', 'IT_ADMIN', 'CC_REPORTS', 'INVOICE_UPLOADER',
         ]);
       }
     } catch (err) {

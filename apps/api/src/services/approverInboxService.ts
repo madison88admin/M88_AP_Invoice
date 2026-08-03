@@ -218,6 +218,8 @@ function mapUserRoleToSignatoryRoles(userRole: UserRole): SignatoryRole[] {
     [UserRole.SUPERADMIN]: [],
     [UserRole.ADMIN]: [],
     [UserRole.PRESIDENT]: [SignatoryRole.ACCOUNTING_REVIEWER],
+    [UserRole.CC_REPORTS]: [],
+    [UserRole.INVOICE_UPLOADER]: [],
   };
 
   return mapping[userRole] || [];

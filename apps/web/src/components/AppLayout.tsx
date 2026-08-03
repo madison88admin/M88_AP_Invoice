@@ -47,7 +47,7 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
       items: [
         { icon: LayoutDashboard, label: 'Dashboard', path: '/', badgeKey: 'dashboard', badgeColor: 'blue' },
         { icon: FileText, label: 'Invoice Repository', path: '/repository', badgeKey: 'repository', badgeColor: 'purple' },
-        { icon: Upload, label: 'Upload Invoice', path: '/upload', roles: ['PURCHASING_COORDINATOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'] },
+        { icon: Upload, label: 'Upload Invoice', path: '/upload', roles: ['PURCHASING_COORDINATOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN', 'INVOICE_UPLOADER'] },
       ],
     },
     {
@@ -69,9 +69,9 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
     {
       label: 'Analytics',
       items: [
-        { icon: BarChart3, label: 'Reports', path: '/reports', roles: ['PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'ACCOUNTING_ASSOCIATE'] },
-        { icon: Gauge, label: 'SLA Analytics', path: '/sla-analytics', roles: ['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'ACCOUNTING_ASSOCIATE'] },
-        { icon: Activity, label: 'Extraction Analytics', path: '/extraction-analytics', roles: ['PURCHASING_COORDINATOR', 'IT_ADMIN', 'ACCOUNTING_SUPERVISOR'] },
+        { icon: BarChart3, label: 'Reports', path: '/reports', roles: ['PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'ACCOUNTING_ASSOCIATE', 'CC_REPORTS'] },
+        { icon: Gauge, label: 'SLA Analytics', path: '/sla-analytics', roles: ['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'ACCOUNTING_ASSOCIATE', 'CC_REPORTS'] },
+        { icon: Activity, label: 'Extraction Analytics', path: '/extraction-analytics', roles: ['PURCHASING_COORDINATOR', 'IT_ADMIN', 'ACCOUNTING_SUPERVISOR', 'CC_REPORTS'] },
       ],
     },
     {
@@ -102,6 +102,9 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
     items: group.items.filter(item => {
       if (user?.role === 'SUPERADMIN') {
         return item.path === '/' || item.label === 'Audit Logs' || item.label === 'User Management' || item.label === 'System Configuration';
+      }
+      if (user?.role === 'INVOICE_UPLOADER') {
+        return item.path === '/' || item.label === 'Upload Invoice';
       }
       return !item.roles || item.roles.includes(user?.role || '') || user?.role === 'IT_ADMIN';
     }),

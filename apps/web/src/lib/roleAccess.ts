@@ -214,6 +214,47 @@ export const ROLE_PERMISSIONS = {
     canConfigureSystem: true,
     canViewInvoicesReadOnly: true,
   },
+  CC_REPORTS: {
+    canApprove: false,
+    canReject: false,
+    canPost: false,
+    canSchedulePayment: false,
+    canUpload: false,
+    canValidate: false,
+    canRequestApproval: false,
+    canViewAllInvoices: false,
+    canViewReports: true,
+    canViewFinancialReports: true,
+    canManageUsers: false,
+    canEditInvoice: false,
+    canEditBankDetails: false,
+    canDeleteInvoice: false,
+    canViewSystemHealth: false,
+    canViewErrorLogs: false,
+    canConfigureSystem: false,
+    canViewInvoicesReadOnly: true,
+  },
+  INVOICE_UPLOADER: {
+    canApprove: false,
+    canReject: false,
+    canPost: false,
+    canSchedulePayment: false,
+    canUpload: true,
+    canValidate: false,
+    canRequestApproval: false,
+    canViewAllInvoices: false,
+    canViewMyInvoices: false,
+    canViewReports: false,
+    canViewFinancialReports: false,
+    canManageUsers: false,
+    canEditInvoice: false,
+    canEditBankDetails: false,
+    canDeleteInvoice: false,
+    canViewSystemHealth: false,
+    canViewErrorLogs: false,
+    canConfigureSystem: false,
+    canViewOwnUploadsOnly: true,
+  },
 };
 
 // Role-based invoice stage access
@@ -229,6 +270,8 @@ export const ROLE_STAGE_ACCESS: Record<string, string[]> = {
   MS_POLLY: ['PENDING_POLLY'],
   PRESIDENT: ['PENDING_ACCOUNTING', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID'],
   IT_ADMIN: [], // System maintenance only; cannot approve/reject/hold
+  CC_REPORTS: [], // Reports only; no invoice stage access
+  INVOICE_UPLOADER: [], // Upload only; no invoice stage access
 };
 
 // Minimum invoice amount threshold per role (0 = no threshold, sees all tiers)
@@ -247,6 +290,8 @@ export const ROLE_TIER_THRESHOLD: Record<string, number> = {
   ACCOUNTING_ASSOCIATE: 0,          // All tiers (all go through accounting)
   ACCOUNTING_SUPERVISOR: 0,         // All tiers
   PRESIDENT: 0,                     // All tiers
+  CC_REPORTS: 0,                    // All tiers (read-only reports)
+  INVOICE_UPLOADER: 0,              // N/A — no invoice visibility
 };
 
 // Check if an invoice amount is within a role's tier threshold
@@ -281,6 +326,8 @@ export function canUserApproveStatus(role: string, status: string): boolean {
 // Get invoices filtered by role's accessible stages AND tier threshold
 export function filterInvoicesByRole(invoices: any[], role: string): any[] {
   if (role === 'SUPERADMIN') return []; // No invoice visibility
+  if (role === 'INVOICE_UPLOADER') return []; // No invoice visibility — upload only
+  if (role === 'CC_REPORTS') return invoices; // Read-only access to all invoices for reports
   if (['IT_ADMIN', 'PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'PRESIDENT'].includes(role)) return invoices;
   const accessibleStages = ROLE_STAGE_ACCESS[role];
   if (!accessibleStages || accessibleStages.length === 0) return invoices;

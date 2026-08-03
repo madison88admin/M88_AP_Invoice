@@ -6,7 +6,7 @@ export interface DuplicateDetectionResult {
   hash: string;
   existing_invoice_id?: string;
   existing_invoice_number?: string;
-  duplicate_type?: 'EXACT' | 'FUZZY' | 'SAME_NUMBER_DIFFERENT_AMOUNT' | 'SAME_NUMBER_DIFFERENT_VENDOR';
+  duplicate_type?: 'EXACT' | 'FUZZY' | 'SAME_NUMBER_DIFFERENT_AMOUNT' | 'SAME_NUMBER_DIFFERENT_VENDOR' | 'SAME_NUMBER_DIFFERENT_MPO';
   fuzzy_match_details?: {
     existing_invoice_number: string;
     existing_amount: number;
@@ -14,6 +14,7 @@ export interface DuplicateDetectionResult {
     match_reason: string;
   };
   risk_level?: 'HIGH' | 'MEDIUM' | 'LOW';
+  is_multiple_mpo_single_invoice?: boolean;
 }
 
 /**
@@ -54,6 +55,8 @@ export async function checkDuplicateInvoice(
       id: true,
       invoice_number: true,
       total_amount: true,
+      mpo_base_number: true,
+      mpo_order_sequence: true,
     },
   });
 
@@ -61,6 +64,21 @@ export async function checkDuplicateInvoice(
     const existingAmount = Number(existingInvoice.total_amount);
     const amountDiff = Math.abs(existingAmount - amount);
     const amountMismatchRate = existingAmount > 0 ? amountDiff / existingAmount : 0;
+
+    // Check if this is a same-invoice-number-different-MPO case (not a true duplicate)
+    // If the new invoice has a different MPO than the existing one, treat as separate invoice
+    const newMpo = context?.mpo_base_number || context?.mpo_order_sequence;
+    if (newMpo) {
+      const existingMpo = (existingInvoice as any).mpo_base_number || (existingInvoice as any).mpo_order_sequence;
+      if (existingMpo && existingMpo !== newMpo) {
+        // Same invoice number, same vendor, but different MPO — NOT a duplicate
+        return {
+          is_duplicate: false,
+          hash,
+          is_multiple_mpo_single_invoice: true,
+        };
+      }
+    }
 
     if (amountMismatchRate > 0.01) {
       return {

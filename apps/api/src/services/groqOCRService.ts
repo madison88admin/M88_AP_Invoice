@@ -9,6 +9,8 @@ interface ExtractedLineItem {
   unit_price: number;
   total_amount: number;
   item_code?: string;
+  mpo_number?: string;
+  po_number?: string;
 }
 
 export interface ExtractedInvoiceData {
@@ -80,6 +82,8 @@ Fields to extract:
   - unit_price: unit price as number
   - total_amount: line total as number
   - item_code: item code if present
+  - mpo_number: Material Purchase Order number for THIS specific line (format like MPO015713). Extract from the line's "Customer PO" or "PO#" column. If the invoice has different MPOs per line, each line MUST have its own mpo_number.
+  - po_number: Purchase Order number for THIS specific line (format like PO002997) if present per line
 - signatures: Array of signatures/stamps found on the document. Look for:
   - Printed or handwritten names near "Signature", "Signed by", "Authorized by", "Approved by", "Prepared by", "For and on behalf of" sections
   - Stamped names or company stamps
@@ -110,7 +114,10 @@ IMPORTANT RULES:
    - unit_price (number from Unit Price column)
    - total_amount (number from Amount/Total column)
    - item_code (item code if present, e.g., "SA10047935", "M5PG*")
+   - mpo_number (MPO for this line — extract from the line's Customer PO / PO column. Pattern: MPO\\d+. If each line has a different MPO, capture it per line.)
+   - po_number (PO for this line if present per line — pattern: PO\\d+)
    Do not skip line items. If quantity looks like a unit price, re-check the column.
+   CRITICAL: If the invoice has MULTIPLE different MPOs across line items (e.g., one line has MPO015798 and another has MPO015841), you MUST extract the mpo_number for each line separately. Do NOT just use the first MPO for all lines.
 5. For bank details: CRITICAL — look carefully for ANY bank-related information anywhere in the invoice. Check sections labeled "Bank Details", "Payment Information", "Remittance", "Beneficiary Bank", "Bank Account", "SWIFT", "Payment Instructions", or similar. Also check the footer, bottom of page, or any small text sections. Extract bank_name, swift_code, and account_number. Even if bank info appears in an image or small text, report what you can find.
 6. For qty_shipped: if there is a total quantity field, use that. Otherwise, sum the quantities from all line items.
 7. For document_type: check if the document says "INVOICE", "PROFORMA INVOICE", "COMMERCIAL INVOICE", "CREDIT NOTE", "STATEMENT", etc.
@@ -172,7 +179,9 @@ Example output:
       "quantity": 120,
       "unit_price": 0.06656,
       "total_amount": 7.99,
-      "item_code": "1-292738-000-02"
+      "item_code": "1-292738-000-02",
+      "mpo_number": "MPO15371",
+      "po_number": null
     }
   ],
   "signatures": [

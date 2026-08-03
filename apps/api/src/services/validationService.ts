@@ -869,6 +869,14 @@ async function checkDuplicateInvoice(invoice: any): Promise<ValidationResult> {
       };
     }
 
+    // Not a duplicate, but flag if same invoice number has different MPO (multiple MPO single invoice)
+    if (result.is_multiple_mpo_single_invoice) {
+      return {
+        passed: true,
+        message: 'Same invoice number exists with a different MPO — treated as separate invoice (multiple MPO single invoice)',
+      };
+    }
+
     return {
       passed: true,
       message: 'No duplicate invoice found',

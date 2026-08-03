@@ -285,19 +285,33 @@ async function processSingleInvoiceBuffer(
     if (Array.isArray(ocrLineItems) && ocrLineItems.length > 0) {
       const parsedMpo = ocrResult.mpo_number ? parseMPOReference(ocrResult.mpo_number) : { baseMpo: null, orderSequence: null, materialCode: null };
       baseData.invoice_lines = {
-        create: ocrLineItems.map((line: any, index: number) => ({
-          line_number: Number(line.line_number || index + 1),
-          description: line.description || line.material_name || null,
-          mpo_base_number: line.mpo_base_number || parsedMpo.baseMpo || null,
-          mpo_order_sequence: line.mpo_order_sequence || parsedMpo.orderSequence || null,
-          material_code: line.material_code || line.item_code || parsedMpo.materialCode || null,
-          material_name: line.material_name || line.description || null,
-          quantity: line.quantity != null ? Number(line.quantity) : null,
-          unit_price: line.unit_price != null ? Number(line.unit_price) : null,
-          line_amount: line.line_amount != null ? Number(line.line_amount) : (line.total_amount != null ? Number(line.total_amount) : null),
-          match_status: 'PENDING',
-        })),
+        create: ocrLineItems.map((line: any, index: number) => {
+          // Use per-line MPO if present, otherwise fall back to invoice-level MPO
+          const lineMpo = line.mpo_number || null;
+          const lineParsedMpo = lineMpo ? parseMPOReference(lineMpo) : parsedMpo;
+          return {
+            line_number: Number(line.line_number || index + 1),
+            description: line.description || line.material_name || null,
+            mpo_base_number: line.mpo_base_number || lineParsedMpo.baseMpo || null,
+            mpo_order_sequence: line.mpo_order_sequence || lineParsedMpo.orderSequence || null,
+            material_code: line.material_code || line.item_code || lineParsedMpo.materialCode || null,
+            material_name: line.material_name || line.description || null,
+            quantity: line.quantity != null ? Number(line.quantity) : null,
+            unit_price: line.unit_price != null ? Number(line.unit_price) : null,
+            line_amount: line.line_amount != null ? Number(line.line_amount) : (line.total_amount != null ? Number(line.total_amount) : null),
+            match_status: 'PENDING',
+          };
+        }),
       };
+    }
+
+    // Detect multiple MPOs in a single invoice
+    const lineMpos = Array.isArray(ocrLineItems)
+      ? [...new Set(ocrLineItems.map((l: any) => l.mpo_number).filter(Boolean))]
+      : [];
+    const hasMultipleMpos = lineMpos.length > 1;
+    if (hasMultipleMpos) {
+      logger.info(`[File Watcher] Invoice ${baseData.invoice_number} has multiple MPOs in one invoice: ${lineMpos.join(', ')}`);
     }
 
     const invoice = await prisma.invoice.create({
@@ -307,6 +321,23 @@ async function processSingleInvoiceBuffer(
     invoiceId = invoice.id;
 
     logger.info(`[File Watcher] Saved invoice ${invoice.invoice_number} with ${invoice.invoice_lines?.length || 0} line items`);
+
+    // If multiple MPOs in one invoice, add a MULTI_PO_CONSOLIDATED exception for manual review
+    if (hasMultipleMpos) {
+      // Check if line totals match invoice total
+      const lineTotalSum = ocrLineItems.reduce((sum: number, l: any) => sum + (Number(l.total_amount || l.line_amount) || 0), 0);
+      const invoiceTotal = Number(ocrResult.total_amount) || 0;
+      const totalsMatch = Math.abs(lineTotalSum - invoiceTotal) < 0.01;
+
+      await prisma.exception.create({
+        data: {
+          invoice_id: invoice.id,
+          reason: ExceptionReason.MULTI_PO_CONSOLIDATED as any,
+          detail: `Invoice contains ${lineMpos.length} different MPOs: ${lineMpos.join(', ')}. ${totalsMatch ? 'Line totals match invoice total.' : `WARNING: Line totals ($${lineTotalSum.toFixed(2)}) do NOT match invoice total ($${invoiceTotal.toFixed(2)}) — manual review required.`} Each MPO will be exported separately during posting.`,
+        },
+      });
+      logger.info(`[File Watcher] Added MULTI_PO_CONSOLIDATED exception for invoice ${invoice.invoice_number} (totals match: ${totalsMatch})`);
+    }
 
     // Create signature records
     if (ocrResult.signatures && ocrResult.signatures.length > 0) {

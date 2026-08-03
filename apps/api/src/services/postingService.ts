@@ -122,6 +122,7 @@ export async function postInvoice(invoiceId: string, userId: string, bypassVaria
       vendor: true,
       signatures: true,
       exceptions: true,
+      invoice_lines: true,
     },
   });
 
@@ -327,7 +328,40 @@ async function postToQuickBooks(invoice: any, glAccount: string, qbMemo: string)
   // For now, we'll simulate the posting process with QB-specific fields
   const qbInvoiceId = `QB-${Date.now()}-${invoice.invoice_number}`;
 
-  // Map invoice data to QuickBooks format using pre-computed GL account and memo
+  // Build line items for QuickBooks — export each MPO line separately
+  let qbLines: any[] = [];
+
+  if (invoice.invoice_lines && invoice.invoice_lines.length > 0) {
+    // Group lines by MPO base number so each MPO is exported as a separate line
+    const mpoGroups = new Map<string, { mpo: string; amount: number; lines: any[] }>();
+    for (const line of invoice.invoice_lines) {
+      const mpoKey = line.mpo_base_number || invoice.mpo_number || 'NO_MPO';
+      if (!mpoGroups.has(mpoKey)) {
+        mpoGroups.set(mpoKey, { mpo: mpoKey, amount: 0, lines: [] });
+      }
+      const group = mpoGroups.get(mpoKey)!;
+      group.amount += Number(line.line_amount) || 0;
+      group.lines.push(line);
+    }
+
+    qbLines = Array.from(mpoGroups.values()).map(group => ({
+      Amount: Number(group.amount.toFixed(2)),
+      Description: `${qbMemo || `Invoice ${invoice.invoice_number}`} | MPO: ${group.mpo} (${group.lines.length} line(s))`,
+      AccountRef: { value: glAccount },
+      MPORef: group.mpo,
+    }));
+  } else {
+    // No line items — post as single line
+    qbLines = [
+      {
+        Amount: Number(invoice.total_amount),
+        Description: qbMemo || `Invoice ${invoice.invoice_number}`,
+        AccountRef: { value: glAccount },
+      },
+    ];
+  }
+
+  // Map invoice data to QuickBooks format
   const qbInvoice = {
     InvoiceNum: invoice.invoice_number,
     VendorRef: {
@@ -336,15 +370,7 @@ async function postToQuickBooks(invoice: any, glAccount: string, qbMemo: string)
     },
     TxnDate: invoice.invoice_date ? invoice.invoice_date.toISOString().split('T')[0] : null,
     DueDate: invoice.due_date ? invoice.due_date.toISOString().split('T')[0] : null,
-    Line: [
-      {
-        Amount: Number(invoice.total_amount),
-        Description: qbMemo || `Invoice ${invoice.invoice_number}`,
-        AccountRef: {
-          value: glAccount,
-        },
-      },
-    ],
+    Line: qbLines,
     PrivateNote: qbMemo || '',
     CurrencyRef: {
       value: invoice.currency === 'USD' ? 'USD' : invoice.currency,
@@ -366,6 +392,8 @@ async function postToQuickBooks(invoice: any, glAccount: string, qbMemo: string)
     currency: invoice.currency,
     vendor_id: invoice.vendor_id,
     qb_memo: qbMemo,
+    lines_exported: qbLines.length,
+    mpo_lines: qbLines.filter(l => l.MPORef).map(l => ({ mpo: l.MPORef, amount: l.Amount })),
   };
 }
 

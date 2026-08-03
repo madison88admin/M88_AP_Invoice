@@ -9,7 +9,7 @@ import {
   LayoutDashboard, FileText, CheckSquare, AlertTriangle, Building2,
   Package, BarChart3, FileSearch, Users, Settings, ChevronLeft,
   Menu, X, LogOut, Upload, Pause, Activity, Gauge,
-  ClipboardList,
+  ClipboardList, Landmark,
 } from 'lucide-react';
 
 interface AppLayoutProps {
@@ -64,6 +64,7 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
         { icon: Package, label: 'Payment Batches', path: '/payment-batches', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'batches', badgeColor: 'lime' },
         { icon: FileSearch, label: 'Accounting Review', path: '/accounting-review', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'review', badgeColor: 'blue' },
         { icon: Building2, label: 'Vendors', path: '/vendors', roles: ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'] },
+        { icon: Landmark, label: 'Bank Details', path: '/bank-details', roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'] },
       ],
     },
     {
@@ -101,7 +102,7 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
     ...group,
     items: group.items.filter(item => {
       if (user?.role === 'SUPERADMIN') {
-        return item.path === '/' || item.label === 'Audit Logs' || item.label === 'User Management' || item.label === 'System Configuration';
+        return true; // SUPERADMIN sees all sidebar items
       }
       if (user?.role === 'INVOICE_UPLOADER') {
         return item.path === '/' || item.label === 'Upload Invoice';

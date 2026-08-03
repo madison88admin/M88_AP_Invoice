@@ -65,7 +65,7 @@ export default function Sidebar() {
 
   const visibleItems = navItems.filter((item) => {
     if (user?.role === 'SUPERADMIN') {
-      return item.label === 'Dashboard' || item.label === 'Audit Logs';
+      return true; // SUPERADMIN sees all sidebar items
     }
     if (user?.role === 'INVOICE_UPLOADER') {
       return item.label === 'Dashboard'; // Upload only — no invoice visibility

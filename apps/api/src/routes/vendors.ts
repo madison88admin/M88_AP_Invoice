@@ -5,6 +5,7 @@ import prisma from '../config/database';
 import { UserRole } from '@ap-invoice/shared';
 import { inAppNotificationService } from '../services/inAppNotificationService';
 import { AppError } from '../middleware/errorHandler';
+import crypto from 'crypto';
 
 const router: Router = Router();
 
@@ -55,7 +56,12 @@ router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
 router.post('/', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const vendor = await prisma.vendor.create({
-      data: req.body,
+      data: {
+        ...req.body,
+        id: req.body.id || crypto.randomUUID(),
+        created_at: new Date(),
+        updated_at: new Date(),
+      },
     });
     res.status(201).json(vendor);
   } catch (error) {
@@ -96,7 +102,10 @@ router.patch('/:id', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTI
 
     const vendor = await prisma.vendor.update({
       where: { id: req.params.id },
-      data: updateData,
+      data: {
+        ...updateData,
+        updated_at: new Date(),
+      },
     });
     res.json(vendor);
   } catch (error) {

@@ -91,13 +91,17 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
       throw new AppError('A user with this email already exists', 409);
     }
 
+    const now = new Date();
     const newUser = await prisma.user.create({
       data: {
+        id: crypto.randomUUID(),
         name,
         email: email.toLowerCase(),
         role,
         password_hash: hashPassword(password),
         active,
+        created_at: now,
+        updated_at: now,
       },
     });
 
@@ -167,7 +171,10 @@ router.patch('/:id', async (req: Request, res: Response, next: NextFunction) => 
     if (changes.length > 0) {
       const updated = await prisma.user.update({
         where: { id: req.params.id },
-        data,
+        data: {
+          ...data,
+          updated_at: new Date(),
+        },
       });
 
       await logAudit({

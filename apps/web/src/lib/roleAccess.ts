@@ -12,7 +12,7 @@ export const ROLE_PERMISSIONS = {
     canViewReports: false,
     canViewFinancialReports: false,
     canManageUsers: true,
-    canEditInvoice: false,
+    canEditInvoice: true,
     canEditBankDetails: true,
     canDeleteInvoice: false,
     canViewSystemHealth: true,

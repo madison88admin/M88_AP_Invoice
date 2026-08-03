@@ -34,10 +34,6 @@ export const errorHandler = (
     error: {
       message: 'Internal server error',
       status: 500,
-      debug: {
-        name: err.name,
-        message: err.message,
-      },
     },
   });
 };

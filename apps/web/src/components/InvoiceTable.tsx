@@ -129,6 +129,9 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
             <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '100px', color: 'var(--text-muted)' }}>
               MPO #
             </th>
+            <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '100px', color: 'var(--text-muted)' }}>
+              PO #
+            </th>
             <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '70px', color: 'var(--text-muted)' }}>
               Qty
             </th>
@@ -260,6 +263,9 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
               </td>
               <td className="px-4 py-4 whitespace-nowrap text-sm" style={{ width: '100px', color: 'var(--text-secondary)' }}>
                 {invoice.mpo_number || '—'}
+              </td>
+              <td className="px-4 py-4 whitespace-nowrap text-sm" style={{ width: '100px', color: 'var(--text-secondary)' }}>
+                {invoice.customer_po_number || '—'}
               </td>
               <td className="px-4 py-4 whitespace-nowrap text-sm" style={{ width: '70px', color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
                 {invoice.qty_shipped != null ? invoice.qty_shipped.toLocaleString() : '—'}

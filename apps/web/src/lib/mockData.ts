@@ -22,6 +22,7 @@ export interface MockInvoice {
   season?: string;
   order_type?: string;
   po_number?: string;
+  customer_po_number?: string;
   mpo_number?: string;
   qty_shipped?: number;
   status: InvoiceStatus;

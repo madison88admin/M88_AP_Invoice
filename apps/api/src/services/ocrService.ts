@@ -662,7 +662,7 @@ function convertPDFToImage(fileBuffer: Buffer): string | null {
 }
 
 /**
- * Try AI fallback OCR engines in order: Gemini Vision → Ollama (Qwen) → Groq (Llama)
+ * Try AI fallback OCR engines in order: Groq (Llama) → Gemini Vision → Ollama (Qwen)
  * Returns the first successful result with engine name, or null if all fail.
  */
 async function tryAIFallbacks(
@@ -670,7 +670,24 @@ async function tryAIFallbacks(
   rawText: string,
   vendorName?: string
 ): Promise<{ engine: string; vendor_name?: string; invoice_number?: string; invoice_date?: string; due_date?: string; total_amount?: number; subtotal?: number; currency?: string; po_number?: string; mpo_number?: string; brand?: string; brand_code?: string; season?: string; payment_terms?: string; ship_to?: string; sold_to?: string; qty_shipped?: number; document_type?: string; bank_name?: string; swift_code?: string; account_number?: string; bank_info?: { swift_code?: string; account_number?: string }; line_items?: any[]; signatures?: { signatory_name: string; signatory_role?: string; signed_date?: string }[]; bank_charges?: number; tt_charge?: number; freight_charges?: number; courier_charges?: number; handling_fee?: number; finance_surcharge?: number; tax_amount?: number; discount_amount?: number; setup_charge?: number; sample_charge?: number; min_order_charge?: number; additional_charges?: number } | null> {
-  // 1st fallback: Gemini Vision (sends PDF as file directly — best for visual layout)
+  // 1st fallback: Groq (Llama 3.3 70B — high free-tier limit, fast)
+  if (rawText && rawText.length > 50) {
+    try {
+      const groqOCR = (await import('./groqOCRService')).groqOCRService;
+      if (groqOCR.isAvailable()) {
+        logger.info('[OCR] Trying Groq (Llama) fallback with raw text...');
+        const groqResult = await groqOCR.extractFromText(rawText, { vendorName } as any);
+        if (groqResult && (groqResult.vendor_name || groqResult.invoice_number)) {
+          logger.info('[OCR] Groq (Llama) fallback succeeded');
+          return { engine: 'groq', ...groqResult };
+        }
+      }
+    } catch (e) {
+      logger.error('[OCR] Groq fallback failed:', e);
+    }
+  }
+
+  // 2nd fallback: Gemini Vision (sends PDF as file directly — best for visual layout)
   try {
     const geminiOCR = (await import('./geminiOCRService')).geminiOCRService;
     if (geminiOCR.isAvailable()) {
@@ -685,7 +702,7 @@ async function tryAIFallbacks(
     logger.error('[OCR] Gemini Vision fallback failed:', e);
   }
 
-  // 2nd fallback: Ollama (Qwen 2.5 VL — local, uses raw text from pdf2json)
+  // 3rd fallback: Ollama (Qwen 2.5 VL — local, uses raw text from pdf2json)
   if (rawText && rawText.length > 50) {
     try {
       const ollamaOCR = (await import('./ollamaOCRService')).ollamaOCRService;
@@ -718,23 +735,6 @@ async function tryAIFallbacks(
       } catch (e) {
         logger.error('[OCR] Ollama vision fallback failed:', e);
       }
-    }
-  }
-
-  // 3rd fallback: Groq (Llama 3.3 70B — uses raw text)
-  if (rawText && rawText.length > 50) {
-    try {
-      const groqOCR = (await import('./groqOCRService')).groqOCRService;
-      if (groqOCR.isAvailable()) {
-        logger.info('[OCR] Trying Groq (Llama) fallback with raw text...');
-        const groqResult = await groqOCR.extractFromText(rawText, { vendorName } as any);
-        if (groqResult && (groqResult.vendor_name || groqResult.invoice_number)) {
-          logger.info('[OCR] Groq (Llama) fallback succeeded');
-          return { engine: 'groq', ...groqResult };
-        }
-      }
-    } catch (e) {
-      logger.error('[OCR] Groq fallback failed:', e);
     }
   }
 

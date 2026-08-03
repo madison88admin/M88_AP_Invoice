@@ -829,14 +829,33 @@ export async function rejectInvoice(
 
   const signedRole = pendingSignature.signatory_role;
 
-  // Update invoice status to REJECTED
+  // Reject sends the invoice back to accounting (PENDING_ACCOUNTING) so it can be corrected
+  // and re-routed for approval. This avoids a dead-end REJECTED status.
   await prisma.invoice.update({
     where: { id: invoiceId },
-    data: { status: InvoiceStatus.REJECTED as any },
+    data: { status: InvoiceStatus.PENDING_ACCOUNTING as any, current_approver_role: null },
   });
-  await inAppNotificationService.notifyStageTransition(invoiceId, invoice.invoice_number, invoice.vendor?.name || 'Unknown', '', 'REJECTED');
+  await inAppNotificationService.notifyStageTransition(invoiceId, invoice.invoice_number, invoice.vendor?.name || 'Unknown', '', 'PENDING_ACCOUNTING');
 
-  // Exit current stage timestamp — calculate breach status
+  // Invalidate all signatures from the rejecting approver onwards so re-approval is required
+  const sortedSigs = [...invoice.signatures].sort(
+    (a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  );
+  const rejectIndex = sortedSigs.findIndex((s: any) => s.id === pendingSignature.id);
+  const sigsToInvalidate = sortedSigs.slice(rejectIndex);
+  for (const sig of sigsToInvalidate) {
+    if (sig.signed_at) {
+      await prisma.signature.update({
+        where: { id: sig.id },
+        data: {
+          invalidated_at: new Date(),
+          invalidation_reason: `Rejected by ${signedRole}: ${reason}`,
+        },
+      });
+    }
+  }
+
+  // Exit current stage timestamp FIRST — before creating a new one
   const currentStage = await prisma.stageTimestamp.findFirst({
     where: { invoice_id: invoiceId, exited_at: null },
   });
@@ -851,17 +870,26 @@ export async function rejectInvoice(
     });
   }
 
+  // Create new stage timestamp for PENDING_ACCOUNTING
+  await prisma.stageTimestamp.create({
+    data: {
+      invoice_id: invoiceId,
+      stage: InvoiceStatus.PENDING_ACCOUNTING as any,
+      sla_hours: SLA_LIMITS.ACCOUNTING_DAYS * 24,
+    },
+  });
+
   // Create audit log entry
   await prisma.auditLog.create({
     data: {
       invoice_id: invoiceId,
       action: 'REJECTED',
       performed_by: userId,
-      note: `Invoice rejected by ${signedRole}. Reason: ${reason}`,
+      note: `Invoice rejected by ${signedRole} — returned to accounting. Reason: ${reason}`,
     },
   });
 
-  return { message: 'Invoice rejected successfully' };
+  return { message: 'Invoice rejected — returned to accounting for correction' };
 }
 
 /** Return an invoice to a prior purchasing approver without destroying history. */

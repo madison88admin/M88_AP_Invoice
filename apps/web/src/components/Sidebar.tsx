@@ -21,6 +21,7 @@ import {
   Pause,
   Gauge,
   ScanSearch,
+  Landmark,
 } from 'lucide-react';
 
 interface NavItem {
@@ -39,6 +40,7 @@ const navItems: NavItem[] = [
   { label: 'Exceptions', path: '/exceptions', icon: AlertTriangle, badgeKey: 'exceptions' },
   { label: 'On-Hold Queue', path: '/on-hold-queue', icon: Pause, roles: ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'] },
   { label: 'Vendors', path: '/vendors', icon: Building2, roles: ['PURCHASING_COORDINATOR', 'IT_ADMIN', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE'], badgeKey: 'vendors' },
+  { label: 'Bank Details', path: '/bank-details', icon: Landmark, roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'] },
   { label: 'Batches', path: '/payment-batches', icon: Package, roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'batches' },
   { label: 'Reports', path: '/reports', icon: BarChart3, roles: ['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'ACCOUNTING_ASSOCIATE', 'CC_REPORTS'] },
   { label: 'Review', path: '/accounting-review', icon: FileSearch, roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'review' },

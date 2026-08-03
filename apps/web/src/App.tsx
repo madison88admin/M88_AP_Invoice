@@ -19,11 +19,12 @@ import OnHoldQueue from './components/OnHoldQueue';
 import UserManagement from './components/UserManagement';
 import SettingsPage from './components/SettingsPage';
 import InvoiceRepository from './components/InvoiceRepository';
+import BankDetailsMasterlist from './components/BankDetailsMasterlist';
 
 import ProtectedRoute from './components/ProtectedRoute';
 import NotFound from './components/NotFound';
 import AppLayout from './components/AppLayout';
-import { FileText, CheckSquare, AlertTriangle, Building2, Package, BarChart3, FileSearch, Users, Settings, Upload, FileSearch as AuditIcon, LayoutDashboard } from 'lucide-react';
+import { FileText, CheckSquare, AlertTriangle, Building2, Package, BarChart3, FileSearch, Users, Settings, Upload, FileSearch as AuditIcon, LayoutDashboard, Landmark } from 'lucide-react';
 
 function App() {
   return (
@@ -143,6 +144,13 @@ function App() {
                   <ProtectedRoute>
                     <AppLayout title="Invoice Repository" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}><FileText className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
                       <InvoiceRepository />
+                    </AppLayout>
+                  </ProtectedRoute>
+                } />
+                <Route path="/bank-details" element={
+                  <ProtectedRoute>
+                    <AppLayout title="Bank Details Masterlist" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-blue), var(--accent-purple))' }}><Landmark className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
+                      <BankDetailsMasterlist />
                     </AppLayout>
                   </ProtectedRoute>
                 } />

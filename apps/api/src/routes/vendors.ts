@@ -14,7 +14,7 @@ const ACCOUNTING_ROLES = [UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_AS
 
 router.use(authenticate);
 
-// IMPORTANT: /suggestions must come BEFORE /:id to avoid route collision
+// IMPORTANT: /suggestions and /bank-details/masterlist must come BEFORE /:id to avoid route collision
 router.get('/suggestions', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { search, limit } = req.query;
@@ -23,6 +23,51 @@ router.get('/suggestions', async (req: Request, res: Response, next: NextFunctio
       limit ? parseInt(limit as string) : 5
     );
     res.json(suggestions);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Bank Details Masterlist — must be before /:id
+router.get('/bank-details/masterlist', authenticate, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const vendors = await prisma.vendor.findMany({
+      where: { is_active: true },
+      orderBy: { name: 'asc' },
+    });
+
+    // Get invoice counts per vendor
+    const invoiceCounts = await prisma.invoice.groupBy({
+      by: ['vendor_id'],
+      _count: { id: true },
+      where: { vendor_id: { not: undefined } as any },
+    });
+    const countMap = new Map(invoiceCounts.map((c: any) => [c.vendor_id, c._count.id]));
+
+    const result = vendors.map(v => ({
+      id: v.id,
+      name: v.name,
+      beneficiary_name: v.beneficiary_name,
+      classification: v.classification,
+      supplier_location: v.supplier_location,
+      bank_name: v.bank_name,
+      bank_name_alt: v.bank_name_alt,
+      bank_address: v.bank_address,
+      swift_code: v.swift_code,
+      swift_code_alt: v.swift_code_alt,
+      account_number: v.account_number,
+      account_number_alt: v.account_number_alt,
+      iban: v.iban,
+      sort_code: v.sort_code,
+      aba_routing_number: v.aba_routing_number,
+      intermediary_bank_name: v.intermediary_bank_name,
+      intermediary_bank_swift: v.intermediary_bank_swift,
+      has_multiple_accounts: v.has_multiple_accounts,
+      bank_verified_at: v.bank_verified_at,
+      invoice_count: countMap.get(v.id) || 0,
+    }));
+
+    res.json(result);
   } catch (error) {
     next(error);
   }
@@ -160,6 +205,68 @@ router.post('/:id/request-bank-update', authenticate, async (req: AuthRequest, r
     });
 
     res.json({ message: 'Bank update request sent to the Accounting team' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ─── BANK DETAILS UPDATE (propagate to invoices) ────────────────────────────
+// Update vendor bank details AND propagate to all related invoices
+router.patch('/:id/bank-details', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const vendorId = req.params.id;
+    const { bank_name, swift_code, account_number, bank_name_alt, bank_address, account_number_alt, swift_code_alt, iban, sort_code, aba_routing_number, intermediary_bank_name, intermediary_bank_swift } = req.body;
+
+    const vendor = await prisma.vendor.findUnique({ where: { id: vendorId } });
+    if (!vendor) {
+      throw new AppError('Vendor not found', 404);
+    }
+
+    // Build update data for vendor
+    const vendorUpdate: Record<string, any> = { updated_at: new Date() };
+    const bankUpdateFields = { bank_name, swift_code, account_number, bank_name_alt, bank_address, account_number_alt, swift_code_alt, iban, sort_code, aba_routing_number, intermediary_bank_name, intermediary_bank_swift };
+    for (const [key, value] of Object.entries(bankUpdateFields)) {
+      if (value !== undefined) {
+        vendorUpdate[key] = value;
+      }
+    }
+
+    // Update vendor
+    await prisma.vendor.update({
+      where: { id: vendorId },
+      data: vendorUpdate,
+    });
+
+    // Propagate bank changes to ALL invoices linked to this vendor
+    const invoiceUpdate: Record<string, any> = {};
+    if (bank_name !== undefined) invoiceUpdate.bank_name = bank_name;
+    if (swift_code !== undefined) invoiceUpdate.swift_code = swift_code;
+    if (account_number !== undefined) invoiceUpdate.account_number = account_number;
+
+    let updatedInvoices = 0;
+    if (Object.keys(invoiceUpdate).length > 0) {
+      const result = await prisma.invoice.updateMany({
+        where: { vendor_id: vendorId },
+        data: { ...invoiceUpdate, updated_at: new Date() },
+      });
+      updatedInvoices = result.count;
+    }
+
+    // Create audit log
+    const changedFields = Object.keys(vendorUpdate).filter(k => k !== 'updated_at');
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "AP_Invoice"."APInvoice_AuditLog" (id, action, performed_by, note, created_at, updated_at) VALUES (gen_random_uuid(), $1, $2, $3, NOW(), NOW())`,
+      'VENDOR_BANK_UPDATED',
+      req.user!.id,
+      `Vendor "${vendor.name}" bank details updated by ${req.user!.role}. Fields: ${changedFields.join(', ')}. Propagated to ${updatedInvoices} invoice(s).`
+    );
+
+    res.json({
+      message: `Bank details updated for vendor "${vendor.name}" and propagated to ${updatedInvoices} invoice(s)`,
+      vendor_id: vendorId,
+      updated_fields: changedFields,
+      invoices_updated: updatedInvoices,
+    });
   } catch (error) {
     next(error);
   }

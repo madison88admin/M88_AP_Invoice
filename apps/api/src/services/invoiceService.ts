@@ -494,11 +494,28 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     throw new AppError(`Cannot edit invoice in ${existing.status} status`, 400);
   }
 
+  // Protected fields that cannot be set via update
+  const protectedFields = ['id', 'created_at', 'updated_at', 'status', 'source', 'approval_tier', 'qb_posted_at', 'vendor_id', 'revision', 'edit_reason'];
+
+  // Once invoice is approved (PENDING_ACCOUNTING or APPROVED), accounting can ONLY edit bank details
+  // All other fields are locked to preserve the approved invoice state
+  const approvedStatuses = ['PENDING_ACCOUNTING', 'APPROVED'];
+  if (approvedStatuses.includes(existing.status)) {
+    const allowedFields = ['bank_name', 'swift_code', 'account_number'];
+    const attemptedFields = Object.keys(invoiceData).filter(k => invoiceData[k] !== undefined && !protectedFields.includes(k));
+    const disallowedFields = attemptedFields.filter(f => !allowedFields.includes(f));
+    if (disallowedFields.length > 0) {
+      throw new AppError(
+        `Invoice is already approved. Only bank details (bank_name, swift_code, account_number) can be edited. Locked fields: ${disallowedFields.join(', ')}`,
+        403
+      );
+    }
+  }
+
   // Convert date strings to Date objects for Prisma DateTime fields
   const data: Record<string, any> = {};
 
   // Only copy defined, non-undefined values — prevents accidental null overwrites
-  const protectedFields = ['id', 'created_at', 'updated_at', 'status', 'source', 'approval_tier', 'qb_posted_at', 'vendor_id', 'revision', 'edit_reason'];
   for (const [key, value] of Object.entries(invoiceData)) {
     if (value === undefined) continue;
     if (protectedFields.includes(key)) continue;

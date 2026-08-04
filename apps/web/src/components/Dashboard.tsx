@@ -725,6 +725,25 @@ export default function Dashboard() {
 
   const handleSaveEdit = async () => {
     if (!selectedInvoice) return;
+    
+    // Validate required fields (only for users who can edit invoice fields)
+    const canEditAll = user ? hasPermission(user.role, 'canEditInvoice') : false;
+    if (canEditAll) {
+      const requiredFields: { field: string; label: string }[] = [
+        { field: 'due_date', label: 'Due Date' },
+        { field: 'brand', label: 'Brand' },
+        { field: 'season', label: 'Season' },
+        { field: 'customer_po_number', label: 'PO Number' },
+        { field: 'mpo_base_number', label: 'Base MPO' },
+        { field: 'material_name', label: 'Material Name' },
+      ];
+      const missing = requiredFields.filter(f => !editFormData[f.field] || editFormData[f.field] === '');
+      if (missing.length > 0) {
+        showToast(`Please fill in required fields: ${missing.map(f => f.label).join(', ')}`, 'error');
+        return;
+      }
+    }
+    
     setSavingEdit(true);
     try {
       const parseNum = (val: string) => (val === '' || val === undefined || val === null) ? undefined : parseFloat(val);
@@ -732,7 +751,6 @@ export default function Dashboard() {
 
       // Remove bank fields from payload if user can't edit them — backend will reject anyway
       const canEditBank = user ? hasPermission(user.role, 'canEditBankDetails') : false;
-      const canEditAll = user ? hasPermission(user.role, 'canEditInvoice') : false;
 
       const payload = {
         // Non-bank fields: only send if user can edit invoice
@@ -3369,7 +3387,7 @@ ${dataRows}
                   { label: 'Vendor Name', field: 'vendor_name_raw', type: 'text' },
                   { label: 'Invoice Number', field: 'invoice_number', type: 'text' },
                   { label: 'Invoice Date', field: 'invoice_date', type: 'date' },
-                  { label: 'Due Date', field: 'due_date', type: 'date' },
+                  { label: 'Due Date', field: 'due_date', type: 'date', required: true },
                   { label: 'Amount', field: 'total_amount', type: 'number' },
                   { label: 'Currency', field: 'currency', type: 'select', options: [
                     { value: '', label: '— Select —' },
@@ -3397,13 +3415,13 @@ ${dataRows}
                   { label: 'Incoterm', field: 'incoterm', type: 'text' },
                 ]},
                 { title: 'Classification', fields: [
-                  { label: 'Brand', field: 'brand', type: 'text' },
+                  { label: 'Brand', field: 'brand', type: 'text', required: true },
                   { label: 'Brand Tier', field: 'brand_tier', type: 'select', options: [
                     { value: '', label: '— Select —' },
                     { value: 'TOP_10', label: 'Top 10' },
                     { value: 'OTHER', label: 'Other' },
                   ] },
-                  { label: 'Season', field: 'season', type: 'text' },
+                  { label: 'Season', field: 'season', type: 'text', required: true },
                   { label: 'Order Type', field: 'order_type', type: 'select', options: [
                     { value: '', label: '— Select —' },
                     { value: 'BULK', label: 'Bulk' },
@@ -3431,12 +3449,12 @@ ${dataRows}
                   ] },
                 ]},
                 { title: 'PO & Material', fields: [
-                  { label: 'PO Number', field: 'customer_po_number', type: 'text' },
+                  { label: 'PO Number', field: 'customer_po_number', type: 'text', required: true },
                   { label: 'MPO Number', field: 'mpo_number', type: 'text' },
-                  { label: 'Base MPO', field: 'mpo_base_number', type: 'text' },
+                  { label: 'Base MPO', field: 'mpo_base_number', type: 'text', required: true },
                   { label: 'Order Sequence', field: 'mpo_order_sequence', type: 'text' },
                   { label: 'Material Code', field: 'material_code', type: 'text' },
-                  { label: 'Material Name', field: 'material_name', type: 'text' },
+                  { label: 'Material Name', field: 'material_name', type: 'text', required: true },
                   { label: 'QTY SHIPPED', field: 'qty_shipped', type: 'number' },
                 ]},
                 { title: 'Financial Details', fields: [
@@ -3486,10 +3504,10 @@ ${dataRows}
                   {!isCollapsed && (
                     <>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
-                      {section.fields.map(({ label, field, type, options }: any) => (
+                      {section.fields.map(({ label, field, type, options, required }: any) => (
                         <div key={field}>
                           <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
-                            {label}
+                            {label}{required && <span style={{ color: 'var(--accent-red)' }}> *</span>}
                           </label>
                           {type === 'select' ? (
                             <select

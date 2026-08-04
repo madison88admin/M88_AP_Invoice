@@ -536,10 +536,25 @@ export default function Dashboard() {
       } else {
         showToast('Exception resolved', 'success');
       }
+      // Optimistic update — immediately remove resolved exception from UI
+      if (selectedInvoice && selectedInvoice.exceptions) {
+        setSelectedInvoice({
+          ...selectedInvoice,
+          exceptions: selectedInvoice.exceptions.map((exc: any) =>
+            exc.id === exceptionId ? { ...exc, status: 'RESOLVED' } : exc
+          ),
+          status: res.data?.invoice_status || selectedInvoice.status,
+        });
+      }
+      // Then refresh from server to get full updated data
       await refresh();
       if (selectedInvoice) {
-        const updated = await invoiceApi.getById(selectedInvoice.id);
-        setSelectedInvoice(updated.data);
+        try {
+          const updated = await invoiceApi.getById(selectedInvoice.id);
+          setSelectedInvoice(updated.data);
+        } catch (e) {
+          // getById failed — optimistic update is already applied
+        }
       }
     } catch (error: any) {
       const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to resolve exception';
@@ -555,10 +570,25 @@ export default function Dashboard() {
       } else {
         showToast('Exception waived', 'success');
       }
+      // Optimistic update — immediately remove waived exception from UI
+      if (selectedInvoice && selectedInvoice.exceptions) {
+        setSelectedInvoice({
+          ...selectedInvoice,
+          exceptions: selectedInvoice.exceptions.map((exc: any) =>
+            exc.id === exceptionId ? { ...exc, status: 'WAIVED' } : exc
+          ),
+          status: res.data?.invoice_status || selectedInvoice.status,
+        });
+      }
+      // Then refresh from server to get full updated data
       await refresh();
       if (selectedInvoice) {
-        const updated = await invoiceApi.getById(selectedInvoice.id);
-        setSelectedInvoice(updated.data);
+        try {
+          const updated = await invoiceApi.getById(selectedInvoice.id);
+          setSelectedInvoice(updated.data);
+        } catch (e) {
+          // getById failed — optimistic update is already applied
+        }
       }
     } catch (error: any) {
       const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to waive exception';

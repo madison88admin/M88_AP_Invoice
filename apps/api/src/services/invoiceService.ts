@@ -468,9 +468,14 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     throw new AppError('Invoice not found', 404);
   }
 
-  // Only coordinators, accounting supervisors, or admins can edit invoice data
-  const allowedRoles = ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN'];
-  if (!allowedRoles.includes(userRole)) {
+  // Accounting roles can ONLY edit bank details — not other invoice fields
+  // Purchasing roles + IT_ADMIN + SUPERADMIN can edit the full invoice
+  const accountingRoles = ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR'];
+  const fullEditRoles = ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN', 'SUPERADMIN'];
+  const isAccounting = accountingRoles.includes(userRole);
+  const canFullEdit = fullEditRoles.includes(userRole);
+
+  if (!isAccounting && !canFullEdit) {
     throw new AppError('Not authorized to edit invoice data', 403);
   }
 
@@ -478,6 +483,19 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
   // Accounting roles + IT_ADMIN + SUPERADMIN. Purchasing/Managers must request a change.
   const bankDetailFields = ['bank_name', 'swift_code', 'account_number'];
   const canEditBankDetails = ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN'].includes(userRole);
+
+  // If accounting role, they can ONLY edit bank details — block all other fields
+  if (isAccounting && !canFullEdit) {
+    const attemptedFields = Object.keys(invoiceData).filter(k => invoiceData[k] !== undefined);
+    const nonBankFields = attemptedFields.filter(f => !bankDetailFields.includes(f) && f !== 'edit_reason');
+    if (nonBankFields.length > 0) {
+      throw new AppError(
+        `Accounting can only edit bank details (bank_name, swift_code, account_number). Locked fields: ${nonBankFields.join(', ')}`,
+        403
+      );
+    }
+  }
+
   if (!canEditBankDetails) {
     const bankChanges = bankDetailFields.filter(f => invoiceData[f] !== undefined && invoiceData[f] !== existing[f as keyof typeof existing]);
     if (bankChanges.length > 0) {

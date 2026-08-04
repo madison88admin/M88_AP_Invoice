@@ -2632,6 +2632,26 @@ export default function Dashboard() {
                 </div>
               )}
 
+              {/* Reject from Accounting — Accounting can reject invoice from PENDING_ACCOUNTING stage */}
+              {selectedInvoice.status === InvoiceStatus.PENDING_ACCOUNTING && user &&
+                ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR'].includes(user.role) &&
+                hasPermission(user.role, 'canReject') && (
+                <button
+                  onClick={() => setShowRejectModal(true)}
+                  className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
+                  style={{
+                    background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)',
+                    color: 'var(--accent-red)',
+                    border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)',
+                  }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'color-mix(in srgb, var(--accent-red) 20%, transparent)'; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'color-mix(in srgb, var(--accent-red) 10%, transparent)'; }}
+                >
+                  <XCircle className="h-4 w-4 mr-2" strokeWidth={1.75} />
+                  Reject & Return to Approver
+                </button>
+              )}
+
               {/* Posting Actions */}
               {(selectedInvoice.status === InvoiceStatus.APPROVED || selectedInvoice.status === InvoiceStatus.PENDING_ACCOUNTING) && user && hasPermission(user.role, 'canPost') && (
                 <>

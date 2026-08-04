@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { vendorApi } from '../lib/api';
-import { Landmark, Search, Edit, Save, X, ArrowLeft, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Landmark, Search, Edit, Save, X, ArrowLeft, CheckCircle2, AlertCircle, Landmark as BankIcon } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 interface BankDetailsEntry {
@@ -34,7 +34,8 @@ export default function BankDetailsMasterlist() {
   const [loading, setLoading] = useState(true);
   const [bankDetails, setBankDetails] = useState<BankDetailsEntry[]>([]);
   const [search, setSearch] = useState('');
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingEntry, setEditingEntry] = useState<BankDetailsEntry | null>(null);
   const [editData, setEditData] = useState<Partial<BankDetailsEntry>>({});
   const [saving, setSaving] = useState(false);
 
@@ -65,7 +66,7 @@ export default function BankDetailsMasterlist() {
   );
 
   const handleEdit = (entry: BankDetailsEntry) => {
-    setEditingId(entry.id);
+    setEditingEntry(entry);
     setEditData({
       bank_name: entry.bank_name,
       bank_name_alt: entry.bank_name_alt,
@@ -80,15 +81,17 @@ export default function BankDetailsMasterlist() {
       intermediary_bank_name: entry.intermediary_bank_name,
       intermediary_bank_swift: entry.intermediary_bank_swift,
     });
+    setShowEditModal(true);
   };
 
   const handleSave = async () => {
-    if (!editingId) return;
+    if (!editingEntry) return;
     setSaving(true);
     try {
-      const res = await vendorApi.updateBankDetails(editingId, editData);
+      const res = await vendorApi.updateBankDetails(editingEntry.id, editData);
       showToast(res.data.message, 'success');
-      setEditingId(null);
+      setShowEditModal(false);
+      setEditingEntry(null);
       setEditData({});
       await loadBankDetails();
     } catch (err: any) {
@@ -99,9 +102,23 @@ export default function BankDetailsMasterlist() {
   };
 
   const handleCancel = () => {
-    setEditingId(null);
+    setShowEditModal(false);
+    setEditingEntry(null);
     setEditData({});
   };
+
+  const editField = (label: string, field: keyof BankDetailsEntry, type: string = 'text') => (
+    <div>
+      <label className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{label}</label>
+      <input
+        type={type}
+        value={(editData[field] as string) || ''}
+        onChange={(e) => setEditData({ ...editData, [field]: e.target.value })}
+        className="w-full p-2 rounded-lg text-sm mt-1"
+        style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+      />
+    </div>
+  );
 
   return (
     <div className="p-6 space-y-4" style={{ color: 'var(--text-primary)' }}>
@@ -144,7 +161,7 @@ export default function BankDetailsMasterlist() {
         <div className="flex items-center gap-2 p-3 rounded-lg text-sm" style={{ background: 'color-mix(in srgb, var(--accent-blue) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-blue) 20%, transparent)' }}>
           <CheckCircle2 className="h-4 w-4" style={{ color: 'var(--accent-blue)' }} />
           <span style={{ color: 'var(--text-secondary)' }}>
-            Editing bank details here updates the vendor masterlist AND automatically propagates to all linked invoices.
+            Click the <strong>Edit</strong> button on any vendor row to update bank details. Changes will propagate to all linked invoices.
           </span>
         </div>
       )}
@@ -160,15 +177,12 @@ export default function BankDetailsMasterlist() {
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
                 <th className="text-left p-3 font-semibold">Vendor</th>
-                <th className="text-left p-3 font-semibold">Beneficiary</th>
                 <th className="text-left p-3 font-semibold">Bank Name</th>
                 <th className="text-left p-3 font-semibold">SWIFT Code</th>
                 <th className="text-left p-3 font-semibold">Account Number</th>
-                <th className="text-left p-3 font-semibold">IBAN</th>
-                <th className="text-left p-3 font-semibold">Intermediary Bank</th>
                 <th className="text-center p-3 font-semibold">Invoices</th>
                 <th className="text-center p-3 font-semibold">Verified</th>
-                {canEditBank && <th className="text-center p-3 font-semibold">Actions</th>}
+                {canEditBank && <th className="text-center p-3 font-semibold">Action</th>}
               </tr>
             </thead>
             <tbody>
@@ -180,97 +194,32 @@ export default function BankDetailsMasterlist() {
                     {entry.classification && (
                       <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{entry.classification}</div>
                     )}
-                  </td>
-                  {/* Beneficiary */}
-                  <td className="p-3">{entry.beneficiary_name || '-'}</td>
-
-                  {/* Bank Name (editable) */}
-                  <td className="p-3">
-                    {editingId === entry.id ? (
-                      <input
-                        value={editData.bank_name || ''}
-                        onChange={(e) => setEditData({ ...editData, bank_name: e.target.value })}
-                        className="w-full p-1 rounded text-xs"
-                        style={{ background: 'var(--bg-elevated)', border: '1px solid var(--accent-blue)', color: 'var(--text-primary)' }}
-                      />
-                    ) : (
-                      <div>
-                        {entry.bank_name || '-'}
-                        {entry.has_multiple_accounts && entry.bank_name_alt && (
-                          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>Alt: {entry.bank_name_alt}</div>
-                        )}
-                      </div>
+                    {entry.beneficiary_name && (
+                      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>Beneficiary: {entry.beneficiary_name}</div>
                     )}
                   </td>
 
-                  {/* SWIFT Code (editable) */}
+                  {/* Bank Name */}
                   <td className="p-3">
-                    {editingId === entry.id ? (
-                      <input
-                        value={editData.swift_code || ''}
-                        onChange={(e) => setEditData({ ...editData, swift_code: e.target.value })}
-                        className="w-full p-1 rounded text-xs"
-                        style={{ background: 'var(--bg-elevated)', border: '1px solid var(--accent-blue)', color: 'var(--text-primary)' }}
-                      />
-                    ) : (
-                      <div>
-                        {entry.swift_code || '-'}
-                        {entry.has_multiple_accounts && entry.swift_code_alt && (
-                          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>Alt: {entry.swift_code_alt}</div>
-                        )}
-                      </div>
+                    <div>{entry.bank_name || '-'}</div>
+                    {entry.has_multiple_accounts && entry.bank_name_alt && (
+                      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>Alt: {entry.bank_name_alt}</div>
                     )}
                   </td>
 
-                  {/* Account Number (editable) */}
+                  {/* SWIFT Code */}
                   <td className="p-3">
-                    {editingId === entry.id ? (
-                      <input
-                        value={editData.account_number || ''}
-                        onChange={(e) => setEditData({ ...editData, account_number: e.target.value })}
-                        className="w-full p-1 rounded text-xs"
-                        style={{ background: 'var(--bg-elevated)', border: '1px solid var(--accent-blue)', color: 'var(--text-primary)' }}
-                      />
-                    ) : (
-                      <div>
-                        {entry.account_number || '-'}
-                        {entry.has_multiple_accounts && entry.account_number_alt && (
-                          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>Alt: {entry.account_number_alt}</div>
-                        )}
-                      </div>
+                    <div>{entry.swift_code || '-'}</div>
+                    {entry.has_multiple_accounts && entry.swift_code_alt && (
+                      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>Alt: {entry.swift_code_alt}</div>
                     )}
                   </td>
 
-                  {/* IBAN (editable) */}
+                  {/* Account Number */}
                   <td className="p-3">
-                    {editingId === entry.id ? (
-                      <input
-                        value={editData.iban || ''}
-                        onChange={(e) => setEditData({ ...editData, iban: e.target.value })}
-                        className="w-full p-1 rounded text-xs"
-                        style={{ background: 'var(--bg-elevated)', border: '1px solid var(--accent-blue)', color: 'var(--text-primary)' }}
-                      />
-                    ) : (
-                      entry.iban || '-'
-                    )}
-                  </td>
-
-                  {/* Intermediary Bank */}
-                  <td className="p-3">
-                    {editingId === entry.id ? (
-                      <input
-                        value={editData.intermediary_bank_name || ''}
-                        onChange={(e) => setEditData({ ...editData, intermediary_bank_name: e.target.value })}
-                        className="w-full p-1 rounded text-xs"
-                        style={{ background: 'var(--bg-elevated)', border: '1px solid var(--accent-blue)', color: 'var(--text-primary)' }}
-                      />
-                    ) : (
-                      <div>
-                        {entry.intermediary_bank_name || '-'}
-                        {entry.intermediary_bank_swift && (
-                          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>SWIFT: {entry.intermediary_bank_swift}</div>
-                        )}
-                      </div>
+                    <div>{entry.account_number || '-'}</div>
+                    {entry.has_multiple_accounts && entry.account_number_alt && (
+                      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>Alt: {entry.account_number_alt}</div>
                     )}
                   </td>
 
@@ -296,40 +245,20 @@ export default function BankDetailsMasterlist() {
                     )}
                   </td>
 
-                  {/* Actions */}
+                  {/* Action button — prominent Edit button */}
                   {canEditBank && (
                     <td className="p-3 text-center">
-                      {editingId === entry.id ? (
-                        <div className="flex items-center justify-center gap-1">
-                          <button
-                            onClick={handleSave}
-                            disabled={saving}
-                            className="p-1.5 rounded hover:opacity-80"
-                            style={{ background: 'var(--accent-lime)', color: 'var(--bg-card)' }}
-                            title="Save"
-                          >
-                            <Save className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={handleCancel}
-                            disabled={saving}
-                            className="p-1.5 rounded hover:opacity-80"
-                            style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}
-                            title="Cancel"
-                          >
-                            <X className="h-4 w-4" />
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => handleEdit(entry)}
-                          className="p-1.5 rounded hover:opacity-80"
-                          style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}
-                          title="Edit bank details"
-                        >
-                          <Edit className="h-4 w-4" />
-                        </button>
-                      )}
+                      <button
+                        onClick={() => handleEdit(entry)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+                        style={{
+                          background: 'var(--accent-blue)',
+                          color: 'var(--text-inverse)',
+                        }}
+                      >
+                        <Edit className="h-3.5 w-3.5" />
+                        Edit Bank
+                      </button>
                     </td>
                   )}
                 </tr>
@@ -339,73 +268,101 @@ export default function BankDetailsMasterlist() {
         )}
       </div>
 
-      {/* Expandable edit fields for alt accounts */}
-      {editingId && (
-        <div className="p-4 rounded-lg space-y-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
-          <h3 className="text-sm font-semibold">Additional Bank Fields</h3>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div>
-              <label className="text-xs" style={{ color: 'var(--text-muted)' }}>Bank Address</label>
-              <input
-                value={editData.bank_address || ''}
-                onChange={(e) => setEditData({ ...editData, bank_address: e.target.value })}
-                className="w-full p-2 rounded text-xs mt-1"
-                style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
-              />
+      {/* Edit Modal */}
+      {showEditModal && editingEntry && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.5)' }}
+          onClick={handleCancel}
+        >
+          <div
+            className="rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto"
+            style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-4 border-b" style={{ borderColor: 'var(--border-color)' }}>
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-blue), var(--accent-purple))' }}>
+                  <BankIcon className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold">Edit Bank Details</h2>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    {editingEntry.name} — changes will propagate to {editingEntry.invoice_count} invoice(s)
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={handleCancel}
+                className="p-2 rounded-lg hover:opacity-80"
+                style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}
+              >
+                <X className="h-5 w-5" />
+              </button>
             </div>
-            <div>
-              <label className="text-xs" style={{ color: 'var(--text-muted)' }}>Alt Bank Name</label>
-              <input
-                value={editData.bank_name_alt || ''}
-                onChange={(e) => setEditData({ ...editData, bank_name_alt: e.target.value })}
-                className="w-full p-2 rounded text-xs mt-1"
-                style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
-              />
+
+            {/* Modal Body */}
+            <div className="p-4 space-y-4">
+              {/* Primary Bank Account */}
+              <div>
+                <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Primary Bank Account</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {editField('Bank Name', 'bank_name')}
+                  {editField('SWIFT Code', 'swift_code')}
+                  {editField('Account Number', 'account_number')}
+                  {editField('IBAN', 'iban')}
+                  {editField('Bank Address', 'bank_address')}
+                  {editField('Sort Code', 'sort_code')}
+                  {editField('ABA Routing Number', 'aba_routing_number')}
+                </div>
+              </div>
+
+              {/* Intermediary Bank */}
+              <div>
+                <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Intermediary Bank</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {editField('Intermediary Bank Name', 'intermediary_bank_name')}
+                  {editField('Intermediary SWIFT Code', 'intermediary_bank_swift')}
+                </div>
+              </div>
+
+              {/* Alternate Account (if applicable) */}
+              <div>
+                <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>
+                  Alternate Account {editingEntry.has_multiple_accounts ? '(Vendor has multiple accounts)' : '(optional)'}
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {editField('Alt Bank Name', 'bank_name_alt')}
+                  {editField('Alt SWIFT Code', 'swift_code_alt')}
+                  {editField('Alt Account Number', 'account_number_alt')}
+                </div>
+              </div>
             </div>
-            <div>
-              <label className="text-xs" style={{ color: 'var(--text-muted)' }}>Alt SWIFT</label>
-              <input
-                value={editData.swift_code_alt || ''}
-                onChange={(e) => setEditData({ ...editData, swift_code_alt: e.target.value })}
-                className="w-full p-2 rounded text-xs mt-1"
-                style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
-              />
-            </div>
-            <div>
-              <label className="text-xs" style={{ color: 'var(--text-muted)' }}>Alt Account Number</label>
-              <input
-                value={editData.account_number_alt || ''}
-                onChange={(e) => setEditData({ ...editData, account_number_alt: e.target.value })}
-                className="w-full p-2 rounded text-xs mt-1"
-                style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
-              />
-            </div>
-            <div>
-              <label className="text-xs" style={{ color: 'var(--text-muted)' }}>Sort Code</label>
-              <input
-                value={editData.sort_code || ''}
-                onChange={(e) => setEditData({ ...editData, sort_code: e.target.value })}
-                className="w-full p-2 rounded text-xs mt-1"
-                style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
-              />
-            </div>
-            <div>
-              <label className="text-xs" style={{ color: 'var(--text-muted)' }}>ABA Routing</label>
-              <input
-                value={editData.aba_routing_number || ''}
-                onChange={(e) => setEditData({ ...editData, aba_routing_number: e.target.value })}
-                className="w-full p-2 rounded text-xs mt-1"
-                style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
-              />
-            </div>
-            <div>
-              <label className="text-xs" style={{ color: 'var(--text-muted)' }}>Intermediary SWIFT</label>
-              <input
-                value={editData.intermediary_bank_swift || ''}
-                onChange={(e) => setEditData({ ...editData, intermediary_bank_swift: e.target.value })}
-                className="w-full p-2 rounded text-xs mt-1"
-                style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
-              />
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-end gap-2 p-4 border-t" style={{ borderColor: 'var(--border-color)' }}>
+              <button
+                onClick={handleCancel}
+                disabled={saving}
+                className="px-4 py-2 rounded-lg text-sm font-medium"
+                style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium"
+                style={{
+                  background: saving ? 'var(--bg-elevated)' : 'var(--accent-lime)',
+                  color: saving ? 'var(--text-muted)' : 'var(--text-inverse)',
+                  cursor: saving ? 'not-allowed' : 'pointer',
+                }}
+              >
+                <Save className="h-4 w-4" />
+                {saving ? 'Saving...' : 'Save Changes'}
+              </button>
             </div>
           </div>
         </div>

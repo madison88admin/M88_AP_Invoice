@@ -807,9 +807,18 @@ export async function rejectInvoice(
   }
 
   // Find the first unsigned signature matching any allowed role
-  const pendingSignature = invoice.signatures.find(
+  let pendingSignature = invoice.signatures.find(
     (sig: any) => signatoryRoles.includes(sig.signatory_role) && !sig.signed_at
   );
+
+  // Special case: Accounting rejecting from PENDING_ACCOUNTING stage
+  // ACCOUNTING_REVIEWER is not part of the approval route signatures, so
+  // we need to handle this case separately — find the last signed approver
+  // and return the invoice to them.
+  const isAccountingRole = ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR'].includes(userRole);
+  if (!pendingSignature && isAccountingRole && invoice.status === InvoiceStatus.PENDING_ACCOUNTING) {
+    return rejectFromAccounting(invoiceId, userId, userRole, reason, invoice);
+  }
 
   if (!pendingSignature) {
     throw new AppError('No pending approval found for this role', 400);
@@ -829,14 +838,6 @@ export async function rejectInvoice(
 
   const signedRole = pendingSignature.signatory_role;
 
-  // Reject sends the invoice back to accounting (PENDING_ACCOUNTING) so it can be corrected
-  // and re-routed for approval. This avoids a dead-end REJECTED status.
-  await prisma.invoice.update({
-    where: { id: invoiceId },
-    data: { status: InvoiceStatus.PENDING_ACCOUNTING as any, current_approver_role: null },
-  });
-  await inAppNotificationService.notifyStageTransition(invoiceId, invoice.invoice_number, invoice.vendor?.name || 'Unknown', '', 'PENDING_ACCOUNTING');
-
   // Invalidate all signatures from the rejecting approver onwards so re-approval is required
   const sortedSigs = [...invoice.signatures].sort(
     (a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
@@ -855,6 +856,27 @@ export async function rejectInvoice(
     }
   }
 
+  // Find the last approver who signed before the rejecting approver
+  // Reject sends the invoice back to the last approver (not accounting)
+  const priorSignedSigs = sortedSigs
+    .slice(0, rejectIndex)
+    .filter((s: any) => s.signed_at && !s.invalidated_at)
+    .reverse();
+  const lastApprover = priorSignedSigs[0];
+
+  let targetStatus: any;
+  let targetApproverRole: string | null;
+
+  if (lastApprover) {
+    // Return to the last approver who signed
+    targetStatus = mapSignatoryRoleToPendingStatus(lastApprover.signatory_role as SignatoryRole);
+    targetApproverRole = lastApprover.signatory_role;
+  } else {
+    // No prior approver — return to coordinator as fallback
+    targetStatus = InvoiceStatus.PENDING_COORDINATOR as any;
+    targetApproverRole = SignatoryRole.COORDINATOR;
+  }
+
   // Exit current stage timestamp FIRST — before creating a new one
   const currentStage = await prisma.stageTimestamp.findFirst({
     where: { invoice_id: invoiceId, exited_at: null },
@@ -870,12 +892,25 @@ export async function rejectInvoice(
     });
   }
 
-  // Create new stage timestamp for PENDING_ACCOUNTING
+  // Update invoice status to the last approver's pending status
+  await prisma.invoice.update({
+    where: { id: invoiceId },
+    data: { status: targetStatus as any, current_approver_role: targetApproverRole as any },
+  });
+  await inAppNotificationService.notifyStageTransition(
+    invoiceId,
+    invoice.invoice_number,
+    invoice.vendor?.name || 'Unknown',
+    '',
+    targetStatus as any
+  );
+
+  // Create new stage timestamp for the target status
   await prisma.stageTimestamp.create({
     data: {
       invoice_id: invoiceId,
-      stage: InvoiceStatus.PENDING_ACCOUNTING as any,
-      sla_hours: SLA_LIMITS.ACCOUNTING_DAYS * 24,
+      stage: targetStatus as any,
+      sla_hours: getSLAForRole(targetApproverRole as SignatoryRole) * 24,
     },
   });
 
@@ -885,11 +920,116 @@ export async function rejectInvoice(
       invoice_id: invoiceId,
       action: 'REJECTED',
       performed_by: userId,
-      note: `Invoice rejected by ${signedRole} — returned to accounting. Reason: ${reason}`,
+      note: `Invoice rejected by ${signedRole} — returned to ${targetApproverRole}. Reason: ${reason}`,
     },
   });
 
-  return { message: 'Invoice rejected — returned to accounting for correction' };
+  return { message: `Invoice rejected — returned to ${targetApproverRole} for correction` };
+}
+
+/**
+ * Special reject path for Accounting roles rejecting from PENDING_ACCOUNTING stage.
+ * Since ACCOUNTING_REVIEWER is not part of the signature chain, we find the last
+ * signed approver and return the invoice to their stage for correction.
+ */
+async function rejectFromAccounting(
+  invoiceId: string,
+  userId: string,
+  userRole: string,
+  reason: string,
+  invoice: any
+) {
+  if (!reason?.trim()) {
+    throw new AppError('Rejection reason is required', 400);
+  }
+
+  const sortedSigs = [...invoice.signatures].sort(
+    (a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  );
+
+  // Find the last signed, non-invalidated approver
+  const signedSigs = sortedSigs.filter(
+    (s: any) => s.signed_at && !s.invalidated_at
+  );
+  const lastApprover = signedSigs[signedSigs.length - 1];
+
+  let targetStatus: any;
+  let targetApproverRole: string;
+
+  if (lastApprover) {
+    targetStatus = mapSignatoryRoleToPendingStatus(lastApprover.signatory_role as SignatoryRole);
+    targetApproverRole = lastApprover.signatory_role;
+  } else {
+    // No signed approver — return to coordinator as fallback
+    targetStatus = InvoiceStatus.PENDING_COORDINATOR as any;
+    targetApproverRole = SignatoryRole.COORDINATOR;
+  }
+
+  // Exit current PENDING_ACCOUNTING stage
+  const currentStage = await prisma.stageTimestamp.findFirst({
+    where: { invoice_id: invoiceId, exited_at: null },
+  });
+  if (currentStage) {
+    const elapsedHours = calcWorkingHoursElapsed(new Date(currentStage.entered_at), new Date());
+    await prisma.stageTimestamp.update({
+      where: { id: currentStage.id },
+      data: {
+        exited_at: new Date(),
+        is_breached: elapsedHours > currentStage.sla_hours,
+      },
+    });
+  }
+
+  // Update invoice status back to the last approver
+  await prisma.invoice.update({
+    where: { id: invoiceId },
+    data: {
+      status: targetStatus as any,
+      current_approver_role: targetApproverRole as any,
+    },
+  });
+  await inAppNotificationService.notifyStageTransition(
+    invoiceId,
+    invoice.invoice_number,
+    invoice.vendor?.name || 'Unknown',
+    '',
+    targetStatus as any
+  );
+
+  // Create new stage timestamp for the target status
+  await prisma.stageTimestamp.create({
+    data: {
+      invoice_id: invoiceId,
+      stage: targetStatus as any,
+      sla_hours: getSLAForRole(targetApproverRole as SignatoryRole) * 24,
+    },
+  });
+
+  // Create audit log entry
+  await prisma.auditLog.create({
+    data: {
+      invoice_id: invoiceId,
+      action: 'REJECTED',
+      performed_by: userId,
+      note: `Invoice rejected by Accounting (${userRole}) — returned to ${targetApproverRole}. Reason: ${reason}`,
+    },
+  });
+
+  // Create workflow action record
+  await prisma.invoiceWorkflowAction.create({
+    data: {
+      invoice_id: invoiceId,
+      invoice_revision: invoice.revision,
+      action: 'REJECTED',
+      from_stage: invoice.status,
+      to_stage: targetStatus,
+      reason: reason.trim(),
+      performed_by: userId,
+      performed_by_role: userRole,
+    },
+  }).catch(() => { /* workflow action table may not exist in all envs */ });
+
+  return { message: `Invoice rejected — returned to ${targetApproverRole} for correction` };
 }
 
 /** Return an invoice to a prior purchasing approver without destroying history. */

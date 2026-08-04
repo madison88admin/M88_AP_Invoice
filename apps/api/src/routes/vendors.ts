@@ -254,12 +254,13 @@ router.patch('/:id/bank-details', authorize(UserRole.ACCOUNTING_SUPERVISOR, User
 
     // Create audit log
     const changedFields = Object.keys(vendorUpdate).filter(k => k !== 'updated_at');
-    await prisma.$executeRawUnsafe(
-      `INSERT INTO "AP_Invoice"."APInvoice_AuditLog" (id, action, performed_by, note, created_at, updated_at) VALUES (gen_random_uuid(), $1, $2, $3, NOW(), NOW())`,
-      'VENDOR_BANK_UPDATED',
-      req.user!.id,
-      `Vendor "${vendor.name}" bank details updated by ${req.user!.role}. Fields: ${changedFields.join(', ')}. Propagated to ${updatedInvoices} invoice(s).`
-    );
+    await prisma.auditLog.create({
+      data: {
+        action: 'VENDOR_BANK_UPDATED',
+        performed_by: req.user!.id,
+        note: `Vendor "${vendor.name}" bank details updated by ${req.user!.role}. Fields: ${changedFields.join(', ')}. Propagated to ${updatedInvoices} invoice(s).`,
+      },
+    }).catch(() => { /* audit log failure should not block the update */ });
 
     res.json({
       message: `Bank details updated for vendor "${vendor.name}" and propagated to ${updatedInvoices} invoice(s)`,

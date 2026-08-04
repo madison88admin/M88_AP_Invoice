@@ -3515,8 +3515,15 @@ ${dataRows}
                             <select
                               value={editFormData[field] || ''}
                               onChange={(e) => handleEditChange(field, e.target.value)}
+                              disabled={isReadOnly}
                               className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
-                              style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                              style={{
+                                background: isReadOnly ? 'var(--bg-base)' : 'var(--bg-elevated)',
+                                border: '1px solid var(--border-color)',
+                                color: isReadOnly ? 'var(--text-muted)' : 'var(--text-primary)',
+                                cursor: isReadOnly ? 'not-allowed' : 'pointer',
+                                opacity: isReadOnly ? 0.7 : 1,
+                              }}
                             >
                               {options.map((opt: any) => (
                                 <option key={opt.value} value={opt.value}>{opt.label}</option>

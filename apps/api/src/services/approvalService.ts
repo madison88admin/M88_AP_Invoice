@@ -177,6 +177,25 @@ async function createApprovalRequestInternal(
     throw new AppError('Invoice not found', 404);
   }
 
+  // Validate required fields before allowing approval request
+  const requiredFields: { field: string; label: string }[] = [
+    { field: 'due_date', label: 'Due Date' },
+    { field: 'brand', label: 'Brand' },
+    { field: 'season', label: 'Season' },
+    { field: 'customer_po_number', label: 'PO Number' },
+    { field: 'mpo_base_number', label: 'Base MPO' },
+  ];
+  const missingFields = requiredFields.filter(f => {
+    const val = (invoice as any)[f.field];
+    return !val || val === '';
+  });
+  if (missingFields.length > 0) {
+    throw new AppError(
+      `Cannot request approval — missing required fields: ${missingFields.map(f => f.label).join(', ')}. Please fill these in before requesting approval.`,
+      400
+    );
+  }
+
   if (invoice.status !== 'VALIDATION_PENDING') {
     throw new AppError('Invoice must be validated before requesting approval', 400);
   }
@@ -596,6 +615,25 @@ export async function approveInvoice(
 
   if (!invoice) {
     throw new AppError('Invoice not found', 404);
+  }
+
+  // Validate required fields before allowing approval
+  const requiredFields: { field: string; label: string }[] = [
+    { field: 'due_date', label: 'Due Date' },
+    { field: 'brand', label: 'Brand' },
+    { field: 'season', label: 'Season' },
+    { field: 'customer_po_number', label: 'PO Number' },
+    { field: 'mpo_base_number', label: 'Base MPO' },
+  ];
+  const missingFields = requiredFields.filter(f => {
+    const val = (invoice as any)[f.field];
+    return !val || val === '';
+  });
+  if (missingFields.length > 0) {
+    throw new AppError(
+      `Cannot approve — missing required fields: ${missingFields.map(f => f.label).join(', ')}. Please fill these in before approving.`,
+      400
+    );
   }
 
   // Map user role to allowed signatory roles

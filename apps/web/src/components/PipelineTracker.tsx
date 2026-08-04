@@ -180,7 +180,26 @@ export default function PipelineTracker({ invoice }: PipelineTrackerProps) {
                     </span>
                   )}
                 </div>
-                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{stageInfo.role}</p>
+                {(() => {
+                  // Find the approver name from signatures matching this stage
+                  const stageSig = signatures.find((s: any) => {
+                    if (!s.signed_at) return false;
+                    const sigRole = String(s.signatory_role || '').toUpperCase();
+                    const stageRole = stageInfo.stage.replace('PENDING_', '');
+                    return sigRole === stageRole ||
+                      sigRole.replace(/_/g, ' ') === stageRole.replace(/_/g, ' ') ||
+                      (stageInfo.stage === 'PENDING_COORDINATOR' && (sigRole === 'PURCHASING_COORDINATOR' || sigRole === 'COORDINATOR')) ||
+                      (stageInfo.stage === 'PENDING_MANAGER' && (sigRole === 'PURCHASING_MANAGER' || sigRole === 'MANAGER'));
+                  });
+                  if (isCompleted && stageSig?.signatory_name) {
+                    return (
+                      <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                        {stageSig.signatory_name} <span style={{ opacity: 0.6 }}>· {stageInfo.role}</span>
+                      </p>
+                    );
+                  }
+                  return <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{stageInfo.role}</p>;
+                })()}
 
                 {ts && (
                   <div className="mt-1.5 space-y-0.5">
@@ -255,8 +274,11 @@ export default function PipelineTracker({ invoice }: PipelineTrackerProps) {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-medium truncate" style={{ color: isSuperseded ? 'var(--text-muted)' : 'var(--text-primary)', textDecoration: isSuperseded ? 'line-through' : 'none' }}>
-                      {sig.signatory_role}
+                      {sig.signatory_name || sig.signatory_role}
                     </p>
+                    {sig.signatory_name && (
+                      <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{sig.signatory_role}</p>
+                    )}
                     {isSigned && (
                       <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
                         Signed {formatTimestamp(sig.signed_at)}

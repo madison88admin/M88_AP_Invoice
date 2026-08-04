@@ -735,7 +735,6 @@ export default function Dashboard() {
         { field: 'season', label: 'Season' },
         { field: 'customer_po_number', label: 'PO Number' },
         { field: 'mpo_base_number', label: 'Base MPO' },
-        { field: 'material_name', label: 'Material Name' },
       ];
       const missing = requiredFields.filter(f => !editFormData[f.field] || editFormData[f.field] === '');
       if (missing.length > 0) {
@@ -3454,7 +3453,7 @@ ${dataRows}
                   { label: 'Base MPO', field: 'mpo_base_number', type: 'text', required: true },
                   { label: 'Order Sequence', field: 'mpo_order_sequence', type: 'text' },
                   { label: 'Material Code', field: 'material_code', type: 'text' },
-                  { label: 'Material Name', field: 'material_name', type: 'text', required: true },
+                  { label: 'Material Name', field: 'material_name', type: 'text' },
                   { label: 'QTY SHIPPED', field: 'qty_shipped', type: 'number' },
                 ]},
                 { title: 'Financial Details', fields: [

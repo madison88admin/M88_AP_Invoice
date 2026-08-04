@@ -9,6 +9,7 @@ import { logger } from '../utils/logger';
 import { extractTextWithOpenDataLoader } from './openDataLoaderService';
 
 export interface BankInfo {
+  beneficiary_name?: string;
   bank_name?: string;
   swift_code?: string;
   bank_code?: string;
@@ -921,6 +922,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
       payment_terms: aiResult.payment_terms || '',
       bank_swift: aiResult.swift_code || aiResult.bank_info?.swift_code || '',
       bank_account: aiResult.account_number || (aiResult.bank_info as any)?.account_usd || aiResult.bank_info?.account_number || '',
+      beneficiary_name: (aiResult as any).beneficiary_name || (aiResult as any).bank_info?.beneficiary_name || '',
       invoice_type: mapDocumentType((aiResult as any).document_type) as any,
       tax_id: '',
       company_reg: '',
@@ -1103,10 +1105,11 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
     qb_memo: undefined,
     qb_account_class: undefined,
     bank_info: {
+      beneficiary_name: (extracted as any).beneficiary_name || (extracted as any).bank_info?.beneficiary_name || undefined,
       bank_name: (extracted as any).bank_name || undefined,
       swift_code: extracted.bank_swift,
       account_usd: extracted.bank_account,
-    },
+    } as BankInfo,
     signatures: ((extracted as any).signatures || [])
       .filter((sig: any) => sig && (sig.signatory_name || sig.signatory_role))
       .map((sig: any) => {

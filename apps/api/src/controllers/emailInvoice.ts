@@ -197,6 +197,7 @@ async function processSingleEmailInvoice(
           email_attachment_name: emailMetadata.attachmentName,
           multi_invoice_split_index: splitIndex,
         } as any,
+        beneficiary_name: (ocrResult as any).bank_info?.beneficiary_name || (ocrResult as any).beneficiary_name || undefined,
         bank_name: (ocrResult as any).bank_info?.bank_name || (ocrResult as any).bank_name || undefined,
         swift_code: (ocrResult as any).bank_info?.swift_code || (ocrResult as any).swift_code || undefined,
         account_number: (ocrResult as any).bank_info?.account_number || (ocrResult as any).account_number || undefined,

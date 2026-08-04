@@ -479,9 +479,9 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     throw new AppError('Not authorized to edit invoice data', 403);
   }
 
-  // Bank details (bank_name, swift_code, account_number) can only be edited by
+  // Bank details (beneficiary_name, bank_name, swift_code, account_number) can only be edited by
   // Accounting roles + IT_ADMIN + SUPERADMIN. Purchasing/Managers must request a change.
-  const bankDetailFields = ['bank_name', 'swift_code', 'account_number'];
+  const bankDetailFields = ['beneficiary_name', 'bank_name', 'swift_code', 'account_number'];
   const canEditBankDetails = ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN'].includes(userRole);
 
   // If accounting role, they can ONLY edit bank details — block all other fields
@@ -490,7 +490,7 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     const nonBankFields = attemptedFields.filter(f => !bankDetailFields.includes(f) && f !== 'edit_reason');
     if (nonBankFields.length > 0) {
       throw new AppError(
-        `Accounting can only edit bank details (bank_name, swift_code, account_number). Locked fields: ${nonBankFields.join(', ')}`,
+        `Accounting can only edit bank details (beneficiary_name, bank_name, swift_code, account_number). Locked fields: ${nonBankFields.join(', ')}`,
         403
       );
     }
@@ -519,12 +519,12 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
   // All other fields are locked to preserve the approved invoice state
   const approvedStatuses = ['PENDING_ACCOUNTING', 'APPROVED'];
   if (approvedStatuses.includes(existing.status)) {
-    const allowedFields = ['bank_name', 'swift_code', 'account_number'];
+    const allowedFields = ['beneficiary_name', 'bank_name', 'swift_code', 'account_number'];
     const attemptedFields = Object.keys(invoiceData).filter(k => invoiceData[k] !== undefined && !protectedFields.includes(k));
     const disallowedFields = attemptedFields.filter(f => !allowedFields.includes(f));
     if (disallowedFields.length > 0) {
       throw new AppError(
-        `Invoice is already approved. Only bank details (bank_name, swift_code, account_number) can be edited. Locked fields: ${disallowedFields.join(', ')}`,
+        `Invoice is already approved. Only bank details (beneficiary_name, bank_name, swift_code, account_number) can be edited. Locked fields: ${disallowedFields.join(', ')}`,
         403
       );
     }
@@ -596,7 +596,7 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
   const materialFields = new Set([
     'vendor_name_raw', 'invoice_number', 'invoice_type', 'invoice_date', 'total_amount',
     'currency', 'mpo_number', 'mpo_base_number', 'mpo_order_sequence', 'material_code',
-    'material_name', 'qty_shipped', 'bank_name', 'swift_code', 'account_number',
+    'material_name', 'qty_shipped', 'beneficiary_name', 'bank_name', 'swift_code', 'account_number',
     'payment_terms', 'customer_po_number'
   ]);
   const materialChange = Object.keys(data).some((key) =>
@@ -717,7 +717,7 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     'handling_fee', 'tt_charge', 'setup_charge', 'sample_charge',
     'min_order_charge', 'finance_surcharge',
     // Bank info
-    'bank_name', 'swift_code', 'account_number',
+    'beneficiary_name', 'bank_name', 'swift_code', 'account_number',
     // Dates
     'invoice_date', 'due_date', 'invoice_received_date',
     // PO & order refs
@@ -957,7 +957,7 @@ export const requestBankDetailsChange = async (
     throw new AppError('Invoice not found', 404);
   }
 
-  const allowedFields = ['bank_name', 'swift_code', 'account_number'];
+  const allowedFields = ['beneficiary_name', 'bank_name', 'swift_code', 'account_number'];
   if (!allowedFields.includes(request.field)) {
     throw new AppError(`Invalid bank field: ${request.field}. Allowed: ${allowedFields.join(', ')}`, 400);
   }

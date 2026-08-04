@@ -107,7 +107,7 @@ IMPORTANT RULES:
    - total_amount (number from Amount/Total column)
    - item_code (item code if present, e.g., "SA10047935", "M5PG*")
    Do not skip line items. If quantity looks like a unit price, re-check the column.
-5. For bank details: look for sections labeled "Bank Details", "Payment Information", "Remittance", "Beneficiary Bank", or similar. Extract bank_name, swift_code, and account_number from there.
+5. For bank details: look for sections labeled "Bank Details", "Payment Information", "Remittance", "Beneficiary Bank", or similar. Extract beneficiary_name (account holder name), bank_name, swift_code, and account_number from there.
 6. For qty_shipped: if there is a total quantity field, use that. Otherwise, sum the quantities from all line items.
 7. For document_type: check if the document says "INVOICE", "PROFORMA INVOICE", "COMMERCIAL INVOICE", "CREDIT NOTE", "STATEMENT", etc.
 8. For charges: extract ALL charges separately. Look for lines labeled:

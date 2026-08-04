@@ -120,7 +120,7 @@ export async function matchVendor(vendorName: string): Promise<VendorMatchResult
  */
 export async function matchOrCreateVendor(
   vendorName: string,
-  _bankInfo?: { bank_name?: string; swift_code?: string; account_number?: string }
+  _bankInfo?: { beneficiary_name?: string; bank_name?: string; swift_code?: string; account_number?: string }
 ): Promise<{ vendor_id: string; vendor_name: string; auto_created: boolean } | null> {
   if (!isDbEnabled()) {
     return null;

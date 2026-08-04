@@ -32,6 +32,7 @@ export interface ExtractedInvoiceData {
   bank_name?: string;
   swift_code?: string;
   account_number?: string;
+  beneficiary_name?: string;
   raw_text?: string;
   extraction_method?: string;
   engine_name?: string;
@@ -60,6 +61,7 @@ Fields to extract:
 - sold_to: Sold to / invoice / buyer company and address. If the invoice shows two columns (e.g., "Delivery address" and "Invoice address"), extract ONLY the invoice address column, NOT the delivery address column.
 - qty_shipped: Total quantity shipped (sum of all line item quantities, or the total quantity field if explicitly stated)
 - document_type: Type of document (INVOICE, PROFORMA, COMMERCIAL_INVOICE, CREDIT_NOTE, STATEMENT, DEBIT_NOTE). Default to INVOICE if not clear.
+- beneficiary_name: Beneficiary name / Account holder name (the company or person who owns the bank account)
 - bank_name: Bank name of the vendor's bank (e.g., "Standard Chartered Bank", "HSBC", "The Hongkong and Shanghai Banking Corporation Ltd")
 - swift_code: SWIFT/BIC code of the vendor's bank (e.g., "SCBLHKHHXXX", "HSBCHKHHHKH")
 - account_number: Bank account number of the vendor (e.g., "447-0-092572-7", "484-592449-838")
@@ -118,7 +120,7 @@ IMPORTANT RULES:
    - po_number (PO for this line if present per line — pattern: PO\\d+)
    Do not skip line items. If quantity looks like a unit price, re-check the column.
    CRITICAL: If the invoice has MULTIPLE different MPOs across line items (e.g., one line has MPO015798 and another has MPO015841), you MUST extract the mpo_number for each line separately. Do NOT just use the first MPO for all lines.
-5. For bank details: CRITICAL — look carefully for ANY bank-related information anywhere in the invoice. Check sections labeled "Bank Details", "Payment Information", "Remittance", "Beneficiary Bank", "Bank Account", "SWIFT", "Payment Instructions", or similar. Also check the footer, bottom of page, or any small text sections. Extract bank_name, swift_code, and account_number. Even if bank info appears in an image or small text, report what you can find.
+5. For bank details: CRITICAL — look carefully for ANY bank-related information anywhere in the invoice. Check sections labeled "Bank Details", "Payment Information", "Remittance", "Beneficiary Bank", "Bank Account", "SWIFT", "Payment Instructions", or similar. Also check the footer, bottom of page, or any small text sections. Extract beneficiary_name (the account holder name), bank_name, swift_code, and account_number. Even if bank info appears in an image or small text, report what you can find.
 6. For qty_shipped: if there is a total quantity field, use that. Otherwise, sum the quantities from all line items.
 7. For document_type: check if the document says "INVOICE", "PROFORMA INVOICE", "COMMERCIAL INVOICE", "CREDIT NOTE", "STATEMENT", etc.
 8. For charges: extract ALL charges separately. Look for lines labeled:
@@ -157,6 +159,7 @@ Example output:
   "sold_to": "256086 / THE NORTH FACE",
   "qty_shipped": 120,
   "document_type": "INVOICE",
+  "beneficiary_name": "Madison 88 Ltd",
   "bank_name": "Standard Chartered Bank",
   "swift_code": "SCBLHKHHXXX",
   "account_number": "447-0-092572-7",
@@ -333,7 +336,7 @@ export class GroqOCRService {
       extracted.confidence = this.calculateConfidence(extracted);
 
       logger.info(`Groq OCR extracted: vendor=${extracted.vendor_name}, amount=${extracted.total_amount}, confidence=${extracted.confidence}`);
-      logger.info(`Groq OCR bank fields: bank_name="${extracted.bank_name || ''}", swift_code="${extracted.swift_code || ''}", account_number="${extracted.account_number || ''}"`);
+      logger.info(`Groq OCR bank fields: beneficiary_name="${extracted.beneficiary_name || ''}", bank_name="${extracted.bank_name || ''}", swift_code="${extracted.swift_code || ''}", account_number="${extracted.account_number || ''}"`);
 
       return extracted;
     } catch (error) {

@@ -30,6 +30,7 @@ export interface MockInvoice {
   bank_name?: string;
   account_number?: string;
   swift_code?: string;
+  beneficiary_name?: string;
   signatures: MockSignature[];
   exceptions: MockException[];
   stage_timestamps: MockStageTimestamp[];
@@ -169,13 +170,13 @@ export interface MockVendor {
   bank_name?: string;
   account_number?: string;
   swift_code?: string;
+  beneficiary_name?: string;
   iban?: string;
   has_multiple_accounts: boolean;
   bank_verified_at?: string;
   brand_code?: string;
   brand_name?: string;
   brand_tier?: BrandTier;
-  beneficiary_name?: string;
   classification?: string;
 }
 

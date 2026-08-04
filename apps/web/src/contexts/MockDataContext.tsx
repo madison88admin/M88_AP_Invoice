@@ -109,6 +109,7 @@ const apiInvoiceToMock = (invoice: any): MockInvoice => {
     bank_name: vendor.bank_name || invoice.bank_name || undefined,
     account_number: vendor.account_number || invoice.account_number || undefined,
     swift_code: vendor.swift_code || invoice.swift_code || undefined,
+    beneficiary_name: (invoice as any).beneficiary_name || vendor.beneficiary_name || undefined,
     signatures: (invoice.signatures || []).map((s: any) => ({
       id: s.id || '',
       signatory_role: s.signatory_role || '',

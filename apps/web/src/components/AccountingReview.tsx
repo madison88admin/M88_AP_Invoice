@@ -226,7 +226,7 @@ ${dataRows}
                           <div className="flex items-center gap-2 mb-1">
                             <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{req.invoice_number}</span>
                             <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: 'color-mix(in srgb, var(--accent-blue) 12%, transparent)', color: 'var(--accent-blue)' }}>
-                              {req.field === 'bank_name' ? 'Bank Name' : req.field === 'swift_code' ? 'SWIFT Code' : req.field === 'account_number' ? 'Account Number' : req.field}
+                              {req.field === 'beneficiary_name' ? 'Beneficiary Name' : req.field === 'bank_name' ? 'Bank Name' : req.field === 'swift_code' ? 'SWIFT Code' : req.field === 'account_number' ? 'Account Number' : req.field}
                             </span>
                             {req.status && req.status !== 'PENDING' && (
                               <span className="text-xs px-2 py-0.5 rounded-full" style={{

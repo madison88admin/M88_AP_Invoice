@@ -135,6 +135,7 @@ model Invoice {
   exception_reasons     ExceptionReason[]
   
   // Extracted bank info (fallback when vendor bank details are missing)
+  beneficiary_name      String?
   bank_name             String?
   swift_code            String?
   account_number        String?

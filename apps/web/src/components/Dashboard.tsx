@@ -699,6 +699,7 @@ export default function Dashboard() {
       bank_name: invoice.bank_name || '',
       swift_code: invoice.swift_code || '',
       account_number: invoice.account_number || '',
+      beneficiary_name: (invoice as any).beneficiary_name || '',
       subtotal: invoice.subtotal || '',
       tax_amount: invoice.tax_amount || '',
       discount_amount: invoice.discount_amount || '',
@@ -774,6 +775,7 @@ export default function Dashboard() {
         qty_shipped: canEditAll ? parseNum(editFormData.qty_shipped) : undefined,
         payment_terms: canEditAll ? parseString(editFormData.payment_terms) : undefined,
         // Bank fields: only send if user can edit bank details
+        beneficiary_name: canEditBank ? parseString(editFormData.beneficiary_name) : undefined,
         bank_name: canEditBank ? parseString(editFormData.bank_name) : undefined,
         swift_code: canEditBank ? parseString(editFormData.swift_code) : undefined,
         account_number: canEditBank ? parseString(editFormData.account_number) : undefined,
@@ -2597,7 +2599,7 @@ ${dataRows}
                       <div key={req.id} className="p-3 rounded-lg" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ background: 'color-mix(in srgb, var(--accent-blue) 12%, transparent)', color: 'var(--accent-blue)' }}>
-                            {req.field === 'bank_name' ? 'Bank Name' : req.field === 'swift_code' ? 'SWIFT Code' : req.field === 'account_number' ? 'Account Number' : req.field}
+                            {req.field === 'beneficiary_name' ? 'Beneficiary Name' : req.field === 'bank_name' ? 'Bank Name' : req.field === 'swift_code' ? 'SWIFT Code' : req.field === 'account_number' ? 'Account Number' : req.field}
                           </span>
                           <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
                             {new Date(req.created_at).toLocaleString('en-US', { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
@@ -3467,6 +3469,7 @@ ${dataRows}
                   { label: 'Original Currency', field: 'invoice_currency_original', type: 'text' },
                 ]},
                 { title: 'Bank Details', fields: [
+                  { label: 'Beneficiary Name', field: 'beneficiary_name', type: 'text' },
                   { label: 'Bank Name', field: 'bank_name', type: 'text' },
                   { label: 'SWIFT Code', field: 'swift_code', type: 'text' },
                   { label: 'Account Number', field: 'account_number', type: 'text' },
@@ -3790,6 +3793,7 @@ ${dataRows}
                   style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
                 >
                   <option value="">Select a field...</option>
+                  <option value="beneficiary_name">Beneficiary Name</option>
                   <option value="bank_name">Bank Name</option>
                   <option value="swift_code">SWIFT Code</option>
                   <option value="account_number">Account Number</option>

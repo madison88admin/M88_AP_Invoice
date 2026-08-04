@@ -1689,10 +1689,11 @@ function extractIncoterm(text: string): string | null {
 /**
  * Extract bank details with confidence scoring
  */
-export function extractBankDetails(text: string): { bank_name: string | null; swift_code: string | null; account_number: string | null; account_usd: string | null; account_hkd: string | null; account_eur: string | null; account_vnd: string | null; account_idr: string | null; account_php: string | null; account_jpy: string | null; account_gbp: string | null; account_cny: string | null; account_aud: string | null; account_cad: string | null; account_sgd: string | null; intermediary_bank_name: string | null; intermediary_bank_swift: string | null; confidence: number } {
+export function extractBankDetails(text: string): { beneficiary_name: string | null; bank_name: string | null; swift_code: string | null; account_number: string | null; account_usd: string | null; account_hkd: string | null; account_eur: string | null; account_vnd: string | null; account_idr: string | null; account_php: string | null; account_jpy: string | null; account_gbp: string | null; account_cny: string | null; account_aud: string | null; account_cad: string | null; account_sgd: string | null; intermediary_bank_name: string | null; intermediary_bank_swift: string | null; confidence: number } {
   console.log('[extractBankDetails] Starting bank details extraction');
-  
+
   const normalized = normalizeInvoiceText(text);
+  let beneficiary_name: string | null = null;
   let bank_name: string | null = null;
   let swift_code: string | null = null;
   let account_number: string | null = null;
@@ -1758,6 +1759,22 @@ export function extractBankDetails(text: string): { bank_name: string | null; sw
       new RegExp(`Bank\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,()]+?)(?=\\s*${bankNameStopLabels})`, 'i'),
       new RegExp(`Banker\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,()]+?)(?=\\s*${bankNameStopLabels})`, 'i'),
     ];
+
+    // Extract beneficiary name (account holder)
+    const beneficiaryNamePatterns = [
+      new RegExp(`Beneficiary\\s*Name\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,()]+?)(?=\\s*(?:Bank|SWIFT|Swift|A\/C|Account|Address|ADD|Tel|Fax|$))`, 'i'),
+      new RegExp(`A\/C\\s*Name\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,()]+?)(?=\\s*(?:Bank|SWIFT|Swift|A\/C|Account|Address|ADD|Tel|Fax|$))`, 'i'),
+      new RegExp(`Account\\s*Holder\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,()]+?)(?=\\s*(?:Bank|SWIFT|Swift|A\/C|Account|Address|ADD|Tel|Fax|$))`, 'i'),
+      new RegExp(`Account\\s*Name\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,()]+?)(?=\\s*(?:Bank|SWIFT|Swift|A\/C|Account|Address|ADD|Tel|Fax|$))`, 'i'),
+      new RegExp(`Beneficiary\\s*[:：]\\s*([A-Za-z][A-Za-z\\s&.,()]+?)(?=\\s*(?:Bank|SWIFT|Swift|A\/C|Account|Address|ADD|Tel|Fax|$))`, 'i'),
+    ];
+    for (const pattern of beneficiaryNamePatterns) {
+      const m = normalized.match(pattern);
+      if (m && m[1]) {
+        beneficiary_name = m[1].trim();
+        break;
+      }
+    }
 
     for (const pattern of genericBankNamePatterns) {
       const match = bankNameText.match(pattern);
@@ -2091,9 +2108,9 @@ export function extractBankDetails(text: string): { bank_name: string | null; sw
   );
   console.log('[extractBankDetails] Lines with A/C/Account:', linesWithAC);
 
-  console.log('[extractBankDetails] Final result:', { bank_name, swift_code, account_number, account_usd, account_hkd, account_eur, intermediary_bank_name, intermediary_bank_swift, confidence });
+  console.log('[extractBankDetails] Final result:', { beneficiary_name, bank_name, swift_code, account_number, account_usd, account_hkd, account_eur, intermediary_bank_name, intermediary_bank_swift, confidence });
   return {
-    bank_name, swift_code, account_number,
+    beneficiary_name, bank_name, swift_code, account_number,
     account_usd: accountLookup.account_usd,
     account_hkd: accountLookup.account_hkd,
     account_eur: accountLookup.account_eur,

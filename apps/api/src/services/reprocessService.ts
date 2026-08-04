@@ -346,6 +346,7 @@ export async function reExtractInvoice(
         ship_to: ocrResult.ship_to,
         sold_to: ocrResult.sold_to,
         line_items: ocrResult.line_items,
+        beneficiary_name: ocrResult.bank_info?.beneficiary_name,
         bank_name: ocrResult.bank_info?.bank_name,
         swift_code: ocrResult.bank_info?.swift_code,
         account_number: ocrResult.bank_info?.account_usd,

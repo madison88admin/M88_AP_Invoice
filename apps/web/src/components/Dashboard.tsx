@@ -702,50 +702,53 @@ export default function Dashboard() {
 
       // Remove bank fields from payload if user can't edit them — backend will reject anyway
       const canEditBank = user ? hasPermission(user.role, 'canEditBankDetails') : false;
+      const canEditAll = user ? hasPermission(user.role, 'canEditInvoice') : false;
 
       const payload = {
-        vendor_name_raw: parseString(editFormData.vendor_name_raw),
-        invoice_number: parseString(editFormData.invoice_number),
-        invoice_date: parseString(editFormData.invoice_date),
-        due_date: parseString(editFormData.due_date),
-        total_amount: parseNum(editFormData.total_amount),
-        currency: parseString(editFormData.currency),
-        invoice_type: parseString(editFormData.invoice_type),
-        brand: parseString(editFormData.brand),
-        brand_tier: parseString(editFormData.brand_tier),
-        season: parseString(editFormData.season),
-        order_type: parseString(editFormData.order_type),
-        customer_po_number: parseString(editFormData.customer_po_number),
-        mpo_number: parseString(editFormData.mpo_number),
-        mpo_base_number: parseString(editFormData.mpo_base_number),
-        mpo_order_sequence: parseString(editFormData.mpo_order_sequence),
-        material_code: parseString(editFormData.material_code),
-        material_name: parseString(editFormData.material_name),
+        // Non-bank fields: only send if user can edit invoice
+        vendor_name_raw: canEditAll ? parseString(editFormData.vendor_name_raw) : undefined,
+        invoice_number: canEditAll ? parseString(editFormData.invoice_number) : undefined,
+        invoice_date: canEditAll ? parseString(editFormData.invoice_date) : undefined,
+        due_date: canEditAll ? parseString(editFormData.due_date) : undefined,
+        total_amount: canEditAll ? parseNum(editFormData.total_amount) : undefined,
+        currency: canEditAll ? parseString(editFormData.currency) : undefined,
+        invoice_type: canEditAll ? parseString(editFormData.invoice_type) : undefined,
+        brand: canEditAll ? parseString(editFormData.brand) : undefined,
+        brand_tier: canEditAll ? parseString(editFormData.brand_tier) : undefined,
+        season: canEditAll ? parseString(editFormData.season) : undefined,
+        order_type: canEditAll ? parseString(editFormData.order_type) : undefined,
+        customer_po_number: canEditAll ? parseString(editFormData.customer_po_number) : undefined,
+        mpo_number: canEditAll ? parseString(editFormData.mpo_number) : undefined,
+        mpo_base_number: canEditAll ? parseString(editFormData.mpo_base_number) : undefined,
+        mpo_order_sequence: canEditAll ? parseString(editFormData.mpo_order_sequence) : undefined,
+        material_code: canEditAll ? parseString(editFormData.material_code) : undefined,
+        material_name: canEditAll ? parseString(editFormData.material_name) : undefined,
         edit_reason: parseString(editFormData.edit_reason),
-        qty_shipped: parseNum(editFormData.qty_shipped),
-        payment_terms: parseString(editFormData.payment_terms),
+        qty_shipped: canEditAll ? parseNum(editFormData.qty_shipped) : undefined,
+        payment_terms: canEditAll ? parseString(editFormData.payment_terms) : undefined,
+        // Bank fields: only send if user can edit bank details
         bank_name: canEditBank ? parseString(editFormData.bank_name) : undefined,
         swift_code: canEditBank ? parseString(editFormData.swift_code) : undefined,
         account_number: canEditBank ? parseString(editFormData.account_number) : undefined,
-        ship_to: parseString(editFormData.ship_to),
-        sold_to: parseString(editFormData.sold_to),
-        subtotal: parseNum(editFormData.subtotal),
-        tax_amount: parseNum(editFormData.tax_amount),
-        discount_amount: parseNum(editFormData.discount_amount),
-        bank_charges: parseNum(editFormData.bank_charges),
-        freight_charges: parseNum(editFormData.freight_charges),
-        additional_charges: parseNum(editFormData.additional_charges),
-        exchange_rate_to_usd: parseNum(editFormData.exchange_rate_to_usd),
-        invoice_currency_original: parseString(editFormData.invoice_currency_original),
-        incoterm: parseString(editFormData.incoterm),
-        category: parseString(editFormData.category),
-        bill_to_entity: parseString(editFormData.bill_to_entity),
-        is_handwritten: editFormData.is_handwritten === true ? true : editFormData.is_handwritten === false ? false : undefined,
-        is_urgent: editFormData.is_urgent === true ? true : editFormData.is_urgent === false ? false : undefined,
-        priority_flag: editFormData.priority_flag === true ? true : editFormData.priority_flag === false ? false : undefined,
-        priority_pay_date: parseString(editFormData.priority_pay_date),
-        date_range_start: parseString(editFormData.date_range_start),
-        date_range_end: parseString(editFormData.date_range_end),
+        ship_to: canEditAll ? parseString(editFormData.ship_to) : undefined,
+        sold_to: canEditAll ? parseString(editFormData.sold_to) : undefined,
+        subtotal: canEditAll ? parseNum(editFormData.subtotal) : undefined,
+        tax_amount: canEditAll ? parseNum(editFormData.tax_amount) : undefined,
+        discount_amount: canEditAll ? parseNum(editFormData.discount_amount) : undefined,
+        bank_charges: canEditAll ? parseNum(editFormData.bank_charges) : undefined,
+        freight_charges: canEditAll ? parseNum(editFormData.freight_charges) : undefined,
+        additional_charges: canEditAll ? parseNum(editFormData.additional_charges) : undefined,
+        exchange_rate_to_usd: canEditAll ? parseNum(editFormData.exchange_rate_to_usd) : undefined,
+        invoice_currency_original: canEditAll ? parseString(editFormData.invoice_currency_original) : undefined,
+        incoterm: canEditAll ? parseString(editFormData.incoterm) : undefined,
+        category: canEditAll ? parseString(editFormData.category) : undefined,
+        bill_to_entity: canEditAll ? parseString(editFormData.bill_to_entity) : undefined,
+        is_handwritten: canEditAll ? (editFormData.is_handwritten === true ? true : editFormData.is_handwritten === false ? false : undefined) : undefined,
+        is_urgent: canEditAll ? (editFormData.is_urgent === true ? true : editFormData.is_urgent === false ? false : undefined) : undefined,
+        priority_flag: canEditAll ? (editFormData.priority_flag === true ? true : editFormData.priority_flag === false ? false : undefined) : undefined,
+        priority_pay_date: canEditAll ? parseString(editFormData.priority_pay_date) : undefined,
+        date_range_start: canEditAll ? parseString(editFormData.date_range_start) : undefined,
+        date_range_end: canEditAll ? parseString(editFormData.date_range_end) : undefined,
       };
       const response = await invoiceApi.update(selectedInvoice.id, payload);
       await refresh();
@@ -2668,8 +2671,8 @@ ${dataRows}
             {/* Actions Tab */}
             {detailTab === 'actions' && (
             <div className="space-y-3">
-              {/* Edit Invoice Button */}
-              {user && hasPermission(user.role, 'canEditInvoice') && (
+              {/* Edit Invoice Button — shown if user can edit invoice OR edit bank details */}
+              {user && (hasPermission(user.role, 'canEditInvoice') || hasPermission(user.role, 'canEditBankDetails')) && (
                 <button
                   onClick={handleOpenEdit}
                   className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
@@ -2678,7 +2681,7 @@ ${dataRows}
                   onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--accent-purple)'; }}
                 >
                   <Edit className="h-4 w-4 mr-2" strokeWidth={1.75} />
-                  Edit Invoice
+                  {hasPermission(user.role, 'canEditInvoice') ? 'Edit Invoice' : 'Edit Bank Details'}
                 </button>
               )}
 
@@ -3432,7 +3435,12 @@ ${dataRows}
                 const isCollapsed = editCollapsed[section.title];
                 const isBankSection = section.title === 'Bank Details';
                 const canEditBank = user ? hasPermission(user.role, 'canEditBankDetails') : false;
-                const isReadOnly = isBankSection && !canEditBank;
+                const canEditAll = user ? hasPermission(user.role, 'canEditInvoice') : false;
+                // Bank section: read-only if user can't edit bank details
+                // Non-bank sections: read-only if user can't edit invoice (e.g., Accounting can only edit bank)
+                const isReadOnly = canEditAll
+                  ? (isBankSection && !canEditBank)
+                  : !isBankSection;
                 return (
                 <div key={section.title} className="mb-3 rounded-xl overflow-hidden" style={{ border: '1px solid var(--border-color)' }}>
                   <button

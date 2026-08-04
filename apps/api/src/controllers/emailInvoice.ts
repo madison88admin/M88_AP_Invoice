@@ -84,6 +84,18 @@ async function processSingleEmailInvoice(
       };
     }
 
+    // Step 1b: Upload to VPS Supabase Storage FIRST (before OCR — ensures file is saved even if OCR fails)
+    let storagePath: string | undefined;
+    try {
+      const uploadedPath = await uploadToStorage(fileBuffer, fileName, mimeType);
+      if (uploadedPath) {
+        storagePath = uploadedPath;
+        logger.info(`[${requestId}] Invoice uploaded to VPS storage${partLabel}: ${storagePath}`);
+      }
+    } catch (storageError) {
+      logger.warn(`[${requestId}] Failed to upload to VPS storage${partLabel}:`, storageError);
+    }
+
     // Step 2: OCR extraction
     const ocrResult = await analyzeInvoice(fileBuffer, mimeType);
     logger.info(`[${requestId}] OCR completed${partLabel}: ${ocrResult.invoice_number}, vendor: ${ocrResult.vendor_name}`);
@@ -140,17 +152,6 @@ async function processSingleEmailInvoice(
       brand_tier = BrandTier.TOP_10;
     } else {
       brand_tier = BrandTier.OTHER;
-    }
-
-    // Step 8b: Upload to VPS Supabase Storage
-    let storagePath: string | undefined;
-    try {
-      const uploadedPath = await uploadToStorage(fileBuffer, fileName, mimeType);
-      if (uploadedPath) {
-        storagePath = uploadedPath;
-      }
-    } catch (storageError) {
-      logger.warn(`[${requestId}] Failed to upload to VPS storage${partLabel}:`, storageError);
     }
 
     // Step 9: Create invoice with email metadata
@@ -323,6 +324,18 @@ async function processSingleManualInvoice(
       };
     }
 
+    // Upload to VPS Supabase Storage FIRST (before OCR — ensures file is saved even if OCR fails)
+    let storagePath: string | undefined;
+    try {
+      const uploadedPath = await uploadToStorage(fileBuffer, fileName, mimeType);
+      if (uploadedPath) {
+        storagePath = uploadedPath;
+        logger.info(`[${requestId}] Invoice uploaded to VPS storage${partLabel}: ${storagePath}`);
+      }
+    } catch (storageError) {
+      logger.warn(`[${requestId}] Failed to upload to VPS storage${partLabel}:`, storageError);
+    }
+
     // OCR
     const ocrResult = await analyzeInvoice(fileBuffer, mimeType);
     logger.info(`[${requestId}] OCR completed${partLabel}: ${ocrResult.invoice_number}, vendor: ${ocrResult.vendor_name}`);
@@ -374,17 +387,6 @@ async function processSingleManualInvoice(
       brand_tier = BrandTier.TOP_10;
     } else {
       brand_tier = BrandTier.OTHER;
-    }
-
-    // Upload to VPS Supabase Storage
-    let storagePath: string | undefined;
-    try {
-      const uploadedPath = await uploadToStorage(fileBuffer, fileName, mimeType);
-      if (uploadedPath) {
-        storagePath = uploadedPath;
-      }
-    } catch (storageError) {
-      logger.warn(`[${requestId}] Failed to upload to VPS storage${partLabel}:`, storageError);
     }
 
     const invoice = await prisma.invoice.create({

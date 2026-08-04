@@ -171,6 +171,18 @@ async function processSingleInvoiceAttachment(
   splitIndex?: number
 ): Promise<void> {
   try {
+    // Upload to VPS Supabase Storage FIRST (before OCR — ensures file is saved even if OCR fails)
+    let storagePath: string | undefined;
+    try {
+      const uploadedPath = await uploadToStorage(buffer, fileName, contentType);
+      if (uploadedPath) {
+        storagePath = uploadedPath;
+        logger.info(`[Email Intake] Invoice uploaded to VPS storage: ${storagePath}`);
+      }
+    } catch (storageError) {
+      logger.warn(`Failed to upload invoice to VPS storage for ${fileName}:`, storageError);
+    }
+
     // Analyze invoice using OCR
     const ocrResult = await analyzeInvoice(buffer, contentType);
     
@@ -200,17 +212,6 @@ async function processSingleInvoiceAttachment(
       ocrResult.mpo_number || '',
     ].filter(Boolean);
     const qbMemo = memoParts.length > 0 ? memoParts.join('_') : undefined;
-
-    // Upload to VPS Supabase Storage (primary storage)
-    let storagePath: string | undefined;
-    try {
-      const uploadedPath = await uploadToStorage(buffer, fileName, contentType);
-      if (uploadedPath) {
-        storagePath = uploadedPath;
-      }
-    } catch (storageError) {
-      logger.warn(`Failed to upload invoice to VPS storage for ${ocrResult.invoice_number}:`, storageError);
-    }
 
     // Upload to structured SharePoint folder (secondary, if configured)
     let sharepointUrl: string | undefined;
@@ -609,6 +610,18 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
     // Convert base64 to buffer
     const buffer = Buffer.from(data.attachmentBase64, 'base64');
 
+    // Upload to VPS Supabase Storage FIRST (before OCR — ensures file is saved even if OCR fails)
+    let storagePath: string | undefined;
+    try {
+      const uploadedPath = await uploadToStorage(buffer, data.fileName, data.contentType || 'application/pdf');
+      if (uploadedPath) {
+        storagePath = uploadedPath;
+        logger.info(`[Power Automate] Invoice uploaded to VPS storage: ${storagePath}`);
+      }
+    } catch (storageError) {
+      logger.warn(`Failed to upload invoice to VPS storage for ${data.fileName}:`, storageError);
+    }
+
     // Analyze invoice using OCR
     const ocrResult = await analyzeInvoice(buffer, data.contentType);
 
@@ -638,17 +651,6 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
       ocrResult.mpo_number || '',
     ].filter(Boolean);
     const qbMemo = memoParts.length > 0 ? memoParts.join('_') : undefined;
-
-    // Upload to VPS Supabase Storage (primary storage)
-    let storagePath: string | undefined;
-    try {
-      const uploadedPath = await uploadToStorage(buffer, data.fileName, data.contentType || 'application/pdf');
-      if (uploadedPath) {
-        storagePath = uploadedPath;
-      }
-    } catch (storageError) {
-      logger.warn(`Failed to upload invoice to VPS storage for ${ocrResult.invoice_number}:`, storageError);
-    }
 
     // Upload to structured SharePoint folder (secondary, if configured)
     let sharepointUrl: string | undefined;

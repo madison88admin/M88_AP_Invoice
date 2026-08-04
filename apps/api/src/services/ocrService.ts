@@ -972,19 +972,25 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
             logger.info('[OCR] Vision bank fallback: Gemini did not return bank info');
           }
         } else {
-          // Try Ollama vision as alternative
-          const ollamaOCR = (await import('./ollamaOCRService')).ollamaOCRService;
-          if (ollamaOCR.isAvailable()) {
-            const imageBase64 = convertPDFToImage(fileBuffer);
-            if (imageBase64) {
-              const ollamaBankResult = await ollamaOCR.extractFromImage(imageBase64, { vendorName: extracted.vendor_name });
-              if (ollamaBankResult && (ollamaBankResult.bank_name || ollamaBankResult.swift_code || ollamaBankResult.account_number)) {
-                logger.info(`[OCR] Ollama vision bank fallback succeeded — bank_name: "${ollamaBankResult.bank_name}", swift: "${ollamaBankResult.swift_code}", account: "${ollamaBankResult.account_number}"`);
-                (extracted as any).bank_name = ollamaBankResult.bank_name || (extracted as any).bank_name;
-                extracted.bank_swift = ollamaBankResult.swift_code || extracted.bank_swift;
-                extracted.bank_account = ollamaBankResult.account_number || extracted.bank_account;
+          // Ollama vision bank fallback is too slow on CPU-only VPS (60+ seconds)
+          // Skip unless explicitly enabled via OLLAMA_VISION_BANK_FALLBACK=true
+          const enableOllamaVisionBank = process.env.OLLAMA_VISION_BANK_FALLBACK === 'true';
+          if (enableOllamaVisionBank) {
+            const ollamaOCR = (await import('./ollamaOCRService')).ollamaOCRService;
+            if (ollamaOCR.isAvailable()) {
+              const imageBase64 = convertPDFToImage(fileBuffer);
+              if (imageBase64) {
+                const ollamaBankResult = await ollamaOCR.extractFromImage(imageBase64, { vendorName: extracted.vendor_name });
+                if (ollamaBankResult && (ollamaBankResult.bank_name || ollamaBankResult.swift_code || ollamaBankResult.account_number)) {
+                  logger.info(`[OCR] Ollama vision bank fallback succeeded — bank_name: "${ollamaBankResult.bank_name}", swift: "${ollamaBankResult.swift_code}", account: "${ollamaBankResult.account_number}"`);
+                  (extracted as any).bank_name = ollamaBankResult.bank_name || (extracted as any).bank_name;
+                  extracted.bank_swift = ollamaBankResult.swift_code || extracted.bank_swift;
+                  extracted.bank_account = ollamaBankResult.account_number || extracted.bank_account;
+                }
               }
             }
+          } else {
+            logger.info('[OCR] Skipping Ollama vision bank fallback (disabled — set OLLAMA_VISION_BANK_FALLBACK=true to enable)');
           }
         }
       } catch (visionErr) {

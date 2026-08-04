@@ -2711,7 +2711,7 @@ ${dataRows}
                   onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--accent-purple)'; }}
                 >
                   <Edit className="h-4 w-4 mr-2" strokeWidth={1.75} />
-                  {hasPermission(user.role, 'canEditInvoice') ? 'Edit Invoice' : 'Edit Bank Details'}
+                  {hasPermission(user.role, 'canEditInvoice') ? 'Edit Invoice' : 'Invoice Details'}
                 </button>
               )}
 

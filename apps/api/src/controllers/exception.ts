@@ -16,7 +16,7 @@ export const resolveExceptionController = async (
   try {
     const { exceptionId } = req.params;
     const { resolution } = req.body;
-    const result = await resolveException(exceptionId, resolution, req.user!.id);
+    const result = await resolveException(exceptionId, resolution || 'Resolved by coordinator', req.user!.id);
     res.json(result);
   } catch (error) {
     next(error);
@@ -31,7 +31,7 @@ export const waiveExceptionController = async (
   try {
     const { exceptionId } = req.params;
     const { waiverReason } = req.body;
-    const result = await waiveException(exceptionId, waiverReason, req.user!.id);
+    const result = await waiveException(exceptionId, waiverReason || 'Waived by coordinator', req.user!.id);
     res.json(result);
   } catch (error) {
     next(error);

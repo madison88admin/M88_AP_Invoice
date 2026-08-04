@@ -4,6 +4,7 @@ import { analyzeInvoice } from './ocrService';
 import { matchVendor, matchOrCreateVendor } from './vendorMatchingService';
 import { validateInvoice } from './validationService';
 import { uploadInvoiceToStructuredFolder } from './sharePointService';
+import { uploadToStorage } from './supabaseStorageService';
 import { detectMultiInvoice, splitPdfByPageRanges } from './multiInvoiceDetector';
 import { InvoiceStatus, InvoiceType, InvoiceSource, SignatureType, ExceptionReason, determineApprovalTier, BrandTier } from '@ap-invoice/shared';
 import { isTop10Brand, TOP_10_BRANDS } from '@ap-invoice/shared';
@@ -200,7 +201,18 @@ async function processSingleInvoiceAttachment(
     ].filter(Boolean);
     const qbMemo = memoParts.length > 0 ? memoParts.join('_') : undefined;
 
-    // Upload to structured SharePoint folder
+    // Upload to VPS Supabase Storage (primary storage)
+    let storagePath: string | undefined;
+    try {
+      const uploadedPath = await uploadToStorage(buffer, fileName, contentType);
+      if (uploadedPath) {
+        storagePath = uploadedPath;
+      }
+    } catch (storageError) {
+      logger.warn(`Failed to upload invoice to VPS storage for ${ocrResult.invoice_number}:`, storageError);
+    }
+
+    // Upload to structured SharePoint folder (secondary, if configured)
     let sharepointUrl: string | undefined;
     if (vendorId) {
       try {
@@ -282,6 +294,8 @@ async function processSingleInvoiceAttachment(
         payment_terms: ocrResult.payment_terms,
         sharepoint_folder_url: sharepointUrl,
         sharepoint_filed_at: sharepointUrl ? new Date() : null,
+        pdf_path: storagePath || undefined,
+        raw_file_url: storagePath || undefined,
         ...(ocrResult.date_range_start ? { date_range_start: new Date(ocrResult.date_range_start) } : {}),
         ...(ocrResult.date_range_end ? { date_range_end: new Date(ocrResult.date_range_end) } : {}),
       },
@@ -289,7 +303,7 @@ async function processSingleInvoiceAttachment(
         vendor: true,
       },
     });
-    
+
     // Create signature records if detected
     if (ocrResult.signatures && ocrResult.signatures.length > 0) {
       for (const sig of ocrResult.signatures) {
@@ -396,6 +410,17 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
     const response = await client.api(downloadUrl).get();
     const buffer = Buffer.from(response, 'binary');
 
+    // Upload to VPS Supabase Storage (primary storage)
+    let storagePath: string | undefined;
+    try {
+      const uploadedPath = await uploadToStorage(buffer, data.fileName, 'application/pdf');
+      if (uploadedPath) {
+        storagePath = uploadedPath;
+      }
+    } catch (storageError) {
+      logger.warn(`Failed to upload SharePoint file to VPS storage for ${data.fileName}:`, storageError);
+    }
+
     // Analyze invoice using OCR
     const ocrResult = await analyzeInvoice(buffer, 'application/pdf');
 
@@ -478,6 +503,8 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
         payment_terms: ocrResult.payment_terms,
         sharepoint_folder_url: data.sharepointUrl,
         sharepoint_filed_at: new Date(),
+        pdf_path: storagePath || undefined,
+        raw_file_url: storagePath || undefined,
       },
       include: {
         vendor: true,
@@ -612,7 +639,18 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
     ].filter(Boolean);
     const qbMemo = memoParts.length > 0 ? memoParts.join('_') : undefined;
 
-    // Upload to structured SharePoint folder
+    // Upload to VPS Supabase Storage (primary storage)
+    let storagePath: string | undefined;
+    try {
+      const uploadedPath = await uploadToStorage(buffer, data.fileName, data.contentType || 'application/pdf');
+      if (uploadedPath) {
+        storagePath = uploadedPath;
+      }
+    } catch (storageError) {
+      logger.warn(`Failed to upload invoice to VPS storage for ${ocrResult.invoice_number}:`, storageError);
+    }
+
+    // Upload to structured SharePoint folder (secondary, if configured)
     let sharepointUrl: string | undefined;
     if (vendorId) {
       try {
@@ -683,6 +721,8 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
         payment_terms: ocrResult.payment_terms,
         sharepoint_folder_url: sharepointUrl,
         sharepoint_filed_at: sharepointUrl ? new Date() : null,
+        pdf_path: storagePath || undefined,
+        raw_file_url: storagePath || undefined,
       },
       include: {
         vendor: true,

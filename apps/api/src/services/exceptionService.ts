@@ -126,18 +126,32 @@ export async function resolveException(
     remainingExceptions === 0 &&
     exception.invoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any)
   ) {
-    try {
-      // Resolve = coordinator fixed the issue. Re-validate but DON'T auto-advance.
-      // The invoice stays in VALIDATION_PENDING until the coordinator explicitly clicks "Request Approval".
-      const revalidation = await revalidateAfterExceptionsHandled(exception.invoice_id, userId, { autoAdvance: false });
-      return { exception: updatedException, revalidation };
-    } catch (err: any) {
-      logger.error(`Automatic revalidation failed for invoice ${exception.invoice_id}:`, err);
-      return {
-        exception: updatedException,
-        approvalWarning: `Exception resolved, but automatic revalidation failed: ${err.message}. Please retry validation.`,
-      };
-    }
+    // All exceptions resolved — skip revalidation, move directly to VALIDATION_PENDING.
+    // Coordinator clicks "Request Approval" to advance to the approval workflow.
+    await prisma.invoice.update({
+      where: { id: exception.invoice_id },
+      data: { status: InvoiceStatus.VALIDATION_PENDING as any },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        invoice_id: exception.invoice_id,
+        action: 'EXCEPTIONS_ALL_RESOLVED',
+        performed_by: userId,
+        note: 'All exceptions resolved. Invoice moved to VALIDATION_PENDING — coordinator can now request approval.',
+      },
+    });
+
+    return {
+      exception: updatedException,
+      revalidation: {
+        triggered: false,
+        passed: true,
+        status: String(InvoiceStatus.VALIDATION_PENDING),
+        exception_count: 0,
+        message: 'All exceptions resolved. Invoice is ready for approval — click "Request Approval" to proceed.',
+      },
+    };
   }
 
   return { exception: updatedException };
@@ -340,16 +354,32 @@ export async function waiveException(
     pendingExceptions === 0 &&
     exception.invoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any)
   ) {
-    try {
-      const revalidation = await revalidateAfterExceptionsHandled(exception.invoice_id, userId);
-      return { exception: updatedException, revalidation };
-    } catch (err: any) {
-      logger.error(`Automatic revalidation failed for invoice ${exception.invoice_id} after waiver:`, err);
-      return {
-        exception: updatedException,
-        approvalWarning: `Exception waived, but automatic revalidation failed: ${err.message}. Please retry validation.`,
-      };
-    }
+    // All exceptions waived — skip revalidation, move directly to VALIDATION_PENDING.
+    // Coordinator clicks "Request Approval" to advance to the approval workflow.
+    await prisma.invoice.update({
+      where: { id: exception.invoice_id },
+      data: { status: InvoiceStatus.VALIDATION_PENDING as any },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        invoice_id: exception.invoice_id,
+        action: 'EXCEPTIONS_ALL_WAIVED',
+        performed_by: userId,
+        note: 'All exceptions waived. Invoice moved to VALIDATION_PENDING — coordinator can now request approval.',
+      },
+    });
+
+    return {
+      exception: updatedException,
+      revalidation: {
+        triggered: false,
+        passed: true,
+        status: String(InvoiceStatus.VALIDATION_PENDING),
+        exception_count: 0,
+        message: 'All exceptions waived. Invoice is ready for approval — click "Request Approval" to proceed.',
+      },
+    };
   }
 
   return { exception: updatedException };

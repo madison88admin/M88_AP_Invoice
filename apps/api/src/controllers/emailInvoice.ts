@@ -6,6 +6,7 @@ import { analyzeInvoice } from '../services/ocrService';
 import { matchVendor } from '../services/vendorMatchingService';
 import { validateInvoice } from '../services/validationService';
 import { detectMultiInvoice, splitPdfByPageRanges } from '../services/multiInvoiceDetector';
+import { uploadToStorage } from '../services/supabaseStorageService';
 import { InvoiceStatus, InvoiceSource, InvoiceType, SignatureType, ExceptionReason, determineApprovalTier, BrandTier, isTop10Brand, TOP_10_BRANDS } from '@ap-invoice/shared';
 import { parseMPOReference } from '../utils/mpoReference';
 import prisma from '../config/database';
@@ -141,6 +142,17 @@ async function processSingleEmailInvoice(
       brand_tier = BrandTier.OTHER;
     }
 
+    // Step 8b: Upload to VPS Supabase Storage
+    let storagePath: string | undefined;
+    try {
+      const uploadedPath = await uploadToStorage(fileBuffer, fileName, mimeType);
+      if (uploadedPath) {
+        storagePath = uploadedPath;
+      }
+    } catch (storageError) {
+      logger.warn(`[${requestId}] Failed to upload to VPS storage${partLabel}:`, storageError);
+    }
+
     // Step 9: Create invoice with email metadata
     const invoice = await prisma.invoice.create({
       data: {
@@ -193,6 +205,8 @@ async function processSingleEmailInvoice(
         source: InvoiceSource.EMAIL as any,
         approval_tier: tier,
         payment_terms: ocrResult.payment_terms,
+        pdf_path: storagePath || undefined,
+        raw_file_url: storagePath || undefined,
         // Persist line items to InvoiceLine table for line-level validation matching
         ...(buildInvoiceLinesData((ocrResult as any).line_items, ocrResult.mpo_number) ? {
           invoice_lines: buildInvoiceLinesData((ocrResult as any).line_items, ocrResult.mpo_number),
@@ -362,6 +376,17 @@ async function processSingleManualInvoice(
       brand_tier = BrandTier.OTHER;
     }
 
+    // Upload to VPS Supabase Storage
+    let storagePath: string | undefined;
+    try {
+      const uploadedPath = await uploadToStorage(fileBuffer, fileName, mimeType);
+      if (uploadedPath) {
+        storagePath = uploadedPath;
+      }
+    } catch (storageError) {
+      logger.warn(`[${requestId}] Failed to upload to VPS storage${partLabel}:`, storageError);
+    }
+
     const invoice = await prisma.invoice.create({
       data: {
         invoice_number: ocrResult.invoice_number,
@@ -394,6 +419,8 @@ async function processSingleManualInvoice(
         source: 'MANUAL' as any,
         approval_tier: tier,
         payment_terms: ocrResult.payment_terms,
+        pdf_path: storagePath || undefined,
+        raw_file_url: storagePath || undefined,
         // Persist line items to InvoiceLine table for line-level validation matching
         ...(buildInvoiceLinesData((ocrResult as any).line_items, ocrResult.mpo_number) ? {
           invoice_lines: buildInvoiceLinesData((ocrResult as any).line_items, ocrResult.mpo_number),

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { InvoiceStatus, InvoiceCategory, InvoiceType, calcWorkingHoursElapsed } from '@ap-invoice/shared';
-import { invoiceApi, notificationApi, vendorApi } from '../lib/api';
+import { invoiceApi, notificationApi, vendorApi, exceptionApi } from '../lib/api';
 import InvoiceTable from './InvoiceTable';
 import UploadInvoiceModal from './UploadInvoiceModal';
 import BottleneckView from './BottleneckView';
@@ -527,6 +527,44 @@ export default function Dashboard() {
     }
   };
 
+
+  const handleResolveException = async (exceptionId: string) => {
+    try {
+      const res = await exceptionApi.resolve(exceptionId, 'Resolved by coordinator');
+      if (res.data?.revalidation) {
+        showToast(res.data.revalidation.message, res.data.revalidation.passed ? 'success' : 'warning');
+      } else {
+        showToast('Exception resolved', 'success');
+      }
+      await refresh();
+      if (selectedInvoice) {
+        const updated = await invoiceApi.getById(selectedInvoice.id);
+        setSelectedInvoice(updated.data);
+      }
+    } catch (error: any) {
+      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to resolve exception';
+      showToast(msg, 'error');
+    }
+  };
+
+  const handleWaiveException = async (exceptionId: string) => {
+    try {
+      const res = await exceptionApi.waive(exceptionId, 'Waived by coordinator');
+      if (res.data?.revalidation) {
+        showToast(res.data.revalidation.message, res.data.revalidation.passed ? 'success' : 'warning');
+      } else {
+        showToast('Exception waived', 'success');
+      }
+      await refresh();
+      if (selectedInvoice) {
+        const updated = await invoiceApi.getById(selectedInvoice.id);
+        setSelectedInvoice(updated.data);
+      }
+    } catch (error: any) {
+      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to waive exception';
+      showToast(msg, 'error');
+    }
+  };
 
   const handleValidate = async () => {
     if (!selectedInvoice) return;
@@ -2996,13 +3034,36 @@ ${dataRows}
                 const resolvedExcs = selectedInvoice.exceptions.filter((exc) => exc.status === 'RESOLVED' || exc.status === 'WAIVED');
                 const hasActive = activeExcs.length > 0;
                 const accentVar = hasActive ? 'var(--accent-red)' : 'var(--accent-lime)';
+                const canHandleException = user && ['PURCHASING_COORDINATOR', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role);
                 return (
                 <div className="mt-4 p-4 rounded-lg" style={{ background: `color-mix(in srgb, ${accentVar} 10%, transparent)`, border: `1px solid color-mix(in srgb, ${accentVar} 20%, transparent)` }}>
                   <p className="text-sm font-semibold mb-2" style={{ color: accentVar }}>Exceptions</p>
                   {activeExcs.map((exc) => (
-                    <p key={exc.id} className="text-xs" style={{ color: 'var(--accent-red)' }}>
-                      {exc.reason}: {exc.detail}
-                    </p>
+                    <div key={exc.id} className="mb-2 last:mb-0">
+                      <p className="text-xs" style={{ color: 'var(--accent-red)' }}>
+                        {exc.reason}: {exc.detail}
+                      </p>
+                      {canHandleException && (
+                        <div className="flex gap-2 mt-1">
+                          <button
+                            onClick={() => handleResolveException(exc.id)}
+                            className="px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1"
+                            style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}
+                          >
+                            <CheckCircle className="h-3 w-3" strokeWidth={2} />
+                            Resolve
+                          </button>
+                          <button
+                            onClick={() => handleWaiveException(exc.id)}
+                            className="px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1"
+                            style={{ background: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', color: 'var(--accent-blue)', border: '1px solid color-mix(in srgb, var(--accent-blue) 20%, transparent)' }}
+                          >
+                            <XCircle className="h-3 w-3" strokeWidth={2} />
+                            Waive
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   ))}
                   {resolvedExcs.map((exc) => (
                     <p key={exc.id} className="text-xs flex items-center gap-1" style={{ color: 'var(--accent-lime)' }}>
@@ -3277,7 +3338,12 @@ ${dataRows}
                   { label: 'Invoice Date', field: 'invoice_date', type: 'date' },
                   { label: 'Due Date', field: 'due_date', type: 'date' },
                   { label: 'Amount', field: 'total_amount', type: 'number' },
-                  { label: 'Currency', field: 'currency', type: 'text' },
+                  { label: 'Currency', field: 'currency', type: 'select', options: [
+                    { value: '', label: '— Select —' },
+                    { value: 'USD', label: 'USD — US Dollar' },
+                    { value: 'HKD', label: 'HKD — Hong Kong Dollar' },
+                    { value: 'IDR', label: 'IDR — Indonesian Rupiah' },
+                  ] },
                   { label: 'Document Type', field: 'invoice_type', type: 'select', options: [
                     { value: '', label: '— Select —' },
                     { value: 'INVOICE', label: 'Invoice' },

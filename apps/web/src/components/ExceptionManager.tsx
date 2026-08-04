@@ -19,10 +19,6 @@ export default function ExceptionManager() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<ExceptionFilter>('OPEN');
   const [selectedException, setSelectedException] = useState<MockException | null>(null);
-  const [showResolveModal, setShowResolveModal] = useState(false);
-  const [showWaiveModal, setShowWaiveModal] = useState(false);
-  const [resolution, setResolution] = useState('');
-  const [waiverReason, setWaiverReason] = useState('');
   const [approvalWarning, setApprovalWarning] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -84,13 +80,11 @@ export default function ExceptionManager() {
   }, [location.state, invoices, exceptions, navigate]);
 
   const handleResolve = async () => {
-    if (!selectedException || !resolution.trim() || !user) return;
+    if (!selectedException || !user) return;
 
     try {
-      const result = await resolveException(selectedException.invoice_id, selectedException.id, resolution);
+      const result = await resolveException(selectedException.invoice_id, selectedException.id, 'Resolved by coordinator');
       setSelectedException(null);
-      setShowResolveModal(false);
-      setResolution('');
       if (result?.approvalWarning) {
         setApprovalWarning(result.approvalWarning);
       }
@@ -108,14 +102,12 @@ export default function ExceptionManager() {
   };
 
   const handleWaive = async () => {
-    if (!selectedException || !waiverReason.trim() || !user) return;
+    if (!selectedException || !user) return;
 
     try {
-      const res = await exceptionApi.waive(selectedException.id, waiverReason);
+      const res = await exceptionApi.waive(selectedException.id, 'Waived by coordinator');
       await refresh();
       setSelectedException(null);
-      setShowWaiveModal(false);
-      setWaiverReason('');
       if (res.data?.approvalWarning) {
         setApprovalWarning(res.data.approvalWarning);
       }
@@ -374,7 +366,7 @@ export default function ExceptionManager() {
                           Go to Invoice
                         </button>
                         <button
-                          onClick={() => setShowResolveModal(true)}
+                          onClick={handleResolve}
                           className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-semibold text-sm"
                           style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)', boxShadow: '0 0 16px var(--accent-lime-glow)' }}
                           onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--accent-lime-hover)'; }}
@@ -384,7 +376,7 @@ export default function ExceptionManager() {
                           Resolve Exception
                         </button>
                         <button
-                          onClick={() => setShowWaiveModal(true)}
+                          onClick={handleWaive}
                           className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
                           style={{ background: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', color: 'var(--accent-blue)', border: '1px solid color-mix(in srgb, var(--accent-blue) 20%, transparent)' }}
                           onMouseEnter={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-blue) 20%, transparent)'; }}
@@ -402,101 +394,6 @@ export default function ExceptionManager() {
           )}
         </div>
 
-      {/* Resolve Modal */}
-      {showResolveModal && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-backdrop">
-          <div className="max-w-md w-full mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
-            <div className="p-6">
-              <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
-                Resolve Exception
-              </h3>
-              <textarea
-                value={resolution}
-                onChange={(e) => setResolution(e.target.value)}
-                placeholder="Please describe how this exception was resolved..."
-                className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
-                style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
-                rows={4}
-              />
-              <div className="mt-4 flex justify-end space-x-3">
-                <button
-                  onClick={() => {
-                    setShowResolveModal(false);
-                    setResolution('');
-                  }}
-                  className="px-4 py-2 transition-colors text-sm"
-                  style={{ color: 'var(--text-secondary)' }}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleResolve}
-                  disabled={!resolution.trim()}
-                  className="px-4 py-2 rounded-xl transition-colors disabled:cursor-not-allowed text-sm font-semibold"
-                  style={!resolution.trim()
-                    ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' }
-                    : { background: 'var(--accent-lime)', color: 'var(--bg-base)' }
-                  }
-                  onMouseEnter={(e) => { if (resolution.trim()) e.currentTarget.style.background = 'var(--accent-lime-hover)'; }}
-                  onMouseLeave={(e) => { if (resolution.trim()) e.currentTarget.style.background = 'var(--accent-lime)'; }}
-                >
-                  Confirm Resolution
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Waive Modal */}
-      {showWaiveModal && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-backdrop">
-          <div className="max-w-md w-full mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
-            <div className="p-6">
-              <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
-                Waive Exception
-              </h3>
-              <textarea
-                value={waiverReason}
-                onChange={(e) => setWaiverReason(e.target.value)}
-                placeholder="Please provide a reason for waiving this exception..."
-                className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
-                style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
-                rows={4}
-              />
-              <div className="mt-4 flex justify-end space-x-3">
-                <button
-                  onClick={() => {
-                    setShowWaiveModal(false);
-                    setWaiverReason('');
-                  }}
-                  className="px-4 py-2 transition-colors text-sm"
-                  style={{ color: 'var(--text-secondary)' }}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleWaive}
-                  disabled={!waiverReason.trim()}
-                  className="px-4 py-2 rounded-xl transition-colors disabled:cursor-not-allowed text-sm font-medium"
-                  style={!waiverReason.trim()
-                    ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' }
-                    : { background: 'var(--accent-blue)', color: '#fff' }
-                  }
-                  onMouseEnter={(e) => { if (waiverReason.trim()) e.currentTarget.style.opacity = '0.9'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
-                >
-                  Confirm Waiver
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

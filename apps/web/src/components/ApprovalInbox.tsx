@@ -269,7 +269,14 @@ export default function ApprovalInbox() {
                                 key={sig.id}
                                 className="flex items-center justify-between text-sm"
                               >
-                                <span style={{ color: 'var(--text-secondary)' }}>{sig.signatory_role}</span>
+                                <div className="flex flex-col">
+                                  <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>
+                                    {sig.signatory_name || sig.signatory_role}
+                                  </span>
+                                  {sig.signatory_name && (
+                                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{sig.signatory_role}</span>
+                                  )}
+                                </div>
                                 <div className="flex items-center">
                                   {sig.signed_at && (
                                     <CheckCircle className="h-4 w-4 mr-1" style={{ color: 'var(--accent-lime)' }} strokeWidth={1.75} />

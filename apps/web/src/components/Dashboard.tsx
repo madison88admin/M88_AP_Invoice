@@ -17,7 +17,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { MockInvoice } from '../lib/mockData';
 import { hasPermission, filterInvoicesByRole, canUserApproveStatus, isWithinRoleThreshold } from '../lib/roleAccess';
 import { cn } from '../lib/utils';
-import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, ChevronRight, LogOut, Edit, Unlock, Pause, Users, Loader2, Menu, X, Trash2, Landmark, Paperclip, Upload } from 'lucide-react';
+import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, ChevronRight, LogOut, Edit, Unlock, Pause, Users, Loader2, Menu, X, Trash2, Landmark, Paperclip, Upload, Download } from 'lucide-react';
 import { Skeleton, SkeletonBar } from './ui/Skeleton';
 
 // Custom hook for number count-up animation
@@ -1438,6 +1438,129 @@ export default function Dashboard() {
 
   const kpis = getRoleSpecificKPIs();
 
+  // Excel export for filtered invoices — generates a formatted .xls file
+  const exportFilteredCSV = () => {
+    const rows = sortedInvoices;
+    if (rows.length === 0) return;
+
+    const statusLabel = filters.status ? filters.status.replace(/_/g, ' ') : 'All Invoices';
+    const exportDate = new Date().toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'short' });
+    const fileName = `AP-Invoice-Report-${filters.status || 'all'}-${new Date().toISOString().split('T')[0]}.xls`;
+
+    const columns = [
+      { header: '#', width: 40 },
+      { header: 'Invoice Number', width: 160 },
+      { header: 'Vendor Name', width: 220 },
+      { header: 'Status', width: 140 },
+      { header: 'Amount', width: 100 },
+      { header: 'Currency', width: 70 },
+      { header: 'Invoice Date', width: 100 },
+      { header: 'Due Date', width: 100 },
+      { header: 'Brand', width: 100 },
+      { header: 'PO Number', width: 120 },
+      { header: 'MPO Number', width: 120 },
+      { header: 'Payment Terms', width: 100 },
+      { header: 'Bank Name', width: 180 },
+      { header: 'SWIFT Code', width: 120 },
+      { header: 'Account Number', width: 160 },
+    ];
+
+    const esc = (v: any) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    const headerRow = columns.map(c =>
+      `<td style="background:#1F2937;color:#FFFFFF;font-weight:bold;text-align:center;border:1px solid #374151;padding:6px 8px;white-space:nowrap;">${esc(c.header)}</td>`
+    ).join('');
+
+    const dataRows = rows.map((inv: any, idx: number) => {
+      const bg = idx % 2 === 0 ? '#FFFFFF' : '#F3F4F6';
+      const style = `style="background:${bg};border:1px solid #D1D5DB;padding:5px 8px;white-space:nowrap;mso-number-format:'\\@';"`;
+      const amountStyle = `style="background:${bg};border:1px solid #D1D5DB;padding:5px 8px;text-align:right;white-space:nowrap;mso-number-format:'#,##0.00';"`;
+      const centerStyle = `style="background:${bg};border:1px solid #D1D5DB;padding:5px 8px;text-align:center;white-space:nowrap;"`;
+      return `<tr>` +
+        `<td ${centerStyle}>${idx + 1}</td>` +
+        `<td ${style}>${esc(inv.invoice_number || '')}</td>` +
+        `<td ${style}>${esc(inv.vendor_name_raw || inv.vendor?.name || '')}</td>` +
+        `<td ${centerStyle}>${esc((inv.status || '').replace(/_/g, ' '))}</td>` +
+        `<td ${amountStyle}>${esc(inv.total_amount || 0)}</td>` +
+        `<td ${centerStyle}>${esc(inv.currency || '')}</td>` +
+        `<td ${centerStyle}>${esc(inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString('en-US') : '')}</td>` +
+        `<td ${centerStyle}>${esc(inv.due_date ? new Date(inv.due_date).toLocaleDateString('en-US') : '')}</td>` +
+        `<td ${style}>${esc(inv.brand || '')}</td>` +
+        `<td ${style}>${esc(inv.po_number || inv.customer_po_number || '')}</td>` +
+        `<td ${style}>${esc(inv.mpo_number || '')}</td>` +
+        `<td ${centerStyle}>${esc(inv.payment_terms || '')}</td>` +
+        `<td ${style}>${esc(inv.bank_name || '')}</td>` +
+        `<td ${style}>${esc(inv.swift_code || '')}</td>` +
+        `<td ${style}>${esc(inv.account_number || '')}</td>` +
+        `</tr>`;
+    }).join('');
+
+    const totalAmount = rows.reduce((sum: number, inv: any) => sum + (Number(inv.total_amount) || 0), 0);
+
+    const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+<meta charset="utf-8"/>
+<!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>
+<x:Name>AP Invoice Report</x:Name>
+<x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>
+</x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
+</head>
+<body>
+<table>
+<tr><td colspan="${columns.length}" style="font-size:18px;font-weight:bold;color:#1F2937;padding:4px 0;">Madison 88 — AP Invoice Report</td></tr>
+<tr><td colspan="${columns.length}" style="font-size:12px;color:#6B7280;padding:2px 0;">Filter: ${esc(statusLabel)} &nbsp;|&nbsp; Generated: ${esc(exportDate)} &nbsp;|&nbsp; Total Records: ${rows.length}</td></tr>
+<tr><td colspan="${columns.length}" style="font-size:12px;color:#6B7280;padding:2px 0 10px 0;">Total Amount: ${esc(rows[0]?.currency || 'USD')} ${totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td></tr>
+<tr></tr>
+<tr>${headerRow}</tr>
+${dataRows}
+</table>
+</body>
+</html>`;
+
+    const blob = new Blob(['\uFEFF' + html], { type: 'application/vnd.ms-excel;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // KPI click — filter invoice list by relevant status
+  const handleKpiClick = (kpiLabel: string) => {
+    const label = kpiLabel.toLowerCase();
+    // Map KPI labels to status filters
+    if (label.includes('validation')) {
+      setFilters({ ...filters, status: InvoiceStatus.VALIDATION_PENDING });
+    } else if (label.includes('awaiting approval') || label.includes('pending my approval')) {
+      // Pending approvals — clear status filter to show all pending stages
+      setFilters({ ...filters, status: undefined });
+    } else if (label.includes('exception')) {
+      setFilters({ ...filters, status: InvoiceStatus.EXCEPTION_FLAGGED });
+    } else if (label.includes('scheduled payment')) {
+      setFilters({ ...filters, status: InvoiceStatus.PAYMENT_SCHEDULED });
+    } else if (label.includes('pending accounting') || label.includes('accounting review')) {
+      setFilters({ ...filters, status: InvoiceStatus.PENDING_ACCOUNTING });
+    } else if (label.includes('approved')) {
+      setFilters({ ...filters, status: InvoiceStatus.APPROVED });
+    } else if (label.includes('on-hold') || label.includes('hold') || label.includes('escalated')) {
+      setFilters({ ...filters, status: InvoiceStatus.ON_HOLD });
+    } else if (label.includes('paid')) {
+      setFilters({ ...filters, status: InvoiceStatus.PAID });
+    } else if (label.includes('posted')) {
+      setFilters({ ...filters, status: InvoiceStatus.POSTED_TO_QB });
+    } else if (label.includes('urgent')) {
+      setFilters({ ...filters, status: undefined });
+    } else {
+      setFilters({ ...filters, status: undefined });
+    }
+    // Scroll to invoice table
+    setTimeout(() => {
+      const table = document.querySelector('[data-invoice-table]');
+      if (table) table.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+  };
+
   return (
     <div>
       {/* Primary Action Bar */}
@@ -1504,6 +1627,7 @@ export default function Dashboard() {
                       icon={kpi.icon}
                       accent={accent}
                       trend={kpi.trend ? { value: kpi.trend, direction: kpi.trendUp ? 'up' : 'down' } : undefined}
+                      onClick={() => handleKpiClick(kpi.label)}
                     />
                   </div>
                 );
@@ -1718,6 +1842,17 @@ export default function Dashboard() {
                 >
                   Clear{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
                 </button>
+                <button
+                  onClick={exportFilteredCSV}
+                  disabled={sortedInvoices.length === 0}
+                  className="h-9 w-full md:w-auto px-4 rounded-full transition-colors text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+                  style={{ color: 'var(--accent-green)', background: 'color-mix(in srgb, var(--accent-green) 10%, transparent)' }}
+                  onMouseEnter={(e) => { if (!e.currentTarget.disabled) { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-green) 18%, transparent)'; } }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-green) 10%, transparent)'; }}
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Export Excel{sortedInvoices.length > 0 ? ` (${sortedInvoices.length})` : ''}
+                </button>
               </div>
 
               {/* Advanced filters — collapsible */}
@@ -1830,6 +1965,7 @@ export default function Dashboard() {
               </h2>
               <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{displayedInvoices.length} records</span>
             </div>
+            <div data-invoice-table>
             <InvoiceTable
               invoices={displayedInvoices}
               onInvoiceClick={(inv) => { setDetailTab('overview'); setSelectedInvoice(inv); }}
@@ -1870,6 +2006,7 @@ export default function Dashboard() {
                 </div>
               </div>
             )}
+            </div>
           </div>
           )}
 
@@ -2508,7 +2645,7 @@ export default function Dashboard() {
               )}
 
               {/* Check NextGen Changes Button */}
-              {selectedInvoice.mpo_number && user && ['PURCHASING_COORDINATOR', 'ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role) && (
+              {selectedInvoice.mpo_number && user && ['PURCHASING_COORDINATOR', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role) && (
                 <button
                   onClick={handleCheckNextGen}
                   disabled={posting}

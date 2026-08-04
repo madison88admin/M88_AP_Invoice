@@ -65,6 +65,95 @@ export default function AccountingReview() {
     return { background: 'color-mix(in srgb, var(--accent-amber) 12%, transparent)', color: 'var(--accent-amber)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' };
   };
 
+  const exportToExcel = () => {
+    const rows = filteredInvoices;
+    if (rows.length === 0) return;
+
+    const tabLabel = activeTab === 'soa' ? 'SOA Reconciliation' : activeTab === 'bank-requests' ? 'Bank Change Requests' : 'Posted Invoices';
+    const exportDate = new Date().toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'short' });
+    const fileName = `Accounting-Review-${tabLabel.replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.xls`;
+
+    const columns = [
+      { header: '#', width: 40 },
+      { header: 'Invoice Number', width: 160 },
+      { header: 'Vendor', width: 220 },
+      { header: 'Amount', width: 100 },
+      { header: 'Currency', width: 70 },
+      { header: 'Status', width: 140 },
+      { header: 'Posted Date', width: 120 },
+      { header: 'Invoice Date', width: 100 },
+      { header: 'Due Date', width: 100 },
+      { header: 'Payment Terms', width: 100 },
+      { header: 'Brand', width: 100 },
+      { header: 'PO Number', width: 120 },
+      { header: 'MPO Number', width: 120 },
+      { header: 'Bank Name', width: 180 },
+      { header: 'SWIFT Code', width: 120 },
+      { header: 'Account Number', width: 160 },
+    ];
+
+    const esc = (v: any) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    const headerRow = columns.map(c =>
+      `<td style="background:#1F2937;color:#FFFFFF;font-weight:bold;text-align:center;border:1px solid #374151;padding:6px 8px;white-space:nowrap;">${esc(c.header)}</td>`
+    ).join('');
+
+    const dataRows = rows.map((inv: any, idx: number) => {
+      const bg = idx % 2 === 0 ? '#FFFFFF' : '#F3F4F6';
+      const style = `style="background:${bg};border:1px solid #D1D5DB;padding:5px 8px;white-space:nowrap;mso-number-format:'\\@';"`;
+      const amountStyle = `style="background:${bg};border:1px solid #D1D5DB;padding:5px 8px;text-align:right;white-space:nowrap;mso-number-format:'#,##0.00';"`;
+      const centerStyle = `style="background:${bg};border:1px solid #D1D5DB;padding:5px 8px;text-align:center;white-space:nowrap;"`;
+      return `<tr>` +
+        `<td ${centerStyle}>${idx + 1}</td>` +
+        `<td ${style}>${esc(inv.invoice_number || '')}</td>` +
+        `<td ${style}>${esc(inv.vendor_name || inv.vendor?.name || '')}</td>` +
+        `<td ${amountStyle}>${esc(inv.total_amount || 0)}</td>` +
+        `<td ${centerStyle}>${esc(inv.currency || 'USD')}</td>` +
+        `<td ${centerStyle}>${esc((inv.status || '').replace(/_/g, ' '))}</td>` +
+        `<td ${centerStyle}>${esc(inv.updated_at ? new Date(inv.updated_at).toLocaleDateString('en-US') : 'N/A')}</td>` +
+        `<td ${centerStyle}>${esc(inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString('en-US') : '')}</td>` +
+        `<td ${centerStyle}>${esc(inv.due_date ? new Date(inv.due_date).toLocaleDateString('en-US') : '')}</td>` +
+        `<td ${centerStyle}>${esc(inv.payment_terms || '')}</td>` +
+        `<td ${style}>${esc(inv.brand || '')}</td>` +
+        `<td ${style}>${esc(inv.po_number || inv.customer_po_number || '')}</td>` +
+        `<td ${style}>${esc(inv.mpo_number || '')}</td>` +
+        `<td ${style}>${esc(inv.bank_name || '')}</td>` +
+        `<td ${style}>${esc(inv.swift_code || '')}</td>` +
+        `<td ${style}>${esc(inv.account_number || '')}</td>` +
+        `</tr>`;
+    }).join('');
+
+    const totalAmount = rows.reduce((sum: number, inv: any) => sum + (Number(inv.total_amount) || 0), 0);
+
+    const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+<meta charset="utf-8"/>
+<!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>
+<x:Name>Accounting Review</x:Name>
+<x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>
+</x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
+</head>
+<body>
+<table>
+<tr><td colspan="${columns.length}" style="font-size:18px;font-weight:bold;color:#1F2937;padding:4px 0;">Madison 88 — Accounting Review Report</td></tr>
+<tr><td colspan="${columns.length}" style="font-size:12px;color:#6B7280;padding:2px 0;">Tab: ${esc(tabLabel)} &nbsp;|&nbsp; Generated: ${esc(exportDate)} &nbsp;|&nbsp; Total Records: ${rows.length}</td></tr>
+<tr><td colspan="${columns.length}" style="font-size:12px;color:#6B7280;padding:2px 0 10px 0;">Total Amount: ${esc(rows[0]?.currency || 'USD')} ${totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td></tr>
+<tr></tr>
+<tr>${headerRow}</tr>
+${dataRows}
+</table>
+</body>
+</html>`;
+
+    const blob = new Blob(['\uFEFF' + html], { type: 'application/vnd.ms-excel;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div>
         {/* Tab Switcher */}
@@ -314,12 +403,16 @@ export default function AccountingReview() {
               <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
                 {activeTab === 'soa' ? 'SOA Reconciliation Queue' : 'Posted Invoices'} ({filteredInvoices.length})
               </h2>
-              <button className="flex items-center px-4 py-2.5 rounded-xl transition-all text-sm font-semibold" style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--accent-lime-hover)'; }}
+              <button
+                onClick={exportToExcel}
+                disabled={filteredInvoices.length === 0}
+                className="flex items-center px-4 py-2.5 rounded-xl transition-all text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}
+                onMouseEnter={(e) => { if (!e.currentTarget.disabled) e.currentTarget.style.background = 'var(--accent-lime-hover)'; }}
                 onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--accent-lime)'; }}
               >
                 <Download className="h-5 w-5 mr-2" strokeWidth={1.75} />
-                Export
+                Export Excel{filteredInvoices.length > 0 ? ` (${filteredInvoices.length})` : ''}
               </button>
             </div>
 

@@ -17,7 +17,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { MockInvoice } from '../lib/mockData';
 import { hasPermission, filterInvoicesByRole, canUserApproveStatus, isWithinRoleThreshold } from '../lib/roleAccess';
 import { cn } from '../lib/utils';
-import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, ChevronRight, LogOut, Edit, Unlock, Pause, Users, Loader2, Menu, X, Trash2, Landmark, Paperclip, Upload, Download } from 'lucide-react';
+import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, ChevronRight, LogOut, Edit, Unlock, Pause, Users, Loader2, Menu, X, Trash2, Landmark, Paperclip, Upload, Download, Eye } from 'lucide-react';
 import { Skeleton, SkeletonBar } from './ui/Skeleton';
 
 // Custom hook for number count-up animation
@@ -3548,22 +3548,35 @@ ${dataRows}
                     </div>
                     {isReadOnly && (
                       <div className="px-4 pb-4">
-                        <div className="p-3 rounded-xl flex items-start gap-2 mb-3" style={{ background: 'color-mix(in srgb, var(--accent-amber) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}>
-                          <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" style={{ color: 'var(--accent-amber)' }} strokeWidth={1.75} />
-                          <p className="text-xs" style={{ color: 'var(--accent-amber)' }}>
-                            Bank details can only be edited by Accounting. Click below to request a change.
-                          </p>
-                        </div>
-                        <button
-                          onClick={() => { setBankChangeField(''); setBankChangeValue(''); setBankChangeReason(''); setBankChangeAttachment(null); setShowBankChangeModal(true); }}
-                          className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all"
-                          style={{ background: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', color: 'var(--accent-blue)', border: '1px solid color-mix(in srgb, var(--accent-blue) 20%, transparent)' }}
-                          onMouseEnter={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-blue) 20%, transparent)'; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-blue) 10%, transparent)'; }}
-                        >
-                          <Edit className="h-4 w-4" strokeWidth={1.75} />
-                          Request Bank Details Change
-                        </button>
+                        {isBankSection ? (
+                          // Bank section read-only for non-Accounting users
+                          <>
+                          <div className="p-3 rounded-xl flex items-start gap-2 mb-3" style={{ background: 'color-mix(in srgb, var(--accent-amber) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}>
+                            <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" style={{ color: 'var(--accent-amber)' }} strokeWidth={1.75} />
+                            <p className="text-xs" style={{ color: 'var(--accent-amber)' }}>
+                              Bank details can only be edited by Accounting. Click below to request a change.
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => { setBankChangeField(''); setBankChangeValue(''); setBankChangeReason(''); setBankChangeAttachment(null); setShowBankChangeModal(true); }}
+                            className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all"
+                            style={{ background: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', color: 'var(--accent-blue)', border: '1px solid color-mix(in srgb, var(--accent-blue) 20%, transparent)' }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-blue) 20%, transparent)'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-blue) 10%, transparent)'; }}
+                          >
+                            <Edit className="h-4 w-4" strokeWidth={1.75} />
+                            Request Bank Details Change
+                          </button>
+                          </>
+                        ) : (
+                          // Non-bank section read-only for Accounting users
+                          <div className="p-3 rounded-xl flex items-start gap-2" style={{ background: 'color-mix(in srgb, var(--text-muted) 8%, transparent)', border: '1px solid var(--border-color)' }}>
+                            <Eye className="h-4 w-4 flex-shrink-0 mt-0.5" style={{ color: 'var(--text-muted)' }} strokeWidth={1.75} />
+                            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                              View only — editable by Purchasing Coordinator.
+                            </p>
+                          </div>
+                        )}
                       </div>
                     )}
                     </>

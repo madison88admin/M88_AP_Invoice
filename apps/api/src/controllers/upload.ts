@@ -28,6 +28,8 @@ import {
 } from '../services/structuredInvoiceService';
 import crypto from 'crypto';
 import { createChildLogger } from '../utils/logger';
+import { uploadToStorage } from '../services/supabaseStorageService';
+import { syncToHetzner } from '../services/hetznerStorageService';
 
 // ─── Async upload job storage ───
 interface UploadJob {
@@ -244,14 +246,28 @@ async function processSingleInvoice(
 
     const fileBuffer = req.file.buffer;
     const mimeType = req.file.mimetype;
+    const fileName = req.file.originalname;
 
     logger.info(`[${reqId}] File received`, {
+      fileName,
       fileSize: fileBuffer.length,
       mimeType: mimeType,
     });
 
     console.log('[DEBUG] File buffer size:', fileBuffer.length);
     console.log('[DEBUG] MIME type:', mimeType);
+
+    // Upload to Supabase Storage FIRST (before OCR — ensures file is saved even if OCR fails)
+    let storagePath: string | undefined;
+    try {
+      const uploadedPath = await uploadToStorage(fileBuffer, fileName, mimeType);
+      if (uploadedPath) {
+        storagePath = uploadedPath;
+        logger.info(`[${reqId}] Invoice uploaded to Supabase storage: ${storagePath}`);
+      }
+    } catch (storageError) {
+      logger.warn(`[${reqId}] Failed to upload invoice to Supabase storage for ${fileName}:`, storageError);
+    }
 
     // Extract Madison-specific invoice fields (Engine 1)
     const startTime = Date.now();
@@ -953,6 +969,7 @@ async function processSingleInvoice(
           }
         : null,
       debug: debugLogs,
+      storage_path: storagePath || undefined,
     });
   } catch (error) {
     console.error('[DEBUG] processSingleInvoice error:', error);
@@ -1157,6 +1174,7 @@ export const confirmOCR = async (
       line_items,
       accounting_preapproved,
       approval_evidence_confirmed,
+      storage_path,
     } = req.body;
 
     // Import invoice service dynamically to avoid circular dependency
@@ -1216,9 +1234,13 @@ export const confirmOCR = async (
         },
         po_validation,
         // Extract bank fields from bank_info if available
+        beneficiary_name: bank_info?.beneficiary_name,
         bank_name: bank_info?.bank_name,
         swift_code: bank_info?.swift_code,
         account_number: bank_info?.account_usd || bank_info?.account_number,
+        // Storage paths
+        raw_file_url: storage_path || undefined,
+        pdf_path: storage_path || undefined,
         accounting_preapproved,
         approval_evidence_confirmed,
       },
@@ -1230,6 +1252,28 @@ export const confirmOCR = async (
     if (po_audit_id) {
       const transferred = poAuditService.transferAudit(po_audit_id, invoice.id);
       console.log(`[DEBUG] PO audit transfer from ${po_audit_id} to invoice ${invoice.id}: ${transferred}`);
+    }
+
+    // Sync to Hetzner Object Storage (non-blocking — runs in background)
+    if (storage_path) {
+      const vendorName = vendor_name_raw || invoice.vendor_name_raw || 'Unknown';
+      const invNumber = invoice_number || invoice.invoice_number || 'unknown';
+      const receivedDate = invoice_received_date ? new Date(invoice_received_date) : new Date();
+      // Download from Supabase storage and re-upload to Hetzner
+      import('../services/supabaseStorageService')
+        .then(({ downloadFromStorage }) => downloadFromStorage(storage_path))
+        .then((buffer) => {
+          if (!buffer) return null;
+          return syncToHetzner(buffer, vendorName, invNumber, receivedDate);
+        })
+        .then((hetznerPath) => {
+          if (hetznerPath) {
+            console.log(`[Hetzner] Invoice ${invNumber} synced to Hetzner: ${hetznerPath}`);
+          }
+        })
+        .catch((err) => {
+          console.warn(`[Hetzner] Failed to sync invoice ${invNumber}:`, err);
+        });
     }
 
     // Create signature records if detected

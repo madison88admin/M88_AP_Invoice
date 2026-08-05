@@ -15,6 +15,7 @@
     "@anthropic-ai/sdk": "^0.105.0",
     "@ap-invoice/db": "workspace:*",
     "@ap-invoice/shared": "workspace:*",
+    "@aws-sdk/client-s3": "^3.1102.0",
     "@azure/ai-form-recognizer": "^5.0.0",
     "@azure/identity": "^4.13.1",
     "@azure/msal-node": "^2.7.0",

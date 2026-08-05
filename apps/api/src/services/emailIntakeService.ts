@@ -185,7 +185,15 @@ async function processSingleInvoiceAttachment(
 
     // Analyze invoice using OCR
     const ocrResult = await analyzeInvoice(buffer, contentType);
-    
+
+    // OCR confidence threshold check — flag low confidence for manual review
+    const OCR_CONFIDENCE_THRESHOLD = parseFloat(process.env.OCR_CONFIDENCE_THRESHOLD || '0.60');
+    const ocrConfidence = ocrResult.ocr_confidence_score ?? 0;
+    const isLowConfidence = ocrConfidence < OCR_CONFIDENCE_THRESHOLD;
+    if (isLowConfidence) {
+      logger.warn(`[Email Intake] Low OCR confidence (${(ocrConfidence * 100).toFixed(1)}%) for ${fileName}`);
+    }
+
     // Match vendor (with auto-create)
     let vendorId: string | undefined;
     try {
@@ -290,7 +298,7 @@ async function processSingleInvoiceAttachment(
         account_number: (ocrResult as any).bank_info?.account_usd || (ocrResult as any).bank_info?.account_number || (ocrResult as any).account_number || (ocrResult as any).bank_account || undefined,
         qb_memo: qbMemo,
         qb_account_class: ocrResult.qb_account_class,
-        status: (vendorId ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,
+        status: (vendorId && !isLowConfidence ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,
         source: InvoiceSource.EMAIL as any,
         approval_tier: tier,
         payment_terms: ocrResult.payment_terms,
@@ -321,7 +329,7 @@ async function processSingleInvoiceAttachment(
         });
       }
     }
-    
+
     // Create audit log
     await prisma.auditLog.create({
       data: {
@@ -331,7 +339,7 @@ async function processSingleInvoiceAttachment(
         note: `Email intake from ${message.from?.emailAddress?.address}: ${fileName}${splitIndex !== undefined ? ` (part ${splitIndex + 1})` : ''}${sharepointUrl ? `. Uploaded to SharePoint: ${sharepointUrl}` : ''}`,
       },
     });
-    
+
     // Create exception if vendor not matched
     if (!vendorId) {
       await prisma.exception.create({
@@ -342,9 +350,20 @@ async function processSingleInvoiceAttachment(
         },
       });
     }
+
+    // Create exception if OCR confidence is low
+    if (isLowConfidence) {
+      await prisma.exception.create({
+        data: {
+          invoice_id: invoice.id,
+          reason: ExceptionReason.OCR_LOW_CONFIDENCE as any,
+          detail: `OCR confidence ${(ocrConfidence * 100).toFixed(1)}% is below threshold ${(OCR_CONFIDENCE_THRESHOLD * 100).toFixed(0)}%. Manual review of extracted data required.`,
+        },
+      });
+    }
     
-    // Auto-trigger validation if invoice was created in RECEIVED status (vendor matched)
-    if (vendorId && invoice.status === InvoiceStatus.RECEIVED as any) {
+    // Auto-trigger validation if invoice was created in RECEIVED status (vendor matched, confidence OK)
+    if (vendorId && !isLowConfidence && invoice.status === InvoiceStatus.RECEIVED as any) {
       try {
         const validationResult = await validateInvoice(invoice.id);
         logger.info(
@@ -426,6 +445,14 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
     // Analyze invoice using OCR
     const ocrResult = await analyzeInvoice(buffer, 'application/pdf');
 
+    // OCR confidence threshold check
+    const OCR_CONFIDENCE_THRESHOLD = parseFloat(process.env.OCR_CONFIDENCE_THRESHOLD || '0.60');
+    const ocrConfidence = ocrResult.ocr_confidence_score ?? 0;
+    const isLowConfidence = ocrConfidence < OCR_CONFIDENCE_THRESHOLD;
+    if (isLowConfidence) {
+      logger.warn(`[SharePoint Intake] Low OCR confidence (${(ocrConfidence * 100).toFixed(1)}%) for ${data.fileName}`);
+    }
+
     // Match vendor (with auto-create)
     let vendorId: string | undefined;
     try {
@@ -500,7 +527,7 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
         account_number: (ocrResult as any).bank_info?.account_usd || (ocrResult as any).bank_info?.account_number || (ocrResult as any).account_number || (ocrResult as any).bank_account || undefined,
         qb_memo: qbMemo,
         qb_account_class: ocrResult.qb_account_class,
-        status: (vendorId ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,
+        status: (vendorId && !isLowConfidence ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,
         source: InvoiceSource.EMAIL as any,
         approval_tier: tier,
         payment_terms: ocrResult.payment_terms,
@@ -553,8 +580,20 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
       exceptions.push('VENDOR_NOT_FOUND');
     }
 
+    // Create exception if OCR confidence is low
+    if (isLowConfidence) {
+      await prisma.exception.create({
+        data: {
+          invoice_id: invoice.id,
+          reason: ExceptionReason.OCR_LOW_CONFIDENCE as any,
+          detail: `OCR confidence ${(ocrConfidence * 100).toFixed(1)}% is below threshold ${(OCR_CONFIDENCE_THRESHOLD * 100).toFixed(0)}%. Manual review of extracted data required.`,
+        },
+      });
+      exceptions.push('OCR_LOW_CONFIDENCE');
+    }
+
     // Auto-trigger validation if invoice was created in RECEIVED status (vendor matched)
-    if (vendorId && invoice.status === InvoiceStatus.RECEIVED as any) {
+    if (vendorId && !isLowConfidence && invoice.status === InvoiceStatus.RECEIVED as any) {
       try {
         const validationResult = await validateInvoice(invoice.id);
         logger.info(
@@ -626,6 +665,14 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
 
     // Analyze invoice using OCR
     const ocrResult = await analyzeInvoice(buffer, data.contentType);
+
+    // OCR confidence threshold check
+    const OCR_CONFIDENCE_THRESHOLD = parseFloat(process.env.OCR_CONFIDENCE_THRESHOLD || '0.60');
+    const ocrConfidence = ocrResult.ocr_confidence_score ?? 0;
+    const isLowConfidence = ocrConfidence < OCR_CONFIDENCE_THRESHOLD;
+    if (isLowConfidence) {
+      logger.warn(`[Power Automate] Low OCR confidence (${(ocrConfidence * 100).toFixed(1)}%) for ${data.fileName}`);
+    }
 
     // Match vendor (with auto-create)
     let vendorId: string | undefined;
@@ -720,7 +767,7 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
         account_number: (ocrResult as any).bank_info?.account_usd || (ocrResult as any).bank_info?.account_number || (ocrResult as any).account_number || (ocrResult as any).bank_account || undefined,
         qb_memo: qbMemo,
         qb_account_class: ocrResult.qb_account_class,
-        status: (vendorId ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,
+        status: (vendorId && !isLowConfidence ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,
         source: InvoiceSource.EMAIL as any,
         approval_tier: tier,
         payment_terms: ocrResult.payment_terms,
@@ -773,8 +820,20 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
       exceptions.push('VENDOR_NOT_FOUND');
     }
 
+    // Create exception if OCR confidence is low
+    if (isLowConfidence) {
+      await prisma.exception.create({
+        data: {
+          invoice_id: invoice.id,
+          reason: ExceptionReason.OCR_LOW_CONFIDENCE as any,
+          detail: `OCR confidence ${(ocrConfidence * 100).toFixed(1)}% is below threshold ${(OCR_CONFIDENCE_THRESHOLD * 100).toFixed(0)}%. Manual review of extracted data required.`,
+        },
+      });
+      exceptions.push('OCR_LOW_CONFIDENCE');
+    }
+
     // Auto-trigger validation if invoice was created in RECEIVED status (vendor matched)
-    if (vendorId && invoice.status === InvoiceStatus.RECEIVED as any) {
+    if (vendorId && !isLowConfidence && invoice.status === InvoiceStatus.RECEIVED as any) {
       try {
         const validationResult = await validateInvoice(invoice.id);
         logger.info(

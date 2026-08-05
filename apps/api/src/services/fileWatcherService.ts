@@ -49,6 +49,46 @@ function ensureDirectories(): void {
 }
 
 /**
+ * Recover stuck files from processing/ directory on startup.
+ * Files left in processing/ are from crashed/interrupted processing cycles.
+ * Move them back to incoming/ so they get reprocessed.
+ */
+function recoverStuckFiles(): void {
+  if (!fs.existsSync(PROCESSING_DIR)) return;
+
+  const files = fs.readdirSync(PROCESSING_DIR).filter(f => f.toLowerCase().endsWith('.pdf'));
+  if (files.length === 0) return;
+
+  logger.info(`[File Watcher] Found ${files.length} stuck file(s) in processing/ — recovering...`);
+
+  for (const fileName of files) {
+    const processingPath = path.join(PROCESSING_DIR, fileName);
+    try {
+      const stat = fs.statSync(processingPath);
+      if (!stat.isFile()) continue;
+
+      // Check if this file is referenced by an existing invoice in the DB
+      // If so, move it to the appropriate final folder instead of reprocessing
+      // For now, just move back to incoming for reprocessing
+      const incomingPath = path.join(INCOMING_DIR, fileName);
+
+      // Handle name collision in incoming
+      let targetPath = incomingPath;
+      if (fs.existsSync(targetPath)) {
+        const ext = path.extname(fileName);
+        const base = path.basename(fileName, ext);
+        targetPath = path.join(INCOMING_DIR, `${base}_recovered_${Date.now()}${ext}`);
+      }
+
+      fs.renameSync(processingPath, targetPath);
+      logger.info(`[File Watcher] Recovered stuck file: ${fileName} → incoming/`);
+    } catch (err) {
+      logger.error(`[File Watcher] Failed to recover stuck file ${fileName}:`, err);
+    }
+  }
+}
+
+/**
  * Process a single PDF file:
  * 1. Move to Processing
  * 2. Multi-invoice detection (split if needed)
@@ -132,6 +172,23 @@ async function processSingleInvoiceBuffer(
     logger.error(`[File Watcher] OCR failed for ${fileName}${partLabel}:`, err);
     if (splitIndex === undefined) safeMove(processingPath, FAILED_DIR);
     await createAuditLog(null, 'WATCHER_OCR_FAILED', `OCR extraction failed for ${fileName}${partLabel}: ${err}`);
+    return;
+  }
+
+  // Step 3b: OCR confidence threshold check
+  // If confidence < 60%, route to manual review instead of creating invoice with bad data
+  const OCR_CONFIDENCE_THRESHOLD = parseFloat(process.env.OCR_CONFIDENCE_THRESHOLD || '0.60');
+  const ocrConfidence = ocrResult.ocr_confidence_score ?? 0;
+  if (ocrConfidence < OCR_CONFIDENCE_THRESHOLD) {
+    logger.warn(
+      `[File Watcher] Low OCR confidence (${(ocrConfidence * 100).toFixed(1)}% < ${(OCR_CONFIDENCE_THRESHOLD * 100).toFixed(0)}%) for ${fileName}${partLabel} → ManualReview`
+    );
+    if (splitIndex === undefined) safeMove(processingPath, MANUAL_REVIEW_DIR);
+    await createAuditLog(
+      null,
+      'WATCHER_LOW_OCR_CONFIDENCE',
+      `OCR confidence ${(ocrConfidence * 100).toFixed(1)}% below threshold ${(OCR_CONFIDENCE_THRESHOLD * 100).toFixed(0)}% for ${fileName}${partLabel}. Routed to manual review.`
+    );
     return;
   }
 
@@ -583,6 +640,9 @@ export async function startFileWatcher(intervalSeconds: number = 30): Promise<vo
   logger.info(`[File Watcher] Incoming dir: ${INCOMING_DIR}`);
 
   ensureDirectories();
+
+  // Recover any stuck files from processing/ before starting
+  recoverStuckFiles();
 
   // Initial poll after 5 seconds
   setTimeout(async () => {

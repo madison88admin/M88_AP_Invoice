@@ -296,6 +296,8 @@ async function processSingleInvoiceBuffer(
   let invoiceId: string | null = null;
   let finalPdfPath: string | null = null;
   try {
+    // Parse MPO reference for base MPO, order sequence, and material code
+    const headerParsedMpo = ocrResult.mpo_number ? parseMPOReference(ocrResult.mpo_number) : { baseMpo: null, orderSequence: null, materialCode: null };
     const baseData: any = {
         invoice_number: effectiveInvoiceNumber,
         invoice_date: ocrResult.invoice_date,
@@ -334,6 +336,9 @@ async function processSingleInvoiceBuffer(
         season: ocrResult.season,
         qty_shipped: (ocrResult as any).qty_shipped || undefined,
         mpo_number: ocrResult.mpo_number,
+        mpo_base_number: headerParsedMpo.baseMpo || undefined,
+        mpo_order_sequence: headerParsedMpo.orderSequence || undefined,
+        material_code: headerParsedMpo.materialCode || undefined,
         customer_po_number: ocrResult.customer_po_number,
         bill_to_entity: (ocrResult.bill_to_entity || 'MADISON_88_LTD') as any,
         is_handwritten: ocrResult.is_handwritten || false,
@@ -360,12 +365,11 @@ async function processSingleInvoiceBuffer(
     // Add invoice lines from OCR extraction if present
     const ocrLineItems = (ocrResult as any).line_items;
     if (Array.isArray(ocrLineItems) && ocrLineItems.length > 0) {
-      const parsedMpo = ocrResult.mpo_number ? parseMPOReference(ocrResult.mpo_number) : { baseMpo: null, orderSequence: null, materialCode: null };
       baseData.invoice_lines = {
         create: ocrLineItems.map((line: any, index: number) => {
           // Use per-line MPO if present, otherwise fall back to invoice-level MPO
           const lineMpo = line.mpo_number || null;
-          const lineParsedMpo = lineMpo ? parseMPOReference(lineMpo) : parsedMpo;
+          const lineParsedMpo = lineMpo ? parseMPOReference(lineMpo) : headerParsedMpo;
           return {
             line_number: Number(line.line_number || index + 1),
             description: line.description || line.material_name || null,

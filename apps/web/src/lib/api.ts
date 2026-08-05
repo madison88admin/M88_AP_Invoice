@@ -92,7 +92,7 @@ export const invoiceApi = {
   approve: (id: string, signerName: string) => api.post(`/api/invoices/${id}/approve`, { signerName }),
   reject: (id: string, reason: string) => api.post(`/api/invoices/${id}/reject`, { reason }),
   returnForCorrection: (id: string, reason: string, targetRole?: string) => api.post(`/api/invoices/${id}/return`, { reason, targetRole }),
-  post: (id: string, bypassVarianceCheck: boolean = false) => api.post(`/api/invoices/${id}/post`, { bypassVarianceCheck }),
+  post: (id: string, bypassVarianceCheck: boolean = false) => api.post(`/.netlify/functions/proxy-api/invoices/${id}/post`, { bypassVarianceCheck }, { timeout: 300000 }),
   releaseHold: (id: string) => api.post(`/api/invoices/${id}/release-hold`),
   holdForBatchThreshold: (id: string, reason?: string) => api.post(`/api/invoices/${id}/hold`, { reason }),
   checkNextGen: async (id: string) => {

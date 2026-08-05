@@ -6,6 +6,7 @@ import { analyzeInvoice } from './ocrService';
 import { matchVendor, matchOrCreateVendor } from './vendorMatchingService';
 import { validateInvoice } from './validationService';
 import { checkEmailDuplicate, generateFileHash } from './emailDuplicateService';
+import { uploadToStorage } from './supabaseStorageService';
 import {
   InvoiceStatus,
   InvoiceType,
@@ -119,6 +120,24 @@ async function processFile(filePath: string, fileName: string): Promise<void> {
     logger.error(`[File Watcher] Failed to read ${fileName}:`, err);
     safeMove(processingPath, FAILED_DIR);
     return;
+  }
+
+  // Step 2a: Detect and decode base64-encoded files (Power Automate SFTP workaround)
+  if (fileBuffer.length > 0 && fileBuffer[0] === 0x4a && fileBuffer[1] === 0x56) {
+    // Check if it starts with "JVBERi" (base64 of "%PDF-")
+    const headerStr = fileBuffer.slice(0, 6).toString('ascii');
+    if (headerStr === 'JVBERi') {
+      logger.warn(`[File Watcher] Base64-encoded PDF detected for ${fileName} — decoding...`);
+      try {
+        fileBuffer = Buffer.from(fileBuffer.toString('ascii'), 'base64');
+        fs.writeFileSync(processingPath, fileBuffer);
+        logger.info(`[File Watcher] Base64 decoded: ${fileName} (${fileBuffer.length} bytes)`);
+      } catch (decodeErr) {
+        logger.error(`[File Watcher] Base64 decode failed for ${fileName}:`, decodeErr);
+        safeMove(processingPath, FAILED_DIR);
+        return;
+      }
+    }
   }
 
   // Step 2b: Multi-invoice detection
@@ -593,21 +612,45 @@ function safeMove(sourcePath: string, targetDir: string): string | null {
 
 /**
  * Move a file and update the invoice's pdf_path with the final destination.
+ * Also uploads the PDF to Supabase Storage so it's accessible from the dashboard.
  */
 async function safeMoveAndUpdatePdfPath(
   sourcePath: string,
   targetDir: string,
-  invoiceId: string | null
+  invoiceId: string | null,
+  fileName?: string
 ): Promise<string | null> {
   const finalPath = safeMove(sourcePath, targetDir);
   if (finalPath && invoiceId) {
+    // Upload to Supabase Storage (best-effort — don't fail if upload fails)
     try {
-      await prisma.invoice.update({
-        where: { id: invoiceId },
-        data: { pdf_path: finalPath },
-      });
+      const fileBuffer = fs.readFileSync(finalPath);
+      const baseName = fileName || path.basename(finalPath);
+      const storagePath = await uploadToStorage(fileBuffer, baseName, 'application/pdf');
+      if (storagePath) {
+        // Save both local path and Supabase storage path
+        await prisma.invoice.update({
+          where: { id: invoiceId },
+          data: { pdf_path: storagePath },
+        });
+        logger.info(`[File Watcher] PDF uploaded to Supabase storage: ${storagePath}`);
+      } else {
+        // Upload failed — keep local path
+        await prisma.invoice.update({
+          where: { id: invoiceId },
+          data: { pdf_path: finalPath },
+        });
+      }
     } catch (err) {
-      logger.warn(`[File Watcher] Failed to update pdf_path for invoice ${invoiceId}:`, err);
+      logger.warn(`[File Watcher] Supabase upload failed, keeping local path for invoice ${invoiceId}:`, err);
+      try {
+        await prisma.invoice.update({
+          where: { id: invoiceId },
+          data: { pdf_path: finalPath },
+        });
+      } catch (updateErr) {
+        logger.warn(`[File Watcher] Failed to update pdf_path for invoice ${invoiceId}:`, updateErr);
+      }
     }
   }
   return finalPath;

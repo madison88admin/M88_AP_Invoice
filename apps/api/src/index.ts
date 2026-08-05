@@ -53,17 +53,17 @@ const PORT = process.env.PORT || 3001;
 // General rate limiting: applies to all non-upload routes
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 300,
+  max: 1000,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: () => process.env.NODE_ENV === 'development',
+  skip: (req) => process.env.NODE_ENV === 'development' || req.path === '/api/health',
   message: { error: { message: 'Too many requests, please try again later.', status: 429 } },
 });
 
 // Upload rate limiting: slower, allows larger bursts of file uploads
 const uploadLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 30,
+  max: 100,
   standardHeaders: true,
   legacyHeaders: false,
   skip: () => process.env.NODE_ENV === 'development',
@@ -253,12 +253,16 @@ const startServer = async () => {
     });
 
     // Pre-load MPO cache from NextGen (fetches all 15,000+ headers once at startup)
-    // This makes subsequent MPO lookups instant instead of 30+ seconds each
-    if (process.env.NEXTGEN_USERNAME && process.env.NEXTGEN_PASSWORD) {
+    // Disabled — causes 5+ minute blocking when NextGen is slow.
+    // MPO lookups now use 10s timeout + graceful skip in validationService.
+    // To re-enable: set PRELOAD_MPO_CACHE=true in .env
+    if (process.env.PRELOAD_MPO_CACHE === 'true' && process.env.NEXTGEN_USERNAME && process.env.NEXTGEN_PASSWORD) {
       logger.info('Pre-loading MPO cache from NextGen...');
       nextGenService.preloadMPOCache().catch((err) => {
         logger.error('MPO cache pre-load failed (will fetch on demand):', err instanceof Error ? err.message : String(err));
       });
+    } else {
+      logger.info('MPO cache pre-load disabled (PRELOAD_MPO_CACHE not set) — using 10s timeout fallback');
     }
 
     // SLA reminder scheduler — runs every hour

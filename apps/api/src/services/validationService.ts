@@ -1045,13 +1045,27 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
   const materialName = invoice.material_name || rawData.material_name;
 
   try {
-    // Fetch PO from NextGen using MPO only (read-only)
-    // Pass material_code as additional hint for fuzzy matching
-    let po = await nextGenService.fetchPOByMPO(baseMpo, {
-      vendor_name: invoice.vendor?.name,
-      amount: Number(invoice.total_amount),
-      material_code: materialCode,
-    });
+    // Fetch PO from NextGen with 10s timeout — skip if NextGen is slow/down
+    let po: any = null;
+    try {
+      po = await Promise.race([
+        nextGenService.fetchPOByMPO(baseMpo, {
+          vendor_name: invoice.vendor?.name,
+          amount: Number(invoice.total_amount),
+          material_code: materialCode,
+        }),
+        new Promise<null>((_, reject) =>
+          setTimeout(() => reject(new Error('NEXTGEN_TIMEOUT_10s')), 10000)
+        ),
+      ]);
+    } catch (timeoutErr: any) {
+      // NextGen timed out or returned 500 — skip MPO validation gracefully
+      logger.warn(`[Validation] NextGen timeout/error for MPO ${baseMpo}: ${timeoutErr.message} — skipping MPO check`);
+      return {
+        passed: true,
+        message: `NextGen unavailable (timeout) — MPO ${poRef} check deferred. Re-validate when NextGen is available.`,
+      };
+    }
 
     // Fallback: If PO not found by MPO/PO number, try searching by material name
     if (!po && materialName) {
@@ -1358,9 +1372,9 @@ export async function checkBatchThreshold(invoiceId: string): Promise<{ held: bo
   const heldTotal = heldInvoices.reduce((sum, inv) => sum + Number(inv.total_amount), 0);
   const currentAmount = Number(invoice.total_amount);
   const cumulative = heldTotal + currentAmount;
-  // Only hold if the existing cumulative (before this invoice) is below threshold
-  // The current invoice itself should push it over, not be held
-  const held = heldTotal < BATCH_THRESHOLD;
+  // Hold only if the cumulative (including current invoice) is below threshold
+  // If the current invoice alone meets the threshold, release immediately
+  const held = cumulative < BATCH_THRESHOLD;
 
   if (held) {
     // Mark current invoice as ON_HOLD

@@ -66,12 +66,32 @@ async function prePostCheck(invoice: any): Promise<PrePostResult> {
 
   // 3. Amount vs PO variance via NextGen (new check)
   // Skip for STATEMENT documents — monthly aggregates won't match a single PO
+  //
+  // IMPORTANT: The NextGen lookup is wrapped in a hard deadline (NEXTGEN_PREPOST_DEADLINE_MS,
+  // default 10s). The MPO header cache can be cold (15,000+ records) and a fresh NextGen
+  // login + paginated grid read can take 30-60+ seconds. Netlify's redirect-based proxy
+  // times out at ~30s, which would surface as a 504 to the user. Since the variance check
+  // is already warn-only on failure, we abort early and treat NextGen as unavailable
+  // rather than hanging the entire post request.
+  const PREPOST_NEXTGEN_DEADLINE_MS = Math.max(
+    1000,
+    Number(process.env.NEXTGEN_PREPOST_DEADLINE_MS || 10000)
+  );
   const poRef = invoice.mpo_number || invoice.po_number;
   if (poRef && invoice.invoice_type !== 'STATEMENT') {
     try {
-      const po = invoice.mpo_number
-        ? await nextGenService.getFullPOByMPO(invoice.mpo_number)
-        : await nextGenService.getFullPO(invoice.po_number);
+      const nextgenPromise = invoice.mpo_number
+        ? nextGenService.getFullPOByMPO(invoice.mpo_number)
+        : nextGenService.getFullPO(invoice.po_number);
+
+      const deadlinePromise = new Promise<null>((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`NextGen lookup exceeded ${PREPOST_NEXTGEN_DEADLINE_MS / 1000}s deadline`)),
+          PREPOST_NEXTGEN_DEADLINE_MS
+        )
+      );
+
+      const po = await Promise.race([nextgenPromise, deadlinePromise]);
 
       if (!po) {
         flags.push({
@@ -100,7 +120,7 @@ async function prePostCheck(invoice: any): Promise<PrePostResult> {
         }
       }
     } catch (error) {
-      // NextGen unavailable — warn but don't block
+      // NextGen unavailable or timed out — warn but don't block
       flags.push({
         type: 'PO_NOT_FOUND',
         severity: 'warn',
@@ -623,6 +643,13 @@ export async function releaseFromHold(invoiceId: string, userId: string) {
     throw new AppError('Invoice is not on hold', 400);
   }
 
+  // Determine WHY the invoice was on hold:
+  // - BATCH_THRESHOLD_NOT_MET → should go back to VALIDATION_PENDING (pre-approval)
+  // - Other exceptions (pre-post check) → should go back to PENDING_ACCOUNTING (post-approval)
+  const batchThresholdException = invoice.exceptions.find(
+    (exc: any) => exc.reason === 'BATCH_THRESHOLD_NOT_MET' && exc.status === 'PENDING'
+  );
+
   // Resolve any PENDING exceptions that were created by the pre-post check
   const pendingExceptions = invoice.exceptions.filter(
     (exc: any) => exc.status === 'PENDING'
@@ -639,6 +666,27 @@ export async function releaseFromHold(invoiceId: string, userId: string) {
     });
   }
 
+  // If the invoice was held due to batch threshold, send it back to VALIDATION_PENDING
+  // so it goes through the full approval workflow (coordinator → manager → ... → accounting)
+  if (batchThresholdException) {
+    await prisma.invoice.update({
+      where: { id: invoiceId },
+      data: { status: InvoiceStatus.VALIDATION_PENDING as any },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        invoice_id: invoiceId,
+        action: 'RELEASED_FROM_HOLD',
+        performed_by: userId,
+        note: `Invoice released from ON_HOLD (batch threshold) back to VALIDATION_PENDING by user. ${pendingExceptions.length} exception(s) auto-resolved. Invoice will go through full approval workflow.`,
+      },
+    });
+
+    return { message: 'Invoice released from hold (batch threshold) — sent to validation pending for approval workflow', invoice_id: invoiceId };
+  }
+
+  // Normal case: invoice was held during posting (pre-post check failed)
   // Update invoice status back to PENDING_ACCOUNTING so it can be re-posted
   await prisma.invoice.update({
     where: { id: invoiceId },

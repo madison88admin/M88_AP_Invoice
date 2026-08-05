@@ -100,7 +100,7 @@ async function fetchWithTimeout(url: string, options: RequestInit = {}): Promise
 // ─── MPO Header Cache ──────────────────────────────────────────────────────
 // Caches all MPO headers to avoid re-fetching 15,000+ records for every invoice
 // TTL: 10 minutes (MPOs don't change frequently during processing)
-const MPO_CACHE_TTL_MS = 10 * 60 * 1000;
+const MPO_CACHE_TTL_MS = 30 * 60 * 1000;
 let mpoHeaderCache: any[] | null = null;
 let mpoCacheTimestamp = 0;
 let mpoCacheFetchPromise: Promise<any[]> | null = null;
@@ -861,17 +861,36 @@ export class NextGenService {
    * e.g. "MPO15371" → 73
    */
   private async getMPOOrderId(mpoNumber: string): Promise<number | null> {
-    // Skip if EntityBrowserList is known to be broken (returns 500)
+    const normalizedMPO = mpoNumber.replace(/^MPO/i, '').replace(/^0+/, '');
+    const mpoWithPrefix = `MPO${normalizedMPO.padStart(6, '0')}`;
+    const mpoWithPrefixShort = `MPO${normalizedMPO}`;
+
+    // ── Fastest path: Check in-memory MPO header cache first ──
+    const now = Date.now();
+    if (mpoHeaderCache && (now - mpoCacheTimestamp) < MPO_CACHE_TTL_MS) {
+      const match = mpoHeaderCache.find((i: any) =>
+        i.Name === mpoNumber ||
+        i.Name === mpoWithPrefix ||
+        i.Name === mpoWithPrefixShort ||
+        (i.Name || '').includes(normalizedMPO)
+      );
+      if (match) {
+        const orderId = match?.Id || match?.OrderId || match?.id || null;
+        if (orderId) {
+          logger.info(`MPO ${mpoNumber}: Cache hit — OrderId ${orderId} (age: ${Math.round((now - mpoCacheTimestamp) / 1000)}s)`);
+          return Number(orderId);
+        }
+      }
+    }
+
+    // Skip EntityBrowserList if known to be broken (returns 500)
     if (entityBrowserListBroken) {
       logger.info(`MPO ${mpoNumber}: Skipping EntityBrowserList (known broken)`);
-      return null;
+      // Fall through to MPOGridRead which may still work
     }
+
     try {
       // Try MPOGridRead with filter first (faster than EntityBrowserList)
-      const normalizedMPO = mpoNumber.replace(/^MPO/i, '').replace(/^0+/, '');
-      const mpoWithPrefix = `MPO${normalizedMPO.padStart(6, '0')}`;
-      const mpoWithPrefixShort = `MPO${normalizedMPO}`;
-
       const filterFormats = [mpoNumber, mpoWithPrefix, mpoWithPrefixShort];
       for (const fmt of filterFormats) {
         try {
@@ -906,27 +925,47 @@ export class NextGenService {
         }
       }
 
-      // Fall back to EntityBrowserList
-      const result = await this.get<any>(
-        `/MaterialPurchaseOrder/GetEntityBrowserList`
-      );
-      const items = result?.Data || result?.data || result || [];
-      if (!Array.isArray(items)) return null;
+      // Fall back to EntityBrowserList (only if not known to be broken)
+      if (!entityBrowserListBroken) {
+        const result = await this.get<any>(
+          `/MaterialPurchaseOrder/GetEntityBrowserList`
+        );
+        const items = result?.Data || result?.data || result || [];
+        if (!Array.isArray(items)) return null;
 
-      const match = items.find((i: any) =>
-        i.Name === mpoNumber ||
-        i.MPONumber === mpoNumber ||
-        (i.Name || '').includes(mpoNumber)
-      );
+        const match = items.find((i: any) =>
+          i.Name === mpoNumber ||
+          i.MPONumber === mpoNumber ||
+          (i.Name || '').includes(mpoNumber)
+        );
 
-      const orderId = match?.Id || match?.OrderId || match?.id || null;
-      if (!orderId) {
-        logger.warn(`MPO ${mpoNumber} not found in EntityBrowserList`);
-        return null;
+        const orderId = match?.Id || match?.OrderId || match?.id || null;
+        if (!orderId) {
+          logger.warn(`MPO ${mpoNumber} not found in EntityBrowserList`);
+          return null;
+        }
+
+        logger.info(`MPO ${mpoNumber} resolved to OrderId ${orderId}`);
+        return Number(orderId);
       }
 
-      logger.info(`MPO ${mpoNumber} resolved to OrderId ${orderId}`);
-      return Number(orderId);
+      // EntityBrowserList is broken — try fetching all headers as last resort
+      logger.info(`MPO ${mpoNumber}: EntityBrowserList broken, trying full header fetch`);
+      const allHeaders = await this.fetchAllMPOHeaders(mpoNumber);
+      const match = allHeaders.find((i: any) =>
+        i.Name === mpoNumber ||
+        i.Name === mpoWithPrefix ||
+        i.Name === mpoWithPrefixShort ||
+        (i.Name || '').includes(normalizedMPO)
+      );
+      if (match) {
+        const orderId = match?.Id || match?.OrderId || match?.id || null;
+        if (orderId) {
+          logger.info(`MPO ${mpoNumber}: Found OrderId ${orderId} via full header fetch`);
+          return Number(orderId);
+        }
+      }
+      return null;
     } catch (error: any) {
       if (error?.message?.includes('500') || error?.status === 500) {
         entityBrowserListBroken = true;

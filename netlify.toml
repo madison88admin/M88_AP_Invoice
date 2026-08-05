@@ -1,6 +1,6 @@
 [build]
   base = "/"
-  command = "pnpm install --frozen-lockfile && pnpm build --filter @ap-invoice/web"
+  command = "pnpm install --no-frozen-lockfile && pnpm build --filter @ap-invoice/web"
   publish = "apps/web/dist"
 
 [build.environment]

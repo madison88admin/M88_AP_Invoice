@@ -25,6 +25,7 @@
     "node": ">=18.0.0",
     "npm": ">=9.0.0"
   },
+  "packageManager": "pnpm@9.0.0",
   "dependencies": {
     "pg": "^8.22.0"
   }

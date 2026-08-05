@@ -1,11 +1,10 @@
 [build]
   base = "/"
-  command = "pnpm install --no-frozen-lockfile && pnpm build --filter @ap-invoice/web"
+  command = "corepack enable && pnpm install --no-frozen-lockfile && pnpm build --filter @ap-invoice/web"
   publish = "apps/web/dist"
 
 [build.environment]
   NODE_VERSION = "20"
-  NPM_FLAGS = "--version"
 
 [[redirects]]
   from = "/api/invoices/upload*"

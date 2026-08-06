@@ -290,6 +290,39 @@ export default function PaymentBatchManager() {
     }
   };
 
+  const handleExportPerVendor = async (batchId: string) => {
+    setProcessing(true);
+    try {
+      const response = await paymentBatchApi.exportPerVendor(batchId);
+      const blob = new Blob([response.data], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${selectedBatch?.batch_number || batchId}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('Excel file downloaded', 'success');
+    } catch (error: any) {
+      console.error('Failed to export:', error);
+      // Error response is also a blob (since responseType: 'blob'), need to parse it
+      let msg = 'Failed to export Excel file';
+      if (error?.response?.data instanceof Blob) {
+        try {
+          const text = await error.response.data.text();
+          const parsed = JSON.parse(text);
+          msg = parsed?.error?.message || msg;
+        } catch { /* use default msg */ }
+      } else if (error?.response?.data?.error?.message) {
+        msg = error.response.data.error.message;
+      }
+      showToast(msg, 'error');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   const handleCancelBatch = async () => {
     if (!selectedBatch || !cancelReason) return;
     setProcessing(true);
@@ -670,9 +703,22 @@ export default function PaymentBatchManager() {
                 </div>
               )}
 
+              {selectedBatch.status === 'REVIEWED' && isSupervisor && (
+                <div className="flex items-center gap-3 mb-6">
+                  <button onClick={() => handleExportPerVendor(selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2" style={{ background: 'var(--accent-blue)', color: 'white' }}>
+                    <Paperclip className="h-4 w-4" strokeWidth={1.75} />
+                    {processing ? 'Exporting...' : 'Export Per-Vendor (Excel)'}
+                  </button>
+                  <button onClick={() => handleBatchAction('export', selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'var(--accent-purple)', color: 'white' }}>Mark Exported to Bank</button>
+                </div>
+              )}
+
               {selectedBatch.status === 'REVIEWED' && isAssociate && (
                 <div className="flex items-center gap-3 mb-6">
-                  <button onClick={() => handleBatchAction('export', selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'var(--accent-purple)', color: 'white' }}>Mark Exported to Bank</button>
+                  <button onClick={() => handleExportPerVendor(selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2" style={{ background: 'var(--accent-blue)', color: 'white' }}>
+                    <Paperclip className="h-4 w-4" strokeWidth={1.75} />
+                    {processing ? 'Exporting...' : 'Export Per-Vendor (Excel)'}
+                  </button>
                   <button onClick={() => setShowExecutionModal(true)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}>Execute Payments</button>
                 </div>
               )}

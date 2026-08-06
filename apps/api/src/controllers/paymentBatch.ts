@@ -18,6 +18,7 @@ import {
   returnPaymentBatch,
   markPaymentBatchExported,
 } from '../services/paymentBatchService';
+import { exportBatchPerVendor } from '../services/perVendorExportService';
 
 export const createPaymentBatchController = async (
   req: AuthRequest,
@@ -169,6 +170,25 @@ export const deselectPaymentsForBatchController = async (
     const { paymentIds } = req.body;
     const result = await deselectPaymentsForBatch(paymentIds, req.user!.id);
     res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const exportBatchPerVendorController = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { batchId } = req.params;
+    const result = await exportBatchPerVendor(batchId, req.user!.id);
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.setHeader('Content-Length', result.buffer.length);
+
+    res.send(result.buffer);
   } catch (error) {
     next(error);
   }

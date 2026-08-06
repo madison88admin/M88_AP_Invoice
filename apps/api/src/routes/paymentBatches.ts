@@ -22,7 +22,8 @@ router.post('/deselect', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_AD
 router.post('/:batchId/submit', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.submitPaymentBatchController);
 router.post('/:batchId/review', authorize(UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.reviewPaymentBatchController);
 router.post('/:batchId/return', authorize(UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.returnPaymentBatchController);
-router.post('/:batchId/export', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.exportPaymentBatchController);
+router.post('/:batchId/export', authorize(UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.exportPaymentBatchController);
+router.get('/:batchId/export-per-vendor', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), paymentBatchController.exportBatchPerVendorController);
 router.post('/:batchId/process', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), upload.single('proof'), paymentBatchController.processPaymentBatchController);
 router.post('/:batchId/cancel', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), paymentBatchController.cancelPaymentBatchController);
 

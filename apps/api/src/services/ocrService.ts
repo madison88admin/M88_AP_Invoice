@@ -712,7 +712,12 @@ function convertPDFToImages(fileBuffer: Buffer): string[] {
 }
 
 /**
- * Try AI fallback OCR engines in order: Gemini Vision → Groq (Llama) → Ollama (Qwen)
+ * Try AI fallback OCR engines in order: Ollama (Qwen2.5 — local, no rate limits) → Gemini Vision → Groq → Mistral
+ * Ollama is now 1st priority because:
+ *   - OpenDataLoader provides clean Markdown (no need for vision models)
+ *   - qwen2.5:3b-instruct achieved 100% accuracy in benchmarks
+ *   - No rate limits (local), ~32s per invoice on CPU
+ * Cloud engines (Gemini/Groq/Mistral) are fallbacks for when Ollama is down or for scanned PDFs.
  * Returns the first successful result with engine name, or null if all fail.
  */
 async function tryAIFallbacks(
@@ -720,73 +725,23 @@ async function tryAIFallbacks(
   rawText: string,
   vendorName?: string
 ): Promise<{ engine: string; vendor_name?: string; invoice_number?: string; invoice_date?: string; due_date?: string; total_amount?: number; subtotal?: number; currency?: string; po_number?: string; mpo_number?: string; brand?: string; brand_code?: string; season?: string; payment_terms?: string; ship_to?: string; sold_to?: string; qty_shipped?: number; document_type?: string; bank_name?: string; swift_code?: string; account_number?: string; bank_info?: { swift_code?: string; account_number?: string }; line_items?: any[]; signatures?: { signatory_name: string; signatory_role?: string; signed_date?: string }[]; bank_charges?: number; tt_charge?: number; freight_charges?: number; courier_charges?: number; handling_fee?: number; finance_surcharge?: number; tax_amount?: number; discount_amount?: number; setup_charge?: number; sample_charge?: number; min_order_charge?: number; additional_charges?: number } | null> {
-  // 1st fallback: Gemini Vision (sends PDF as file directly — best for visual layout, works even with scanned PDFs)
-  try {
-    const geminiOCR = (await import('./geminiOCRService')).geminiOCRService;
-    if (geminiOCR.isAvailable()) {
-      logger.info('[OCR] Trying Gemini Vision fallback (1st priority)...');
-      const geminiResult = await geminiOCR.extractFromPDF(fileBuffer, vendorName);
-      if (geminiResult && (geminiResult.vendor_name || geminiResult.invoice_number)) {
-        logger.info('[OCR] Gemini Vision fallback succeeded');
-        return { engine: 'gemini', ...geminiResult };
-      }
-    }
-  } catch (e) {
-    logger.error('[OCR] Gemini Vision fallback failed:', e);
-  }
-
-  // 2nd fallback: Groq (Llama 3.3 70B — text-based, fast, good free-tier limit)
-  if (rawText && rawText.length > 50) {
-    try {
-      const groqOCR = (await import('./groqOCRService')).groqOCRService;
-      if (groqOCR.isAvailable()) {
-        logger.info('[OCR] Trying Groq (Llama) fallback with raw text...');
-        const groqResult = await groqOCR.extractFromText(rawText, { vendorName } as any);
-        if (groqResult && (groqResult.vendor_name || groqResult.invoice_number)) {
-          logger.info('[OCR] Groq (Llama) fallback succeeded');
-          return { engine: 'groq', ...groqResult };
-        }
-      }
-    } catch (e) {
-      logger.error('[OCR] Groq fallback failed:', e);
-    }
-  }
-
-  // 2.5th fallback: Mistral (text-based, decent free-tier)
-  if (rawText && rawText.length > 50) {
-    try {
-      const mistralOCR = (await import('./mistralOCRService')).mistralOCRService;
-      if (mistralOCR.isAvailable()) {
-        logger.info('[OCR] Trying Mistral fallback with raw text...');
-        const mistralResult = await mistralOCR.extractFromText(rawText, { vendorName } as any);
-        if (mistralResult && (mistralResult.vendor_name || mistralResult.invoice_number)) {
-          logger.info('[OCR] Mistral fallback succeeded');
-          return { engine: 'mistral', ...mistralResult };
-        }
-      }
-    } catch (e) {
-      logger.error('[OCR] Mistral fallback failed:', e);
-    }
-  }
-
-  // 3rd fallback: Ollama (Qwen — local, uses raw text from pdf2json or image conversion)
+  // 1st priority: Ollama (Qwen2.5:3b-instruct — local, no rate limits, 100% accuracy with clean Markdown)
   if (rawText && rawText.length > 50) {
     try {
       const ollamaOCR = (await import('./ollamaOCRService')).ollamaOCRService;
       if (ollamaOCR.isAvailable()) {
-        logger.info('[OCR] Trying Ollama (Qwen) fallback with raw text...');
+        logger.info('[OCR] Trying Ollama (Qwen2.5) — 1st priority (local, no rate limits)...');
         const ollamaResult = await ollamaOCR.extractFromText(rawText, { vendorName });
         if (ollamaResult && (ollamaResult.vendor_name || ollamaResult.invoice_number)) {
-          logger.info('[OCR] Ollama (Qwen) text fallback succeeded');
+          logger.info('[OCR] Ollama (Qwen2.5) extraction succeeded');
           return { engine: 'ollama', ...ollamaResult };
         }
       }
     } catch (e) {
-      logger.error('[OCR] Ollama text fallback failed:', e);
+      logger.error('[OCR] Ollama (Qwen2.5) extraction failed:', e);
     }
   } else {
-    logger.warn('[OCR] No raw text from pdf2json — trying PDF-to-image conversion for Ollama vision...');
-    // Convert PDF to images and try Ollama vision model
+    logger.warn('[OCR] No raw text from OpenDataLoader/pdf2json — trying PDF-to-image conversion for Ollama vision...');
     const imagesBase64 = convertPDFToImages(fileBuffer);
     if (imagesBase64.length > 0) {
       for (let i = 0; i < imagesBase64.length; i++) {
@@ -804,6 +759,55 @@ async function tryAIFallbacks(
           logger.error(`[OCR] Ollama vision fallback failed for page ${i + 1}:`, e);
         }
       }
+    }
+  }
+
+  // 2nd fallback: Gemini Vision (sends PDF as file directly — best for scanned PDFs or when Ollama fails)
+  try {
+    const geminiOCR = (await import('./geminiOCRService')).geminiOCRService;
+    if (geminiOCR.isAvailable()) {
+      logger.info('[OCR] Trying Gemini Vision fallback (2nd priority)...');
+      const geminiResult = await geminiOCR.extractFromPDF(fileBuffer, vendorName);
+      if (geminiResult && (geminiResult.vendor_name || geminiResult.invoice_number)) {
+        logger.info('[OCR] Gemini Vision fallback succeeded');
+        return { engine: 'gemini', ...geminiResult };
+      }
+    }
+  } catch (e) {
+    logger.error('[OCR] Gemini Vision fallback failed:', e);
+  }
+
+  // 3rd fallback: Groq (Llama 3.3 70B — text-based, fast, good free-tier limit)
+  if (rawText && rawText.length > 50) {
+    try {
+      const groqOCR = (await import('./groqOCRService')).groqOCRService;
+      if (groqOCR.isAvailable()) {
+        logger.info('[OCR] Trying Groq (Llama) fallback with raw text...');
+        const groqResult = await groqOCR.extractFromText(rawText, { vendorName } as any);
+        if (groqResult && (groqResult.vendor_name || groqResult.invoice_number)) {
+          logger.info('[OCR] Groq (Llama) fallback succeeded');
+          return { engine: 'groq', ...groqResult };
+        }
+      }
+    } catch (e) {
+      logger.error('[OCR] Groq fallback failed:', e);
+    }
+  }
+
+  // 4th fallback: Mistral (text-based, decent free-tier)
+  if (rawText && rawText.length > 50) {
+    try {
+      const mistralOCR = (await import('./mistralOCRService')).mistralOCRService;
+      if (mistralOCR.isAvailable()) {
+        logger.info('[OCR] Trying Mistral fallback with raw text...');
+        const mistralResult = await mistralOCR.extractFromText(rawText, { vendorName } as any);
+        if (mistralResult && (mistralResult.vendor_name || mistralResult.invoice_number)) {
+          logger.info('[OCR] Mistral fallback succeeded');
+          return { engine: 'mistral', ...mistralResult };
+        }
+      }
+    } catch (e) {
+      logger.error('[OCR] Mistral fallback failed:', e);
     }
   }
 
@@ -1158,13 +1162,15 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
     brand_code: poParsed.brand_code || extracted.brand_code || undefined,
     season: poParsed.season || (extracted as any).season || undefined,
     mpo_number: (() => {
-      const raw = poParsed.mpo_number || extracted.mpo_number || '';
+      // Prefer AI's direct MPO extraction, fall back to parsePOReference
+      const raw = extracted.mpo_number || poParsed.mpo_number || '';
       if (!raw) return raw as any;
       const digits = raw.replace(/^MPO/i, '').replace(/^0+/, '');
       return 'MPO' + digits.padStart(6, '0');
     })(),
     customer_po_number: (() => {
-      const raw = poParsed.po_number || '';
+      // Prefer parsePOReference, fall back to AI's direct po_number extraction
+      const raw = poParsed.po_number || (extracted as any).po_reference || '';
       if (!raw) return raw as any;
       const poMatch = raw.match(/\bPO(\d{4,6})\b/i);
       if (poMatch) return 'PO' + poMatch[1].padStart(6, '0');

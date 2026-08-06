@@ -140,6 +140,7 @@ export const paymentBatchApi = {
   submit: (batchId: string) => api.post(`/api/payment-batches/${batchId}/submit`),
   review: (batchId: string, note?: string) => api.post(`/api/payment-batches/${batchId}/review`, { note }),
   returnForCorrection: (batchId: string, reason: string) => api.post(`/api/payment-batches/${batchId}/return`, { reason }),
+  returnInvoices: (batchId: string, paymentIds: string[], reason: string) => api.post(`/api/payment-batches/${batchId}/return-invoices`, { paymentIds, reason }),
   markExported: (batchId: string) => api.post(`/api/payment-batches/${batchId}/export`),
   exportPerVendor: (batchId: string) => api.get(`/api/payment-batches/${batchId}/export-per-vendor`, { responseType: 'blob' }),
   process: (batchId: string, data?: { paidDate?: string; reference?: string; bankUsed?: string; remarks?: string; proof?: File | null }) => {

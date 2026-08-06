@@ -5,6 +5,7 @@ import { validateInvoice } from './validationService';
 import { createApprovalRequest } from './approvalService';
 import { logger } from '../utils/logger';
 import { getGraphClient } from './sharePointService';
+import { downloadFromStorage } from './supabaseStorageService';
 import { extractMadisonInvoiceFields, AST_SINGLE_SOURCE_MODE } from './madisonInvoiceExtractor';
 import { analyzeInvoice } from './ocrService';
 import { matchVendor, matchOrCreateVendor } from './vendorMatchingService';
@@ -211,11 +212,36 @@ async function downloadInvoicePdf(invoice: any): Promise<Buffer> {
       logger.info(`[ReExtract] Using local pdf_path: ${invoice.pdf_path}`);
       return fs.readFileSync(invoice.pdf_path);
     }
-    logger.warn(`[ReExtract] pdf_path exists in DB but file not found on disk: ${invoice.pdf_path}`);
+    // 1b. Try Supabase storage download (pdf_path is a Supabase storage key)
+    try {
+      logger.info(`[ReExtract] Trying Supabase storage download: ${invoice.pdf_path}`);
+      const buffer = await downloadFromStorage(invoice.pdf_path);
+      if (buffer) {
+        logger.info(`[ReExtract] Downloaded from Supabase: ${buffer.length} bytes`);
+        return buffer;
+      }
+    } catch (supabaseErr) {
+      logger.warn(`[ReExtract] Supabase download failed: ${supabaseErr instanceof Error ? supabaseErr.message : 'unknown'}`);
+    }
+    logger.warn(`[ReExtract] pdf_path exists in DB but file not found on disk or Supabase: ${invoice.pdf_path}`);
   }
 
-  // 2. Fall back to SharePoint or raw_file_url
-  const sharepointUrl = invoice.sharepoint_folder_url || invoice.raw_file_url;
+  // 1c. Try raw_file_url as a Supabase storage key (common for SFTP-uploaded invoices)
+  if (invoice.raw_file_url) {
+    try {
+      logger.info(`[ReExtract] Trying Supabase storage download via raw_file_url: ${invoice.raw_file_url}`);
+      const buffer = await downloadFromStorage(invoice.raw_file_url);
+      if (buffer) {
+        logger.info(`[ReExtract] Downloaded from Supabase (raw_file_url): ${buffer.length} bytes`);
+        return buffer;
+      }
+    } catch (supabaseErr) {
+      logger.warn(`[ReExtract] Supabase download via raw_file_url failed: ${supabaseErr instanceof Error ? supabaseErr.message : 'unknown'}`);
+    }
+  }
+
+  // 2. Fall back to SharePoint URL
+  const sharepointUrl = invoice.sharepoint_folder_url;
   if (!sharepointUrl) {
     throw new AppError('No pdf_path, SharePoint URL, or raw file URL found for this invoice — cannot re-download PDF', 400);
   }
@@ -224,7 +250,7 @@ async function downloadInvoicePdf(invoice: any): Promise<Buffer> {
   // URL format: https://madison88.sharepoint.com/sites/APInvoice/AP-Invoices/vendor/year/month/file.pdf
   const urlParts = sharepointUrl.split('/sites/APInvoice/');
   if (urlParts.length < 2) {
-    // Try raw_file_url as a direct path
+    // Try raw_file_url as a direct SharePoint path
     const client = await getGraphClient();
     const downloadUrl = `/sites/${process.env.SHAREPOINT_SITE_ID}/drive/items/${process.env.SHAREPOINT_DRIVE_ID}:/${sharepointUrl}:/content`;
     const response = await client.api(downloadUrl).get();
@@ -404,19 +430,20 @@ export async function reExtractInvoice(
     console.error('[ReExtract] FieldDecision error:', decisionError);
   }
 
+  // Fallback: prefer AI-first (ocrResult) values over Madison regex
   const decisionFinal = fieldDecision?.final || {
-    vendor_name: madisonResult.vendor_name || '',
-    invoice_number: madisonResult.invoice_number || '',
-    invoice_date: madisonResult.invoice_date || '',
-    due_date: madisonResult.due_date || null,
-    payment_terms: madisonResult.payment_terms || null,
-    total_amount: madisonResult.amount || 0,
-    currency: madisonResult.currency || 'USD',
-    po_number: madisonResult.po_number,
-    mpo_number: madisonResult.mpo_number,
-    brand: madisonResult.brand,
-    brand_code: madisonResult.brand_code,
-    season: madisonResult.season,
+    vendor_name: ocrResult.vendor_name || madisonResult.vendor_name || '',
+    invoice_number: ocrResult.invoice_number || madisonResult.invoice_number || '',
+    invoice_date: ocrResult.invoice_date || madisonResult.invoice_date || '',
+    due_date: ocrResult.due_date || madisonResult.due_date || null,
+    payment_terms: ocrResult.payment_terms || madisonResult.payment_terms || null,
+    total_amount: ocrResult.total_amount || madisonResult.amount || 0,
+    currency: ocrResult.currency || madisonResult.currency || 'USD',
+    po_number: (ocrResult as any).po_reference || madisonResult.po_number,
+    mpo_number: ocrResult.mpo_number || madisonResult.mpo_number,
+    brand: ocrResult.brand || madisonResult.brand,
+    brand_code: ocrResult.brand_code || madisonResult.brand_code,
+    season: ocrResult.season || madisonResult.season,
   };
 
   // 5. Compute final values (same logic as upload controller)
@@ -429,12 +456,10 @@ export async function reExtractInvoice(
     return value;
   };
 
-  const finalAmount = AST_SINGLE_SOURCE_MODE
-    ? (madisonResult.amount ?? decisionFinal.total_amount)
-    : (decisionFinal.total_amount ?? madisonResult.amount);
-  const finalCurrency = AST_SINGLE_SOURCE_MODE
-    ? (madisonResult.currency ?? decisionFinal.currency)
-    : decisionFinal.currency;
+  // For re-extraction, ALWAYS prefer AI-first values over Madison regex.
+  // The AI (Ollama Qwen2.5) is more accurate than regex for complex invoices.
+  const finalAmount = decisionFinal.total_amount ?? madisonResult.amount;
+  const finalCurrency = decisionFinal.currency ?? madisonResult.currency;
 
   // 6. Capture old values for comparison
   const oldValues: Record<string, any> = {
@@ -497,7 +522,15 @@ export async function reExtractInvoice(
     updateData.payment_terms = decisionFinal.payment_terms;
   }
   if (madisonResult.document_type) {
-    updateData.invoice_type = madisonResult.document_type;
+    // Map Madison extractor's short codes to Prisma enum values
+    const docTypeMap: Record<string, string> = {
+      INV: 'INVOICE',
+      PI: 'PROFORMA',
+      CI: 'COMMERCIAL',
+      SI: 'SALES',
+      STATEMENT: 'STATEMENT',
+    };
+    updateData.invoice_type = docTypeMap[madisonResult.document_type] || madisonResult.document_type;
   }
 
   // Update charges — prefer AI-first result, fall back to Madison

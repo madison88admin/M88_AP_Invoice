@@ -81,6 +81,9 @@ export default function PaymentBatchManager() {
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [selectedPaymentIds, setSelectedPaymentIds] = useState<Set<string>>(new Set());
+  const [selectedReturnPaymentIds, setSelectedReturnPaymentIds] = useState<Set<string>>(new Set());
+  const [showReturnModal, setShowReturnModal] = useState(false);
+  const [returnReason, setReturnReason] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [filters, setFilters] = useState({ vendorId: '', currency: '', dateFrom: '', dateTo: '', search: '' });
@@ -284,6 +287,70 @@ export default function PaymentBatchManager() {
     } catch (error: any) {
       console.error(`Failed to ${action} batch:`, error);
       const msg = error?.response?.data?.error?.message || `Failed to ${action} batch`;
+      showToast(msg, 'error');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleToggleReturnSelect = (paymentId: string) => {
+    setSelectedReturnPaymentIds(prev => {
+      const next = new Set(prev);
+      if (next.has(paymentId)) next.delete(paymentId);
+      else next.add(paymentId);
+      return next;
+    });
+  };
+
+  const handleReturnInvoices = async () => {
+    if (!selectedBatch || !returnReason.trim() || selectedReturnPaymentIds.size === 0) return;
+    setProcessing(true);
+    try {
+      const result = await paymentBatchApi.returnInvoices(
+        selectedBatch.id,
+        Array.from(selectedReturnPaymentIds),
+        returnReason.trim()
+      );
+      showToast(`${selectedReturnPaymentIds.size} invoice(s) returned for revision`, 'success');
+      setShowReturnModal(false);
+      setReturnReason('');
+      setSelectedReturnPaymentIds(new Set());
+      await loadBatches();
+      // Reload the selected batch to reflect changes
+      if (result.data?.batch_cancelled) {
+        setSelectedBatch(null);
+      } else {
+        const updated = await paymentBatchApi.getById(selectedBatch.id);
+        const b = updated.data;
+        setSelectedBatch({
+          id: b.id,
+          batch_number: b.batch_number || b.id,
+          total_amount: Number(b.total_amount || 0),
+          payment_count: b.payment_count || 0,
+          status: b.status || 'DRAFT',
+          created_at: b.created_at || new Date().toISOString(),
+          processed_at: b.processed_at || undefined,
+          cancelled_at: b.cancelled_at || undefined,
+          cancellation_reason: b.cancellation_reason || undefined,
+          return_reason: b.return_reason || undefined,
+          review_note: b.review_note || undefined,
+          payments: (b.payments || []).map((p: any) => ({
+            id: p.id,
+            amount: Number(p.amount || 0),
+            scheduled_date: p.payment_date || p.scheduled_date || new Date().toISOString(),
+            status: p.status || 'SCHEDULED',
+            paid_at: p.paid_at || undefined,
+            reference: p.reference || undefined,
+            bank_used: p.bank_used || undefined,
+            remarks: p.remarks || undefined,
+            proof_file_url: p.proof_file_url || undefined,
+            proof_file_name: p.proof_file_name || undefined,
+            invoice: { id: p.invoice?.id || '', invoice_number: p.invoice?.invoice_number || '', vendor: { name: p.invoice?.vendor?.name || '' } },
+          })),
+        });
+      }
+    } catch (error: any) {
+      const msg = error?.response?.data?.error?.message || 'Failed to return invoices';
       showToast(msg, 'error');
     } finally {
       setProcessing(false);
@@ -606,7 +673,7 @@ export default function PaymentBatchManager() {
                     key={batch.id}
                     className="flex items-center justify-between p-4 rounded-xl cursor-pointer transition-colors"
                     style={{ border: '1px solid var(--border-color)', background: 'var(--bg-elevated)' }}
-                    onClick={() => setSelectedBatch(batch)}
+                    onClick={() => { setSelectedBatch(batch); setSelectedReturnPaymentIds(new Set()); }}
                     onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
                     onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--bg-elevated)'; }}
                   >
@@ -734,6 +801,22 @@ export default function PaymentBatchManager() {
                 <table className="min-w-full">
                   <thead style={{ background: 'var(--bg-elevated)' }}>
                     <tr>
+                      {['DRAFT', 'RETURNED_FOR_CORRECTION', 'PENDING_SUPERVISOR_REVIEW'].includes(selectedBatch.status) && (
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)', width: '40px' }}>
+                          <div className="flex items-center justify-center w-5 h-5 rounded border-2 transition-all cursor-pointer" style={{
+                            borderColor: selectedReturnPaymentIds.size === selectedBatch.payments.length && selectedBatch.payments.length > 0 ? 'var(--accent-amber)' : 'var(--border-color)',
+                            background: selectedReturnPaymentIds.size === selectedBatch.payments.length && selectedBatch.payments.length > 0 ? 'var(--accent-amber)' : 'transparent',
+                          }} onClick={() => {
+                            if (selectedReturnPaymentIds.size === selectedBatch.payments.length) {
+                              setSelectedReturnPaymentIds(new Set());
+                            } else {
+                              setSelectedReturnPaymentIds(new Set(selectedBatch.payments.map(p => p.id)));
+                            }
+                          }}>
+                            {selectedReturnPaymentIds.size === selectedBatch.payments.length && selectedBatch.payments.length > 0 && <CheckSquare className="h-3 w-3 text-white" strokeWidth={2.5} />}
+                          </div>
+                        </th>
+                      )}
                       <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Invoice</th>
                       <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Vendor</th>
                       <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Amount</th>
@@ -743,11 +826,24 @@ export default function PaymentBatchManager() {
                     </tr>
                   </thead>
                   <tbody>
-                    {selectedBatch.payments.map((payment, idx) => (
-                      <tr key={payment.id} className="transition-colors" style={{ borderTop: idx > 0 ? '1px solid var(--border-subtle)' : 'none' }}
-                        onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.background = ''; }}
+                    {selectedBatch.payments.map((payment, idx) => {
+                      const isReturnSelected = selectedReturnPaymentIds.has(payment.id);
+                      const canReturn = ['DRAFT', 'RETURNED_FOR_CORRECTION', 'PENDING_SUPERVISOR_REVIEW'].includes(selectedBatch.status);
+                      return (
+                      <tr key={payment.id} className="transition-colors" style={{ borderTop: idx > 0 ? '1px solid var(--border-subtle)' : 'none', background: isReturnSelected ? 'color-mix(in srgb, var(--accent-amber) 5%, transparent)' : '' }}
+                        onMouseEnter={(e) => { if (!isReturnSelected) e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
+                        onMouseLeave={(e) => { if (!isReturnSelected) e.currentTarget.style.background = ''; }}
                       >
+                        {canReturn && (
+                          <td className="px-4 py-4">
+                            <div className="flex items-center justify-center w-5 h-5 rounded border-2 transition-all cursor-pointer" style={{
+                              borderColor: isReturnSelected ? 'var(--accent-amber)' : 'var(--border-color)',
+                              background: isReturnSelected ? 'var(--accent-amber)' : 'transparent',
+                            }} onClick={() => handleToggleReturnSelect(payment.id)}>
+                              {isReturnSelected && <CheckSquare className="h-3 w-3 text-white" strokeWidth={2.5} />}
+                            </div>
+                          </td>
+                        )}
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{payment.invoice.invoice_number}</td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--text-secondary)' }}>{payment.invoice.vendor.name}</td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>${payment.amount.toLocaleString()}</td>
@@ -771,10 +867,35 @@ export default function PaymentBatchManager() {
                           ) : 'Pending'}
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
+
+              {/* Per-invoice return action bar */}
+              {['DRAFT', 'RETURNED_FOR_CORRECTION', 'PENDING_SUPERVISOR_REVIEW'].includes(selectedBatch.status) && selectedReturnPaymentIds.size > 0 && (
+                <div className="mt-4 flex items-center justify-between p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-amber) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}>
+                  <div className="text-sm font-medium" style={{ color: 'var(--accent-amber)' }}>
+                    {selectedReturnPaymentIds.size} invoice{selectedReturnPaymentIds.size === 1 ? '' : 's'} selected for return to revision
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button onClick={() => setSelectedReturnPaymentIds(new Set())} className="px-3 py-2 text-sm transition-colors" style={{ color: 'var(--text-secondary)' }}
+                      onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
+                    >Clear</button>
+                    <button onClick={() => setShowReturnModal(true)} disabled={processing}
+                      className="flex items-center px-4 py-2 rounded-xl text-sm font-semibold transition-colors disabled:opacity-50"
+                      style={{ background: 'var(--accent-amber)', color: 'var(--bg-base)' }}
+                      onMouseEnter={(e) => { if (!processing) e.currentTarget.style.opacity = '0.9'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
+                    >
+                      <ArrowLeft className="h-4 w-4 mr-2" strokeWidth={1.75} />
+                      Return for Revision
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {selectedBatch.cancellation_reason && (
                 <div className="mt-4 p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}>
@@ -817,6 +938,41 @@ export default function PaymentBatchManager() {
                   onMouseEnter={(e) => { if (cancelReason && !processing) e.currentTarget.style.opacity = '0.9'; }}
                   onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
                 >Confirm Cancellation</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showReturnModal && selectedBatch && (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-backdrop">
+            <div className="p-6 max-w-md w-full mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
+              <h3 className="text-lg font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Return Invoices for Revision</h3>
+              <p className="text-sm mb-4" style={{ color: 'var(--text-secondary)' }}>
+                Return {selectedReturnPaymentIds.size} invoice{selectedReturnPaymentIds.size === 1 ? '' : 's'} from batch {selectedBatch.batch_number} back to Accounting for revision?
+                The invoice(s) will be unlinked from this batch and reset to <span style={{ color: 'var(--accent-amber)', fontWeight: 600 }}>PENDING_ACCOUNTING</span> status.
+              </p>
+              <div className="mb-4">
+                <label className="block text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>Return Reason</label>
+                <textarea
+                  value={returnReason}
+                  onChange={(e) => setReturnReason(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                  style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
+                  rows={3}
+                  placeholder="Enter reason for returning these invoices..."
+                />
+              </div>
+              <div className="flex justify-end space-x-3">
+                <button onClick={() => { setShowReturnModal(false); setReturnReason(''); }} className="px-4 py-2 transition-colors text-sm" style={{ color: 'var(--text-secondary)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
+                >Cancel</button>
+                <button onClick={handleReturnInvoices} disabled={!returnReason.trim() || processing} className="px-4 py-2 rounded-xl transition-colors disabled:opacity-50 text-sm font-semibold" style={{ background: 'var(--accent-amber)', color: 'var(--bg-base)' }}
+                  onMouseEnter={(e) => { if (returnReason.trim() && !processing) e.currentTarget.style.opacity = '0.9'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
+                >
+                  {processing ? <Loader2 className="h-4 w-4 animate-spin" /> : `Return ${selectedReturnPaymentIds.size} Invoice${selectedReturnPaymentIds.size === 1 ? '' : 's'}`}
+                </button>
               </div>
             </div>
           </div>

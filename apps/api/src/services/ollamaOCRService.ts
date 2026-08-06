@@ -64,8 +64,12 @@ Fields to extract:
 - payment_terms: Payment terms text (e.g., "30 Days", "Net 30", "T/T 100% before shipment", "DUE DATE")
 - total_amount: Final total amount (number only, no currency symbol)
 - currency: Currency code (USD, HKD, EUR, etc.)
-- po_number: Purchase Order number if present (format like PO000002_KEY or extract PO#2924)
-- mpo_number: Material Purchase Order number (format like MPO015713 — extract from Customer PO field which may contain "TNF F26 JAN BUY_MPO15371_MDDC_...")
+- po_number: Customer Purchase Order number (the PO number from the buyer, e.g., "PO3011", "PO000002", "PO#2924"). Look for fields labeled "PO", "Customer PO", "Purchase Order", or PO references in line items like "PO3011-MPO15736-CA". Extract ONLY the PO part (e.g., "PO3011"), NOT the MPO part.
+- mpo_number: Material Purchase Order number (format like MPO015713 or MPO15736). Look for:
+  1. Headers or sections labeled "MPO" (e.g., "## MPO15736")
+  2. Customer PO fields containing MPO (e.g., "TNF F26 JAN BUY_MPO15371_MDDC_..." → extract "MPO15371")
+  3. Line item references like "PO3011-MPO15736-CA" → extract "MPO15736"
+  4. Regex: /MPO(\d+)/i — always extract the MPO number with digits
 - brand: Brand name (The North Face, Under Armour, Vans, Columbia, etc.)
 - brand_code: Brand code (TNF, UA, VNS, CSC, HH, BUR, etc.)
 - season: Season code (like F26, S26, F25, etc.)
@@ -99,11 +103,18 @@ Fields to extract:
 
 IMPORTANT RULES:
 1. vendor_name is the SENDER of the invoice, NOT Madison 88
-2. For mpo_number: look in "Customer PO" or "CUSTOMER PO" field
-   - Pattern: "TNF F26 JAN BUY_MPO15371_MDDC_..." → extract "MPO15371"
-   - Pattern: "MPO015713" → extract "MPO015713"
-   - Regex: /MPO(\d+)/i
-3. total_amount must be a NUMBER only (e.g. 37.94 not "$37.94")
+2. For mpo_number: extract the MPO number from ANY of these locations:
+   - Section headers like "## MPO15736" → "MPO15736"
+   - "Customer PO" or "CUSTOMER PO" field: "TNF F26 JAN BUY_MPO15371_MDDC_..." → "MPO15371"
+   - Line item references: "PO3011-MPO15736-CA" → "MPO15736"
+   - Standalone: "MPO015713" → "MPO015713"
+   - Regex: /MPO(\d+)/i — always include "MPO" prefix + digits
+3. For po_number: extract the Customer PO number (NOT the MPO):
+   - "PO3011-MPO15736-CA" → "PO3011" (extract ONLY the PO part, NOT MPO)
+   - "PO#VN000PNTEMP" → "VN000PNTEMP" (extract the reference after PO#)
+   - "PO000002" → "PO000002"
+   - If no PO number is found, return null
+4. total_amount must be a NUMBER only (e.g. 37.94 not "$37.94")
 4. For line_items: extract EVERY line item row from the invoice table. Each row has:
    - description (item description text)
    - quantity (number from Quantity/Qty column, e.g., 12900, 6075, 8300)
@@ -142,7 +153,7 @@ Example output:
   "payment_terms": "Net 30",
   "total_amount": 37.94,
   "currency": "USD",
-  "po_number": null,
+  "po_number": "PO3011",
   "mpo_number": "MPO15371",
   "brand": "The North Face",
   "brand_code": "TNF",
@@ -185,8 +196,8 @@ Invoice text to extract from:
 export class OllamaOCRService {
   private static instance: OllamaOCRService;
   private baseUrl: string | null = null;
-  private model: string = 'qwen3:4b';
-  private timeout: number = 300000;
+  private model: string = 'qwen2.5:3b-instruct';
+  private timeout: number = 120000;
   private isConfigured: boolean = false;
 
   private constructor() {
@@ -197,8 +208,8 @@ export class OllamaOCRService {
     }
 
     this.baseUrl = baseUrl.replace(/\/$/, '');
-    this.model = process.env.OLLAMA_MODEL || 'qwen3:4b';
-    this.timeout = (Number(process.env.OLLAMA_TIMEOUT) || 300) * 1000;
+    this.model = process.env.OLLAMA_MODEL || 'qwen2.5:3b-instruct';
+    this.timeout = (Number(process.env.OLLAMA_TIMEOUT) || 120) * 1000;
     this.isConfigured = true;
     logger.info(`Ollama OCR service initialized at ${this.baseUrl} with model ${this.model}`);
   }

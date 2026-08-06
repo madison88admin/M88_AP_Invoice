@@ -260,7 +260,7 @@ export const ROLE_PERMISSIONS = {
 // Role-based invoice stage access
 export const ROLE_STAGE_ACCESS: Record<string, string[]> = {
   SUPERADMIN: [], // System maintenance only — no invoice stage access
-  ACCOUNTING_ASSOCIATE: ['VALIDATION_PENDING', 'APPROVED', 'POSTED_TO_QB', 'PENDING_ACCOUNTING', 'ON_HOLD', 'PAID', 'PAYMENT_CONFIRMATION_SENT'],
+  ACCOUNTING_ASSOCIATE: ['VALIDATION_PENDING', 'APPROVED', 'POSTED_TO_QB', 'PENDING_ACCOUNTING', 'PAYMENT_SCHEDULED', 'ON_HOLD', 'PAID', 'PAYMENT_CONFIRMATION_SENT'],
   ACCOUNTING_SUPERVISOR: ['VALIDATION_PENDING', 'PENDING_ACCOUNTING', 'APPROVED', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'ON_HOLD', 'PAID', 'PAYMENT_CONFIRMATION_SENT'],
   PURCHASING_COORDINATOR: ['VALIDATION_PENDING', 'EXCEPTION_FLAGGED', 'PENDING_COORDINATOR', 'ON_HOLD'],
   PURCHASING_MANAGER: ['PENDING_MANAGER'],
@@ -328,7 +328,7 @@ export function filterInvoicesByRole(invoices: any[], role: string): any[] {
   if (role === 'SUPERADMIN') return []; // No invoice visibility
   if (role === 'INVOICE_UPLOADER') return []; // No invoice visibility — upload only
   if (role === 'CC_REPORTS') return invoices; // Read-only access to all invoices for reports
-  if (['IT_ADMIN', 'PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'PRESIDENT'].includes(role)) return invoices;
+  if (['IT_ADMIN', 'PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'PRESIDENT'].includes(role)) return invoices;
   const accessibleStages = ROLE_STAGE_ACCESS[role];
   if (!accessibleStages || accessibleStages.length === 0) return invoices;
   const threshold = ROLE_TIER_THRESHOLD[role] || 0;

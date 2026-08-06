@@ -1,6 +1,6 @@
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
-import { PaymentBatchStatus } from '@ap-invoice/shared';
+import { PaymentBatchStatus, InvoiceStatus } from '@ap-invoice/shared';
 import { PaymentExecutionInput, processPayment } from './postingService';
 import { logger } from '../utils/logger';
 
@@ -601,6 +601,131 @@ export async function cancelPaymentBatch(
   });
 
   return updatedBatch;
+}
+
+/**
+ * Return individual invoice(s) from a payment batch back for revision.
+ * - Unlinks the payment(s) from the batch
+ * - Resets payment status to SCHEDULED (available for future batches)
+ * - Resets invoice status to PENDING_ACCOUNTING (back to accounting review)
+ * - Updates batch total_amount and payment_count
+ * - If all payments are returned, the batch is cancelled
+ *
+ * Can be called by either ACCOUNTING_SUPERVISOR (during review) or ACCOUNTING_ASSOCIATE (on returned batch).
+ */
+export async function returnInvoicesFromBatch(
+  batchId: string,
+  paymentIds: string[],
+  userId: string,
+  reason: string
+) {
+  if (!reason?.trim()) throw new AppError('Return reason is required', 400);
+  if (!Array.isArray(paymentIds) || paymentIds.length === 0) {
+    throw new AppError('Select at least one invoice to return', 400);
+  }
+
+  const batch = await prisma.paymentBatch.findUnique({
+    where: { id: batchId },
+    include: {
+      payments: {
+        include: {
+          invoice: true,
+        },
+      },
+    },
+  });
+
+  if (!batch) throw new AppError('Payment batch not found', 404);
+
+  // Allow return from PENDING_SUPERVISOR_REVIEW (supervisor returning) or RETURNED_FOR_CORRECTION (associate revising)
+  if (![PaymentBatchStatus.PENDING_SUPERVISOR_REVIEW, PaymentBatchStatus.RETURNED_FOR_CORRECTION, PaymentBatchStatus.DRAFT].includes(batch.status as any)) {
+    throw new AppError('Only draft, pending-review, or returned batches allow per-invoice returns', 400);
+  }
+
+  // Validate that the payment IDs belong to this batch
+  const batchPaymentIds = new Set(batch.payments.map((p: any) => p.id));
+  const invalidIds = paymentIds.filter(id => !batchPaymentIds.has(id));
+  if (invalidIds.length > 0) {
+    throw new AppError('Some invoices are not part of this batch', 400);
+  }
+
+  const paymentsToReturn = batch.payments.filter((p: any) => paymentIds.includes(p.id));
+  const remainingPayments = batch.payments.filter((p: any) => !paymentIds.includes(p.id));
+
+  // 1. Unlink returned payments from batch, reset to SCHEDULED
+  await prisma.payment.updateMany({
+    where: { id: { in: paymentIds } },
+    data: {
+      batch_id: null,
+      selected_for_batch: false,
+      selected_by: null,
+      selected_at: null,
+    },
+  });
+
+  // 2. Reset invoice status to PENDING_ACCOUNTING for returned invoices
+  const invoiceIdsToReturn = paymentsToReturn.map((p: any) => p.invoice_id);
+  for (const invId of invoiceIdsToReturn) {
+    await prisma.invoice.update({
+      where: { id: invId },
+      data: { status: InvoiceStatus.PENDING_ACCOUNTING as any },
+    });
+
+    // Create audit log
+    await prisma.auditLog.create({
+      data: {
+        invoice_id: invId,
+        action: 'INVOICE_RETURNED_FROM_BATCH',
+        performed_by: userId,
+        note: `Invoice returned from batch ${batch.batch_number} for revision. Reason: ${reason.trim()}`,
+      },
+    });
+  }
+
+  // 3. If all payments were returned, cancel the batch
+  if (remainingPayments.length === 0) {
+    await prisma.paymentBatch.update({
+      where: { id: batchId },
+      data: {
+        status: PaymentBatchStatus.CANCELLED as any,
+        cancelled_at: new Date(),
+        cancelled_by: userId,
+        cancellation_reason: `All invoices returned for revision: ${reason.trim()}`,
+        total_amount: 0,
+        payment_count: 0,
+      },
+    });
+    logger.info(`[PaymentBatch] Batch ${batch.batch_number} cancelled — all invoices returned`);
+  } else {
+    // 4. Update batch totals
+    const newTotal = remainingPayments.reduce((sum: number, p: any) => sum + Number(p.amount), 0);
+    await prisma.paymentBatch.update({
+      where: { id: batchId },
+      data: {
+        total_amount: newTotal.toFixed(2),
+        payment_count: remainingPayments.length,
+      },
+    });
+    logger.info(`[PaymentBatch] Batch ${batch.batch_number} updated — ${paymentIds.length} invoice(s) returned, ${remainingPayments.length} remaining`);
+  }
+
+  // 5. Audit log for the batch action
+  await prisma.auditLog.create({
+    data: {
+      action: 'BATCH_INVOICES_RETURNED',
+      performed_by: userId,
+      note: `${paymentIds.length} invoice(s) returned from batch ${batch.batch_number}. Reason: ${reason.trim()}`,
+    },
+  });
+
+  return {
+    batch_id: batchId,
+    batch_number: batch.batch_number,
+    returned_count: paymentIds.length,
+    remaining_count: remainingPayments.length,
+    batch_cancelled: remainingPayments.length === 0,
+    returned_invoice_numbers: paymentsToReturn.map((p: any) => p.invoice?.invoice_number).filter(Boolean),
+  };
 }
 
 function generateBatchNumber(): string {

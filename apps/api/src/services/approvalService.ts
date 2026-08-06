@@ -398,7 +398,8 @@ async function createApprovalRequestInternal(
   );
 
   // Create signature records for each step in the route
-  // Auto-sign any step (except COORDINATOR) that has a matching OCR-detected signature on the document
+  // All workflow approvals require manual sign-off by actual system users.
+  // OCR-detected signatures from the PDF are for reference only — they do NOT count as workflow approvals.
   const createdSignatures: any[] = [];
   const autoSignedRoles: string[] = [];
   const now = new Date();
@@ -413,62 +414,19 @@ async function createApprovalRequestInternal(
       continue;
     }
 
-    // Skip auto-signing for COORDINATOR — always requires manual validation
-    if (step.role === SignatoryRole.COORDINATOR) {
-      const sig = await prisma.signature.create({
-        data: {
-          invoice_id: invoiceId,
-          signatory_role: step.role as any,
-          signatory_name: '',
-          signature_type: SignatureType.DIGITAL as any,
-          signed_at: null,
-          invoice_revision: invoice.revision,
-          approval_status: 'PENDING',
-        },
-      });
-      createdSignatures.push(sig);
-      continue;
-    }
-
-    // Look for an existing OCR-detected signature matching this role
-    const ocrMatch = ocrSignatures.find((sig: any) => {
-      if (sig.signatory_role === step.role) return true;
-      // Also try matching by name → role (OCR may have assigned a different role)
-      const roleFromName = matchSignerToRole(sig.signatory_name);
-      return roleFromName === step.role;
+    // All steps require manual approval by actual system users
+    const sig = await prisma.signature.create({
+      data: {
+        invoice_id: invoiceId,
+        signatory_role: step.role as any,
+        signatory_name: '',
+        signature_type: SignatureType.DIGITAL as any,
+        signed_at: null,
+        invoice_revision: invoice.revision,
+        approval_status: 'PENDING',
+      },
     });
-
-    if (ocrMatch) {
-      // Auto-sign: create the signature record as already signed
-      const sig = await prisma.signature.create({
-        data: {
-          invoice_id: invoiceId,
-          signatory_role: step.role as any,
-          signatory_name: ocrMatch.signatory_name,
-          signature_type: SignatureType.DIGITAL as any,
-          signed_at: ocrMatch.signed_at,
-          invoice_revision: invoice.revision,
-          approval_status: 'APPROVED',
-        },
-      });
-      createdSignatures.push(sig);
-      autoSignedRoles.push(step.role);
-      logger.info(`Auto-signed ${step.role} (${ocrMatch.signatory_name}) from OCR-detected signature on document`);
-    } else {
-      // Create unsigned signature record — needs manual approval
-      const sig = await prisma.signature.create({
-        data: {
-          invoice_id: invoiceId,
-          signatory_role: step.role as any,
-          signatory_name: '',
-          signature_type: SignatureType.DIGITAL as any,
-          signed_at: null,
-          invoice_revision: invoice.revision,
-          approval_status: 'PENDING',
-        },
-      });
-      createdSignatures.push(sig);
-    }
+    createdSignatures.push(sig);
   }
 
   // Find the first unsigned step — that's who needs to approve next

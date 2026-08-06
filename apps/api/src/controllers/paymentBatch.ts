@@ -16,6 +16,7 @@ import {
   submitPaymentBatchForReview,
   reviewPaymentBatch,
   returnPaymentBatch,
+  returnInvoicesFromBatch,
   markPaymentBatchExported,
 } from '../services/paymentBatchService';
 import { exportBatchPerVendor } from '../services/perVendorExportService';
@@ -63,6 +64,15 @@ export const reviewPaymentBatchController = async (req: AuthRequest, res: Respon
 
 export const returnPaymentBatchController = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try { res.json(await returnPaymentBatch(req.params.batchId, req.user!.id, req.body.reason)); } catch (error) { next(error); }
+};
+
+export const returnInvoicesFromBatchController = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { batchId } = req.params;
+    const { paymentIds, reason } = req.body;
+    const result = await returnInvoicesFromBatch(batchId, paymentIds, req.user!.id, reason);
+    res.json(result);
+  } catch (error) { next(error); }
 };
 
 export const exportPaymentBatchController = async (req: AuthRequest, res: Response, next: NextFunction) => {

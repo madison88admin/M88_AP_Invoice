@@ -1396,11 +1396,11 @@ function extractSignatures(text: string): ExtractedSignature[] {
     while ((match = pattern.exec(text)) !== null) {
       const name = match[1].trim();
       const signedAt = tryParseDate(match[2], match[3], match[4]);
-      const role = matchSignerToRole(name) || SignatoryRole.COORDINATOR;
+      const role = matchSignerToRole(name);
       signatures.push({
         signatory_name: name,
         signed_at: signedAt,
-        signatory_role: role,
+        signatory_role: role || SignatoryRole.COORDINATOR,
         signature_type: SignatureType.DIGITAL,
         ocr_detected: true,
       });
@@ -1413,11 +1413,11 @@ function extractSignatures(text: string): ExtractedSignature[] {
   while ((match = labelPattern.exec(text)) !== null) {
     const name = match[1].trim();
     const signedAt = tryParseDate(match[2], match[3], match[4]);
-    const role = matchSignerToRole(name) || SignatoryRole.COORDINATOR;
+    const role = matchSignerToRole(name);
     signatures.push({
       signatory_name: name,
       signed_at: signedAt,
-      signatory_role: role,
+      signatory_role: role || SignatoryRole.COORDINATOR,
       signature_type: SignatureType.DIGITAL,
       ocr_detected: true,
     });

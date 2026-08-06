@@ -112,7 +112,7 @@ export async function updateLine(req: AuthRequest, res: Response, next: NextFunc
       if (invoice) line = await prisma.invoiceLine.create({ data: { invoice_id: invoice.id, line_number: 1, description: invoice.material_name, mpo_base_number: invoice.mpo_base_number, mpo_order_sequence: invoice.mpo_order_sequence, material_code: invoice.material_code, material_name: invoice.material_name, quantity: invoice.qty_shipped, line_amount: invoice.total_amount, match_status: 'PENDING' }, include: { invoice: true } });
     }
     if (!line) throw new AppError('Invoice line not found', 404);
-    const allowed = ['description','mpo_base_number','mpo_order_sequence','material_code','material_name','quantity','selling_quantity','unit_price','line_amount','received_quantity','accepted_quantity','match_status'];
+    const allowed = ['description','mpo_base_number','mpo_order_sequence','material_code','material_name','quantity','selling_quantity','unit_price','line_amount','size','received_quantity','accepted_quantity','match_status'];
     const data = Object.fromEntries(Object.entries(req.body).filter(([k]) => allowed.includes(k)));
     const updated = await prisma.invoiceLine.update({ where: { id: line.id }, data: data as any });
     await correctionLogService.saveCorrection({ invoice_id: line.invoice_id, vendor_name: line.invoice.vendor_name_raw, original_fields: line as any, corrected_fields: data as any, note: req.body.note || 'Line validation correction' });

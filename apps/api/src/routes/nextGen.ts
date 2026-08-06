@@ -318,4 +318,82 @@ router.get('/debug/mpo-detail/:orderId', devBypassAdmin, async (req, res) => {
   res.json(results);
 });
 
+// ─── Write Routes (TEST ENV ONLY) ──────────────────────────────────────────────
+// These routes require NEXTGEN_WRITE_ENABLED=true and NEXTGEN_TEST_API_URL to be set.
+// They will reject all requests if write mode is not enabled.
+
+const writeBypassAdmin = (req: any, res: any, next: any) => {
+  if (process.env.NODE_ENV === 'development') return next();
+  return authorize(UserRole.SUPERADMIN, UserRole.IT_ADMIN)(req, res, next);
+};
+
+/**
+ * GET /api/nextgen/write/status
+ * Check if write mode is enabled
+ */
+router.get('/write/status', writeBypassAdmin, (_req, res) => {
+  res.json({
+    write_enabled: nextGenService.isWriteEnabled(),
+    message: nextGenService.isWriteEnabled()
+      ? 'Write mode is ENABLED — operations target the test environment only.'
+      : 'Write mode is DISABLED. Set NEXTGEN_WRITE_ENABLED=true and NEXTGEN_TEST_API_URL to enable.',
+  });
+});
+
+/**
+ * POST /api/nextgen/write/mpo/:mpoNumber/lines
+ * Upload/create MPO line items in NextGen test env
+ * Body: { lines: Array<{ material_code?, material_name?, description?, quantity?, unit_price?, total_amount?, size?, color?, purchase_uom? }> }
+ */
+router.post('/write/mpo/:mpoNumber/lines', writeBypassAdmin, async (req, res) => {
+  try {
+    if (!nextGenService.isWriteEnabled()) {
+      return res.status(403).json({
+        error: 'Write mode is not enabled. Set NEXTGEN_WRITE_ENABLED=true and NEXTGEN_TEST_API_URL.',
+      });
+    }
+
+    const { mpoNumber } = req.params;
+    const { lines } = req.body;
+
+    if (!Array.isArray(lines) || lines.length === 0) {
+      return res.status(400).json({ error: 'Body must contain a "lines" array with at least one line item' });
+    }
+
+    const result = await nextGenService.uploadMPOLines(mpoNumber, lines);
+    res.json(result);
+  } catch (error) {
+    console.error('Error uploading MPO lines to NextGen test env:', error);
+    res.status(500).json({ error: 'Failed to upload MPO lines', detail: error instanceof Error ? error.message : 'unknown error' });
+  }
+});
+
+/**
+ * POST /api/nextgen/write/mpo/:mpoNumber/sizes
+ * Upload/update sizes on MPO lines in NextGen test env
+ * Body: { sizes: Array<{ line_id?, material_code?, size_name, quantity?, colour_name? }> }
+ */
+router.post('/write/mpo/:mpoNumber/sizes', writeBypassAdmin, async (req, res) => {
+  try {
+    if (!nextGenService.isWriteEnabled()) {
+      return res.status(403).json({
+        error: 'Write mode is not enabled. Set NEXTGEN_WRITE_ENABLED=true and NEXTGEN_TEST_API_URL.',
+      });
+    }
+
+    const { mpoNumber } = req.params;
+    const { sizes } = req.body;
+
+    if (!Array.isArray(sizes) || sizes.length === 0) {
+      return res.status(400).json({ error: 'Body must contain a "sizes" array with at least one size entry' });
+    }
+
+    const result = await nextGenService.uploadSizes(mpoNumber, sizes);
+    res.json(result);
+  } catch (error) {
+    console.error('Error uploading sizes to NextGen test env:', error);
+    res.status(500).json({ error: 'Failed to upload sizes', detail: error instanceof Error ? error.message : 'unknown error' });
+  }
+});
+
 export default router;

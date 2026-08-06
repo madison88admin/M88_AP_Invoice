@@ -1,5 +1,6 @@
 import { logger } from '../utils/logger';
 import { correctionLogService } from './correctionLogService';
+import type { ExtractionContext } from './consensusExtractor';
 
 interface ExtractedLineItem {
   description: string;
@@ -7,6 +8,8 @@ interface ExtractedLineItem {
   unit_price: number;
   total_amount: number;
   item_code?: string;
+  mpo_number?: string;
+  po_number?: string;
   size?: string;
 }
 
@@ -16,7 +19,6 @@ export interface ExtractedInvoiceData {
   invoice_date?: string;
   due_date?: string;
   payment_terms?: string;
-  subtotal?: number;
   total_amount?: number;
   currency?: string;
   po_number?: string;
@@ -26,25 +28,11 @@ export interface ExtractedInvoiceData {
   season?: string;
   ship_to?: string;
   sold_to?: string;
-  qty_shipped?: number;
-  document_type?: string;
+  line_items?: ExtractedLineItem[];
   bank_name?: string;
   swift_code?: string;
   account_number?: string;
-  // Charges
-  bank_charges?: number;
-  tt_charge?: number;
-  freight_charges?: number;
-  courier_charges?: number;
-  handling_fee?: number;
-  finance_surcharge?: number;
-  tax_amount?: number;
-  discount_amount?: number;
-  setup_charge?: number;
-  sample_charge?: number;
-  min_order_charge?: number;
-  additional_charges?: number;
-  line_items?: ExtractedLineItem[];
+  beneficiary_name?: string;
   raw_text?: string;
   extraction_method?: string;
   engine_name?: string;
@@ -73,6 +61,7 @@ Fields to extract:
 - sold_to: Sold to / invoice / buyer company and address. If the invoice shows two columns (e.g., "Delivery address" and "Invoice address"), extract ONLY the invoice address column, NOT the delivery address column.
 - qty_shipped: Total quantity shipped (sum of all line item quantities, or the total quantity field if explicitly stated)
 - document_type: Type of document (INVOICE, PROFORMA, COMMERCIAL_INVOICE, CREDIT_NOTE, STATEMENT, DEBIT_NOTE). Default to INVOICE if not clear.
+- beneficiary_name: Beneficiary name / Account holder name (the company or person who owns the bank account)
 - bank_name: Bank name of the vendor's bank (e.g., "Standard Chartered Bank", "HSBC", "The Hongkong and Shanghai Banking Corporation Ltd")
 - swift_code: SWIFT/BIC code of the vendor's bank (e.g., "SCBLHKHHXXX", "HSBCHKHHHKH")
 - account_number: Bank account number of the vendor (e.g., "447-0-092572-7", "484-592449-838")
@@ -96,13 +85,31 @@ Fields to extract:
   - total_amount: line total as number
   - item_code: item code if present
   - size: size if present (e.g., "S", "M", "L", "XL", "XXL", "38", "40", "10", "FREE SIZE")
+  - mpo_number: Material Purchase Order number for THIS specific line (format like MPO015713). Extract from the line's "Customer PO" or "PO#" column. If the invoice has different MPOs per line, each line MUST have its own mpo_number.
+  - po_number: Purchase Order number for THIS specific line (format like PO002997) if present per line
+- signatures: Array of signatures/stamps found on the document. Look for:
+  - Printed or handwritten names near "Signature", "Signed by", "Authorized by", "Approved by", "Prepared by", "For and on behalf of" sections
+  - Stamped names or company stamps
+  - Any name that appears to be a signatory/approver
+  - Known signatory names: Sarah Jane Cariquitan, MJ Santiago, Maricon Alvarez, April Joy Diasanta, Pamela Amor Caoili, Mariane Eusebio, Mary Joy Yco, Maricar Tanaleon, Mary Ann Del Monte, Edwin Garcia, Glecie Yumena, Lindsey Schindler
+  - "Computer generated invoice, no signature required" → no signatures needed, skip
+  Each signature should have:
+  - signatory_name: The person's name as printed/signed on the document
+  - signatory_role: Their role if stated (e.g., "Coordinator", "Purchasing Manager", "Account Holder", "Sr. Manager", "Planning Manager")
+  - signed_date: Date next to the signature if present (format: YYYY-MM-DD), null if not found
+  Extract ALL signatures visible on the document, even if only partially readable.
+- incoterm: International trade term (EXW, DAP, FOB, CIF, DDP, CFR, FCA, CPT, CIP). Look for "Incoterm", "Trade Terms" labels or standalone 3-letter codes.
+- exchange_rate: Exchange rate if mentioned (e.g., "@7.70" or "Exchange Rate: 7.70" or "settle in USD @7.70"). Number only.
+- invoice_currency_original: Original currency if different from settlement currency (e.g., invoice in HKD but settle in USD).
+- is_handwritten: true if the invoice appears to be handwritten or has very low text density (less than 200 characters). Common for small suppliers like "Kabuhayan Namin".
+- is_statement: true if the document is a statement/account statement/aging report rather than an invoice (e.g., SF Express statements). These have "STATEMENT", "Account Statement", "Aging", "Outstanding Balance", "Current Charges" labels.
 
 IMPORTANT RULES:
 1. vendor_name is the SENDER of the invoice, NOT Madison 88
 2. For mpo_number: look in "Customer PO" or "CUSTOMER PO" field
    - Pattern: "TNF F26 JAN BUY_MPO15371_MDDC_..." → extract "MPO15371"
    - Pattern: "MPO015713" → extract "MPO015713"
-   - Regex: /MPO(\d+)/i
+   - Regex: /MPO(\\d+)/i
 3. total_amount must be a NUMBER only (e.g. 37.94 not "$37.94")
 4. For line_items: extract EVERY line item row from the invoice table. Each row has:
    - description (item description text)
@@ -111,8 +118,11 @@ IMPORTANT RULES:
    - total_amount (number from Amount/Total column)
    - item_code (item code if present, e.g., "SA10047935", "M5PG*")
    - size (size if present, e.g., "S", "M", "L", "XL", "38", "40", "FREE SIZE")
+   - mpo_number (MPO for this line — extract from the line's Customer PO / PO column. Pattern: MPO\\d+. If each line has a different MPO, capture it per line.)
+   - po_number (PO for this line if present per line — pattern: PO\\d+)
    Do not skip line items. If quantity looks like a unit price, re-check the column.
-5. For bank details: look for sections labeled "Bank Details", "Payment Information", "Remittance", "Beneficiary Bank", or similar. Extract beneficiary_name (account holder name), bank_name, swift_code, and account_number from there.
+   CRITICAL: If the invoice has MULTIPLE different MPOs across line items (e.g., one line has MPO015798 and another has MPO015841), you MUST extract the mpo_number for each line separately. Do NOT just use the first MPO for all lines.
+5. For bank details: CRITICAL — look carefully for ANY bank-related information anywhere in the invoice. Check sections labeled "Bank Details", "Payment Information", "Remittance", "Beneficiary Bank", "Bank Account", "SWIFT", "Payment Instructions", or similar. Also check the footer, bottom of page, or any small text sections. Extract beneficiary_name (the account holder name), bank_name, swift_code, and account_number. Even if bank info appears in an image or small text, report what you can find.
 6. For qty_shipped: if there is a total quantity field, use that. Otherwise, sum the quantities from all line items.
 7. For document_type: check if the document says "INVOICE", "PROFORMA INVOICE", "COMMERCIAL INVOICE", "CREDIT NOTE", "STATEMENT", etc.
 8. For charges: extract ALL charges separately. Look for lines labeled:
@@ -151,6 +161,7 @@ Example output:
   "sold_to": "256086 / THE NORTH FACE",
   "qty_shipped": 120,
   "document_type": "INVOICE",
+  "beneficiary_name": "Madison 88 Ltd",
   "bank_name": "Standard Chartered Bank",
   "swift_code": "SCBLHKHHXXX",
   "account_number": "447-0-092572-7",
@@ -174,118 +185,116 @@ Example output:
       "unit_price": 0.06656,
       "total_amount": 7.99,
       "item_code": "1-292738-000-02",
-      "size": null
+      "size": null,
+      "mpo_number": "MPO15371",
+      "po_number": null
     }
-  ]
+  ],
+  "signatures": [
+    {
+      "signatory_name": "Jane Doe",
+      "signatory_role": "Coordinator",
+      "signed_date": "2026-05-07"
+    }
+  ],
+  "incoterm": "EXW",
+  "exchange_rate": null,
+  "invoice_currency_original": null,
+  "is_handwritten": false,
+  "is_statement": false
 }
 
 Invoice text to extract from:
 `;
 
-export class OllamaOCRService {
-  private static instance: OllamaOCRService;
-  private baseUrl: string | null = null;
-  private model: string = 'qwen3:4b';
-  private timeout: number = 300000;
+export class MistralOCRService {
+  private static instance: MistralOCRService;
+  private apiKey: string | null = null;
+  private model: string = 'mistral-large-latest';
   private isConfigured: boolean = false;
 
   private constructor() {
-    const baseUrl = process.env.OLLAMA_BASE_URL;
-    if (!baseUrl) {
-      logger.warn('OLLAMA_BASE_URL not configured — Ollama OCR fallback disabled');
+    const apiKey = process.env.MISTRAL_API_KEY;
+    if (!apiKey) {
+      logger.warn('MISTRAL_API_KEY not configured — Mistral OCR fallback disabled');
       return;
     }
 
-    this.baseUrl = baseUrl.replace(/\/$/, '');
-    this.model = process.env.OLLAMA_MODEL || 'qwen3:4b';
-    this.timeout = (Number(process.env.OLLAMA_TIMEOUT) || 300) * 1000;
+    this.apiKey = apiKey;
+    this.model = process.env.MISTRAL_MODEL || 'mistral-large-latest';
     this.isConfigured = true;
-    logger.info(`Ollama OCR service initialized at ${this.baseUrl} with model ${this.model}`);
+    logger.info('Mistral OCR service initialized');
   }
 
-  static getInstance(): OllamaOCRService {
-    if (!OllamaOCRService.instance) {
-      OllamaOCRService.instance = new OllamaOCRService();
+  static getInstance(): MistralOCRService {
+    if (!MistralOCRService.instance) {
+      MistralOCRService.instance = new MistralOCRService();
     }
-    return OllamaOCRService.instance;
+    return MistralOCRService.instance;
   }
 
   isAvailable(): boolean {
     return this.isConfigured;
   }
 
-  async healthCheck(): Promise<boolean> {
-    if (!this.baseUrl) return false;
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-      const res = await fetch(`${this.baseUrl}/api/tags`, { signal: controller.signal });
-      clearTimeout(timeoutId);
-      return res.ok;
-    } catch (error) {
-      logger.warn('Ollama health check failed:', error);
-      return false;
-    }
-  }
-
   async extractFromText(
     rawText: string,
-    options?: { vendorName?: string; invoiceTemplateType?: string }
+    context?: ExtractionContext
   ): Promise<ExtractedInvoiceData | null> {
-    if (!this.isConfigured || !this.baseUrl) {
-      logger.warn('Ollama OCR not configured — skipping fallback');
+    if (!this.isConfigured || !this.apiKey) {
+      logger.warn('Mistral OCR not configured — skipping fallback');
       return null;
     }
 
     try {
-      logger.info('Ollama OCR fallback triggered — extracting invoice data');
+      logger.info('Mistral OCR fallback triggered — extracting invoice data');
 
-      const MAX_OLLAMA_TEXT_LENGTH = Number(process.env.OLLAMA_MAX_TEXT_LENGTH) || 12000;
-      const truncatedText = rawText.length > MAX_OLLAMA_TEXT_LENGTH
-        ? rawText.substring(0, MAX_OLLAMA_TEXT_LENGTH) + '\n[TEXT TRUNCATED]'
+      const MAX_TEXT_LENGTH = Number(process.env.MISTRAL_MAX_TEXT_LENGTH) || 30000;
+      const truncatedText = rawText.length > MAX_TEXT_LENGTH
+        ? rawText.substring(0, MAX_TEXT_LENGTH) + '\n[TEXT TRUNCATED]'
         : rawText;
 
-      const fewShot = options
-        ? await correctionLogService.getFewShotPrompt(rawText, options.vendorName, options.invoiceTemplateType)
+      const fewShot = context
+        ? await correctionLogService.getFewShotPrompt(rawText, context.vendorName, context.invoiceTemplateType)
         : '';
 
-      const userPrompt = (fewShot ? fewShot + '\n\n' : '') + 'Extract invoice fields from this text. Return ONLY valid JSON:\n' + truncatedText;
+      const prompt = (fewShot ? fewShot + '\n\n' : '') + EXTRACTION_PROMPT + truncatedText;
 
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-
-      const response = await fetch(`${this.baseUrl}/api/chat`, {
+      const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
           model: this.model,
           messages: [
-            { role: 'system', content: 'You are an invoice data extractor. Return ONLY valid JSON, no explanation.' },
-            { role: 'user', content: EXTRACTION_PROMPT + userPrompt },
+            {
+              role: 'system',
+              content: 'You are a precise invoice data extraction assistant. Always return valid JSON only.',
+            },
+            {
+              role: 'user',
+              content: prompt,
+            },
           ],
-          stream: false,
-          think: false,
-          options: {
-            temperature: 0.1,
-            num_ctx: 8192,
-            num_predict: 4096,
-          },
+          temperature: 0.1,
+          max_tokens: 8192,
+          response_format: { type: 'json_object' },
         }),
-        signal: controller.signal,
+        signal: AbortSignal.timeout(60000),
       });
 
-      clearTimeout(timeoutId);
-
       if (!response.ok) {
-        logger.error(`Ollama returned ${response.status}: ${response.statusText}`);
+        const errorText = await response.text();
+        logger.error(`Mistral API error (${response.status}): ${errorText}`);
         return null;
       }
 
       const data = await response.json() as any;
-      const text = data.message?.content || data.response || '';
-
+      const text = data.choices?.[0]?.message?.content || '';
       if (!text) {
-        logger.warn('Ollama OCR returned empty content');
+        logger.warn('Mistral OCR returned empty content');
         return null;
       }
 
@@ -294,7 +303,32 @@ export class OllamaOCRService {
         .replace(/```\n?/g, '')
         .trim();
 
-      const extracted = JSON.parse(cleaned) as ExtractedInvoiceData;
+      let extracted: ExtractedInvoiceData;
+      try {
+        extracted = JSON.parse(cleaned) as ExtractedInvoiceData;
+      } catch (parseError) {
+        logger.error('JSON parse failed, attempting recovery:', {
+          error: parseError instanceof Error ? parseError.message : 'unknown',
+          textLength: cleaned.length,
+          textSample: cleaned.substring(0, 200),
+        });
+
+        const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+          logger.error('No JSON object found in Mistral response');
+          return null;
+        }
+
+        try {
+          extracted = JSON.parse(jsonMatch[0]) as ExtractedInvoiceData;
+          logger.info('JSON recovery successful for Mistral response');
+        } catch (recoveryError) {
+          logger.error('JSON recovery failed:', {
+            error: recoveryError instanceof Error ? recoveryError.message : 'unknown',
+          });
+          return null;
+        }
+      }
 
       if (extracted.total_amount) {
         extracted.total_amount = Number(extracted.total_amount);
@@ -310,16 +344,16 @@ export class OllamaOCRService {
         }));
       }
 
-      extracted.extraction_method = 'ollama-fallback';
-      extracted.engine_name = 'ollama';
+      extracted.extraction_method = 'mistral-fallback';
+      extracted.engine_name = 'mistral';
       extracted.confidence = this.calculateConfidence(extracted);
 
-      logger.info(`Ollama OCR extracted: vendor=${extracted.vendor_name}, amount=${extracted.total_amount}, confidence=${extracted.confidence}`);
+      logger.info(`Mistral OCR extracted: vendor=${extracted.vendor_name}, amount=${extracted.total_amount}, confidence=${extracted.confidence}`);
 
       return extracted;
     } catch (error) {
-      logger.error('Ollama OCR extraction failed:', error);
-      console.error('[OllamaOCRService] extractFromText failed:', error);
+      logger.error('Mistral OCR extraction failed:', error);
+      console.error('[MistralOCRService] extractFromText failed:', error);
       return null;
     }
   }
@@ -334,97 +368,6 @@ export class OllamaOCRService {
     if (result.line_items && result.line_items.length > 0) score += 5;
     return score;
   }
-
-  async extractFromImage(
-    imageBase64: string,
-    options?: { vendorName?: string; invoiceTemplateType?: string }
-  ): Promise<ExtractedInvoiceData | null> {
-    if (!this.isConfigured || !this.baseUrl) {
-      logger.warn('Ollama OCR not configured — skipping image fallback');
-      return null;
-    }
-
-    try {
-      logger.info('Ollama OCR image fallback triggered — sending image to vision model');
-
-      const fewShot = options
-        ? await correctionLogService.getFewShotPrompt('', options.vendorName, options.invoiceTemplateType)
-        : '';
-
-      const userPrompt = (fewShot ? fewShot + '\n\n' : '') + 'Extract all invoice fields from the image below. Return ONLY valid JSON.';
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-
-      const response = await fetch(`${this.baseUrl}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: this.model,
-          messages: [
-            { role: 'system', content: 'You are an invoice data extractor. Return ONLY valid JSON, no explanation.' },
-            { role: 'user', content: EXTRACTION_PROMPT + userPrompt, images: [imageBase64] },
-          ],
-          stream: false,
-          think: false,
-          options: {
-            temperature: 0.1,
-            num_ctx: 8192,
-            num_predict: 4096,
-          },
-        }),
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        logger.error(`Ollama returned ${response.status}: ${response.statusText}`);
-        return null;
-      }
-
-      const data = await response.json() as any;
-      const text = data.message?.content || data.response || '';
-
-      if (!text) {
-        logger.warn('Ollama OCR image returned empty content');
-        return null;
-      }
-
-      const cleaned = text
-        .replace(/```json\n?/g, '')
-        .replace(/```\n?/g, '')
-        .trim();
-
-      const extracted = JSON.parse(cleaned) as ExtractedInvoiceData;
-
-      if (extracted.total_amount) {
-        extracted.total_amount = Number(extracted.total_amount);
-        if (isNaN(extracted.total_amount)) extracted.total_amount = undefined;
-      }
-
-      if (extracted.line_items) {
-        extracted.line_items = extracted.line_items.map(li => ({
-          ...li,
-          quantity: Number(li.quantity) || 0,
-          unit_price: Number(li.unit_price) || 0,
-          total_amount: Number(li.total_amount) || 0,
-        }));
-      }
-
-      extracted.extraction_method = 'ollama-vision';
-      extracted.engine_name = 'ollama';
-      extracted.confidence = this.calculateConfidence(extracted);
-
-      logger.info(`Ollama OCR image extracted: vendor=${extracted.vendor_name}, amount=${extracted.total_amount}, confidence=${extracted.confidence}`);
-
-      return extracted;
-    } catch (error) {
-      logger.error('Ollama OCR image extraction failed:', error);
-      console.error('[OllamaOCRService] extractFromImage failed:', error);
-      return null;
-    }
-  }
 }
 
-export const ollamaOCRService = OllamaOCRService.getInstance();
+export const mistralOCRService = MistralOCRService.getInstance();

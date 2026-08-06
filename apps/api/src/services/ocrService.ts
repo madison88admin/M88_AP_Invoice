@@ -752,6 +752,23 @@ async function tryAIFallbacks(
     }
   }
 
+  // 2.5th fallback: Mistral (text-based, decent free-tier)
+  if (rawText && rawText.length > 50) {
+    try {
+      const mistralOCR = (await import('./mistralOCRService')).mistralOCRService;
+      if (mistralOCR.isAvailable()) {
+        logger.info('[OCR] Trying Mistral fallback with raw text...');
+        const mistralResult = await mistralOCR.extractFromText(rawText, { vendorName } as any);
+        if (mistralResult && (mistralResult.vendor_name || mistralResult.invoice_number)) {
+          logger.info('[OCR] Mistral fallback succeeded');
+          return { engine: 'mistral', ...mistralResult };
+        }
+      }
+    } catch (e) {
+      logger.error('[OCR] Mistral fallback failed:', e);
+    }
+  }
+
   // 3rd fallback: Ollama (Qwen — local, uses raw text from pdf2json or image conversion)
   if (rawText && rawText.length > 50) {
     try {

@@ -69,7 +69,7 @@ export default function AccountingReview() {
     const rows = filteredInvoices;
     if (rows.length === 0) return;
 
-    const tabLabel = activeTab === 'soa' ? 'SOA Reconciliation' : activeTab === 'bank-requests' ? 'Bank Change Requests' : 'Posted Invoices';
+    const tabLabel = activeTab === 'soa' ? 'SOA Reconciliation' : activeTab === 'bank-requests' ? 'Bank Change Requests' : 'Received Invoices';
     const exportDate = new Date().toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'short' });
     const fileName = `Accounting-Review-${tabLabel.replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.xls`;
 
@@ -165,7 +165,7 @@ ${dataRows}
                 ? { background: 'var(--accent-purple)', color: 'white' }
                 : { background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}
             >
-              Posted Invoices
+              Received Invoices
             </button>
             <button
               onClick={() => setActiveTab('soa')}
@@ -401,7 +401,7 @@ ${dataRows}
           <div className="overflow-hidden rounded-2xl" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
             <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
               <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
-                {activeTab === 'soa' ? 'SOA Reconciliation Queue' : 'Posted Invoices'} ({filteredInvoices.length})
+                {activeTab === 'soa' ? 'SOA Reconciliation Queue' : 'Received Invoices'} ({filteredInvoices.length})
               </h2>
               <button
                 onClick={exportToExcel}

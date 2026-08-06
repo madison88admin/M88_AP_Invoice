@@ -251,6 +251,7 @@ export interface InvoiceLine {
   match_level?: string;
   match_confidence?: number;
   match_status?: string;
+  size?: string;
 }
 
 export interface InvoiceWorkflowAction {

@@ -1,0 +1,95 @@
+{
+  "definition": {
+    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/versions/2016-06-01/workflowdefinition.json#",
+    "actions": {
+      "Apply_to_each_attachment": {
+        "type": "Foreach",
+        "foreach": "@triggerOutputs()?['body/attachments']",
+        "actions": {
+          "Condition_is_PDF_and_not_inline": {
+            "type": "If",
+            "expression": {
+              "and": [
+                {
+                  "endsWith": [
+                    "@toLower(item()?['Name'])",
+                    ".pdf"
+                  ]
+                },
+                {
+                  "not": {
+                    "equals": [
+                      "@item()?['isInline']",
+                      true
+                    ]
+                  }
+                }
+              ]
+            },
+            "actions": {
+              "Create_file_SFTP": {
+                "type": "OpenApiConnection",
+                "inputs": {
+                  "parameters": {
+                    "folderPath": "/incoming/",
+                    "name": "@item()?['Name']",
+                    "body": "@item()?['contentBytes']",
+                    "ReadFileMetadataFromServer": true
+                  },
+                  "host": {
+                    "apiId": "/providers/Microsoft.PowerApps/apis/shared_sftpwithssh",
+                    "connection": "shared_sftpwithssh-1",
+                    "operationId": "CreateFile"
+                  }
+                },
+                "runAfter": {}
+              }
+            },
+            "else": {
+              "actions": {}
+            }
+          }
+        },
+        "runAfter": {}
+      }
+    },
+    "triggers": {
+      "When_a_new_email_arrives_(V3)": {
+        "type": "OpenApiConnection",
+        "inputs": {
+          "parameters": {
+            "folderPath": "Inbox",
+            "importance": "Any",
+            "fetchOnlyWithAttachment": true,
+            "includeAttachments": true
+          },
+          "host": {
+            "apiId": "/providers/Microsoft.PowerApps/apis/shared_office365",
+            "connection": "shared_office365",
+            "operationId": "OnNewEmailV3"
+          }
+        }
+      }
+    },
+    "contentVersion": "1.0.0.0",
+    "outputs": {}
+  },
+  "parameters": {
+    "$connections": {
+      "value": {
+        "shared_office365": {
+          "connectionId": "/shared_office365",
+          "connectionName": "shared_office365",
+          "id": "/providers/Microsoft.PowerApps/apis/shared_office365/connections/shared_office365",
+          "apiId": "/providers/Microsoft.PowerApps/apis/shared_office365"
+        },
+        "shared_sftpwithssh": {
+          "connectionId": "/shared_sftpwithssh-1",
+          "connectionName": "shared_sftpwithssh-1",
+          "id": "/providers/Microsoft.PowerApps/apis/shared_sftpwithssh/connections/shared_sftpwithssh-1",
+          "apiId": "/providers/Microsoft.PowerApps/apis/shared_sftpwithssh"
+        }
+      }
+    }
+  }
+}

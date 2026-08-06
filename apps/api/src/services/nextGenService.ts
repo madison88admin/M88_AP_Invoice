@@ -285,11 +285,17 @@ export class NextGenService {
   private cookieObtainedAt: number = 0;
   private static readonly COOKIE_MAX_AGE = 4 * 60 * 60 * 1000; // 4 hours
 
+  private writeEnabled: boolean;
+  private writeBaseUrl: string;
+
   private constructor() {
     this.baseUrl = process.env.NEXTGEN_API_URL || 'https://nextgen.madison88.com';
     this.username = process.env.NEXTGEN_USERNAME || '';
     this.password = process.env.NEXTGEN_PASSWORD || '';
     this.useMock = !this.username || !this.password;
+    // Write mode: only enabled when NEXTGEN_WRITE_ENABLED=true AND a separate test URL is configured
+    this.writeEnabled = process.env.NEXTGEN_WRITE_ENABLED === 'true';
+    this.writeBaseUrl = process.env.NEXTGEN_TEST_API_URL || '';
   }
 
   static getInstance(): NextGenService {
@@ -420,6 +426,22 @@ export class NextGenService {
     '/ViewCache/MaterialManagerMaterialLines',
   ];
 
+  /** Allowed NextGen write paths (test env only — requires NEXTGEN_WRITE_ENABLED=true) */
+  private static readonly WRITE_PATHS = [
+    '/MaterialPurchaseOrder/FormLinesGridCreate',
+    '/MaterialPurchaseOrder/FormLinesGridUpdate',
+    '/MaterialPurchaseOrder/FormLinesGridDestroy',
+    '/MaterialPurchaseOrder/MPOLIGridCreate',
+    '/MaterialPurchaseOrder/MPOLIGridUpdate',
+    '/MaterialPurchaseOrder/MPOLIGridDestroy',
+    '/MaterialPurchaseOrder/CreateLine',
+    '/MaterialPurchaseOrder/UpdateLine',
+    '/MaterialPurchaseOrder/DeleteLine',
+    '/MaterialPurchaseOrder/SaveLine',
+    '/MaterialPurchaseOrder/FormLinesSave',
+    '/MaterialPurchaseOrder/FormLinesUpdate',
+  ];
+
   private assertReadOnly(path: string): void {
     const pathname = path.split('?')[0];
     const isAllowed = NextGenService.READ_PATHS.includes(pathname);
@@ -429,6 +451,43 @@ export class NextGenService {
         `This service must NEVER write to NextGen.`
       );
     }
+  }
+
+  /** Assert that write mode is enabled and we're targeting a test environment */
+  private assertWriteEnabled(path: string): void {
+    const pathname = path.split('?')[0];
+    const isAllowed = NextGenService.WRITE_PATHS.includes(pathname);
+    if (!isAllowed) {
+      throw new Error(
+        `NextGen write path "${path}" is not in the allowed write paths list.`
+      );
+    }
+    if (!this.writeEnabled) {
+      throw new Error(
+        'NextGen write mode is DISABLED. Set NEXTGEN_WRITE_ENABLED=true and NEXTGEN_TEST_API_URL to enable writes to a test environment.'
+      );
+    }
+    if (!this.writeBaseUrl) {
+      throw new Error(
+        'NEXTGEN_TEST_API_URL is not configured. Write operations require a separate test environment URL.'
+      );
+    }
+    // Safety: never allow writes to the production URL
+    if (this.writeBaseUrl === this.baseUrl) {
+      throw new Error(
+        'NEXTGEN_TEST_API_URL must differ from NEXTGEN_API_URL. Writes are blocked against the production environment.'
+      );
+    }
+  }
+
+  /** Check if write mode is enabled */
+  isWriteEnabled(): boolean {
+    return this.writeEnabled && !!this.writeBaseUrl && this.writeBaseUrl !== this.baseUrl;
+  }
+
+  /** Get the effective base URL for write operations */
+  private get writeUrl(): string {
+    return this.writeBaseUrl || this.baseUrl;
   }
 
   /** POST to Kendo grid Read endpoints (read-only despite using POST method) */
@@ -2001,6 +2060,614 @@ export class NextGenService {
     } catch (error) {
       logger.error('[MPO Cache] Pre-load failed:', error);
     }
+  }
+
+  // ─── Write Methods (TEST ENV ONLY) ──────────────────────────────────────────
+
+  /** POST JSON to a NextGen write endpoint (test env only) */
+  private async postWrite<T>(path: string, body: any): Promise<T | null> {
+    this.assertWriteEnabled(path);
+
+    if (this.useMock) {
+      logger.warn(`NextGen credentials not configured. Cannot write to ${path}`);
+      return null;
+    }
+
+    // Use a separate session for the test env
+    if (!this.sessionCookie || Date.now() - this.cookieObtainedAt > NextGenService.COOKIE_MAX_AGE) {
+      const loggedIn = await this.loginToTestEnv();
+      if (!loggedIn) {
+        logger.error(`NextGen test env login failed, cannot write to ${path}`);
+        return null;
+      }
+    }
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
+    if (this.sessionCookie!.startsWith('Bearer ') || this.sessionCookie!.startsWith('Basic ')) {
+      headers['Authorization'] = this.sessionCookie!;
+    } else {
+      headers['Cookie'] = this.sessionCookie!;
+    }
+
+    const response = await fetchWithTimeout(`${this.writeUrl}${path}`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    });
+
+    if (response.status === 401 || response.status === 403) {
+      logger.warn(`NextGen test env session expired for ${path}, re-logging in...`);
+      const loggedIn = await this.loginToTestEnv();
+      if (!loggedIn) return null;
+
+      if (this.sessionCookie!.startsWith('Bearer ') || this.sessionCookie!.startsWith('Basic ')) {
+        headers['Authorization'] = this.sessionCookie!;
+        delete headers['Cookie'];
+      } else {
+        headers['Cookie'] = this.sessionCookie!;
+      }
+
+      const retryResponse = await fetchWithTimeout(`${this.writeUrl}${path}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      });
+
+      if (!retryResponse.ok) {
+        logger.error(`NextGen test env ${path} returned ${retryResponse.status} after re-login`);
+        return null;
+      }
+
+      const retryText = await retryResponse.text();
+      try { return JSON.parse(retryText) as T; } catch { return null; }
+    }
+
+    if (!response.ok) {
+      logger.error(`NextGen test env ${path} returned ${response.status}: ${response.statusText}`);
+      return null;
+    }
+
+    const responseText = await response.text();
+    try { return JSON.parse(responseText) as T; } catch { return null; }
+  }
+
+  /** POST form-encoded data to a NextGen write endpoint (test env only) */
+  private async postWriteForm<T>(path: string, body: URLSearchParams): Promise<T | null> {
+    this.assertWriteEnabled(path);
+
+    if (this.useMock) return null;
+
+    if (!this.sessionCookie || Date.now() - this.cookieObtainedAt > NextGenService.COOKIE_MAX_AGE) {
+      const loggedIn = await this.loginToTestEnv();
+      if (!loggedIn) return null;
+    }
+
+    const execute = () => fetchWithTimeout(`${this.writeUrl}${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Cookie': this.sessionCookie!,
+      },
+      body: body.toString(),
+    });
+
+    const parseResponse = async (response: Response): Promise<T | null> => {
+      if (!response.ok) return null;
+      const responseText = await response.text();
+      if (responseText.includes('Log In - VisionPLM') || responseText.includes('<!doctype html>')) {
+        return null;
+      }
+      try { return JSON.parse(responseText) as T; } catch { return null; }
+    };
+
+    let response = await execute();
+    if (response.ok) {
+      const parsed = await parseResponse(response);
+      if (parsed !== null) return parsed;
+      logger.warn(`NextGen test env postWriteForm ${path} returned login page, forcing fresh session...`);
+    } else if (response.status === 401 || response.status === 403) {
+      logger.warn(`NextGen test env session expired for ${path}, re-logging in...`);
+    } else {
+      logger.error(`NextGen test env postWriteForm ${path} returned ${response.status}`);
+      return null;
+    }
+
+    await delay(SERVER_RETRY_DELAY_MS);
+    const loggedIn = await this.loginToTestEnv();
+    if (!loggedIn) return null;
+    response = await execute();
+    return parseResponse(response);
+  }
+
+  /** Login to the test environment (separate URL) */
+  private loginInProgress = false;
+
+  private async loginToTestEnv(): Promise<boolean> {
+    // Prevent concurrent login attempts that could trigger account lockout
+    if (this.loginInProgress) {
+      logger.warn('[TestEnv] Login already in progress, waiting...');
+      await delay(2000);
+      return !!this.sessionCookie && Date.now() - this.cookieObtainedAt < NextGenService.COOKIE_MAX_AGE;
+    }
+    this.loginInProgress = true;
+
+    try {
+      const extractCookies = (res: Response): string[] => {
+        if (typeof res.headers.getSetCookie === 'function') {
+          return res.headers.getSetCookie() || [];
+        }
+        const raw = res.headers.get('set-cookie');
+        if (!raw) return [];
+        return raw.split(/,(?=[^;]+=[^;]+)/g).map(c => c.trim());
+      };
+
+      const testUrl = this.writeUrl;
+      logger.info(`Logging into NextGen test env: ${testUrl}`);
+
+      // Step 1: Get login page and extract anti-forgery token
+      // Use direct fetch (not fetchWithTimeout) to avoid rate limiter/cooldown interference
+      const getPage = await fetch(`${testUrl}/Account/Login`);
+      const html = await getPage.text();
+      const pageCookies = extractCookies(getPage);
+
+      const tokenRegex = /name="__RequestVerificationToken"[^>]*value="([^"]+)"/;
+      const tokenRegex2 = /__RequestVerificationToken[\s\S]*?value="([^"]+)"/;
+      let tokenMatch = html.match(tokenRegex);
+      if (!tokenMatch) tokenMatch = html.match(tokenRegex2);
+
+      if (!tokenMatch) {
+        logger.error('NextGen test env login page: could not find __RequestVerificationToken');
+        return false;
+      }
+
+      const antiForgeryToken = tokenMatch[1];
+      const antiForgeryCookie = pageCookies.map((c: string) => c.split(';')[0]).join('; ');
+
+      logger.info(`[TestEnv] Login page cookies: ${antiForgeryCookie.substring(0, 50)}...`);
+      logger.info(`[TestEnv] Anti-forgery token: ${antiForgeryToken.substring(0, 20)}...`);
+
+      const loginBody = new URLSearchParams({
+        '__RequestVerificationToken': antiForgeryToken,
+        'UserName': this.username,
+        'Password': this.password,
+        'FromAdobeIllustrator': 'False',
+      });
+
+      // Step 2: POST login with redirect:manual to catch 302 and auth cookies
+      // Use direct fetch (not fetchWithTimeout) to avoid rate limiter/cooldown interference
+      const loginRes = await fetch(`${testUrl}/Account/Login?ReturnUrl=%2F`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Cookie': antiForgeryCookie,
+        },
+        body: loginBody.toString(),
+        redirect: 'manual',
+      });
+
+      const loginCookies = extractCookies(loginRes);
+      const allCookies = [
+        ...pageCookies.map((c: string) => c.split(';')[0]),
+        ...loginCookies.map((c: string) => c.split(';')[0]),
+      ].join('; ');
+
+      // Check for account lockout in response body (only readable on 200)
+      if (loginRes.status === 200) {
+        const responseText = await loginRes.text();
+        logger.info(`[TestEnv] Login response body (first 300): ${responseText.substring(0, 300)}`);
+        if (responseText.includes('temporarily disabled') || responseText.includes('failed logins')) {
+          const lockoutMatch = responseText.match(/try again in (\d+) minutes/);
+          const minutes = lockoutMatch ? lockoutMatch[1] : 'unknown';
+          logger.error(`NextGen test env account temporarily locked. Try again in ${minutes} minutes.`);
+          return false;
+        }
+        logger.error(`NextGen test env login failed: status 200, still on login page`);
+        return false;
+      }
+
+      // Success: 302 redirect with FastReactAuthentication cookie
+      const hasAuthCookie = loginCookies.some((c: string) =>
+        c.toLowerCase().includes('fastreactauthentication') ||
+        c.toLowerCase().includes('.aspxauth') ||
+        c.toLowerCase().includes('aspnet')
+      );
+
+      if (loginRes.status === 302 && hasAuthCookie) {
+        this.sessionCookie = allCookies;
+        this.cookieObtainedAt = Date.now();
+        logger.info(`NextGen test env login successful.`);
+        return true;
+      }
+
+      logger.error(`NextGen test env login failed: status ${loginRes.status}, cookies: ${loginCookies.length}`);
+      return false;
+    } catch (error) {
+      logger.error('NextGen test env login error:', error);
+      return false;
+    } finally {
+      this.loginInProgress = false;
+    }
+  }
+
+  // ─── Public Write API (test env only) ───────────────────────────────────────
+
+  /**
+   * Resolve MPO number to numeric OrderId by querying the TEST env.
+   * Uses postWriteForm/postWrite to hit the test env's MPOGridRead.
+   */
+  private async getMPOOrderIdFromTestEnv(mpoNumber: string): Promise<number | null> {
+    try {
+      // Login once before the loop — avoid repeated login attempts that trigger lockout
+      if (!this.sessionCookie || Date.now() - this.cookieObtainedAt > NextGenService.COOKIE_MAX_AGE) {
+        const loggedIn = await this.loginToTestEnv();
+        if (!loggedIn) {
+          logger.warn(`[TestEnv] Cannot resolve MPO ${mpoNumber} — login to test env failed`);
+          return null;
+        }
+      }
+
+      const normalizedMPO = mpoNumber.replace(/^MPO/i, '').replace(/^0+/, '');
+      const mpoWithPrefix = `MPO${normalizedMPO.padStart(6, '0')}`;
+      const mpoWithPrefixShort = `MPO${normalizedMPO}`;
+      const filterFormats = [mpoNumber, mpoWithPrefix, mpoWithPrefixShort];
+
+      for (const fmt of filterFormats) {
+        try {
+          const response = await fetchWithTimeout(`${this.writeUrl}/MaterialPurchaseOrder/MPOGridRead`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Cookie': this.sessionCookie!,
+            },
+            body: JSON.stringify({
+              page: 1,
+              pageSize: 50,
+              sort: [{ field: 'Name', dir: 'desc' }],
+              filter: {
+                logic: 'or',
+                filters: [
+                  { field: 'Name', operator: 'eq', value: fmt },
+                  { field: 'Name', operator: 'contains', value: fmt },
+                ],
+              },
+            }),
+          });
+
+          if (!response.ok) continue;
+          const text = await response.text();
+          if (text.includes('Log In - VisionPLM') || text.includes('<!doctype html>')) {
+            // Session expired — try one re-login, then stop
+            const relogged = await this.loginToTestEnv();
+            if (!relogged) break;
+            continue;
+          }
+          let result: any;
+          try { result = JSON.parse(text); } catch { continue; }
+
+          const items: any[] = result?.Data || result?.data || [];
+          if (items.length > 0 && items.length < 500) {
+            const match = items.find((i: any) =>
+              i.Name === mpoNumber || i.Name === mpoWithPrefix ||
+              i.Name === mpoWithPrefixShort || i.Name?.includes(normalizedMPO)
+            );
+            if (match) {
+              const orderId = match?.Id || match?.OrderId || match?.id || null;
+              if (orderId) {
+                logger.info(`[TestEnv] MPO ${mpoNumber}: GridRead found OrderId ${orderId} using "${fmt}"`);
+                return Number(orderId);
+              }
+            }
+          }
+        } catch (e) {
+          // Try next format
+        }
+      }
+
+      logger.warn(`[TestEnv] MPO ${mpoNumber}: Could not resolve OrderId from test env`);
+      return null;
+    } catch (error) {
+      logger.error(`[TestEnv] Error resolving MPO ${mpoNumber} from test env:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Fetch MPO lines from the TEST env by OrderId.
+   */
+  private async fetchMPOLinesWithStatusFromTestEnv(orderId: number | string): Promise<NextGenLineFetchResult> {
+    try {
+      if (!this.sessionCookie || Date.now() - this.cookieObtainedAt > NextGenService.COOKIE_MAX_AGE) {
+        const loggedIn = await this.loginToTestEnv();
+        if (!loggedIn) {
+          logger.warn(`[TestEnv] Cannot fetch lines — login to test env failed`);
+          return { lines: [], available: false };
+        }
+      }
+
+      const body = new URLSearchParams({
+        sort: '',
+        page: '1',
+        pageSize: '200',
+        group: '',
+        filter: '',
+        OrderId: String(orderId),
+      });
+
+      const response = await fetchWithTimeout(`${this.writeUrl}/MaterialPurchaseOrder/FormLinesGridRead`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Cookie': this.sessionCookie!,
+        },
+        body: body.toString(),
+      });
+
+      if (response.ok) {
+        const text = await response.text();
+        if (!text.includes('Log In - VisionPLM') && !text.includes('<!doctype html>')) {
+          try {
+            const result = JSON.parse(text);
+            const items = result?.Data || result?.data || [];
+            return {
+              lines: (Array.isArray(items) ? items : []).map(mapNextGenMPOLine),
+              available: true,
+              source: 'FormLinesGridRead',
+            };
+          } catch { /* fall through */ }
+        }
+      }
+
+      // Fallback: MPOLIGridRead
+      const fallbackResponse = await fetchWithTimeout(`${this.writeUrl}/MaterialPurchaseOrder/MPOLIGridRead`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Cookie': this.sessionCookie!,
+        },
+        body: body.toString(),
+      });
+
+      if (fallbackResponse.ok) {
+        const text = await fallbackResponse.text();
+        if (!text.includes('Log In - VisionPLM') && !text.includes('<!doctype html>')) {
+          try {
+            const result = JSON.parse(text);
+            const items = result?.Data || result?.data || [];
+            return {
+              lines: (Array.isArray(items) ? items : []).map(mapNextGenMPOLine),
+              available: true,
+              source: 'MPOLIGridRead',
+            };
+          } catch { /* fall through */ }
+        }
+      }
+
+      logger.error(`[TestEnv] Line data unavailable for OrderId ${orderId} from test env`);
+      return { lines: [], available: false };
+    } catch (error) {
+      logger.error(`[TestEnv] Error fetching MPO lines for OrderId ${orderId} from test env:`, error);
+      return { lines: [], available: false };
+    }
+  }
+
+  /**
+   * Upload/create MPO line items to NextGen test env.
+   * Accepts an array of line items and creates them on the specified MPO.
+   */
+  async uploadMPOLines(
+    mpoNumber: string,
+    lines: Array<{
+      material_code?: string;
+      material_name?: string;
+      description?: string;
+      quantity?: number;
+      unit_price?: number;
+      total_amount?: number;
+      size?: string;
+      color?: string;
+      purchase_uom?: string;
+      external_reference?: string;
+      customer_reference?: string;
+    }>
+  ): Promise<{ success: boolean; created: number; errors: string[]; details?: any }> {
+    if (!this.isWriteEnabled()) {
+      return {
+        success: false,
+        created: 0,
+        errors: ['Write mode is not enabled. Set NEXTGEN_WRITE_ENABLED=true and NEXTGEN_TEST_API_URL to a test environment.'],
+      };
+    }
+
+    const errors: string[] = [];
+    let created = 0;
+    const details: any[] = [];
+
+    // Resolve MPO to OrderId from the TEST env
+    const orderId = await this.getMPOOrderIdFromTestEnv(mpoNumber);
+    if (!orderId) {
+      return {
+        success: false,
+        created: 0,
+        errors: [`MPO ${mpoNumber} not found in NextGen test env — cannot resolve OrderId for line creation`],
+      };
+    }
+
+    for (const line of lines) {
+      try {
+        // Kendo grid create format — matches FormLinesGridRead structure
+        const createBody = {
+          OrderId: orderId,
+          CommodityExternalReference: line.material_code || line.external_reference || '',
+          CommodityName: line.material_name || '',
+          CommodityDescription: line.description || '',
+          Quantity: line.quantity || 0,
+          PurchasePrice: line.unit_price || 0,
+          TotalAmount: line.total_amount || ((line.quantity || 0) * (line.unit_price || 0)),
+          SizeName: line.size || '',
+          OptionColourName: line.color || '',
+          PurchaseUnitOfMeasureName: line.purchase_uom || '',
+          CommodityCustomerReference: line.customer_reference || '',
+        };
+
+        const result = await this.postWriteForm<any>(
+          '/MaterialPurchaseOrder/FormLinesGridCreate',
+          new URLSearchParams({
+            OrderId: String(orderId),
+            CommodityExternalReference: createBody.CommodityExternalReference,
+            CommodityName: createBody.CommodityName,
+            CommodityDescription: createBody.CommodityDescription,
+            Quantity: String(createBody.Quantity),
+            PurchasePrice: String(createBody.PurchasePrice),
+            TotalAmount: String(createBody.TotalAmount),
+            SizeName: createBody.SizeName,
+            OptionColourName: createBody.OptionColourName,
+            PurchaseUnitOfMeasureName: createBody.PurchaseUnitOfMeasureName,
+            CommodityCustomerReference: createBody.CommodityCustomerReference,
+          })
+        );
+
+        if (result) {
+          created++;
+          details.push({ line: line.material_code || line.material_name, status: 'created', result });
+        } else {
+          // Try JSON-based endpoint as fallback
+          const jsonResult = await this.postWrite<any>('/MaterialPurchaseOrder/CreateLine', createBody);
+          if (jsonResult) {
+            created++;
+            details.push({ line: line.material_code || line.material_name, status: 'created', result: jsonResult });
+          } else {
+            errors.push(`Failed to create line for ${line.material_code || line.material_name || 'unknown'}`);
+            details.push({ line: line.material_code || line.material_name, status: 'failed' });
+          }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        errors.push(`Error creating line ${line.material_code || line.material_name || 'unknown'}: ${msg}`);
+        details.push({ line: line.material_code || line.material_name, status: 'error', error: msg });
+      }
+    }
+
+    return { success: created > 0, created, errors, details };
+  }
+
+  /**
+   * Upload/update sizes on an existing MPO line in NextGen test env.
+   * Accepts an array of size definitions and applies them to the MPO's lines.
+   */
+  async uploadSizes(
+    mpoNumber: string,
+    sizes: Array<{
+      line_id?: number;
+      material_code?: string;
+      size_name: string;
+      quantity?: number;
+      colour_name?: string;
+    }>
+  ): Promise<{ success: boolean; updated: number; errors: string[]; details?: any }> {
+    if (!this.isWriteEnabled()) {
+      return {
+        success: false,
+        updated: 0,
+        errors: ['Write mode is not enabled. Set NEXTGEN_WRITE_ENABLED=true and NEXTGEN_TEST_API_URL to a test environment.'],
+      };
+    }
+
+    const errors: string[] = [];
+    let updated = 0;
+    const details: any[] = [];
+
+    // Resolve MPO to OrderId from the TEST env
+    const orderId = await this.getMPOOrderIdFromTestEnv(mpoNumber);
+    if (!orderId) {
+      return {
+        success: false,
+        updated: 0,
+        errors: [`MPO ${mpoNumber} not found in NextGen test env — cannot resolve OrderId for size upload`],
+      };
+    }
+
+    // Fetch existing lines from the TEST env to match against
+    const existingLines = await this.fetchMPOLinesWithStatusFromTestEnv(orderId);
+    if (!existingLines.available) {
+      return {
+        success: false,
+        updated: 0,
+        errors: [`Could not fetch existing lines for MPO ${mpoNumber} — cannot update sizes`],
+      };
+    }
+
+    for (const sizeEntry of sizes) {
+      try {
+        // Find the matching line by line_id or material_code
+        let targetLine: any = null;
+        if (sizeEntry.line_id) {
+          targetLine = existingLines.lines.find(l => l.line_id === sizeEntry.line_id);
+        }
+        if (!targetLine && sizeEntry.material_code) {
+          const mc = sizeEntry.material_code.toUpperCase();
+          targetLine = existingLines.lines.find(l =>
+            (l.item_code || '').toUpperCase().includes(mc) ||
+            (l.external_reference || '').toUpperCase().includes(mc)
+          );
+        }
+
+        if (!targetLine) {
+          errors.push(`No matching line found for size "${sizeEntry.size_name}" (material: ${sizeEntry.material_code || 'n/a'}, line_id: ${sizeEntry.line_id || 'n/a'})`);
+          details.push({ size: sizeEntry.size_name, status: 'line_not_found' });
+          continue;
+        }
+
+        // Update the line with the new size
+        const updateBody = new URLSearchParams({
+          OrderId: String(orderId),
+          Id: String(targetLine.line_id || ''),
+          CommodityExternalReference: targetLine.external_reference || '',
+          CommodityName: targetLine.material_name || targetLine.item_code || '',
+          CommodityDescription: targetLine.description || '',
+          Quantity: String(sizeEntry.quantity ?? targetLine.quantity ?? 0),
+          PurchasePrice: String(targetLine.unit_price || 0),
+          TotalAmount: String((sizeEntry.quantity ?? targetLine.quantity ?? 0) * (targetLine.unit_price || 0)),
+          SizeName: sizeEntry.size_name,
+          OptionColourName: sizeEntry.colour_name || targetLine.color || '',
+          PurchaseUnitOfMeasureName: targetLine.purchase_uom || '',
+        });
+
+        const result = await this.postWriteForm<any>(
+          '/MaterialPurchaseOrder/FormLinesGridUpdate',
+          updateBody
+        );
+
+        if (result) {
+          updated++;
+          details.push({ size: sizeEntry.size_name, line: targetLine.item_code, status: 'updated', result });
+        } else {
+          // Try JSON endpoint as fallback
+          const jsonResult = await this.postWrite<any>('/MaterialPurchaseOrder/UpdateLine', {
+            OrderId: orderId,
+            Id: targetLine.line_id,
+            SizeName: sizeEntry.size_name,
+            Quantity: sizeEntry.quantity ?? targetLine.quantity,
+            OptionColourName: sizeEntry.colour_name || targetLine.color,
+          });
+          if (jsonResult) {
+            updated++;
+            details.push({ size: sizeEntry.size_name, line: targetLine.item_code, status: 'updated', result: jsonResult });
+          } else {
+            errors.push(`Failed to update size "${sizeEntry.size_name}" on line ${targetLine.item_code}`);
+            details.push({ size: sizeEntry.size_name, line: targetLine.item_code, status: 'failed' });
+          }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        errors.push(`Error updating size "${sizeEntry.size_name}": ${msg}`);
+        details.push({ size: sizeEntry.size_name, status: 'error', error: msg });
+      }
+    }
+
+    return { success: updated > 0, updated, errors, details };
   }
 }
 

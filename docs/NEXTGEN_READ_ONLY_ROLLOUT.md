@@ -34,3 +34,29 @@ Server access should also use a non-root deployment/diagnostic identity with key
 8. Obtain production deployment approval.
 
 No production deployment is permitted from this checklist alone.
+
+## Test environment write mode
+
+A separate write mode is available for the NextGen **test environment only** (`https://nextgen.madison88.com:8443`). This mode allows creating MPO line items and updating sizes on existing lines.
+
+### Safety guards
+
+- **`NEXTGEN_WRITE_ENABLED=true`** must be explicitly set. Default is `false`.
+- **`NEXTGEN_TEST_API_URL`** must be set to a URL that **differs** from `NEXTGEN_API_URL`. If they match, all write operations are blocked.
+- Write paths are whitelisted separately from read paths (`WRITE_PATHS`).
+- All write routes require `SUPERADMIN` or `IT_ADMIN` role (bypassed in development mode).
+
+### Endpoints
+
+- `GET /api/nextgen/write/status` — check if write mode is enabled
+- `POST /api/nextgen/write/mpo/:mpoNumber/lines` — create line items on an MPO
+- `POST /api/nextgen/write/mpo/:mpoNumber/sizes` — update sizes on existing MPO lines
+
+### Environment variables
+
+```
+NEXTGEN_WRITE_ENABLED=true
+NEXTGEN_TEST_API_URL=https://nextgen.madison88.com:8443
+```
+
+Write operations **must never** be enabled against the production NextGen URL.

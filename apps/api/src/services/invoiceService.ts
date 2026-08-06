@@ -243,6 +243,7 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
             selling_quantity: line.selling_quantity != null ? Number(line.selling_quantity) : null,
             unit_price: line.unit_price != null ? Number(line.unit_price) : null,
             line_amount: line.line_amount != null ? Number(line.line_amount) : (line.total_amount != null ? Number(line.total_amount) : null),
+            size: line.size || null,
             received_quantity: line.received_quantity != null ? Number(line.received_quantity) : null,
             accepted_quantity: line.accepted_quantity != null ? Number(line.accepted_quantity) : null,
             previously_invoiced_quantity: line.previously_invoiced_quantity != null ? Number(line.previously_invoiced_quantity) : null,

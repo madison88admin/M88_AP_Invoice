@@ -238,6 +238,7 @@ model InvoiceLine {
   accepted_quantity   Decimal?
   previously_invoiced_quantity Decimal?
   remaining_receivable_quantity Decimal?
+  size                String?
   extraction_confidence Decimal?
   field_confidence    Json?
   extraction_provenance Json?

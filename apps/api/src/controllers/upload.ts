@@ -30,6 +30,7 @@ import crypto from 'crypto';
 import { createChildLogger } from '../utils/logger';
 import { uploadToStorage } from '../services/supabaseStorageService';
 import { syncToHetzner } from '../services/hetznerStorageService';
+import { mistralOCRService } from '../services/mistralOCRService';
 
 // ─── Async upload job storage ───
 interface UploadJob {
@@ -295,6 +296,7 @@ async function processSingleInvoice(
     let geminiResult: any = null;
     let qwenResult: any = null;
     let groqResult: any = null;
+    let mistralResult: any = null;
     let ollamaResult: any = null;
 
     const parallelEngines: Promise<any>[] = [];
@@ -315,17 +317,29 @@ async function processSingleInvoice(
       );
     }
 
+    if (mistralOCRService.isAvailable()) {
+      parallelEngines.push(
+        mistralOCRService.extractFromText(madisonRawResult.raw_text || '', extractionContext)
+          .then(r => { if (r) mistralResult = r; return r; })
+          .catch(e => { console.error('[Mistral] error:', e); return null; })
+      );
+    }
+
     if (parallelEngines.length > 0) {
       await Promise.all(parallelEngines);
     }
 
     // Sequential fallback only if no LLM produced results
-    if (!geminiResult && !qwenResult) {
+    if (!geminiResult && !qwenResult && !mistralResult) {
       if (groqOCRService.isAvailable()) {
         groqResult = await groqOCRService.extractFromText(madisonRawResult.raw_text || '', extractionContext)
           .catch(e => { console.error('[Groq] error:', e); return null; });
       }
-      if (!groqResult && ollamaOCRService.isAvailable()) {
+      if (!groqResult && mistralOCRService.isAvailable()) {
+        mistralResult = await mistralOCRService.extractFromText(madisonRawResult.raw_text || '', extractionContext)
+          .catch(e => { console.error('[Mistral] error:', e); return null; });
+      }
+      if (!groqResult && !mistralResult && ollamaOCRService.isAvailable()) {
         ollamaResult = await ollamaOCRService.extractFromText(madisonRawResult.raw_text || '', extractionContext)
           .catch(e => { console.error('[Ollama] error:', e); return null; });
       }
@@ -366,6 +380,9 @@ async function processSingleInvoice(
     if (groqResult) {
       decisionEngines.push({ engine_name: 'groq', data: groqResult, confidence: groqResult.confidence || 65 });
     }
+    if (mistralResult) {
+      decisionEngines.push({ engine_name: 'mistral', data: mistralResult, confidence: mistralResult.confidence || 65 });
+    }
     if (ollamaResult) {
       decisionEngines.push({ engine_name: 'ollama', data: ollamaResult, confidence: ollamaResult.confidence || 60 });
     }
@@ -378,7 +395,7 @@ async function processSingleInvoice(
     let activeLearningQuestions: any = null;
     let fieldPredictions: any = null;
     let layoutChangeDetection: any = null;
-    let fallbackResult: any = geminiResult || qwenResult || groqResult || ollamaResult || null;
+    let fallbackResult: any = geminiResult || qwenResult || groqResult || mistralResult || ollamaResult || null;
 
     try {
       fieldDecision = await fieldDecisionEngine.decide(decisionEngines, {
@@ -782,6 +799,7 @@ async function processSingleInvoice(
             quantity: Number(line.quantity || 0),
             unit_price: Number(line.unit_price || line.unitPrice || 0),
             line_amount: Number(line.line_amount || line.extended_price || line.amount || 0),
+            size: line.size || null,
           })),
         },
         2000
@@ -809,6 +827,7 @@ async function processSingleInvoice(
             quantity: Number(line.quantity || 0),
             unit_price: Number(line.unit_price || line.unitPrice || 0),
             line_amount: Number(line.line_amount || line.extended_price || line.amount || 0),
+            size: line.size || null,
           })),
         });
 

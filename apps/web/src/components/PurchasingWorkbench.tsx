@@ -107,7 +107,7 @@ export default function PurchasingWorkbench() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr>
-                      {['Line', 'Material', 'MPO / Order', 'Qty', 'Selling Qty', 'Ordered', 'Received', 'Accepted', 'Previously Invoiced', 'Receipt Balance', 'Unit Price', 'Amount', 'Extraction', '3-Way Match'].map((heading) => (
+                      {['Line', 'Material', 'MPO / Order', 'Qty', 'Selling Qty', 'Size', 'Ordered', 'Received', 'Accepted', 'Previously Invoiced', 'Receipt Balance', 'Unit Price', 'Amount', 'Extraction', '3-Way Match'].map((heading) => (
                         <th className="p-3 text-left" key={heading}>{heading}</th>
                       ))}
                     </tr>
@@ -121,6 +121,7 @@ export default function PurchasingWorkbench() {
                           <td className="p-3">{fmt(line.mpo_base_number)}-{fmt(line.mpo_order_sequence)}</td>
                           <td className="p-3"><ConfidenceCell line={line} field="quantity" value={line.quantity} onCorrect={() => editLine(line, 'quantity')} onEvidence={setSelectedEvidence} /></td>
                           <td className="p-3"><ConfidenceCell line={line} field="selling_quantity" value={line.selling_quantity} onCorrect={() => editLine(line, 'selling_quantity')} onEvidence={setSelectedEvidence} /></td>
+                          <td className="p-3 cursor-pointer" onClick={() => editLine(line, 'size')}>{fmt(line.size)}</td>
                           <td className="p-3">{fmt(line.ordered_quantity)}</td>
                           <td className="p-3 cursor-pointer" onClick={() => editLine(line, 'received_quantity')}>{fmt(line.received_quantity)}</td>
                           <td className="p-3 cursor-pointer" onClick={() => editLine(line, 'accepted_quantity')}>{fmt(line.accepted_quantity)}</td>
@@ -133,7 +134,7 @@ export default function PurchasingWorkbench() {
                         </tr>
                         {line.tolerance_alerts?.length > 0 && (
                           <tr>
-                            <td colSpan={14} className="px-3 pb-3">
+                            <td colSpan={15} className="px-3 pb-3">
                               <div className="flex flex-wrap gap-2">
                                 {line.tolerance_alerts.map((alert: any) => (
                                   <span

@@ -11,7 +11,7 @@ import {
 // TYPES
 // ============================================================================
 
-export type EngineName = 'madison' | 'gemini' | 'qwen' | 'groq' | 'ollama' | 'vendor_rules' | 'nextgen' | 'structured';
+export type EngineName = 'madison' | 'gemini' | 'qwen' | 'groq' | 'mistral' | 'ollama' | 'vendor_rules' | 'nextgen' | 'structured';
 
 export interface FieldCandidate {
   value: any;
@@ -106,6 +106,7 @@ export interface LineItemDecision {
   unit_price?: number | null;
   line_amount?: number | null;
   total_amount?: number | null;
+  size?: string | null;
   extraction_confidence: number;
   review_required: boolean;
   field_confidence: Record<string, FieldDecision>;
@@ -487,7 +488,7 @@ export class FieldDecisionEngine {
   private selectLineItems(engines: EngineOutput[]): LineItemDecision[] {
     const lineFields = [
       'description', 'mpo_base_number', 'mpo_order_sequence', 'material_code',
-      'material_name', 'quantity', 'selling_quantity', 'unit_price', 'line_amount',
+      'material_name', 'quantity', 'selling_quantity', 'unit_price', 'line_amount', 'size',
     ];
     const buckets: Array<Array<{ engine: EngineOutput; line: any; index: number }>> = [];
 
@@ -581,6 +582,7 @@ export class FieldDecisionEngine {
         unit_price: unitPrice,
         line_amount: lineAmount,
         total_amount: lineAmount,
+        size: value('size') as string | null,
         extraction_confidence: confidence,
         review_required: decisions.some(decision => decision.review_required) || !arithmeticPassed,
         field_confidence: fieldConfidence,
@@ -612,6 +614,7 @@ export class FieldDecisionEngine {
       selling_quantity: line.selling_quantity ?? line.sell_qty ?? null,
       unit_price: line.unit_price ?? line.price ?? null,
       line_amount: line.line_amount ?? line.total_amount ?? line.amount ?? null,
+      size: line.size ?? null,
     };
   }
 

@@ -1100,6 +1100,7 @@ export default function Dashboard() {
   }, [allInvoices]);
 
   // Urgent payments — invoices due within 7 days or already overdue (not yet paid)
+  // Uses roleFilteredInvoices so the card count matches what the user can actually see
   const urgentPayments = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -1111,7 +1112,7 @@ export default function Dashboard() {
       InvoiceStatus.PENDING_SR_MANAGER, InvoiceStatus.PENDING_POLLY,
       InvoiceStatus.VALIDATION_PENDING, InvoiceStatus.ON_HOLD,
     ];
-    return allInvoices.filter(inv => {
+    return roleFilteredInvoices.filter(inv => {
       if (!unpaidStatuses.includes(inv.status as InvoiceStatus)) return false;
       if (!inv.due_date) return false;
       const dueDate = new Date(inv.due_date);
@@ -1119,7 +1120,7 @@ export default function Dashboard() {
       const diffDays = Math.floor((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
       return diffDays <= 7; // due within 7 days or overdue
     });
-  }, [allInvoices]);
+  }, [roleFilteredInvoices]);
 
   // Processing time per stage — compute from real stage_timestamps data
   const processingTimePerStage = useMemo(() => {

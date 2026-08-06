@@ -150,6 +150,7 @@ export default function Dashboard() {
     dateFrom: undefined as string | undefined,
     dateTo: undefined as string | undefined,
     agingBucket: undefined as 'current' | '1-30' | '31-60' | '60+' | undefined,
+    urgentDue: undefined as boolean | undefined,
   });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -307,6 +308,15 @@ export default function Dashboard() {
         if (filters.agingBucket === '31-60' && (diffDays <= 30 || diffDays > 60)) return false;
         if (filters.agingBucket === '60+' && diffDays <= 60) return false;
       }
+    }
+    if (filters.urgentDue) {
+      if (!inv.due_date) return false;
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const dueDate = new Date(inv.due_date);
+      dueDate.setHours(0, 0, 0, 0);
+      const diffDays = Math.floor((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+      if (diffDays > 7) return false; // only due within 7 days or overdue
     }
     return true;
   });
@@ -1089,6 +1099,28 @@ export default function Dashboard() {
       .slice(0, 10);
   }, [allInvoices]);
 
+  // Urgent payments — invoices due within 7 days or already overdue (not yet paid)
+  const urgentPayments = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const unpaidStatuses: InvoiceStatus[] = [
+      InvoiceStatus.PENDING_ACCOUNTING, InvoiceStatus.APPROVED,
+      InvoiceStatus.POSTED_TO_QB, InvoiceStatus.PAYMENT_SCHEDULED,
+      InvoiceStatus.PENDING_COORDINATOR, InvoiceStatus.PENDING_MANAGER,
+      InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER, InvoiceStatus.PENDING_MLO_PLANNING_MANAGER,
+      InvoiceStatus.PENDING_SR_MANAGER, InvoiceStatus.PENDING_POLLY,
+      InvoiceStatus.VALIDATION_PENDING, InvoiceStatus.ON_HOLD,
+    ];
+    return allInvoices.filter(inv => {
+      if (!unpaidStatuses.includes(inv.status as InvoiceStatus)) return false;
+      if (!inv.due_date) return false;
+      const dueDate = new Date(inv.due_date);
+      dueDate.setHours(0, 0, 0, 0);
+      const diffDays = Math.floor((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+      return diffDays <= 7; // due within 7 days or overdue
+    });
+  }, [allInvoices]);
+
   // Processing time per stage — compute from real stage_timestamps data
   const processingTimePerStage = useMemo(() => {
     const stageLabels: Record<string, { label: string; sla: number }> = {
@@ -1171,20 +1203,20 @@ export default function Dashboard() {
             ...calcTrend(pendingVal),
           },
           {
+            label: 'Urgent Payments',
+            value: urgentPayments.length,
+            icon: AlertTriangle,
+            accent: 'danger',
+            ...calcTrend(urgentPayments),
+            subtitle: 'Due within 7 days / overdue',
+          },
+          {
             label: 'PAID — Confirmation Pending',
             value: paidPendingConfirmation.length,
             icon: Send,
             accent: 'success',
             ...calcTrend(paidPendingConfirmation),
             subtitle: 'Send payment confirmations',
-          },
-          {
-            label: 'Draft Payment Batches',
-            value: draftBatches.length,
-            icon: Package,
-            accent: 'warning',
-            ...calcTrend(draftBatches),
-            subtitle: 'Ready for processing',
           },
         ];
       }
@@ -1281,11 +1313,12 @@ export default function Dashboard() {
             ...calcTrend(allInvoices),
           },
           {
-            label: 'Pending from Associates',
-            value: pendingAssoc.length,
-            icon: Clock,
-            accent: 'default',
-            ...calcTrend(pendingAssoc),
+            label: 'Urgent Payments',
+            value: urgentPayments.length,
+            icon: AlertTriangle,
+            accent: 'danger',
+            ...calcTrend(urgentPayments),
+            subtitle: 'Due within 7 days / overdue',
           },
           {
             label: 'PAID — Confirmation Pending',
@@ -1640,15 +1673,19 @@ ${dataRows}
     } else if (label.includes('posted')) {
       setFilters({ ...filters, status: InvoiceStatus.POSTED_TO_QB });
     } else if (label.includes('urgent')) {
-      setFilters({ ...filters, status: undefined });
+      setFilters({ ...filters, status: undefined, urgentDue: true });
     } else {
       setFilters({ ...filters, status: undefined });
     }
     // Scroll to invoice table
     setTimeout(() => {
-      const table = document.querySelector('[data-invoice-table]');
-      if (table) table.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 100);
+      const section = document.getElementById('invoice-list-section');
+      if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      else {
+        const table = document.querySelector('[data-invoice-table]');
+        if (table) table.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 150);
   };
 
   return (
@@ -1717,6 +1754,7 @@ ${dataRows}
                       icon={kpi.icon}
                       accent={accent}
                       trend={kpi.trend ? { value: kpi.trend, direction: kpi.trendUp ? 'up' : 'down' } : undefined}
+                      subtitle={(kpi as any).subtitle}
                       onClick={() => handleKpiClick(kpi.label)}
                     />
                   </div>
@@ -1921,7 +1959,7 @@ ${dataRows}
                   Advanced
                 </button>
                 <button
-                  onClick={() => setFilters({ status: undefined, category: undefined, type: undefined, brand: undefined, brand_code: undefined, vendorId: undefined, search: undefined, dateFrom: undefined, dateTo: undefined, agingBucket: undefined })}
+                  onClick={() => setFilters({ status: undefined, category: undefined, type: undefined, brand: undefined, brand_code: undefined, vendorId: undefined, search: undefined, dateFrom: undefined, dateTo: undefined, agingBucket: undefined, urgentDue: undefined })}
                   disabled={activeFilterCount === 0}
                   className="h-9 w-full md:w-auto px-4 rounded-full transition-colors text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed"
                   style={activeFilterCount > 0
@@ -2050,6 +2088,11 @@ ${dataRows}
                 {filters.agingBucket && (
                   <span className="ml-2 text-xs font-normal" style={{ color: 'var(--accent-purple)' }}>
                     · {filters.agingBucket === 'current' ? 'Current (not yet due)' : filters.agingBucket === '1-30' ? '1–30 days overdue' : filters.agingBucket === '31-60' ? '31–60 days overdue' : '60+ days overdue'}
+                  </span>
+                )}
+                {filters.urgentDue && (
+                  <span className="ml-2 text-xs font-normal" style={{ color: 'var(--accent-red)' }}>
+                    · Urgent: Due within 7 days / overdue
                   </span>
                 )}
               </h2>

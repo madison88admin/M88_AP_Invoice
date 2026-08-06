@@ -9,6 +9,7 @@ interface StatCardProps {
   accent?: 'default' | 'success' | 'warning' | 'danger' | 'info';
   onClick?: () => void;
   className?: string;
+  subtitle?: string;
 }
 
 const accentBorderStyles = {
@@ -41,7 +42,7 @@ const accentTrendColorStyles = {
   neutral: 'var(--text-muted)',
 };
 
-export default function StatCard({ title, value, icon: Icon, trend, accent = 'default', onClick, className }: StatCardProps) {
+export default function StatCard({ title, value, icon: Icon, trend, accent = 'default', onClick, className, subtitle }: StatCardProps) {
   return (
     <div
       onClick={onClick}
@@ -67,6 +68,9 @@ export default function StatCard({ title, value, icon: Icon, trend, accent = 'de
               {trend.direction === 'down' && <span>↓</span>}
               {trend.value}
             </p>
+          )}
+          {subtitle && !trend && (
+            <p className="mt-1.5 text-xs" style={{ color: 'var(--text-muted)' }}>{subtitle}</p>
           )}
         </div>
         <div

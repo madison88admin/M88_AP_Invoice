@@ -627,8 +627,8 @@ function convertPDFToImage(fileBuffer: Buffer): string | null {
     fs.writeFileSync(tmpPdf, fileBuffer);
     logger.info(`[OCR] Converting PDF to image using pdftoppm...`);
 
-    // Convert first page to PNG at 200 DPI
-    execSync(`pdftoppm -png -r 200 -f 1 -l 1 "${tmpPdf}" "${tmpImgPrefix}"`, {
+    // Convert first page to PNG at 300 DPI with grayscale for better OCR contrast
+    execSync(`pdftoppm -png -gray -r 300 -f 1 -l 1 "${tmpPdf}" "${tmpImgPrefix}"`, {
       timeout: 30000,
       stdio: 'pipe',
     });
@@ -663,7 +663,56 @@ function convertPDFToImage(fileBuffer: Buffer): string | null {
 }
 
 /**
- * Try AI fallback OCR engines in order: Groq (Llama) → Gemini Vision → Ollama (Qwen)
+ * Convert ALL pages of a PDF to PNG images using pdftoppm (poppler-utils).
+ * Returns array of base64-encoded image strings, or empty array if conversion fails.
+ * Uses 300 DPI for better OCR accuracy.
+ */
+function convertPDFToImages(fileBuffer: Buffer): string[] {
+  const tmpDir = os.tmpdir();
+  const tmpPdf = path.join(tmpDir, `invoice_${Date.now()}.pdf`);
+  const tmpImgPrefix = path.join(tmpDir, `invoice_${Date.now()}`);
+
+  try {
+    fs.writeFileSync(tmpPdf, fileBuffer);
+    logger.info(`[OCR] Converting PDF to images (all pages) using pdftoppm...`);
+
+    // Convert ALL pages to PNG at 300 DPI with grayscale for better OCR contrast
+    execSync(`pdftoppm -png -gray -r 300 "${tmpPdf}" "${tmpImgPrefix}"`, {
+      timeout: 60000,
+      stdio: 'pipe',
+    });
+
+    // Find all generated image files (sorted by page number)
+    const prefix = path.basename(tmpImgPrefix);
+    const files = fs.readdirSync(tmpDir)
+      .filter(f => f.startsWith(prefix) && f.endsWith('.png'))
+      .sort();
+
+    if (files.length === 0) {
+      logger.error('[OCR] PDF-to-images conversion produced no output files');
+      return [];
+    }
+
+    const images: string[] = [];
+    for (const file of files) {
+      const imgPath = path.join(tmpDir, file);
+      const imgBuffer = fs.readFileSync(imgPath);
+      images.push(imgBuffer.toString('base64'));
+      fs.unlinkSync(imgPath);
+    }
+
+    logger.info(`[OCR] PDF-to-images conversion succeeded — ${images.length} pages, total ${(images.reduce((s, i) => s + i.length, 0) / 1024).toFixed(0)}KB base64`);
+    return images;
+  } catch (error) {
+    logger.error('[OCR] PDF-to-images conversion failed:', error);
+    return [];
+  } finally {
+    try { fs.unlinkSync(tmpPdf); } catch {}
+  }
+}
+
+/**
+ * Try AI fallback OCR engines in order: Gemini Vision → Groq (Llama) → Ollama (Qwen)
  * Returns the first successful result with engine name, or null if all fail.
  */
 async function tryAIFallbacks(
@@ -671,7 +720,22 @@ async function tryAIFallbacks(
   rawText: string,
   vendorName?: string
 ): Promise<{ engine: string; vendor_name?: string; invoice_number?: string; invoice_date?: string; due_date?: string; total_amount?: number; subtotal?: number; currency?: string; po_number?: string; mpo_number?: string; brand?: string; brand_code?: string; season?: string; payment_terms?: string; ship_to?: string; sold_to?: string; qty_shipped?: number; document_type?: string; bank_name?: string; swift_code?: string; account_number?: string; bank_info?: { swift_code?: string; account_number?: string }; line_items?: any[]; signatures?: { signatory_name: string; signatory_role?: string; signed_date?: string }[]; bank_charges?: number; tt_charge?: number; freight_charges?: number; courier_charges?: number; handling_fee?: number; finance_surcharge?: number; tax_amount?: number; discount_amount?: number; setup_charge?: number; sample_charge?: number; min_order_charge?: number; additional_charges?: number } | null> {
-  // 1st fallback: Groq (Llama 3.3 70B — high free-tier limit, fast)
+  // 1st fallback: Gemini Vision (sends PDF as file directly — best for visual layout, works even with scanned PDFs)
+  try {
+    const geminiOCR = (await import('./geminiOCRService')).geminiOCRService;
+    if (geminiOCR.isAvailable()) {
+      logger.info('[OCR] Trying Gemini Vision fallback (1st priority)...');
+      const geminiResult = await geminiOCR.extractFromPDF(fileBuffer, vendorName);
+      if (geminiResult && (geminiResult.vendor_name || geminiResult.invoice_number)) {
+        logger.info('[OCR] Gemini Vision fallback succeeded');
+        return { engine: 'gemini', ...geminiResult };
+      }
+    }
+  } catch (e) {
+    logger.error('[OCR] Gemini Vision fallback failed:', e);
+  }
+
+  // 2nd fallback: Groq (Llama 3.3 70B — text-based, fast, good free-tier limit)
   if (rawText && rawText.length > 50) {
     try {
       const groqOCR = (await import('./groqOCRService')).groqOCRService;
@@ -688,22 +752,7 @@ async function tryAIFallbacks(
     }
   }
 
-  // 2nd fallback: Gemini Vision (sends PDF as file directly — best for visual layout)
-  try {
-    const geminiOCR = (await import('./geminiOCRService')).geminiOCRService;
-    if (geminiOCR.isAvailable()) {
-      logger.info('[OCR] Trying Gemini Vision fallback...');
-      const geminiResult = await geminiOCR.extractFromPDF(fileBuffer, vendorName);
-      if (geminiResult && (geminiResult.vendor_name || geminiResult.invoice_number)) {
-        logger.info('[OCR] Gemini Vision fallback succeeded');
-        return { engine: 'gemini', ...geminiResult };
-      }
-    }
-  } catch (e) {
-    logger.error('[OCR] Gemini Vision fallback failed:', e);
-  }
-
-  // 3rd fallback: Ollama (Qwen 2.5 VL — local, uses raw text from pdf2json)
+  // 3rd fallback: Ollama (Qwen — local, uses raw text from pdf2json or image conversion)
   if (rawText && rawText.length > 50) {
     try {
       const ollamaOCR = (await import('./ollamaOCRService')).ollamaOCRService;
@@ -720,21 +769,23 @@ async function tryAIFallbacks(
     }
   } else {
     logger.warn('[OCR] No raw text from pdf2json — trying PDF-to-image conversion for Ollama vision...');
-    // Convert PDF to image and try Ollama vision model
-    const imageBase64 = convertPDFToImage(fileBuffer);
-    if (imageBase64) {
-      try {
-        const ollamaOCR = (await import('./ollamaOCRService')).ollamaOCRService;
-        if (ollamaOCR.isAvailable()) {
-          logger.info('[OCR] Trying Ollama (Qwen) vision fallback with PDF image...');
-          const ollamaResult = await ollamaOCR.extractFromImage(imageBase64, { vendorName });
-          if (ollamaResult && (ollamaResult.vendor_name || ollamaResult.invoice_number)) {
-            logger.info('[OCR] Ollama (Qwen) vision fallback succeeded');
-            return { engine: 'ollama-vision', ...ollamaResult };
+    // Convert PDF to images and try Ollama vision model
+    const imagesBase64 = convertPDFToImages(fileBuffer);
+    if (imagesBase64.length > 0) {
+      for (let i = 0; i < imagesBase64.length; i++) {
+        try {
+          const ollamaOCR = (await import('./ollamaOCRService')).ollamaOCRService;
+          if (ollamaOCR.isAvailable()) {
+            logger.info(`[OCR] Trying Ollama (Qwen) vision fallback with PDF image (page ${i + 1}/${imagesBase64.length})...`);
+            const ollamaResult = await ollamaOCR.extractFromImage(imagesBase64[i], { vendorName });
+            if (ollamaResult && (ollamaResult.vendor_name || ollamaResult.invoice_number)) {
+              logger.info('[OCR] Ollama (Qwen) vision fallback succeeded');
+              return { engine: 'ollama-vision', ...ollamaResult };
+            }
           }
+        } catch (e) {
+          logger.error(`[OCR] Ollama vision fallback failed for page ${i + 1}:`, e);
         }
-      } catch (e) {
-        logger.error('[OCR] Ollama vision fallback failed:', e);
       }
     }
   }
@@ -980,14 +1031,19 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
           if (enableOllamaVisionBank) {
             const ollamaOCR = (await import('./ollamaOCRService')).ollamaOCRService;
             if (ollamaOCR.isAvailable()) {
-              const imageBase64 = convertPDFToImage(fileBuffer);
-              if (imageBase64) {
+              const imagesBase64 = convertPDFToImages(fileBuffer);
+              // Try last page first (bank info is usually at the bottom), then fall back to first page
+              const tryImages = imagesBase64.length > 0
+                ? [imagesBase64[imagesBase64.length - 1], ...imagesBase64.slice(0, -1)]
+                : [];
+              for (const imageBase64 of tryImages) {
                 const ollamaBankResult = await ollamaOCR.extractFromImage(imageBase64, { vendorName: extracted.vendor_name });
                 if (ollamaBankResult && (ollamaBankResult.bank_name || ollamaBankResult.swift_code || ollamaBankResult.account_number)) {
                   logger.info(`[OCR] Ollama vision bank fallback succeeded — bank_name: "${ollamaBankResult.bank_name}", swift: "${ollamaBankResult.swift_code}", account: "${ollamaBankResult.account_number}"`);
                   (extracted as any).bank_name = ollamaBankResult.bank_name || (extracted as any).bank_name;
                   extracted.bank_swift = ollamaBankResult.swift_code || extracted.bank_swift;
                   extracted.bank_account = ollamaBankResult.account_number || extracted.bank_account;
+                  break;
                 }
               }
             }

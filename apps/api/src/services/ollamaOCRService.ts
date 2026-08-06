@@ -236,7 +236,7 @@ export class OllamaOCRService {
     try {
       logger.info('Ollama OCR fallback triggered — extracting invoice data');
 
-      const MAX_OLLAMA_TEXT_LENGTH = Number(process.env.OLLAMA_MAX_TEXT_LENGTH) || 4000;
+      const MAX_OLLAMA_TEXT_LENGTH = Number(process.env.OLLAMA_MAX_TEXT_LENGTH) || 12000;
       const truncatedText = rawText.length > MAX_OLLAMA_TEXT_LENGTH
         ? rawText.substring(0, MAX_OLLAMA_TEXT_LENGTH) + '\n[TEXT TRUNCATED]'
         : rawText;
@@ -263,8 +263,8 @@ export class OllamaOCRService {
           think: false,
           options: {
             temperature: 0.1,
-            num_ctx: 4096,
-            num_predict: 2048,
+            num_ctx: 8192,
+            num_predict: 4096,
           },
         }),
         signal: controller.signal,
@@ -365,8 +365,8 @@ export class OllamaOCRService {
           think: false,
           options: {
             temperature: 0.1,
-            num_ctx: 4096,
-            num_predict: 2048,
+            num_ctx: 8192,
+            num_predict: 4096,
           },
         }),
         signal: controller.signal,

@@ -11,6 +11,7 @@ interface ExtractedLineItem {
   item_code?: string;
   mpo_number?: string;
   po_number?: string;
+  size?: string;
 }
 
 export interface ExtractedInvoiceData {
@@ -84,6 +85,7 @@ Fields to extract:
   - unit_price: unit price as number
   - total_amount: line total as number
   - item_code: item code if present
+  - size: size if present (e.g., "S", "M", "L", "XL", "XXL", "38", "40", "10", "FREE SIZE")
   - mpo_number: Material Purchase Order number for THIS specific line (format like MPO015713). Extract from the line's "Customer PO" or "PO#" column. If the invoice has different MPOs per line, each line MUST have its own mpo_number.
   - po_number: Purchase Order number for THIS specific line (format like PO002997) if present per line
 - signatures: Array of signatures/stamps found on the document. Look for:
@@ -116,6 +118,7 @@ IMPORTANT RULES:
    - unit_price (number from Unit Price column)
    - total_amount (number from Amount/Total column)
    - item_code (item code if present, e.g., "SA10047935", "M5PG*")
+   - size (size if present, e.g., "S", "M", "L", "XL", "38", "40", "FREE SIZE")
    - mpo_number (MPO for this line — extract from the line's Customer PO / PO column. Pattern: MPO\\d+. If each line has a different MPO, capture it per line.)
    - po_number (PO for this line if present per line — pattern: PO\\d+)
    Do not skip line items. If quantity looks like a unit price, re-check the column.
@@ -183,6 +186,7 @@ Example output:
       "unit_price": 0.06656,
       "total_amount": 7.99,
       "item_code": "1-292738-000-02",
+      "size": null,
       "mpo_number": "MPO15371",
       "po_number": null
     }
@@ -250,7 +254,7 @@ export class GroqOCRService {
     try {
       logger.info('Groq OCR fallback triggered — extracting invoice data');
 
-      const MAX_GROQ_TEXT_LENGTH = Number(process.env.GROQ_MAX_TEXT_LENGTH) || 8000;
+      const MAX_GROQ_TEXT_LENGTH = Number(process.env.GROQ_MAX_TEXT_LENGTH) || 30000;
       const truncatedText = rawText.length > MAX_GROQ_TEXT_LENGTH
         ? rawText.substring(0, MAX_GROQ_TEXT_LENGTH) + '\n[TEXT TRUNCATED]'
         : rawText;
@@ -274,7 +278,7 @@ export class GroqOCRService {
           },
         ],
         temperature: 0.1,
-        max_tokens: 4096,
+        max_tokens: 8192,
         response_format: { type: 'json_object' },
       });
 

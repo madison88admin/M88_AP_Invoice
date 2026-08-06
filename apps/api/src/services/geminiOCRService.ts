@@ -9,6 +9,7 @@ interface ExtractedLineItem {
   unit_price: number;
   total_amount: number;
   item_code?: string;
+  size?: string;
 }
 
 export interface ExtractedSignature {
@@ -108,6 +109,7 @@ Fields to extract:
   - unit_price: unit price as number
   - total_amount: line total as number
   - item_code: item code if present
+  - size: size if present (e.g., "S", "M", "L", "XL", "XXL", "38", "40", "10", "FREE SIZE")
 - signatures: Array of signatures/stamps found on the document. Look for:
   - Printed or handwritten names near "Signature", "Signed by", "Authorized by", "Approved by", "Prepared by", "For and on behalf of" sections
   - Stamped names or company stamps
@@ -141,6 +143,7 @@ IMPORTANT RULES:
    - unit_price (number from Unit Price column)
    - total_amount (number from Amount/Total column)
    - item_code (item code if present, e.g., "SA10047935", "M5PG*")
+   - size (size if present, e.g., "S", "M", "L", "XL", "38", "40", "FREE SIZE")
    Do not skip line items. If quantity looks like a unit price, re-check the column.
 5. For bank details: look for sections labeled "Bank Details", "Payment Information", "Remittance", "Beneficiary Bank", or similar. Extract beneficiary_name (account holder name), bank_name, swift_code, and account_number from there.
 6. For qty_shipped: if there is a total quantity field (e.g., "Total Qty", "Total Quantity", "Total PCS"), use that. Otherwise, sum the quantities from all line items. Always return as a number, never null if any quantity info exists.
@@ -203,7 +206,8 @@ Example output:
       "quantity": 120,
       "unit_price": 0.06656,
       "total_amount": 7.99,
-      "item_code": "1-292738-000-02"
+      "item_code": "1-292738-000-02",
+      "size": null
     }
   ],
   "signatures": [
@@ -272,7 +276,7 @@ export class GeminiOCRService {
       logger.info('Gemini OCR fallback triggered — extracting invoice data');
 
       // Truncate text if too long (Gemini has token limits)
-      const MAX_GEMINI_TEXT_LENGTH = Number(process.env.GEMINI_MAX_TEXT_LENGTH) || 8000;
+      const MAX_GEMINI_TEXT_LENGTH = Number(process.env.GEMINI_MAX_TEXT_LENGTH) || 30000;
       const truncatedText = rawText.length > MAX_GEMINI_TEXT_LENGTH
         ? rawText.substring(0, MAX_GEMINI_TEXT_LENGTH) + '\n[TEXT TRUNCATED]'
         : rawText;

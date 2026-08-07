@@ -5,6 +5,7 @@ import { matchVendor, matchOrCreateVendor } from './vendorMatchingService';
 import { validateInvoice } from './validationService';
 import { checkEmailDuplicate, generateFileHash } from './emailDuplicateService';
 import { uploadInvoiceToStructuredFolder } from './sharePointService';
+import { uploadToStorage } from './supabaseStorageService';
 import {
   isSharePointConfigured,
   ensureWatcherFolders,
@@ -158,6 +159,18 @@ async function processIncomingFile(file: { id: string; name: string; size: numbe
     }
   }
 
+  // Upload to Supabase Storage (best-effort)
+  let supabasePath: string | undefined;
+  try {
+    const uploadedPath = await uploadToStorage(fileBuffer, fileName, 'application/pdf');
+    if (uploadedPath) {
+      supabasePath = uploadedPath;
+      logger.info(`[SharePoint Watcher] PDF uploaded to Supabase storage: ${supabasePath}`);
+    }
+  } catch (supabaseError) {
+    logger.warn(`[SharePoint Watcher] Supabase upload failed for ${fileName}:`, supabaseError);
+  }
+
   // Step 7: Save to database
   let invoiceId: string | null = null;
   try {
@@ -214,6 +227,8 @@ async function processIncomingFile(file: { id: string; name: string; size: numbe
         payment_terms: ocrResult.payment_terms,
         sharepoint_folder_url: sharepointUrl,
         sharepoint_filed_at: sharepointUrl ? new Date() : null,
+        pdf_path: supabasePath || undefined,
+        raw_file_url: supabasePath || undefined,
         ...(ocrResult.date_range_start ? { date_range_start: new Date(ocrResult.date_range_start) } : {}),
         ...(ocrResult.date_range_end ? { date_range_end: new Date(ocrResult.date_range_end) } : {}),
       },

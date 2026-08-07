@@ -86,6 +86,8 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
     document_layout_fingerprint,
     accounting_preapproved,
     approval_evidence_confirmed,
+    pdf_path,
+    raw_file_url,
   } = invoiceData;
 
   const isAccountingPreapproved = accounting_preapproved === true;
@@ -230,6 +232,8 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
       source_document_type: source_document_type || undefined,
       structured_source_format: structured_source_format || undefined,
       document_layout_fingerprint: document_layout_fingerprint || undefined,
+      pdf_path: pdf_path || undefined,
+      raw_file_url: raw_file_url || undefined,
       ...(Array.isArray(line_items) && line_items.length > 0 ? {
         invoice_lines: {
           create: line_items.map((line: any, index: number) => ({

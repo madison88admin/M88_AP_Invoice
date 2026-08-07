@@ -488,6 +488,26 @@ async function processSingleInvoiceBuffer(
       }
     }
 
+    // For split invoices (multi-invoice PDF), upload the split buffer to Supabase
+    // since safeMoveAndUpdatePdfPath is only called for single (non-split) invoices
+    if (splitIndex !== undefined) {
+      try {
+        const splitFileName = `${fileName}.pdf`;
+        const storagePath = await uploadToStorage(fileBuffer, splitFileName, 'application/pdf');
+        if (storagePath) {
+          await prisma.invoice.update({
+            where: { id: invoice.id },
+            data: { pdf_path: storagePath },
+          });
+          logger.info(`[File Watcher] Split PDF uploaded to Supabase: ${storagePath}`);
+        } else {
+          logger.warn(`[File Watcher] Split PDF Supabase upload returned null for ${invoice.invoice_number}`);
+        }
+      } catch (splitUploadErr) {
+        logger.warn(`[File Watcher] Split PDF upload failed for ${invoice.invoice_number}:`, splitUploadErr);
+      }
+    }
+
     // Audit log
     await prisma.auditLog.create({
       data: {

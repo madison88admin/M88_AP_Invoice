@@ -497,7 +497,7 @@ async function processSingleInvoiceBuffer(
         if (storagePath) {
           await prisma.invoice.update({
             where: { id: invoice.id },
-            data: { pdf_path: storagePath },
+            data: { pdf_path: storagePath, raw_file_url: storagePath },
           });
           logger.info(`[File Watcher] Split PDF uploaded to Supabase: ${storagePath}`);
         } else {
@@ -707,10 +707,10 @@ async function safeMoveAndUpdatePdfPath(
       const baseName = fileName || path.basename(finalPath);
       const storagePath = await uploadToStorage(fileBuffer, baseName, 'application/pdf');
       if (storagePath) {
-        // Save both local path and Supabase storage path
+        // Save both Supabase storage path and raw_file_url
         await prisma.invoice.update({
           where: { id: invoiceId },
-          data: { pdf_path: storagePath },
+          data: { pdf_path: storagePath, raw_file_url: storagePath },
         });
         logger.info(`[File Watcher] PDF uploaded to Supabase storage: ${storagePath}`);
       } else {

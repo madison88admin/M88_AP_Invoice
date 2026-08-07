@@ -90,6 +90,58 @@ function recoverStuckFiles(): void {
 }
 
 /**
+ * Periodic recovery: move files stuck in processing/ for more than 10 minutes
+ * back to incoming/ so they get reprocessed. Runs on every poll cycle.
+ */
+function recoverStuckFilesPeriodic(): void {
+  if (!fs.existsSync(PROCESSING_DIR)) return;
+
+  const STUCK_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+  const now = Date.now();
+
+  let files: string[];
+  try {
+    files = fs.readdirSync(PROCESSING_DIR).filter(f => f.toLowerCase().endsWith('.pdf'));
+  } catch {
+    return;
+  }
+  if (files.length === 0) return;
+
+  let recovered = 0;
+  for (const fileName of files) {
+    const processingPath = path.join(PROCESSING_DIR, fileName);
+    try {
+      const stat = fs.statSync(processingPath);
+      if (!stat.isFile()) continue;
+
+      // Only recover files older than 10 minutes
+      const ageMs = now - stat.mtimeMs;
+      if (ageMs < STUCK_THRESHOLD_MS) continue;
+
+      // Move back to incoming (handle name collision)
+      let targetPath = path.join(INCOMING_DIR, fileName);
+      if (fs.existsSync(targetPath)) {
+        const ext = path.extname(fileName);
+        const base = path.basename(fileName, ext);
+        targetPath = path.join(INCOMING_DIR, `${base}_recovered_${Date.now()}${ext}`);
+      }
+
+      fs.renameSync(processingPath, targetPath);
+      // Remove from processed set so it gets picked up
+      processedFiles.delete(fileName);
+      recovered++;
+      logger.info(`[File Watcher] Recovered stuck file (age: ${Math.round(ageMs / 1000)}s): ${fileName} → incoming/`);
+    } catch (err) {
+      // File might be in use — skip silently
+    }
+  }
+
+  if (recovered > 0) {
+    logger.info(`[File Watcher] Periodic recovery: ${recovered} stuck file(s) moved back to incoming/`);
+  }
+}
+
+/**
  * Process a single PDF file:
  * 1. Move to Processing
  * 2. Multi-invoice detection (split if needed)
@@ -541,6 +593,9 @@ async function pollIncomingDirectory(): Promise<void> {
   isProcessing = true;
 
   try {
+    // Recover stuck files from processing/ (files older than 10 minutes)
+    recoverStuckFilesPeriodic();
+
     if (!fs.existsSync(INCOMING_DIR)) {
       return;
     }

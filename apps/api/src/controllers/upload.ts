@@ -197,8 +197,8 @@ export const uploadInvoice = async (
           requiresManualVendorAssignment = false;
           console.log('[DEBUG] Auto-created vendor:', ocrResult.vendor_name, 'id:', vendorId);
         } else {
-          console.log('[DEBUG] Vendor not found in DB or DB unavailable, skipping vendor assignment');
-          requiresManualVendorAssignment = false;
+          console.log('[DEBUG] Vendor not found in DB or DB unavailable, requires manual assignment');
+          requiresManualVendorAssignment = true;
         }
       }
     }
@@ -207,10 +207,10 @@ export const uploadInvoice = async (
     res.status(200).json({
       success: true,
       ocr_result: ocrResult,
-      vendor_match: {
+      vendor_match: vendorId ? {
         vendor_id: vendorId,
         vendor_name: ocrResult.vendor_name,
-      },
+      } : null,
       requires_manual_vendor_assignment: requiresManualVendorAssignment,
       po_validation: poValidation,
     });
@@ -945,10 +945,13 @@ async function processSingleInvoice(
           requiresManualVendorAssignment = false;
           console.log('[DEBUG] Auto-created vendor:', madisonResult.vendor_name, 'id:', vendorId);
         } else {
-          console.log('[DEBUG] Vendor not found in DB or DB unavailable, skipping vendor assignment');
-          requiresManualVendorAssignment = false;
+          console.log('[DEBUG] Vendor not found in DB or DB unavailable, requires manual assignment');
+          requiresManualVendorAssignment = true;
         }
       }
+    } else {
+      // No vendor name extracted at all
+      requiresManualVendorAssignment = true;
     }
 
     // Return Madison extraction result with debug logs

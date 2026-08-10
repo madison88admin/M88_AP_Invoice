@@ -133,7 +133,7 @@ export default function InvoiceUpload() {
       setRequiresManualVendor(response.data.requires_manual_vendor_assignment);
       setCorrectionSaved(false);
 
-      if (response.data.requires_manual_vendor_assignment) {
+      if (response.data.requires_manual_vendor_assignment || !response.data.vendor_match) {
         const suggestions = await vendorApi.getSuggestions(extraction?.vendor_name);
         setVendorSuggestions(suggestions.data);
       }
@@ -170,7 +170,7 @@ export default function InvoiceUpload() {
     setError(null);
 
     try {
-      const finalVendorId = requiresManualVendor ? selectedVendor : vendorMatch?.vendor_id;
+      const finalVendorId = selectedVendor || vendorMatch?.vendor_id;
 
       if (!finalVendorId) {
         setError('Please select a vendor');
@@ -711,10 +711,10 @@ export default function InvoiceUpload() {
             </label>
           )}
 
-          {requiresManualVendor && (
+          {(requiresManualVendor || !vendorMatch) && (
             <div className="p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}>
               <label className="block text-sm font-medium mb-2" style={{ color: 'var(--accent-amber)' }}>
-                Vendor Not Found - Please Select from Suggestions
+                {!vendorMatch ? 'Vendor Not Matched - Please Select from Suggestions' : 'Vendor Not Found - Please Select from Suggestions'}
               </label>
               <select
                 value={selectedVendor}
@@ -742,14 +742,14 @@ export default function InvoiceUpload() {
           <div className="flex gap-4">
             <button
               onClick={handleConfirm}
-              disabled={uploading || (requiresManualVendor && !selectedVendor) || (user?.role === 'ACCOUNTING_ASSOCIATE' && !accountingPreapproved)}
+              disabled={uploading || (!vendorMatch && !selectedVendor) || (user?.role === 'ACCOUNTING_ASSOCIATE' && !accountingPreapproved)}
               className="flex-1 py-3 rounded-xl transition-colors disabled:cursor-not-allowed text-sm font-semibold"
-              style={uploading || (requiresManualVendor && !selectedVendor) || (user?.role === 'ACCOUNTING_ASSOCIATE' && !accountingPreapproved)
+              style={uploading || (!vendorMatch && !selectedVendor) || (user?.role === 'ACCOUNTING_ASSOCIATE' && !accountingPreapproved)
                 ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' }
                 : { background: 'var(--accent-lime)', color: 'var(--bg-base)' }
               }
-              onMouseEnter={(e) => { if (!(uploading || (requiresManualVendor && !selectedVendor) || (user?.role === 'ACCOUNTING_ASSOCIATE' && !accountingPreapproved))) e.currentTarget.style.background = 'var(--accent-lime-hover)'; }}
-              onMouseLeave={(e) => { if (!(uploading || (requiresManualVendor && !selectedVendor) || (user?.role === 'ACCOUNTING_ASSOCIATE' && !accountingPreapproved))) e.currentTarget.style.background = 'var(--accent-lime)'; }}
+              onMouseEnter={(e) => { if (!(uploading || (!vendorMatch && !selectedVendor) || (user?.role === 'ACCOUNTING_ASSOCIATE' && !accountingPreapproved))) e.currentTarget.style.background = 'var(--accent-lime-hover)'; }}
+              onMouseLeave={(e) => { if (!(uploading || (!vendorMatch && !selectedVendor) || (user?.role === 'ACCOUNTING_ASSOCIATE' && !accountingPreapproved))) e.currentTarget.style.background = 'var(--accent-lime)'; }}
             >
               {uploading ? 'Confirming...' : 'Confirm & Create Invoice'}
             </button>

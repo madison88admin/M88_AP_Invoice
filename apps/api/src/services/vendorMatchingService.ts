@@ -172,7 +172,21 @@ export async function getVendorSuggestions(searchTerm: string, limit: number = 5
   }
 
   const normalizedSearch = searchTerm.toUpperCase().trim();
-  
+
+  // If no search term, return all vendors up to limit
+  if (!normalizedSearch) {
+    const vendors = await prisma.vendor.findMany({
+      take: limit,
+      orderBy: { name: 'asc' },
+    });
+    return vendors.map(vendor => ({
+      id: vendor.id,
+      name: vendor.name,
+      aliases: vendor.name_aliases,
+      confidence: 0,
+    }));
+  }
+
   const vendors = await prisma.vendor.findMany({
     where: {
       OR: [

@@ -134,8 +134,18 @@ export default function InvoiceUpload() {
       setCorrectionSaved(false);
 
       if (response.data.requires_manual_vendor_assignment || !response.data.vendor_match) {
-        const suggestions = await vendorApi.getSuggestions(extraction?.vendor_name);
-        setVendorSuggestions(suggestions.data);
+        const suggestions = await vendorApi.getSuggestions(extraction?.vendor_name || '', 20);
+        let vendorList = suggestions.data;
+        if (!vendorList || vendorList.length === 0) {
+          const allVendors = await vendorApi.getAll();
+          vendorList = (allVendors.data || []).map((v: any) => ({
+            id: v.id,
+            name: v.name,
+            aliases: v.name_aliases || [],
+            confidence: 0,
+          }));
+        }
+        setVendorSuggestions(vendorList);
       }
     } catch (err: any) {
       setError(err.response?.data?.error?.message || 'Failed to process invoice');

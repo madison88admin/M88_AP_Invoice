@@ -690,7 +690,7 @@ export default function Dashboard() {
       brand: invoice.brand || '',
       brand_code: invoice.brand_code || '',
       brand_tier: invoice.brand_tier || '',
-      mpo_number: invoice.mpo_number || '',
+        mpo_number: invoice.mpo_number || invoice.mpo_base_number || '',
       mpo_base_number: invoice.mpo_base_number || '',
       mpo_order_sequence: invoice.mpo_order_sequence || '',
       material_code: invoice.material_code || '',
@@ -764,6 +764,7 @@ export default function Dashboard() {
 
       const payload = {
         // Non-bank fields: only send if user can edit invoice
+        vendor_id: canEditAll ? parseString(editFormData.vendor_id) : undefined,
         vendor_name_raw: canEditAll ? parseString(editFormData.vendor_name_raw) : undefined,
         invoice_number: canEditAll ? parseString(editFormData.invoice_number) : undefined,
         invoice_date: canEditAll ? parseString(editFormData.invoice_date) : undefined,
@@ -1611,7 +1612,7 @@ export default function Dashboard() {
         `<td ${centerStyle}>${esc(inv.due_date ? new Date(inv.due_date).toLocaleDateString('en-US') : '')}</td>` +
         `<td ${style}>${esc(inv.brand || '')}</td>` +
         `<td ${style}>${esc(inv.po_number || inv.customer_po_number || '')}</td>` +
-        `<td ${style}>${esc(inv.mpo_number || '')}</td>` +
+        `<td ${style}>${esc(inv.mpo_number || inv.mpo_base_number || '')}</td>` +
         `<td ${centerStyle}>${esc(inv.payment_terms || '')}</td>` +
         `<td ${style}>${esc(inv.bank_name || '')}</td>` +
         `<td ${style}>${esc(inv.swift_code || '')}</td>` +
@@ -3429,7 +3430,10 @@ ${dataRows}
 
               {([
                 { title: 'Basic Information', fields: [
-                  { label: 'Vendor Name', field: 'vendor_name_raw', type: 'text' },
+                  { label: 'Vendor', field: 'vendor_id', type: 'select', options: [
+                    { value: '', label: '— Select vendor —' },
+                    ...vendorList.map((vendor) => ({ value: vendor.id, label: vendor.name })),
+                  ] },
                   { label: 'Invoice Number', field: 'invoice_number', type: 'text' },
                   { label: 'Invoice Date', field: 'invoice_date', type: 'date' },
                   { label: 'Due Date', field: 'due_date', type: 'date', required: true },
@@ -3558,7 +3562,18 @@ ${dataRows}
                           {type === 'select' ? (
                             <select
                               value={editFormData[field] || ''}
-                              onChange={(e) => handleEditChange(field, e.target.value)}
+                              onChange={(e) => {
+                                if (field === 'vendor_id') {
+                                  const selectedVendor = vendorList.find((vendor) => vendor.id === e.target.value);
+                                  setEditFormData({
+                                    ...editFormData,
+                                    vendor_id: e.target.value,
+                                    vendor_name_raw: selectedVendor?.name || editFormData.vendor_name_raw,
+                                  });
+                                } else {
+                                  handleEditChange(field, e.target.value);
+                                }
+                              }}
                               disabled={isReadOnly}
                               className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
                               style={{

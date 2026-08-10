@@ -102,7 +102,7 @@ export default function PurchasingWorkbench() {
             {invoices.filter((invoice) => invoice.invoice_lines.length).map((invoice) => (
               <div key={invoice.id} className="rounded-xl overflow-auto" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
                 <div className="p-4 font-semibold">
-                  {invoice.invoice_number} | {invoice.vendor?.name} | {invoice.mpo_number || 'No MPO'}
+                  {invoice.invoice_number} | {invoice.vendor?.name} | {invoice.mpo_number || invoice.mpo_base_number || 'No MPO'}
                 </div>
                 <table className="w-full text-sm">
                   <thead>
@@ -259,7 +259,7 @@ function Doc({ title, invoice }: { title: string; invoice: any }) {
         ['Type', invoice.invoice_type],
         ['Vendor', invoice.vendor?.name],
         ['Amount', `${invoice.currency} ${invoice.total_amount}`],
-        ['MPO', invoice.mpo_number],
+        ['MPO', invoice.mpo_number || invoice.mpo_base_number],
         ['Material', invoice.material_code],
         ['Revision', invoice.revision],
       ].map(([label, value]) => (

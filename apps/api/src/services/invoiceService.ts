@@ -313,6 +313,18 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
 
 const PAYMENT_STAGES = ['POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID', 'PAYMENT_CONFIRMATION_SENT'];
 
+const applyVendorDisplayFallbacks = (invoice: any) => {
+  if (!invoice) return invoice;
+  return {
+    ...invoice,
+    mpo_number: invoice.mpo_number || invoice.mpo_base_number || null,
+    beneficiary_name: invoice.beneficiary_name || invoice.vendor?.beneficiary_name || null,
+    bank_name: invoice.bank_name || invoice.vendor?.bank_name || null,
+    swift_code: invoice.swift_code || invoice.vendor?.swift_code || null,
+    account_number: invoice.account_number || invoice.vendor?.account_number || null,
+  };
+};
+
 const ALL_STAGES = [
   'RECEIVED', 'VALIDATION_PENDING', 'EXCEPTION_FLAGGED', 'ON_HOLD',
   'PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_MLO_ACCOUNT_HOLDER',
@@ -420,7 +432,7 @@ export const getInvoices = async (filters: any, userRole?: string) => {
     },
   });
 
-  return invoices;
+  return invoices.map(applyVendorDisplayFallbacks);
 };
 
 export const getInvoiceById = async (id: string) => {
@@ -442,7 +454,7 @@ export const getInvoiceById = async (id: string) => {
     },
   });
 
-  return invoice;
+  return applyVendorDisplayFallbacks(invoice);
 };
 
 export const updateInvoiceStatus = async (id: string, status: InvoiceStatus, userId: string) => {
@@ -521,7 +533,7 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
   }
 
   // Protected fields that cannot be set via update
-  const protectedFields = ['id', 'created_at', 'updated_at', 'status', 'source', 'approval_tier', 'qb_posted_at', 'vendor_id', 'revision', 'edit_reason'];
+  const protectedFields = ['id', 'created_at', 'updated_at', 'status', 'source', 'approval_tier', 'qb_posted_at', 'revision', 'edit_reason'];
 
   // Once invoice is approved (PENDING_ACCOUNTING or APPROVED), accounting can ONLY edit bank details
   // All other fields are locked to preserve the approved invoice state
@@ -546,6 +558,21 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     if (value === undefined) continue;
     if (protectedFields.includes(key)) continue;
     data[key] = value;
+  }
+
+  if (data.vendor_id && data.vendor_id !== existing.vendor_id) {
+    if (!canFullEdit) {
+      throw new AppError('Only Purchasing, IT Admin, or Superadmin can reassign an invoice vendor', 403);
+    }
+    const selectedVendor = await prisma.vendor.findFirst({
+      where: { id: String(data.vendor_id), is_active: true },
+      select: { id: true, name: true },
+    });
+    if (!selectedVendor) {
+      throw new AppError('Selected vendor was not found or is inactive', 400);
+    }
+    data.vendor_id = selectedVendor.id;
+    data.vendor_name_raw = selectedVendor.name;
   }
 
   // Validate enum fields — skip invalid values to prevent Prisma errors
@@ -586,26 +613,31 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
   }
 
   // Invoice numbers are unique within a vendor/document type, not globally.
-  if (data.invoice_number && data.invoice_number !== existing.invoice_number) {
+  const duplicateCheckInvoiceNumber = data.invoice_number || existing.invoice_number;
+  const duplicateCheckVendorId = data.vendor_id || existing.vendor_id;
+  if (
+    (data.invoice_number && data.invoice_number !== existing.invoice_number) ||
+    (data.vendor_id && data.vendor_id !== existing.vendor_id)
+  ) {
     const duplicate = await prisma.invoice.findFirst({
       where: {
         invoice_number: {
-          equals: String(data.invoice_number).trim(),
+          equals: String(duplicateCheckInvoiceNumber).trim(),
           mode: 'insensitive',
         },
-        vendor_id: existing.vendor_id,
+        vendor_id: duplicateCheckVendorId,
         invoice_type: (data.invoice_type || existing.invoice_type) as any,
         id: { not: id },
       },
       select: { id: true },
     });
     if (duplicate) {
-      throw new AppError(`Invoice number "${data.invoice_number}" already exists`, 400);
+      throw new AppError(`Invoice number "${duplicateCheckInvoiceNumber}" already exists for the selected vendor`, 400);
     }
   }
 
   const materialFields = new Set([
-    'vendor_name_raw', 'invoice_number', 'invoice_type', 'invoice_date', 'total_amount',
+    'vendor_id', 'vendor_name_raw', 'invoice_number', 'invoice_type', 'invoice_date', 'total_amount',
     'currency', 'mpo_number', 'mpo_base_number', 'mpo_order_sequence', 'material_code',
     'material_name', 'qty_shipped', 'beneficiary_name', 'bank_name', 'swift_code', 'account_number',
     'payment_terms', 'customer_po_number'
@@ -756,7 +788,7 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     });
   }
 
-  return invoice;
+  return applyVendorDisplayFallbacks(invoice);
 };
 
 export const checkDuplicate = async (invoiceData: any) => {

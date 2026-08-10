@@ -116,7 +116,7 @@ export default function AccountingReview() {
         `<td ${centerStyle}>${esc(inv.payment_terms || '')}</td>` +
         `<td ${style}>${esc(inv.brand || '')}</td>` +
         `<td ${style}>${esc(inv.po_number || inv.customer_po_number || '')}</td>` +
-        `<td ${style}>${esc(inv.mpo_number || '')}</td>` +
+        `<td ${style}>${esc(inv.mpo_number || inv.mpo_base_number || '')}</td>` +
         `<td ${style}>${esc(inv.bank_name || '')}</td>` +
         `<td ${style}>${esc(inv.swift_code || '')}</td>` +
         `<td ${style}>${esc(inv.account_number || '')}</td>` +

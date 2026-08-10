@@ -31,17 +31,9 @@ import { createChildLogger } from '../utils/logger';
 import { uploadToStorage } from '../services/supabaseStorageService';
 import { syncToHetzner } from '../services/hetznerStorageService';
 import { mistralOCRService } from '../services/mistralOCRService';
+import { createJob, completeJob, failJob, getJob } from '../services/jobStore';
 
 // ─── Async upload job storage ───
-interface UploadJob {
-  id: string;
-  status: 'processing' | 'completed' | 'failed';
-  result?: any;
-  error?: string;
-  createdAt: number;
-}
-const uploadJobs = new Map<string, UploadJob>();
-
 export const uploadInvoice = async (
   req: Request,
   res: Response,
@@ -1144,7 +1136,7 @@ export const confirmOCR = async (
   next: NextFunction
 ) => {
   try {
-    const { invoice_id } = req.params;
+    const invoice_id = req.params.id;
     const {
       invoice_number,
       invoice_date,
@@ -1337,17 +1329,11 @@ export const uploadMadisonInvoiceAsync = async (
       throw new AppError('No file uploaded', 400);
     }
 
-    const jobId = crypto.randomUUID();
+    const jobId = createJob('madison-invoice-upload');
     const fileBuffer = Buffer.from(req.file.buffer);
     const fileName = req.file.originalname;
     const mimeType = req.file.mimetype;
     const user = (req as any).user;
-
-    uploadJobs.set(jobId, {
-      id: jobId,
-      status: 'processing',
-      createdAt: Date.now(),
-    });
 
     // Process in background — reuse the same logic as uploadMadisonInvoice
     // by calling the internal function with a mock req/res
@@ -1375,31 +1361,15 @@ export const uploadMadisonInvoiceAsync = async (
 
         await uploadMadisonInvoice(mockReq, mockRes, mockNext);
 
-        const job = uploadJobs.get(jobId);
-        if (job) {
-          if (resultError) {
-            job.status = 'failed';
-            job.error = resultError;
-          } else if (resultData) {
-            job.status = 'completed';
-            job.result = resultData;
-          } else {
-            job.status = 'failed';
-            job.error = 'No result returned from extraction';
-          }
+        if (resultError) {
+          failJob(jobId, resultError);
+        } else if (resultData) {
+          completeJob(jobId, resultData);
+        } else {
+          failJob(jobId, 'No result returned from extraction');
         }
       } catch (err: any) {
-        const job = uploadJobs.get(jobId);
-        if (job) {
-          job.status = 'failed';
-          job.error = err.message || String(err);
-        }
-      }
-
-      // Clean up old jobs (older than 10 minutes)
-      const now = Date.now();
-      for (const [id, j] of uploadJobs.entries()) {
-        if (now - j.createdAt > 600000) uploadJobs.delete(id);
+        failJob(jobId, err.message || String(err));
       }
     });
 
@@ -1416,7 +1386,7 @@ export const getUploadJobStatus = async (
   next: NextFunction
 ) => {
   try {
-    const job = uploadJobs.get(req.params.jobId);
+    const job = getJob(req.params.jobId);
     if (!job) {
       throw new AppError('Job not found', 404);
     }

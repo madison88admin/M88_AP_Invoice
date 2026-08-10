@@ -61,7 +61,15 @@ export const invoiceApi = {
     const maxAttempts = 60;
     for (let i = 0; i < maxAttempts; i++) {
       await new Promise(resolve => setTimeout(resolve, 5000));
-      const pollRes = await api.get(`/api/invoices/upload-jobs/${jobId}`, { timeout: 10000 });
+      let pollRes;
+      try {
+        pollRes = await api.get(`/api/invoices/upload-jobs/${jobId}`, { timeout: 10000 });
+      } catch (error: any) {
+        if (error?.response?.status === 404) {
+          throw new Error('The OCR job is no longer available. The API may have restarted; please upload the file again.');
+        }
+        throw error;
+      }
       const job = pollRes.data;
 
       if (job.status === 'completed') {

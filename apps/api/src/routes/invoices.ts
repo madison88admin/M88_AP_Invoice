@@ -16,9 +16,16 @@ const router = Router() as Router;
 router.use(authenticate);
 
 // Invoice upload endpoints (auth + role required)
-router.post('/upload', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN, UserRole.INVOICE_UPLOADER), upload.single('file'), uploadController.uploadInvoice);
-router.post('/upload-madison', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN, UserRole.INVOICE_UPLOADER), upload.single('file'), uploadController.uploadMadisonInvoice);
-router.post('/upload-madison-async', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN, UserRole.INVOICE_UPLOADER), upload.single('file'), uploadController.uploadMadisonInvoiceAsync);
+const invoiceUploadRoles = [
+  UserRole.PURCHASING_COORDINATOR,
+  UserRole.ACCOUNTING_ASSOCIATE,
+  UserRole.IT_ADMIN,
+  UserRole.INVOICE_UPLOADER,
+] as const;
+
+router.post('/upload', authorize(...invoiceUploadRoles), upload.single('file'), uploadController.uploadInvoice);
+router.post('/upload-madison', authorize(...invoiceUploadRoles), upload.single('file'), uploadController.uploadMadisonInvoice);
+router.post('/upload-madison-async', authorize(...invoiceUploadRoles), upload.single('file'), uploadController.uploadMadisonInvoiceAsync);
 router.get('/upload-jobs/:jobId', uploadController.getUploadJobStatus);
 
 // DSRS v7.3 async PO audit polling endpoint — informational only, non-blocking
@@ -50,7 +57,7 @@ router.post('/:id/check-nextgen', authorize(UserRole.PURCHASING_COORDINATOR, Use
 router.post('/:id/check-nextgen-sync', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), validationController.checkNextGenChangesController);
 router.get('/jobs/:jobId', validationController.getJobStatusController);
 router.get('/bank-change-requests', authenticate, invoiceController.getBankChangeRequests);
-router.post('/', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), invoiceController.createInvoice);
+router.post('/', authorize(...invoiceUploadRoles), invoiceController.createInvoice);
 router.get('/', invoiceController.getInvoices);
 router.get('/metadata/payment-terms', authenticate, invoiceController.getDistinctPaymentTerms);
 router.get('/:id', invoiceController.getInvoiceById);

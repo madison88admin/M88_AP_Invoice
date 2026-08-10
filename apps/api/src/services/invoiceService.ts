@@ -162,7 +162,10 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
 
   const existingInvoice = await prisma.invoice.findFirst({
     where: {
-      invoice_number: String(invoice_number).trim(),
+      invoice_number: {
+        equals: String(invoice_number).trim(),
+        mode: 'insensitive',
+      },
       vendor_id: resolvedVendorId,
       invoice_type: invoice_type as any,
     },
@@ -586,7 +589,10 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
   if (data.invoice_number && data.invoice_number !== existing.invoice_number) {
     const duplicate = await prisma.invoice.findFirst({
       where: {
-        invoice_number: data.invoice_number,
+        invoice_number: {
+          equals: String(data.invoice_number).trim(),
+          mode: 'insensitive',
+        },
         vendor_id: existing.vendor_id,
         invoice_type: (data.invoice_type || existing.invoice_type) as any,
         id: { not: id },
@@ -763,7 +769,10 @@ export const checkDuplicate = async (invoiceData: any) => {
 
   const existingInvoices = await prisma.invoice.findMany({
     where: {
-      invoice_number,
+      invoice_number: {
+        equals: String(invoice_number || '').trim(),
+        mode: 'insensitive',
+      },
       vendor_id,
       total_amount: parseFloat(amount),
       invoice_date: new Date(invoice_date),

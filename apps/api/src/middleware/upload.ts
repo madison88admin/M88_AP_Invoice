@@ -10,7 +10,7 @@ const fileFilter = (req: any, file: any, cb: any) => {
   if (extname) {
     return cb(null, true);
   } else {
-    cb(new Error('Only images, PDF, XML, and UBL invoice files are allowed'));
+    cb(new Error('Only PDF, JPG, PNG, XML, and UBL invoice files are allowed'));
   }
 };
 

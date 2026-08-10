@@ -104,6 +104,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
               originalFormData: JSON.parse(JSON.stringify(extractedFormData)),
               ocrRawData: {
                 extraction: result.extraction,
+                storage_path: result.storage_path,
                 bank_info: result.extraction.bank_details || {},
                 signatures: result.extraction.signatures || [],
                 multi_invoice_source: {
@@ -151,6 +152,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
         setConsensus(response.data.consensus);
         setOcrRawData({
           extraction,
+          storage_path: response.data.storage_path,
           bank_info: extraction.bank_details || {
             bank_name: extraction.bank_name || '',
             swift_code: extraction.swift_code || '',
@@ -187,7 +189,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
         console.log('[DEBUG] success:', response.data.success);
         console.log('[DEBUG] extraction:', response.data.extraction);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('[DEBUG] OCR extraction failed:', error);
       // Fall back to empty form on error
       setFormData({
@@ -213,6 +215,8 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
         notes: '',
         priority: 'medium',
       });
+      const serverMessage = error?.response?.data?.message || error?.response?.data?.error?.message;
+      alert(serverMessage || error?.message || 'OCR extraction failed. Please try uploading the file again.');
     } finally {
       setIsExtracting(false);
     }
@@ -333,6 +337,8 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
           ocr_raw_data: sourceOcrRawData || undefined,
           accounting_preapproved: user?.role === 'ACCOUNTING_ASSOCIATE' && accountingPreapproved,
           approval_evidence_confirmed: user?.role === 'ACCOUNTING_ASSOCIATE' && accountingPreapproved,
+          raw_file_url: sourceOcrRawData?.storage_path || undefined,
+          pdf_path: sourceOcrRawData?.storage_path || undefined,
         };
       };
 
@@ -435,7 +441,16 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
         ocr_raw_data: ocrRawData || undefined,
         accounting_preapproved: user?.role === 'ACCOUNTING_ASSOCIATE' && accountingPreapproved,
         approval_evidence_confirmed: user?.role === 'ACCOUNTING_ASSOCIATE' && accountingPreapproved,
+        raw_file_url: ocrRawData?.storage_path || undefined,
+        pdf_path: ocrRawData?.storage_path || undefined,
       };
+
+      const parsedAmount = Number(invoicePayload.total_amount);
+      if (!formData.vendorName.trim()) throw new Error('Vendor name is required.');
+      if (!formData.invoiceNumber.trim()) throw new Error('Invoice number is required.');
+      if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+        throw new Error('Enter a valid invoice amount greater than zero.');
+      }
 
       const response = await invoiceApi.create(invoicePayload);
       const createdInvoice = response.data;
@@ -647,7 +662,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
             {/* Header */}
             <div className="mb-6">
               <h2 className="text-2xl font-bold mb-2" style={{ color: 'var(--text-primary)' }}>Upload Invoice</h2>
-              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Supported formats: PDF, PNG, JPG, XLSX</p>
+              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Supported formats: PDF, PNG, JPG, XML, UBL</p>
             </div>
 
             {/* Drag & Drop Zone */}
@@ -695,7 +710,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                 </button>
                 <input
                   type="file"
-                  accept=".pdf,.png,.jpg,.jpeg,.xlsx"
+                  accept=".pdf,.png,.jpg,.jpeg,.xml,.ubl,application/xml,text/xml"
                   onChange={(e) => e.target.files?.[0] && handleFileSelect(e.target.files[0])}
                   className="hidden"
                   id="file-input"
@@ -1216,8 +1231,8 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                   >
                     <option value="" style={{ background: 'var(--input-bg)' }}>Select category</option>
                     <option value="TRIMS" style={{ background: 'var(--input-bg)' }}>Trims</option>
-                    <option value="YARN_FABRIC" style={{ background: 'var(--input-bg)' }}>Yarn / Fabric</option>
-                    <option value="SAMPLE_PROTO" style={{ background: 'var(--input-bg)' }}>Sample</option>
+                    <option value="YARN" style={{ background: 'var(--input-bg)' }}>Yarn / Fabric</option>
+                    <option value="SAMPLE_CHARGES" style={{ background: 'var(--input-bg)' }}>Sample</option>
                     <option value="SHIPPING_FREIGHT" style={{ background: 'var(--input-bg)' }}>Shipping / Freight</option>
                     <option value="LAB_TESTING" style={{ background: 'var(--input-bg)' }}>Lab Testing</option>
                     <option value="FACTORY_AUDIT" style={{ background: 'var(--input-bg)' }}>Factory Audit</option>

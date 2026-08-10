@@ -93,6 +93,7 @@ export default function InvoiceUpload() {
   const [vendorSuggestions, setVendorSuggestions] = useState<any[]>([]);
   const [selectedVendor, setSelectedVendor] = useState<string>('');
   const [accountingPreapproved, setAccountingPreapproved] = useState(false);
+  const [notes, setNotes] = useState('');
 
   const handleFileSelect = useCallback((selectedFile: File) => {
     setFile(selectedFile);
@@ -102,6 +103,7 @@ export default function InvoiceUpload() {
     setRequiresManualVendor(false);
     setSuccess(false);
     setAccountingPreapproved(false);
+    setNotes('');
   }, []);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -315,6 +317,7 @@ export default function InvoiceUpload() {
     setCorrectionSaved(false);
     setVendorSuggestions([]);
     setSelectedVendor('');
+    setNotes('');
   };
 
   if (success) {
@@ -683,8 +686,8 @@ export default function InvoiceUpload() {
           <div>
             <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Notes</label>
             <textarea
-              value={''}
-              onChange={() => {}}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
               className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
               style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
               rows={2}

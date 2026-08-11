@@ -33,7 +33,8 @@ const APPROVAL_ROLE_ORDER = [
 ];
 
 const orderedSignatures = (invoice: MockInvoice) => (invoice.signatures || [])
-  .filter(signature => !signature.ocr_detected && !signature.invalidated_at)
+  .filter(signature => !signature.ocr_detected &&
+    (!signature.invalidated_at || signature.approval_status === 'RECONFIRMATION_REQUIRED'))
   .sort((a, b) => APPROVAL_ROLE_ORDER.indexOf(a.signatory_role) - APPROVAL_ROLE_ORDER.indexOf(b.signatory_role));
 
 export default function ApprovalInbox() {
@@ -67,6 +68,11 @@ export default function ApprovalInbox() {
     // Find the first unsigned signature (sequential enforcement — signatures are in route order)
     const firstPending = orderedSignatures(invoice).find(s => !s.signed_at);
     if (!firstPending) return false;
+    if (
+      firstPending.approval_status === 'RECONFIRMATION_REQUIRED' &&
+      firstPending.signatory_name &&
+      firstPending.signatory_name.trim().toLowerCase() !== user?.name?.trim().toLowerCase()
+    ) return false;
     const userSignatoryRoles = user ? mapUserRoleToSignatoryRoles(user.role) : [];
     return userSignatoryRoles.length > 0 ? userSignatoryRoles.includes(firstPending.signatory_role) : false;
   }).sort((a, b) => {

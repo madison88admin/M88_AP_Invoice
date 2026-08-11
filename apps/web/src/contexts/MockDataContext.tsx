@@ -1,7 +1,7 @@
 ﻿// Real-data provider that replaces the previous mock-data context.
 // It fetches live data from the backend API and delegates mutations to the API.
 
-import { createContext, useContext, useState, ReactNode, useCallback, useEffect } from 'react';
+import { createContext, useContext, useState, ReactNode, useCallback, useEffect, useRef } from 'react';
 import {
   MOCK_INVOICES,
   MOCK_VENDORS,
@@ -216,6 +216,7 @@ export const MockDataProvider = ({ children }: MockDataProviderProps) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const refreshInFlight = useRef(false);
 
   // Only fetch payment batches for roles that have permission
   const canFetchPaymentBatches = user && ['ACCOUNTING_SUPERVISOR', 'IT_ADMIN'].includes(user.role);
@@ -224,6 +225,8 @@ export const MockDataProvider = ({ children }: MockDataProviderProps) => {
 
   const refresh = useCallback(async (silent = false) => {
     if (!isAuthenticated) return;
+    if (refreshInFlight.current) return;
+    refreshInFlight.current = true;
     try {
       if (silent) setIsRefreshing(true); else setLoading(true);
       setError(null);
@@ -250,14 +253,24 @@ export const MockDataProvider = ({ children }: MockDataProviderProps) => {
     } finally {
       setLoading(false);
       setIsRefreshing(false);
+      refreshInFlight.current = false;
     }
   }, [isAuthenticated, canFetchPaymentBatches, skipInvoiceFetch]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
     refresh();
-    const interval = setInterval(() => refresh(true), 30000);
-    return () => clearInterval(interval);
+    const interval = setInterval(() => refresh(true), 10000);
+    const syncWhenVisible = () => {
+      if (document.visibilityState === 'visible') refresh(true);
+    };
+    window.addEventListener('focus', syncWhenVisible);
+    document.addEventListener('visibilitychange', syncWhenVisible);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', syncWhenVisible);
+      document.removeEventListener('visibilitychange', syncWhenVisible);
+    };
   }, [refresh, isAuthenticated]);
 
   const updateInvoice = useCallback((id: string, updates: Partial<MockInvoice>) => {

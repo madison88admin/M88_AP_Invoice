@@ -605,8 +605,14 @@ export async function approveInvoice(
     throw new AppError('User does not have approval authority', 403);
   }
 
+  const workflowSignatures = invoice.signatures.filter((sig: any) =>
+    !sig.ocr_detected &&
+    sig.invoice_revision === invoice.revision &&
+    sig.approval_status !== 'SUPERSEDED'
+  );
+
   // Find the first unsigned signature matching any allowed role
-  const pendingSignature = invoice.signatures.find(
+  const pendingSignature = workflowSignatures.find(
     (sig: any) => signatoryRoles.includes(sig.signatory_role) && !sig.signed_at
   );
 
@@ -614,8 +620,16 @@ export async function approveInvoice(
     throw new AppError('No pending approval found for this role', 400);
   }
 
+  if (
+    pendingSignature.approval_status === 'RECONFIRMATION_REQUIRED' &&
+    pendingSignature.signatory_name &&
+    pendingSignature.signatory_name.trim().toLowerCase() !== signerName.trim().toLowerCase()
+  ) {
+    throw new AppError(`This returned invoice is assigned to ${pendingSignature.signatory_name}`, 403);
+  }
+
   // Enforce sequential signing: all signatures created before this one must be signed
-  const sortedSignatures = [...invoice.signatures].sort(
+  const sortedSignatures = [...workflowSignatures].sort(
     (a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
   );
   const pendingIndex = sortedSignatures.findIndex((s: any) => s.id === pendingSignature.id);
@@ -679,11 +693,11 @@ export async function approveInvoice(
     routeOrder = approvalRoute.map((step) => step.role);
   } catch {
     // Fallback: use creation order of remaining signatures if route can't be re-computed
-    routeOrder = invoice.signatures
+    routeOrder = workflowSignatures
       .filter((sig: any) => !sig.signed_at && sig.id !== pendingSignature.id)
       .map((sig: any) => sig.signatory_role);
   }
-  const remainingSignatures = invoice.signatures
+  const remainingSignatures = workflowSignatures
     .filter((sig: any) => !sig.signed_at && sig.id !== pendingSignature.id)
     .sort((a: any, b: any) => {
       const indexA = routeOrder.indexOf(a.signatory_role);
@@ -1069,23 +1083,33 @@ export async function returnInvoice(
   });
   if (!invoice) throw new AppError('Invoice not found', 404);
 
+  // Only digital workflow signatures participate in returns. OCR signatures are
+  // source-document evidence and must never become the return owner.
+  const workflowSignatures = invoice.signatures.filter((sig: any) =>
+    !sig.ocr_detected &&
+    sig.invoice_revision === invoice.revision &&
+    sig.approval_status !== 'SUPERSEDED'
+  );
+
   const allowedRoles = mapUserRoleToSignatoryRoles(userRole);
-  const current = invoice.signatures.find((sig: any) =>
+  const current = workflowSignatures.find((sig: any) =>
     allowedRoles.includes(sig.signatory_role) && !sig.signed_at && sig.approval_status !== 'SUPERSEDED'
   );
   if (!current) throw new AppError('No active approval is assigned to this user', 403);
 
-  const currentIndex = invoice.signatures.findIndex((sig: any) => sig.id === current.id);
+  const currentIndex = workflowSignatures.findIndex((sig: any) => sig.id === current.id);
   let target = targetRole
-    ? invoice.signatures.find((sig: any) => sig.signatory_role === targetRole)
-    : [...invoice.signatures.slice(0, currentIndex)].reverse().find((sig: any) => sig.signed_at);
+    ? workflowSignatures.find((sig: any) => sig.signatory_role === targetRole && sig.signed_at)
+    : [...workflowSignatures.slice(0, currentIndex)].reverse().find((sig: any) => sig.signed_at);
   if (!target && userRole !== 'PURCHASING_COORDINATOR') {
-    target = invoice.signatures.find((sig: any) => sig.signatory_role === SignatoryRole.COORDINATOR);
+    target = workflowSignatures.find((sig: any) =>
+      sig.signatory_role === SignatoryRole.COORDINATOR && sig.signed_at
+    );
   }
   if (!target) throw new AppError('No prior approver is available for return', 400);
 
-  const targetIndex = invoice.signatures.findIndex((sig: any) => sig.id === target!.id);
-  const affectedIds = invoice.signatures.slice(targetIndex).map((sig: any) => sig.id);
+  const targetIndex = workflowSignatures.findIndex((sig: any) => sig.id === target!.id);
+  const affectedIds = workflowSignatures.slice(targetIndex).map((sig: any) => sig.id);
   await prisma.signature.updateMany({
     where: { id: { in: affectedIds } },
     data: {

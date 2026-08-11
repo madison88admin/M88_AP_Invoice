@@ -46,8 +46,8 @@ export const approveInvoiceController = async (
 ) => {
   try {
     const { id } = req.params;
-    const { signerName } = req.body;
-    const effectiveSignerName = signerName || req.user!.name || req.user!.email;
+    // Signer identity must come from the authenticated session, never request data.
+    const effectiveSignerName = req.user!.name || req.user!.email;
     const result = await approveInvoice(
       id,
       req.user!.id,

@@ -9,6 +9,7 @@ const prismaMock = vi.hoisted(() => ({
   },
   invoice: {
     findUnique: vi.fn(),
+    update: vi.fn(),
   },
   auditLog: {
     create: vi.fn(),
@@ -46,6 +47,7 @@ describe('exception workflow smoke test', () => {
       status: 'RESOLVED',
     });
     prismaMock.auditLog.create.mockResolvedValue({});
+    prismaMock.invoice.update.mockResolvedValue({ status: 'VALIDATION_PENDING' });
     validateInvoiceMock.mockResolvedValue({
       invoice_id: flaggedInvoice.id,
       passed: true,
@@ -54,45 +56,37 @@ describe('exception workflow smoke test', () => {
     });
   });
 
-  it('resolves the final exception, revalidates once, and advances to approval', async () => {
+  it('resolves the final exception and makes the invoice ready for approval', async () => {
     prismaMock.exception.findUnique.mockResolvedValue(pendingException);
     prismaMock.exception.count.mockResolvedValueOnce(0);
     prismaMock.exception.findMany.mockResolvedValueOnce([]);
-    prismaMock.invoice.findUnique.mockResolvedValue({
-      status: 'PENDING_COORDINATOR',
-    });
-
     const result = await resolveException(
       pendingException.id,
       'Corrected amount and saved invoice',
       'smoke-user'
     );
 
-    expect(validateInvoiceMock).toHaveBeenCalledTimes(1);
-    expect(validateInvoiceMock).toHaveBeenCalledWith(flaggedInvoice.id, { skipAutoAdvance: true });
+    expect(validateInvoiceMock).not.toHaveBeenCalled();
+    expect(prismaMock.invoice.update).toHaveBeenCalledWith({
+      where: { id: flaggedInvoice.id },
+      data: { status: 'VALIDATION_PENDING' },
+    });
     expect(result.revalidation).toMatchObject({
-      triggered: true,
+      triggered: false,
       passed: true,
-      status: 'PENDING_COORDINATOR',
+      status: 'VALIDATION_PENDING',
       exception_count: 0,
     });
     expect(prismaMock.auditLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ action: 'AUTO_REVALIDATION_COMPLETED' }),
+        data: expect.objectContaining({ action: 'EXCEPTIONS_ALL_RESOLVED' }),
       })
     );
   });
 
-  it('returns the complete new exception outcome instead of reporting a match', async () => {
+  it('keeps the invoice flagged while another exception remains', async () => {
     prismaMock.exception.findUnique.mockResolvedValue(pendingException);
-    prismaMock.exception.count.mockResolvedValueOnce(0);
-    prismaMock.exception.findMany.mockResolvedValueOnce([
-      { reason: 'AMOUNT_MISMATCH', detail: 'Amount differs' },
-      { reason: 'MISSING_BANK_INFO', detail: 'Bank data missing' },
-    ]);
-    prismaMock.invoice.findUnique.mockResolvedValue({
-      status: 'EXCEPTION_FLAGGED',
-    });
+    prismaMock.exception.count.mockResolvedValueOnce(1);
 
     const result = await resolveException(
       pendingException.id,
@@ -100,17 +94,12 @@ describe('exception workflow smoke test', () => {
       'smoke-user'
     );
 
-    expect(validateInvoiceMock).toHaveBeenCalledTimes(1);
-    expect(result.revalidation).toMatchObject({
-      triggered: true,
-      passed: false,
-      status: 'EXCEPTION_FLAGGED',
-      exception_count: 2,
-    });
-    expect(result.revalidation?.message).toContain('2 consolidated exception');
+    expect(validateInvoiceMock).not.toHaveBeenCalled();
+    expect(prismaMock.invoice.update).not.toHaveBeenCalled();
+    expect(result.revalidation).toBeUndefined();
   });
 
-  it('waives the final exception and automatically revalidates into approval', async () => {
+  it('waives the final exception and makes the invoice ready for approval', async () => {
     prismaMock.exception.findUnique.mockResolvedValue(pendingException);
     prismaMock.exception.update.mockResolvedValue({
       ...pendingException,
@@ -118,21 +107,17 @@ describe('exception workflow smoke test', () => {
     });
     prismaMock.exception.count.mockResolvedValueOnce(0);
     prismaMock.exception.findMany.mockResolvedValueOnce([]);
-    prismaMock.invoice.findUnique.mockResolvedValue({
-      status: 'PENDING_MANAGER',
-    });
-
     const result = await waiveException(
       pendingException.id,
       'Approved business exception',
       'smoke-user'
     );
 
-    expect(validateInvoiceMock).toHaveBeenCalledTimes(1);
+    expect(validateInvoiceMock).not.toHaveBeenCalled();
     expect(result.revalidation).toMatchObject({
-      triggered: true,
+      triggered: false,
       passed: true,
-      status: 'PENDING_MANAGER',
+      status: 'VALIDATION_PENDING',
       exception_count: 0,
     });
   });

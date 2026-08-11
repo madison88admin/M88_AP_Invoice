@@ -314,7 +314,17 @@ export default function Dashboard() {
     if (quickFilter === 'all') return true;
     if (quickFilter === 'returned') {
       const sigs = (inv as any).signatures || [];
-      return sigs.some((s: any) => s.approval_status === 'RECONFIRMATION_REQUIRED');
+      const returnedOwner = sigs.find((s: any) =>
+        !s.ocr_detected &&
+        !s.signed_at &&
+        s.approval_status === 'RECONFIRMATION_REQUIRED' &&
+        (!inv.current_stage || s.signatory_role === inv.current_stage)
+      );
+      return Boolean(
+        returnedOwner?.signatory_name &&
+        user?.name &&
+        returnedOwner.signatory_name.trim().toLowerCase() === user.name.trim().toLowerCase()
+      );
     }
     if (quickFilter === 'urgent') {
       const timestamps = (inv as any).stage_timestamps || [];
@@ -325,6 +335,17 @@ export default function Dashboard() {
     }
     return true;
   });
+
+  const returnedToMeCount = filteredInvoices.filter(inv => {
+    const returnedOwner = ((inv as any).signatures || []).find((s: any) =>
+      !s.ocr_detected &&
+      !s.signed_at &&
+      s.approval_status === 'RECONFIRMATION_REQUIRED' &&
+      (!inv.current_stage || s.signatory_role === inv.current_stage)
+    );
+    return Boolean(returnedOwner?.signatory_name && user?.name &&
+      returnedOwner.signatory_name.trim().toLowerCase() === user.name.trim().toLowerCase());
+  }).length;
 
   // Count how many filters are currently active (for the "Clear" affordance)
   const activeFilterCount = Object.values(filters).filter(v => v !== undefined && v !== '').length;
@@ -385,6 +406,14 @@ export default function Dashboard() {
       }
     }
   }, [location.state, location.search, invoices, navigate]);
+
+  // Keep an open invoice detail panel synchronized with background refreshes.
+  useEffect(() => {
+    if (!selectedInvoice) return;
+    const latest = invoices.find(invoice => invoice.id === selectedInvoice.id);
+    if (latest && latest !== selectedInvoice) setSelectedInvoice(latest);
+    if (!latest) setSelectedInvoice(null);
+  }, [invoices, selectedInvoice]);
 
 
   // Count-up animations for each KPI - calculate from live invoice data
@@ -1822,9 +1851,9 @@ ${dataRows}
                 >
                   <AlertTriangle className="h-3 w-3" strokeWidth={2} />
                   Returned to Me
-                  {quickFilteredInvoices.length > 0 && quickFilter === 'returned' && (
+                  {returnedToMeCount > 0 && (
                     <span className="ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: 'rgba(0,0,0,0.2)' }}>
-                      {quickFilteredInvoices.length}
+                      {returnedToMeCount}
                     </span>
                   )}
                 </button>

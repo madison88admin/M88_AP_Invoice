@@ -364,6 +364,19 @@ export const getDistinctPaymentTerms = async (): Promise<string[]> => {
   return [...new Set(terms)];
 };
 
+export const getDistinctBrands = async (): Promise<string[]> => {
+  const results = await prisma.invoice.findMany({
+    where: { brand: { not: null } },
+    select: { brand: true },
+    distinct: ['brand'],
+  });
+  const brands = results
+    .map((r) => r.brand)
+    .filter((b): b is string => !!b && b.trim().length > 0)
+    .sort((a, b) => a.localeCompare(b));
+  return [...new Set(brands)];
+};
+
 export const getInvoices = async (filters: any, userRole?: string) => {
   const where: any = {};
 

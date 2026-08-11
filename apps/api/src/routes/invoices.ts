@@ -61,6 +61,7 @@ router.get('/bank-change-requests', authenticate, invoiceController.getBankChang
 router.post('/', authorize(...invoiceUploadRoles), invoiceController.createInvoice);
 router.get('/', invoiceController.getInvoices);
 router.get('/metadata/payment-terms', authenticate, invoiceController.getDistinctPaymentTerms);
+router.get('/metadata/brands', authenticate, invoiceController.getDistinctBrands);
 router.get('/:id', invoiceController.getInvoiceById);
 router.patch('/:id/status', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), invoiceController.updateInvoiceStatus);
 router.patch('/:id', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.PURCHASING_MANAGER, UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), invoiceController.updateInvoice);

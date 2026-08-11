@@ -232,14 +232,17 @@ export async function getOperationalReports() {
   };
 }
 
-export async function getInvoiceVolumeReport(startDate: Date, endDate: Date): Promise<InvoiceVolumeReport[]> {
-  const invoices = await prisma.invoice.findMany({
-    where: {
-      created_at: {
-        gte: startDate,
-        lte: endDate,
-      },
+export async function getInvoiceVolumeReport(startDate: Date, endDate: Date, brand?: string): Promise<InvoiceVolumeReport[]> {
+  const where: any = {
+    created_at: {
+      gte: startDate,
+      lte: endDate,
     },
+  };
+  if (brand) where.brand = { contains: brand, mode: 'insensitive' };
+
+  const invoices = await prisma.invoice.findMany({
+    where,
     select: {
       created_at: true,
       status: true,
@@ -292,36 +295,47 @@ export async function getInvoiceVolumeReport(startDate: Date, endDate: Date): Pr
   return Array.from(reportMap.values()).sort((a, b) => a.date.localeCompare(b.date));
 }
 
-export async function getPaymentStatusReport(): Promise<PaymentStatusReport[]> {
-  const paymentBatches = await prisma.paymentBatch.findMany({
-    select: {
-      status: true,
-      total_amount: true,
-    },
+export async function getPaymentStatusReport(brand?: string, startDate?: Date, endDate?: Date): Promise<PaymentStatusReport[]> {
+  const invoiceWhere: any = {};
+  if (brand) invoiceWhere.brand = { contains: brand, mode: 'insensitive' };
+  if (startDate || endDate) {
+    invoiceWhere.created_at = {};
+    if (startDate) invoiceWhere.created_at.gte = startDate;
+    if (endDate) invoiceWhere.created_at.lte = endDate;
+  }
+
+  const invoices = await prisma.invoice.findMany({
+    where: invoiceWhere,
+    select: { status: true, total_amount: true },
   });
 
   const reportMap = new Map<string, PaymentStatusReport>();
 
-  paymentBatches.forEach(batch => {
-    if (!reportMap.has(batch.status)) {
-      reportMap.set(batch.status, {
-        status: batch.status,
-        count: 0,
-        total_amount: 0,
-      });
+  invoices.forEach(invoice => {
+    const statusKey = invoice.status;
+    if (!reportMap.has(statusKey)) {
+      reportMap.set(statusKey, { status: statusKey, count: 0, total_amount: 0 });
     }
-
-    const report = reportMap.get(batch.status)!;
+    const report = reportMap.get(statusKey)!;
     report.count++;
-    report.total_amount += Number(batch.total_amount);
+    report.total_amount += Number(invoice.total_amount);
   });
 
   return Array.from(reportMap.values());
 }
 
-export async function getVendorSpendingReport(limit: number = 20): Promise<VendorSpendingReport[]> {
+export async function getVendorSpendingReport(limit: number = 20, brand?: string, startDate?: Date, endDate?: Date): Promise<VendorSpendingReport[]> {
+  const where: any = {};
+  if (brand) where.brand = { contains: brand, mode: 'insensitive' };
+  if (startDate || endDate) {
+    where.created_at = {};
+    if (startDate) where.created_at.gte = startDate;
+    if (endDate) where.created_at.lte = endDate;
+  }
+
   const invoices = await prisma.invoice.groupBy({
     by: ['vendor_id'],
+    where,
     _count: {
       id: true,
     },
@@ -362,14 +376,17 @@ export async function getVendorSpendingReport(limit: number = 20): Promise<Vendo
     }));
 }
 
-export async function getExceptionRateReport(startDate: Date, endDate: Date): Promise<ExceptionRateReport[]> {
-  const invoices = await prisma.invoice.findMany({
-    where: {
-      created_at: {
-        gte: startDate,
-        lte: endDate,
-      },
+export async function getExceptionRateReport(startDate: Date, endDate: Date, brand?: string): Promise<ExceptionRateReport[]> {
+  const where: any = {
+    created_at: {
+      gte: startDate,
+      lte: endDate,
     },
+  };
+  if (brand) where.brand = { contains: brand, mode: 'insensitive' };
+
+  const invoices = await prisma.invoice.findMany({
+    where,
     include: {
       exceptions: true,
     },
@@ -402,7 +419,16 @@ export async function getExceptionRateReport(startDate: Date, endDate: Date): Pr
   return Array.from(reportMap.values()).sort((a, b) => a.date.localeCompare(b.date));
 }
 
-export async function getKPIMetrics(): Promise<KPIMetrics> {
+export async function getKPIMetrics(brand?: string, startDate?: Date, endDate?: Date): Promise<KPIMetrics> {
+  // Build where clause from filters
+  const where: any = {};
+  if (brand) where.brand = { contains: brand, mode: 'insensitive' };
+  if (startDate || endDate) {
+    where.created_at = {};
+    if (startDate) where.created_at.gte = startDate;
+    if (endDate) where.created_at.lte = endDate;
+  }
+
   // All pending approval statuses (3-tier system)
   const pendingApprovalStatuses = [
     InvoiceStatus.PENDING_COORDINATOR,
@@ -413,6 +439,13 @@ export async function getKPIMetrics(): Promise<KPIMetrics> {
     InvoiceStatus.PENDING_POLLY,
     InvoiceStatus.PENDING_ACCOUNTING,
   ];
+
+  const pendingWhere = { ...where, status: { in: pendingApprovalStatuses as any[] } };
+  const approvedWhere = { ...where, status: InvoiceStatus.APPROVED };
+  const rejectedWhere = { ...where, status: InvoiceStatus.REJECTED };
+  const postedWhere = { ...where, status: InvoiceStatus.POSTED_TO_QB };
+  const paidWhere = { ...where, status: InvoiceStatus.PAID };
+  const onHoldWhere = { ...where, status: InvoiceStatus.ON_HOLD };
 
   const [
     totalInvoices,
@@ -425,15 +458,15 @@ export async function getKPIMetrics(): Promise<KPIMetrics> {
     paidInvoices,
     onHoldInvoices,
   ] = await Promise.all([
-    prisma.invoice.count(),
-    prisma.invoice.count({ where: { status: { in: pendingApprovalStatuses as any[] } } }),
-    prisma.exception.count({ where: { resolved_at: null } }),
+    prisma.invoice.count({ where }),
+    prisma.invoice.count({ where: pendingWhere }),
+    prisma.exception.count({ where: { resolved_at: null, invoice: where } }),
     prisma.paymentBatch.count({ where: { status: 'DRAFT' } }),
-    prisma.invoice.count({ where: { status: InvoiceStatus.APPROVED } }),
-    prisma.invoice.count({ where: { status: InvoiceStatus.REJECTED } }),
-    prisma.invoice.count({ where: { status: InvoiceStatus.POSTED_TO_QB } }),
-    prisma.invoice.count({ where: { status: InvoiceStatus.PAID } }),
-    prisma.invoice.count({ where: { status: InvoiceStatus.ON_HOLD } }),
+    prisma.invoice.count({ where: approvedWhere }),
+    prisma.invoice.count({ where: rejectedWhere }),
+    prisma.invoice.count({ where: postedWhere }),
+    prisma.invoice.count({ where: paidWhere }),
+    prisma.invoice.count({ where: onHoldWhere }),
   ]);
 
   const scheduledPaymentsData = await prisma.paymentBatch.findMany({
@@ -448,7 +481,7 @@ export async function getKPIMetrics(): Promise<KPIMetrics> {
 
   // Calculate average processing time (days from creation to approval)
   const approvedInvoicesWithDates = await prisma.invoice.findMany({
-    where: { status: InvoiceStatus.APPROVED },
+    where: approvedWhere,
     select: {
       created_at: true,
       updated_at: true,
@@ -466,9 +499,9 @@ export async function getKPIMetrics(): Promise<KPIMetrics> {
 
   // Calculate total amounts by status
   const [approvedSum, postedSum, paidSum] = await Promise.all([
-    prisma.invoice.aggregate({ _sum: { total_amount: true }, where: { status: InvoiceStatus.APPROVED } }),
-    prisma.invoice.aggregate({ _sum: { total_amount: true }, where: { status: InvoiceStatus.POSTED_TO_QB } }),
-    prisma.invoice.aggregate({ _sum: { total_amount: true }, where: { status: InvoiceStatus.PAID } }),
+    prisma.invoice.aggregate({ _sum: { total_amount: true }, where: approvedWhere }),
+    prisma.invoice.aggregate({ _sum: { total_amount: true }, where: postedWhere }),
+    prisma.invoice.aggregate({ _sum: { total_amount: true }, where: paidWhere }),
   ]);
 
   return {

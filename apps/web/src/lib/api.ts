@@ -116,7 +116,7 @@ export const invoiceApi = {
     }
     throw new Error('NextGen check timed out');
   },
-  schedulePayment: (id: string, paymentDate: string) => api.post(`/api/invoices/${id}/schedule-payment`, { paymentDate }),
+  schedulePayment: (id: string, paymentDate?: string) => api.post(`/api/invoices/${id}/schedule-payment`, paymentDate ? { paymentDate } : {}),
   sendPaymentConfirmation: (id: string) => api.post(`/api/invoices/${id}/send-payment-confirmation`),
   reExtract: async (id: string) => {
     const res = await api.post(`/api/reprocess/${id}/re-extract`, {}, { timeout: 300000 });
@@ -150,8 +150,27 @@ export const paymentBatchApi = {
   review: (batchId: string, note?: string) => api.post(`/api/payment-batches/${batchId}/review`, { note }),
   returnForCorrection: (batchId: string, reason: string) => api.post(`/api/payment-batches/${batchId}/return`, { reason }),
   returnInvoices: (batchId: string, paymentIds: string[], reason: string) => api.post(`/api/payment-batches/${batchId}/return-invoices`, { paymentIds, reason }),
+  applyBankCharge: (batchId: string, paymentId: string, amount: number, note?: string) => api.post(`/api/payment-batches/${batchId}/bank-charge`, { paymentId, amount, note }),
+  removeBankCharge: (batchId: string, paymentId: string) => api.delete(`/api/payment-batches/${batchId}/bank-charge/${paymentId}`),
+  endorseBillStub: (batchId: string, paymentId: string, data: { stubDate?: string; type?: string; reference?: string; originalAmount?: number; balance?: number; discount?: number; paidAmount?: number; stubFile?: File | null }) => {
+    if (data.stubFile) {
+      const form = new FormData();
+      if (data.stubDate) form.append('stubDate', data.stubDate);
+      if (data.type) form.append('type', data.type);
+      if (data.reference) form.append('reference', data.reference);
+      if (data.originalAmount != null) form.append('originalAmount', String(data.originalAmount));
+      if (data.balance != null) form.append('balance', String(data.balance));
+      if (data.discount != null) form.append('discount', String(data.discount));
+      if (data.paidAmount != null) form.append('paidAmount', String(data.paidAmount));
+      form.append('stubFile', data.stubFile);
+      return api.post(`/api/payment-batches/${batchId}/payments/${paymentId}/endorse`, form, { headers: { 'Content-Type': 'multipart/form-data' } });
+    }
+    return api.post(`/api/payment-batches/${batchId}/payments/${paymentId}/endorse`, data);
+  },
+  matchConfirmation: (batchId: string, data: { reference?: string; amount?: number; paidDate?: string; paymentIds?: string[] }) => api.post(`/api/payment-batches/${batchId}/match-confirmation`, data),
   markExported: (batchId: string) => api.post(`/api/payment-batches/${batchId}/export`),
   exportPerVendor: (batchId: string) => api.get(`/api/payment-batches/${batchId}/export-per-vendor`, { responseType: 'blob' }),
+  exportReconciliation: (params?: { status?: string; dateFrom?: string; dateTo?: string }) => api.get('/api/payment-batches/reconciliation', { params, responseType: 'blob' }),
   process: (batchId: string, data?: { paidDate?: string; reference?: string; bankUsed?: string; remarks?: string; proof?: File | null }) => {
     if (data?.proof) {
       const form = new FormData();
@@ -168,14 +187,37 @@ export const paymentBatchApi = {
   getScheduledPayments: (filters?: any) => api.get('/api/payment-batches/scheduled-payments', { params: filters }),
   selectPayments: (paymentIds: string[]) => api.post('/api/payment-batches/select', { paymentIds }),
   deselectPayments: (paymentIds: string[]) => api.post('/api/payment-batches/deselect', { paymentIds }),
+  setPaymentRemarks: (paymentId: string, remarks: string) => api.post(`/api/payment-batches/payments/${paymentId}/remarks`, { remarks }),
+  markForPayment: (paymentId: string) => api.post(`/api/payment-batches/payments/${paymentId}/for-payment`),
+  approveForPayment: (paymentId: string, note?: string) => api.post(`/api/payment-batches/payments/${paymentId}/approve-for-payment`, note ? { note } : {}),
+  rejectForPayment: (paymentId: string, reason: string) => api.post(`/api/payment-batches/payments/${paymentId}/reject-for-payment`, { reason }),
+  bulkApproveForPayment: (paymentIds: string[], note?: string) => api.post('/api/payment-batches/payments/bulk-approve-for-payment', { paymentIds, note }),
+  approveHeld: (paymentId: string) => api.post(`/api/payment-batches/payments/${paymentId}/approve-held`),
 };
 
 export const dashboardApi = {
   getRoleDashboard: () => api.get('/api/dashboard/role'),
 };
 
+export const qbApi = {
+  exportBills: (params?: { status?: string; dateFrom?: string; dateTo?: string }) =>
+    api.get('/api/qb/export', { params, responseType: 'blob' }),
+};
+
 export const reportApi = {
   getOperational: () => api.get('/api/reports/operational'),
+  getKPI: (params?: { brand?: string; startDate?: string; endDate?: string }) =>
+    api.get('/api/reports/kpi', { params }),
+  getInvoiceVolume: (params: { startDate: string; endDate: string; brand?: string }) =>
+    api.get('/api/reports/invoice-volume', { params }),
+  getPaymentStatus: (params?: { brand?: string; startDate?: string; endDate?: string }) =>
+    api.get('/api/reports/payment-status', { params }),
+  getVendorSpending: (params?: { limit?: number; brand?: string; startDate?: string; endDate?: string }) =>
+    api.get('/api/reports/vendor-spending', { params }),
+  getExceptionRate: (params: { startDate: string; endDate: string; brand?: string }) =>
+    api.get('/api/reports/exception-rate', { params }),
+  getForecast: () => api.get('/api/reports/forecast'),
+  getBrands: () => api.get('/api/invoices/metadata/brands'),
 };
 
 export const vendorApi = {

@@ -11,7 +11,7 @@ import {
 
 export async function getInvoiceVolume(req: Request, res: Response) {
   try {
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, brand } = req.query;
 
     if (!startDate || !endDate) {
       return res.status(400).json({ error: 'startDate and endDate are required' });
@@ -19,7 +19,8 @@ export async function getInvoiceVolume(req: Request, res: Response) {
 
     const report = await getInvoiceVolumeReport(
       new Date(startDate as string),
-      new Date(endDate as string)
+      new Date(endDate as string),
+      brand as string | undefined
     );
 
     res.json(report);
@@ -31,7 +32,12 @@ export async function getInvoiceVolume(req: Request, res: Response) {
 
 export async function getPaymentStatus(req: Request, res: Response) {
   try {
-    const report = await getPaymentStatusReport();
+    const { brand, startDate, endDate } = req.query;
+    const report = await getPaymentStatusReport(
+      brand as string | undefined,
+      startDate ? new Date(startDate as string) : undefined,
+      endDate ? new Date(endDate as string) : undefined
+    );
     res.json(report);
   } catch (error) {
     console.error('Error getting payment status report:', error);
@@ -42,7 +48,13 @@ export async function getPaymentStatus(req: Request, res: Response) {
 export async function getVendorSpending(req: Request, res: Response) {
   try {
     const limit = req.query.limit ? parseInt(req.query.limit as string) : 20;
-    const report = await getVendorSpendingReport(limit);
+    const { brand, startDate, endDate } = req.query;
+    const report = await getVendorSpendingReport(
+      limit,
+      brand as string | undefined,
+      startDate ? new Date(startDate as string) : undefined,
+      endDate ? new Date(endDate as string) : undefined
+    );
     res.json(report);
   } catch (error) {
     console.error('Error getting vendor spending report:', error);
@@ -52,7 +64,7 @@ export async function getVendorSpending(req: Request, res: Response) {
 
 export async function getExceptionRate(req: Request, res: Response) {
   try {
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, brand } = req.query;
 
     if (!startDate || !endDate) {
       return res.status(400).json({ error: 'startDate and endDate are required' });
@@ -60,7 +72,8 @@ export async function getExceptionRate(req: Request, res: Response) {
 
     const report = await getExceptionRateReport(
       new Date(startDate as string),
-      new Date(endDate as string)
+      new Date(endDate as string),
+      brand as string | undefined
     );
 
     res.json(report);
@@ -72,7 +85,12 @@ export async function getExceptionRate(req: Request, res: Response) {
 
 export async function getKPI(req: Request, res: Response) {
   try {
-    const metrics = await getKPIMetrics();
+    const { brand, startDate, endDate } = req.query;
+    const metrics = await getKPIMetrics(
+      brand as string | undefined,
+      startDate ? new Date(startDate as string) : undefined,
+      endDate ? new Date(endDate as string) : undefined
+    );
     res.json(metrics);
   } catch (error) {
     console.error('Error getting KPI metrics:', error);

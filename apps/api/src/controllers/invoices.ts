@@ -32,6 +32,19 @@ export const getDistinctPaymentTerms = async (
   }
 };
 
+export const getDistinctBrands = async (
+  _req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const brands = await invoiceService.getDistinctBrands();
+    res.json(brands);
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const getInvoices = async (
   req: AuthRequest,
   res: Response,

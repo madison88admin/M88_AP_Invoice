@@ -498,6 +498,7 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
   const fullEditRoles = ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN', 'SUPERADMIN'];
   const isAccounting = accountingRoles.includes(userRole);
   const canFullEdit = fullEditRoles.includes(userRole);
+  const canReassignVendor = isAccounting || canFullEdit;
 
   if (!isAccounting && !canFullEdit) {
     throw new AppError('Not authorized to edit invoice data', 403);
@@ -511,10 +512,11 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
   // If accounting role, they can ONLY edit bank details — block all other fields
   if (isAccounting && !canFullEdit) {
     const attemptedFields = Object.keys(invoiceData).filter(k => invoiceData[k] !== undefined);
-    const nonBankFields = attemptedFields.filter(f => !bankDetailFields.includes(f) && f !== 'edit_reason');
+    const accountingAllowedFields = [...bankDetailFields, 'vendor_id', 'vendor_name_raw', 'new_vendor_name', 'edit_reason'];
+    const nonBankFields = attemptedFields.filter(f => !accountingAllowedFields.includes(f));
     if (nonBankFields.length > 0) {
       throw new AppError(
-        `Accounting can only edit bank details (beneficiary_name, bank_name, swift_code, account_number). Locked fields: ${nonBankFields.join(', ')}`,
+        `Accounting can only edit bank details or reassign the vendor. Locked fields: ${nonBankFields.join(', ')}`,
         403
       );
     }
@@ -538,18 +540,18 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
   }
 
   // Protected fields that cannot be set via update
-  const protectedFields = ['id', 'created_at', 'updated_at', 'status', 'source', 'approval_tier', 'qb_posted_at', 'revision', 'edit_reason'];
+  const protectedFields = ['id', 'created_at', 'updated_at', 'status', 'source', 'approval_tier', 'qb_posted_at', 'revision', 'edit_reason', 'new_vendor_name'];
 
   // Once invoice is approved (PENDING_ACCOUNTING or APPROVED), accounting can ONLY edit bank details
   // All other fields are locked to preserve the approved invoice state
   const approvedStatuses = ['PENDING_ACCOUNTING', 'APPROVED'];
   if (approvedStatuses.includes(existing.status) && !canFullEdit) {
-    const allowedFields = ['beneficiary_name', 'bank_name', 'swift_code', 'account_number'];
+    const allowedFields = ['beneficiary_name', 'bank_name', 'swift_code', 'account_number', 'vendor_id', 'vendor_name_raw', 'new_vendor_name'];
     const attemptedFields = Object.keys(invoiceData).filter(k => invoiceData[k] !== undefined && !protectedFields.includes(k));
     const disallowedFields = attemptedFields.filter(f => !allowedFields.includes(f));
     if (disallowedFields.length > 0) {
       throw new AppError(
-        `Invoice is already approved. Only bank details (beneficiary_name, bank_name, swift_code, account_number) can be edited. Locked fields: ${disallowedFields.join(', ')}`,
+        `Invoice is already approved. Only bank details or the vendor can be corrected. Locked fields: ${disallowedFields.join(', ')}`,
         403
       );
     }
@@ -565,6 +567,34 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     data[key] = value;
   }
 
+  const manualVendorName = String(invoiceData.new_vendor_name || '').trim();
+  if (manualVendorName) {
+    if (!canReassignVendor) {
+      throw new AppError('Not authorized to create or reassign an invoice vendor', 403);
+    }
+    if (!String(invoiceData.edit_reason || '').trim()) {
+      throw new AppError('A reason is required when changing the invoice vendor', 400);
+    }
+
+    let selectedVendor = await prisma.vendor.findFirst({
+      where: { name: { equals: manualVendorName, mode: 'insensitive' }, is_active: true },
+      select: { id: true, name: true },
+    });
+    if (!selectedVendor) {
+      selectedVendor = await prisma.vendor.create({
+        data: {
+          name: manualVendorName,
+          name_aliases: [],
+          invoice_template_type: 'NO_DATA' as any,
+          onboarded_by: userName || userId,
+        },
+        select: { id: true, name: true },
+      });
+    }
+    data.vendor_id = selectedVendor.id;
+    data.vendor_name_raw = selectedVendor.name;
+  }
+
   // Keep the structured MPO fields synchronized when a user corrects the full MPO reference.
   if (typeof data.mpo_number === 'string' && data.mpo_number.trim()) {
     const parsedMpo = parseMPOReference(data.mpo_number);
@@ -574,8 +604,8 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
   }
 
   if (data.vendor_id && data.vendor_id !== existing.vendor_id) {
-    if (!canFullEdit) {
-      throw new AppError('Only Purchasing, IT Admin, or Superadmin can reassign an invoice vendor', 403);
+    if (!canReassignVendor) {
+      throw new AppError('Not authorized to reassign an invoice vendor', 403);
     }
     const selectedVendor = await prisma.vendor.findFirst({
       where: { id: String(data.vendor_id), is_active: true },
@@ -729,6 +759,10 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
       const newDisplay = newVal instanceof Date ? new Date(newVal).toISOString().split('T')[0] : String(newVal ?? '—');
       changedFields.push(`${key}: "${oldDisplay}" → "${newDisplay}"`);
     }
+  }
+
+  if (data.vendor_id && data.vendor_id !== existing.vendor_id && !changedFields.some((entry) => entry.startsWith('vendor:'))) {
+    changedFields.push(`vendor: "${existing.vendor_name_raw || existing.vendor_id}" -> "${data.vendor_name_raw || data.vendor_id}"`);
   }
 
   const auditNote = changedFields.length > 0

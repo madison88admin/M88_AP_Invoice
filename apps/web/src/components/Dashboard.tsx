@@ -700,6 +700,7 @@ export default function Dashboard() {
       bill_to_entity: invoice.bill_to_entity || '',
       vendor_name_raw: invoice.vendor_name_raw || '',
       vendor_id: invoice.vendor_id || '',
+      new_vendor_name: '',
       ship_to: invoice.ship_to || '',
       sold_to: invoice.sold_to || '',
       bank_name: invoice.bank_name || '',
@@ -745,9 +746,10 @@ export default function Dashboard() {
     
     // Validate required fields (only for users who can edit invoice fields)
     const canEditAll = user ? hasPermission(user.role, 'canEditInvoice') : false;
+    const canEditVendor = user ? ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role) : false;
     if (canEditAll) {
       const requiredFields: { field: string; label: string }[] = [
-        { field: 'vendor_id', label: 'Vendor' },
+        { field: editFormData.new_vendor_name?.trim() ? 'new_vendor_name' : 'vendor_id', label: 'Vendor' },
         { field: 'invoice_number', label: 'Invoice Number' },
         { field: 'invoice_date', label: 'Invoice Date' },
         { field: 'due_date', label: 'Due Date' },
@@ -779,8 +781,9 @@ export default function Dashboard() {
 
       const payload = {
         // Non-bank fields: only send if user can edit invoice
-        vendor_id: canEditAll ? parseString(editFormData.vendor_id) : undefined,
-        vendor_name_raw: canEditAll ? parseString(editFormData.vendor_name_raw) : undefined,
+        vendor_id: canEditVendor ? parseString(editFormData.vendor_id) : undefined,
+        vendor_name_raw: canEditVendor ? parseString(editFormData.vendor_name_raw) : undefined,
+        new_vendor_name: canEditVendor ? parseString(editFormData.new_vendor_name?.trim()) : undefined,
         invoice_number: canEditAll ? parseString(editFormData.invoice_number) : undefined,
         invoice_date: canEditAll ? parseString(editFormData.invoice_date) : undefined,
         due_date: canEditAll ? parseString(editFormData.due_date) : undefined,
@@ -829,7 +832,7 @@ export default function Dashboard() {
       const response = await invoiceApi.update(selectedInvoice.id, payload);
       const mismatches = Object.entries(payload).filter(([field, expected]) => {
         if (expected === undefined || field === 'edit_reason') return false;
-        if (field === 'vendor_name_raw' && (payload as any).vendor_id) return false;
+        if ((field === 'vendor_name_raw' || field === 'new_vendor_name') && (payload as any).vendor_id) return false;
         const persistedValues = (response.data as any)._persisted_values || response.data;
         const actual = persistedValues[field];
         if (expected === null) return actual !== null && actual !== undefined;
@@ -3419,6 +3422,7 @@ ${dataRows}
                     { value: '', label: '— Select vendor —' },
                     ...vendorList.map((vendor) => ({ value: vendor.id, label: vendor.name })),
                   ] },
+                  { label: 'Or enter a new vendor name', field: 'new_vendor_name', type: 'text' },
                   { label: 'Invoice Number', field: 'invoice_number', type: 'text', required: true },
                   { label: 'Invoice Date', field: 'invoice_date', type: 'date', required: true },
                   { label: 'Due Date', field: 'due_date', type: 'date', required: true },
@@ -3519,6 +3523,7 @@ ${dataRows}
                 const isBankSection = section.title === 'Bank Details';
                 const canEditBank = user ? hasPermission(user.role, 'canEditBankDetails') : false;
                 const canEditAll = user ? hasPermission(user.role, 'canEditInvoice') : false;
+                const canEditVendor = user ? ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role) : false;
                 // Bank section: read-only if user can't edit bank details
                 // Non-bank sections: read-only if user can't edit invoice (e.g., Accounting can only edit bank)
                 const isReadOnly = canEditAll
@@ -3539,7 +3544,9 @@ ${dataRows}
                   {!isCollapsed && (
                     <>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
-                      {section.fields.map(({ label, field, type, options, required }: any) => (
+                      {section.fields.map(({ label, field, type, options, required }: any) => {
+                        const fieldIsReadOnly = isReadOnly && !(canEditVendor && (field === 'vendor_id' || field === 'new_vendor_name'));
+                        return (
                         <div key={field}>
                           <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
                             {label}{required && <span style={{ color: 'var(--accent-red)' }}> *</span>}
@@ -3554,19 +3561,20 @@ ${dataRows}
                                     ...editFormData,
                                     vendor_id: e.target.value,
                                     vendor_name_raw: selectedVendor?.name || editFormData.vendor_name_raw,
+                                    new_vendor_name: '',
                                   });
                                 } else {
                                   handleEditChange(field, e.target.value);
                                 }
                               }}
-                              disabled={isReadOnly}
+                              disabled={fieldIsReadOnly}
                               className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
                               style={{
-                                background: isReadOnly ? 'var(--bg-base)' : 'var(--bg-elevated)',
+                                background: fieldIsReadOnly ? 'var(--bg-base)' : 'var(--bg-elevated)',
                                 border: '1px solid var(--border-color)',
-                                color: isReadOnly ? 'var(--text-muted)' : 'var(--text-primary)',
-                                cursor: isReadOnly ? 'not-allowed' : 'pointer',
-                                opacity: isReadOnly ? 0.7 : 1,
+                                color: fieldIsReadOnly ? 'var(--text-muted)' : 'var(--text-primary)',
+                                cursor: fieldIsReadOnly ? 'not-allowed' : 'pointer',
+                                opacity: fieldIsReadOnly ? 0.7 : 1,
                               }}
                             >
                               {options.map((opt: any) => (
@@ -3580,15 +3588,15 @@ ${dataRows}
                                 list={`datalist-${field}`}
                                 value={editFormData[field] || ''}
                                 onChange={(e) => handleEditChange(field, e.target.value)}
-                                disabled={isReadOnly}
-                                readOnly={isReadOnly}
+                                disabled={fieldIsReadOnly}
+                                readOnly={fieldIsReadOnly}
                                 className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
                                 style={{
-                                  background: isReadOnly ? 'var(--bg-base)' : 'var(--bg-elevated)',
+                                  background: fieldIsReadOnly ? 'var(--bg-base)' : 'var(--bg-elevated)',
                                   border: '1px solid var(--border-color)',
-                                  color: isReadOnly ? 'var(--text-muted)' : 'var(--text-primary)',
-                                  cursor: isReadOnly ? 'not-allowed' : 'text',
-                                  opacity: isReadOnly ? 0.7 : 1,
+                                  color: fieldIsReadOnly ? 'var(--text-muted)' : 'var(--text-primary)',
+                                  cursor: fieldIsReadOnly ? 'not-allowed' : 'text',
+                                  opacity: fieldIsReadOnly ? 0.7 : 1,
                                 }}
                               />
                               <datalist id={`datalist-${field}`}>
@@ -3602,20 +3610,21 @@ ${dataRows}
                               type={type}
                               value={editFormData[field] || ''}
                               onChange={(e) => handleEditChange(field, e.target.value)}
-                              disabled={isReadOnly}
-                              readOnly={isReadOnly}
+                              disabled={fieldIsReadOnly}
+                              readOnly={fieldIsReadOnly}
                               className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
                               style={{
-                                background: isReadOnly ? 'var(--bg-base)' : 'var(--bg-elevated)',
+                                background: fieldIsReadOnly ? 'var(--bg-base)' : 'var(--bg-elevated)',
                                 border: '1px solid var(--border-color)',
-                                color: isReadOnly ? 'var(--text-muted)' : 'var(--text-primary)',
-                                cursor: isReadOnly ? 'not-allowed' : 'text',
-                                opacity: isReadOnly ? 0.7 : 1,
+                                color: fieldIsReadOnly ? 'var(--text-muted)' : 'var(--text-primary)',
+                                cursor: fieldIsReadOnly ? 'not-allowed' : 'text',
+                                opacity: fieldIsReadOnly ? 0.7 : 1,
                               }}
                             />
                           )}
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                     {isReadOnly && (
                       <div className="px-4 pb-4">

@@ -335,8 +335,8 @@ const ALL_STAGES = [
 
 const ROLE_STAGE_ACCESS: Record<string, string[]> = {
   SUPERADMIN: [],
-  ACCOUNTING_ASSOCIATE: ['VALIDATION_PENDING', 'APPROVED', 'PENDING_ACCOUNTING', 'ON_HOLD', ...PAYMENT_STAGES],
-  ACCOUNTING_SUPERVISOR: ['VALIDATION_PENDING', 'PENDING_ACCOUNTING', 'APPROVED', 'ON_HOLD', ...PAYMENT_STAGES],
+  ACCOUNTING_ASSOCIATE: ['APPROVED', 'PENDING_ACCOUNTING', 'ON_HOLD', ...PAYMENT_STAGES],
+  ACCOUNTING_SUPERVISOR: ['PENDING_ACCOUNTING', 'APPROVED', 'ON_HOLD', ...PAYMENT_STAGES],
   PURCHASING_COORDINATOR: ALL_STAGES,
   PURCHASING_MANAGER: ALL_STAGES,
   MLO_ACCOUNT_HOLDER: ['PENDING_MLO_ACCOUNT_HOLDER', 'PENDING_MLO_PLANNING_MANAGER', ...PAYMENT_STAGES],
@@ -426,6 +426,8 @@ export const getInvoices = async (filters: any, userRole?: string) => {
       stage_timestamps: true,
       invoice_lines: true,
       payments: true,
+      follow_up_tasks: true,
+      payment_confirmations: true,
     },
     orderBy: {
       created_at: 'desc',
@@ -451,6 +453,8 @@ export const getInvoiceById = async (id: string) => {
       invoice_lines: true,
       workflow_actions: { orderBy: { created_at: 'desc' } },
       payments: { orderBy: { created_at: 'desc' } },
+      follow_up_tasks: { orderBy: { created_at: 'desc' } },
+      payment_confirmations: { orderBy: { created_at: 'desc' } },
     },
   });
 

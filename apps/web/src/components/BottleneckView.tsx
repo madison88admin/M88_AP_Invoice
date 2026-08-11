@@ -39,7 +39,11 @@ export default function BottleneckView() {
   const itemsPerPage = 5;
 
   useEffect(() => {
-    const waitingOnMe = getInvoicesByStage(
+    const isAccounting = user?.role === 'ACCOUNTING_ASSOCIATE' || user?.role === 'ACCOUNTING_SUPERVISOR';
+    const accountingStages = new Set(['PENDING_ACCOUNTING', 'APPROVED', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED']);
+    const waitingInvoices = isAccounting
+      ? invoices.filter(inv => inv.status === 'PENDING_ACCOUNTING' || inv.status === 'APPROVED')
+      : getInvoicesByStage(
       user?.role === 'PURCHASING_COORDINATOR' ? 'COORDINATOR' :
       user?.role === 'PURCHASING_MANAGER' ? 'PURCHASING_MANAGER' :
       user?.role === 'PLANNING_MANAGER' ? 'MLO_PLANNING_MANAGER' :
@@ -47,10 +51,12 @@ export default function BottleneckView() {
       user?.role === 'MLO_ACCOUNT_HOLDER' ? 'MLO_ACCOUNT_HOLDER' :
       user?.role === 'SR_MANAGER_GLOBAL_PRODUCTION' ? 'SR_MANAGER_GLOBAL_PRODUCTION' :
       user?.role === 'MS_POLLY' ? 'MS_POLLY' :
-      user?.role === 'ACCOUNTING_ASSOCIATE' ? 'ACCOUNTING_REVIEWER' :
-      user?.role === 'ACCOUNTING_SUPERVISOR' ? 'ACCOUNTING_REVIEWER' :
       user?.role === 'PRESIDENT' ? 'ACCOUNTING_REVIEWER' : ''
-    ).map(inv => ({
+    );
+
+    const waitingOnMe = waitingInvoices.map(inv => {
+      const currentStage = inv.stage_timestamps.find(st => !st.exited_at);
+      return {
       id: inv.id,
       invoice_number: inv.invoice_number,
       vendor_name: inv.vendor_name,
@@ -58,20 +64,22 @@ export default function BottleneckView() {
       currency: inv.currency,
       status: inv.status,
       current_stage: inv.current_stage,
-      stage_entered_at: inv.invoice_received_date || inv.created_at || inv.stage_timestamps.find(st => st.stage === inv.current_stage)?.entered_at,
-    }));
+      stage_entered_at: currentStage?.entered_at || inv.updated_at || inv.created_at,
+      };
+    });
 
     const atRisk = invoices.filter(inv => {
       const currentStage = inv.stage_timestamps.find(st => !st.exited_at);
       if (!currentStage) return false;
-      const enteredAt = new Date(inv.invoice_received_date || inv.created_at || currentStage.entered_at);
+      if (isAccounting && !accountingStages.has(currentStage.stage)) return false;
+      const enteredAt = new Date(currentStage.entered_at);
       const now = new Date();
       const elapsedHours = calcWorkingHoursElapsed(enteredAt, now);
       const remainingHours = currentStage.sla_hours - elapsedHours;
       return remainingHours <= 48 && remainingHours > 0;
     }).map(inv => {
       const currentStage = inv.stage_timestamps.find(st => !st.exited_at)!;
-      const enteredAt = new Date(inv.invoice_received_date || inv.created_at || currentStage.entered_at);
+      const enteredAt = new Date(currentStage.entered_at);
       const now = new Date();
       const elapsedHours = calcWorkingHoursElapsed(enteredAt, now);
       const remainingHours = currentStage.sla_hours - elapsedHours;

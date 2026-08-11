@@ -1139,6 +1139,39 @@ export default function Dashboard() {
     });
   }, [roleFilteredInvoices]);
 
+  // Accounting KPIs are intentionally scoped to work that Accounting can act on.
+  const accountingQueue = useMemo(() => allInvoices.filter(inv =>
+    inv.status === InvoiceStatus.PENDING_ACCOUNTING || inv.status === InvoiceStatus.APPROVED
+  ), [allInvoices]);
+
+  const accountingOnHold = useMemo(() => allInvoices.filter(inv =>
+    inv.status === InvoiceStatus.ON_HOLD
+  ), [allInvoices]);
+
+  const accountingUrgentPayments = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const actionableStatuses: InvoiceStatus[] = [
+      InvoiceStatus.PENDING_ACCOUNTING,
+      InvoiceStatus.APPROVED,
+      InvoiceStatus.POSTED_TO_QB,
+      InvoiceStatus.PAYMENT_SCHEDULED,
+    ];
+    return allInvoices.filter(inv => {
+      if (!actionableStatuses.includes(inv.status as InvoiceStatus) || !inv.due_date) return false;
+      const dueDate = new Date(inv.due_date);
+      dueDate.setHours(0, 0, 0, 0);
+      const diffDays = Math.floor((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+      return diffDays <= 7;
+    });
+  }, [allInvoices]);
+
+  const paidPendingConfirmation = useMemo(() => allInvoices.filter(inv =>
+    inv.status === InvoiceStatus.PAID &&
+    !inv.confirmation_sent_at &&
+    !inv.payment_confirmations?.some(confirmation => confirmation.email_sent)
+  ), [allInvoices]);
+
   // Processing time per stage — compute from real stage_timestamps data
   const processingTimePerStage = useMemo(() => {
     const stageLabels: Record<string, { label: string; sla: number }> = {
@@ -1199,33 +1232,29 @@ export default function Dashboard() {
 
     switch (role) {
       case 'ACCOUNTING_ASSOCIATE': {
-        const myInvs = allInvoices.filter(i => i.uploaded_by === user.email);
-        const pendingVal = allInvoices.filter(i => i.status === InvoiceStatus.VALIDATION_PENDING);
-        const validated = allInvoices.filter(i => i.status === InvoiceStatus.APPROVED);
-        const paidPendingConfirmation = allInvoices.filter(i => i.status === InvoiceStatus.PAID);
-        const scheduledPayments = allInvoices.filter(i => i.status === InvoiceStatus.PAYMENT_SCHEDULED);
-        const draftBatches = paymentBatches.filter(b => b.status === 'DRAFT');
         return [
           {
-            label: 'My Invoices',
-            value: myInvs.length,
+            label: 'Accounting Queue',
+            value: accountingQueue.length,
             icon: FileText,
             accent: 'info',
-            ...calcTrend(myInvs),
+            ...calcTrend(accountingQueue),
+            subtitle: 'Ready for accounting review',
           },
           {
-            label: 'Pending Validation',
-            value: pendingValidationCount.count,
+            label: 'Accounting On Hold',
+            value: accountingOnHold.length,
             icon: Clock,
-            accent: 'default',
-            ...calcTrend(pendingVal),
+            accent: 'warning',
+            ...calcTrend(accountingOnHold),
+            subtitle: 'Requires accounting action',
           },
           {
             label: 'Urgent Payments',
-            value: urgentPayments.length,
+            value: accountingUrgentPayments.length,
             icon: AlertTriangle,
             accent: 'danger',
-            ...calcTrend(urgentPayments),
+            ...calcTrend(accountingUrgentPayments),
             subtitle: 'Due within 7 days / overdue',
           },
           {
@@ -1318,41 +1347,38 @@ export default function Dashboard() {
       }
 
       case 'ACCOUNTING_SUPERVISOR': {
-        const pendingAssoc = allInvoices.filter(i => i.status === 'VALIDATION_PENDING');
-        const readyPost = allInvoices.filter(i => i.status === InvoiceStatus.APPROVED || i.status === InvoiceStatus.PENDING_ACCOUNTING);
-        const paidPendingConfSup = allInvoices.filter(i => i.status === InvoiceStatus.PAID);
-        const allBatches = paymentBatches;
         return [
           {
-            label: 'All Invoices Overview',
-            value: allInvoices.length,
+            label: 'Accounting Queue',
+            value: accountingQueue.length,
             icon: FileText,
             accent: 'info',
-            ...calcTrend(allInvoices),
+            ...calcTrend(accountingQueue),
+            subtitle: 'Ready for accounting review',
+          },
+          {
+            label: 'Accounting On Hold',
+            value: accountingOnHold.length,
+            icon: Clock,
+            accent: 'warning',
+            ...calcTrend(accountingOnHold),
+            subtitle: 'Requires accounting action',
           },
           {
             label: 'Urgent Payments',
-            value: urgentPayments.length,
+            value: accountingUrgentPayments.length,
             icon: AlertTriangle,
             accent: 'danger',
-            ...calcTrend(urgentPayments),
+            ...calcTrend(accountingUrgentPayments),
             subtitle: 'Due within 7 days / overdue',
           },
           {
             label: 'PAID — Confirmation Pending',
-            value: paidPendingConfSup.length,
+            value: paidPendingConfirmation.length,
             icon: Send,
             accent: 'success',
-            ...calcTrend(paidPendingConfSup),
+            ...calcTrend(paidPendingConfirmation),
             subtitle: 'Send payment confirmations',
-          },
-          {
-            label: 'Payment Batches',
-            value: allBatches.length,
-            icon: Package,
-            accent: 'warning',
-            ...calcTrend(allBatches),
-            subtitle: 'View all batches',
           },
         ];
       }

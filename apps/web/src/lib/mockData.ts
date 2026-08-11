@@ -38,8 +38,10 @@ export interface MockInvoice {
   qb_invoice_id?: string;
   qb_posted_at?: string;
   paid_at?: string;
+  confirmation_sent_at?: string;
   payment_batch_id?: string;
   follow_up_tasks?: MockFollowUpTask[];
+  payment_confirmations?: MockPaymentConfirmation[];
   due_date?: string;
   updated_at?: string;
   created_at?: string;
@@ -209,6 +211,14 @@ export interface MockFollowUpTask {
   last_reminded_at?: string;
   completed_at?: string;
   notes?: string;
+  created_at: string;
+}
+
+export interface MockPaymentConfirmation {
+  id: string;
+  invoice_id: string;
+  email_sent: boolean;
+  sent_at?: string;
   created_at: string;
 }
 

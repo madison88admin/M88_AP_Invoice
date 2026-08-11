@@ -527,7 +527,8 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
   }
 
   // Prevent editing invoices that are already posted or paid
-  const lockedStatuses = ['POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID', 'PAYMENT_CONFIRMATION_SENT', 'REJECTED'];
+  // Rejected invoices remain editable so Purchasing can correct them and restart approval.
+  const lockedStatuses = ['POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID', 'PAYMENT_CONFIRMATION_SENT'];
   if (lockedStatuses.includes(existing.status)) {
     throw new AppError(`Cannot edit invoice in ${existing.status} status`, 400);
   }
@@ -653,7 +654,10 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
   if (materialChange && !String(invoiceData.edit_reason || '').trim()) {
     throw new AppError('A reason is required for material or financial invoice changes', 400);
   }
-  const approvalStarted = String(existing.status).startsWith('PENDING_') || existing.status === 'APPROVED' || existing.status === 'ON_HOLD';
+  const approvalStarted = String(existing.status).startsWith('PENDING_') ||
+    existing.status === 'APPROVED' ||
+    existing.status === 'ON_HOLD' ||
+    existing.status === 'REJECTED';
   const nextRevision = materialChange ? Number((existing as any).revision || 1) + 1 : Number((existing as any).revision || 1);
 
   if (materialChange && approvalStarted) {

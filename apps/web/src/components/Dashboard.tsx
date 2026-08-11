@@ -573,6 +573,30 @@ export default function Dashboard() {
 
   const handleRequestApproval = async () => {
     if (!selectedInvoice) return;
+
+    const requiredFields = [
+      { field: 'vendor_id', label: 'Vendor' },
+      { field: 'invoice_number', label: 'Invoice Number' },
+      { field: 'invoice_date', label: 'Invoice Date' },
+      { field: 'due_date', label: 'Due Date' },
+      { field: 'total_amount', label: 'Amount' },
+      { field: 'currency', label: 'Currency' },
+      { field: 'brand', label: 'Brand' },
+      { field: 'season', label: 'Season' },
+      { field: 'customer_po_number', label: 'PO Number' },
+      { field: 'mpo_base_number', label: 'Base MPO' },
+    ];
+    const invoice = selectedInvoice as any;
+    const missing = requiredFields.filter(({ field }) => {
+      const value = invoice[field];
+      if (field === 'total_amount') return !Number.isFinite(Number(value)) || Number(value) <= 0;
+      return value === null || value === undefined || String(value).trim() === '';
+    });
+    if (missing.length > 0) {
+      showToast(`Complete required fields before requesting approval: ${missing.map(({ label }) => label).join(', ')}`, 'error');
+      return;
+    }
+
     try {
       setRequestingApproval(true);
       await invoiceApi.requestApproval(selectedInvoice.id);
@@ -679,13 +703,22 @@ export default function Dashboard() {
     const canEditAll = user ? hasPermission(user.role, 'canEditInvoice') : false;
     if (canEditAll) {
       const requiredFields: { field: string; label: string }[] = [
+        { field: 'vendor_id', label: 'Vendor' },
+        { field: 'invoice_number', label: 'Invoice Number' },
+        { field: 'invoice_date', label: 'Invoice Date' },
         { field: 'due_date', label: 'Due Date' },
+        { field: 'total_amount', label: 'Amount' },
+        { field: 'currency', label: 'Currency' },
         { field: 'brand', label: 'Brand' },
         { field: 'season', label: 'Season' },
         { field: 'customer_po_number', label: 'PO Number' },
         { field: 'mpo_base_number', label: 'Base MPO' },
       ];
-      const missing = requiredFields.filter(f => !editFormData[f.field] || editFormData[f.field] === '');
+      const missing = requiredFields.filter(({ field }) => {
+        const value = editFormData[field];
+        if (field === 'total_amount') return !Number.isFinite(Number(value)) || Number(value) <= 0;
+        return value === null || value === undefined || String(value).trim() === '';
+      });
       if (missing.length > 0) {
         showToast(`Please fill in required fields: ${missing.map(f => f.label).join(', ')}`, 'error');
         return;
@@ -3312,15 +3345,15 @@ ${dataRows}
 
               {([
                 { title: 'Basic Information', fields: [
-                  { label: 'Vendor', field: 'vendor_id', type: 'select', options: [
+                  { label: 'Vendor', field: 'vendor_id', type: 'select', required: true, options: [
                     { value: '', label: '— Select vendor —' },
                     ...vendorList.map((vendor) => ({ value: vendor.id, label: vendor.name })),
                   ] },
-                  { label: 'Invoice Number', field: 'invoice_number', type: 'text' },
-                  { label: 'Invoice Date', field: 'invoice_date', type: 'date' },
+                  { label: 'Invoice Number', field: 'invoice_number', type: 'text', required: true },
+                  { label: 'Invoice Date', field: 'invoice_date', type: 'date', required: true },
                   { label: 'Due Date', field: 'due_date', type: 'date', required: true },
-                  { label: 'Amount', field: 'total_amount', type: 'number' },
-                  { label: 'Currency', field: 'currency', type: 'select', options: [
+                  { label: 'Amount', field: 'total_amount', type: 'number', required: true },
+                  { label: 'Currency', field: 'currency', type: 'select', required: true, options: [
                     { value: '', label: '— Select —' },
                     { value: 'USD', label: 'USD — US Dollar' },
                     { value: 'HKD', label: 'HKD — Hong Kong Dollar' },

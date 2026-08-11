@@ -149,6 +149,31 @@ async function isAutoApprovalEligible(invoice: any): Promise<{ eligible: boolean
  */
 const approvalRequestInFlight = new Map<string, Promise<any>>();
 
+const APPROVAL_REQUIRED_FIELDS: { field: string; label: string }[] = [
+  { field: 'vendor_id', label: 'Vendor' },
+  { field: 'invoice_number', label: 'Invoice Number' },
+  { field: 'invoice_date', label: 'Invoice Date' },
+  { field: 'due_date', label: 'Due Date' },
+  { field: 'total_amount', label: 'Amount' },
+  { field: 'currency', label: 'Currency' },
+  { field: 'brand', label: 'Brand' },
+  { field: 'season', label: 'Season' },
+  { field: 'customer_po_number', label: 'PO Number' },
+  { field: 'mpo_base_number', label: 'Base MPO' },
+];
+
+function getMissingApprovalFields(invoice: any) {
+  return APPROVAL_REQUIRED_FIELDS.filter(({ field }) => {
+    const value = invoice[field];
+    if (field === 'total_amount') {
+      const amount = Number(value);
+      return !Number.isFinite(amount) || amount <= 0;
+    }
+    if (value instanceof Date) return Number.isNaN(value.getTime());
+    return value === null || value === undefined || String(value).trim() === '';
+  });
+}
+
 export async function createApprovalRequest(
   invoiceId: string,
   userId: string,
@@ -178,17 +203,7 @@ async function createApprovalRequestInternal(
   }
 
   // Validate required fields before allowing approval request
-  const requiredFields: { field: string; label: string }[] = [
-    { field: 'due_date', label: 'Due Date' },
-    { field: 'brand', label: 'Brand' },
-    { field: 'season', label: 'Season' },
-    { field: 'customer_po_number', label: 'PO Number' },
-    { field: 'mpo_base_number', label: 'Base MPO' },
-  ];
-  const missingFields = requiredFields.filter(f => {
-    const val = (invoice as any)[f.field];
-    return !val || val === '';
-  });
+  const missingFields = getMissingApprovalFields(invoice);
   if (missingFields.length > 0) {
     throw new AppError(
       `Cannot request approval — missing required fields: ${missingFields.map(f => f.label).join(', ')}. Please fill these in before requesting approval.`,
@@ -576,17 +591,7 @@ export async function approveInvoice(
   }
 
   // Validate required fields before allowing approval
-  const requiredFields: { field: string; label: string }[] = [
-    { field: 'due_date', label: 'Due Date' },
-    { field: 'brand', label: 'Brand' },
-    { field: 'season', label: 'Season' },
-    { field: 'customer_po_number', label: 'PO Number' },
-    { field: 'mpo_base_number', label: 'Base MPO' },
-  ];
-  const missingFields = requiredFields.filter(f => {
-    const val = (invoice as any)[f.field];
-    return !val || val === '';
-  });
+  const missingFields = getMissingApprovalFields(invoice);
   if (missingFields.length > 0) {
     throw new AppError(
       `Cannot approve — missing required fields: ${missingFields.map(f => f.label).join(', ')}. Please fill these in before approving.`,

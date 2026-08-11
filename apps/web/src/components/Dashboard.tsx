@@ -118,6 +118,11 @@ function calcTrend(invoiceList: { created_at?: string }[]): { trend: string; tre
   return { trend: `${pct > 0 ? '+' : ''}${pct}%`, trendUp: pct > 0 };
 }
 
+function deriveBaseMpo(value?: string | null): string {
+  const match = String(value || '').toUpperCase().match(/MPO\d{5,8}/);
+  return match?.[0] || '';
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -681,8 +686,8 @@ export default function Dashboard() {
       brand: invoice.brand || '',
       brand_code: invoice.brand_code || '',
       brand_tier: invoice.brand_tier || '',
-        mpo_number: invoice.mpo_number || invoice.mpo_base_number || '',
-      mpo_base_number: invoice.mpo_base_number || '',
+      mpo_number: invoice.mpo_number || invoice.mpo_base_number || '',
+      mpo_base_number: invoice.mpo_base_number || deriveBaseMpo(invoice.mpo_number),
       mpo_order_sequence: invoice.mpo_order_sequence || '',
       material_code: invoice.material_code || '',
       material_name: invoice.material_name || '',
@@ -722,7 +727,17 @@ export default function Dashboard() {
   };
 
   const handleEditChange = (field: string, value: string | boolean) => {
-    setEditFormData((prev: any) => ({ ...prev, [field]: value }));
+    setEditFormData((prev: any) => {
+      if (field !== 'mpo_number' || typeof value !== 'string') return { ...prev, [field]: value };
+      const previousDerivedBase = deriveBaseMpo(prev.mpo_number);
+      const nextDerivedBase = deriveBaseMpo(value);
+      const baseWasBlankOrDerived = !prev.mpo_base_number || prev.mpo_base_number === previousDerivedBase;
+      return {
+        ...prev,
+        mpo_number: value.toUpperCase(),
+        ...(baseWasBlankOrDerived ? { mpo_base_number: nextDerivedBase } : {}),
+      };
+    });
   };
 
   const handleSaveEdit = async () => {

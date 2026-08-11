@@ -1169,8 +1169,8 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
       return 'MPO' + digits.padStart(6, '0');
     })(),
     customer_po_number: (() => {
-      // Prefer parsePOReference, fall back to AI's direct po_number extraction
-      const raw = poParsed.po_number || (extracted as any).po_reference || '';
+      // Prefer parsePOReference, then the AI's direct PO extraction/reference.
+      const raw = poParsed.po_number || (extracted as any).po_number || (extracted as any).po_reference || '';
       if (!raw) return raw as any;
       const poMatch = raw.match(/\bPO(\d{4,6})\b/i);
       if (poMatch) return 'PO' + poMatch[1].padStart(6, '0');

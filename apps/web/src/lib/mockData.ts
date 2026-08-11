@@ -24,6 +24,10 @@ export interface MockInvoice {
   po_number?: string;
   customer_po_number?: string;
   mpo_number?: string;
+  mpo_base_number?: string;
+  mpo_order_sequence?: string;
+  material_code?: string;
+  material_name?: string;
   qty_shipped?: number;
   status: InvoiceStatus;
   current_stage?: string;

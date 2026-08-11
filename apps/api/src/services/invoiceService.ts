@@ -565,6 +565,14 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     data[key] = value;
   }
 
+  // Keep the structured MPO fields synchronized when a user corrects the full MPO reference.
+  if (typeof data.mpo_number === 'string' && data.mpo_number.trim()) {
+    const parsedMpo = parseMPOReference(data.mpo_number);
+    if (invoiceData.mpo_base_number === undefined) data.mpo_base_number = parsedMpo.baseMpo;
+    if (invoiceData.mpo_order_sequence === undefined) data.mpo_order_sequence = parsedMpo.orderSequence;
+    if (invoiceData.material_code === undefined && parsedMpo.materialCode) data.material_code = parsedMpo.materialCode;
+  }
+
   if (data.vendor_id && data.vendor_id !== existing.vendor_id) {
     if (!canFullEdit) {
       throw new AppError('Only Purchasing, IT Admin, or Superadmin can reassign an invoice vendor', 403);

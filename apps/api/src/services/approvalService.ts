@@ -632,6 +632,8 @@ export async function approveInvoice(
       signature_type: 'DIGITAL',
       approval_status: 'APPROVED',
       invoice_revision: invoice.revision,
+      invalidated_at: null,
+      invalidation_reason: null,
     },
   });
 
@@ -871,6 +873,24 @@ export async function rejectInvoice(
     // No prior approver — return to coordinator as fallback
     targetStatus = InvoiceStatus.PENDING_COORDINATOR as any;
     targetApproverRole = SignatoryRole.COORDINATOR;
+  }
+
+  // Re-open the actual prior approver's signature. Changing only the invoice
+  // status leaves that signature signed, so the coordinator inbox still sees
+  // the manager as the first unsigned step and the returned invoice disappears.
+  const targetSignature = lastApprover || sortedSigs.find(
+    (sig: any) => sig.signatory_role === SignatoryRole.COORDINATOR
+  );
+  if (targetSignature) {
+    await prisma.signature.update({
+      where: { id: targetSignature.id },
+      data: {
+        signed_at: null,
+        approval_status: 'PENDING',
+        invalidated_at: new Date(),
+        invalidation_reason: `Re-opened after rejection by ${signedRole}: ${reason}`,
+      },
+    });
   }
 
   // Exit current stage timestamp FIRST — before creating a new one
@@ -1243,13 +1263,14 @@ export async function getPendingApprovals(userRole: string) {
     },
     include: {
       vendor: true,
-      signatures: {
-        where: {
-          signatory_role: { in: signatoryRoles as any[] },
-        },
-      },
+      signatures: { orderBy: { created_at: 'asc' } },
     },
-    orderBy: { invoice_date: 'asc' },
+    orderBy: [
+      { invoice_received_date: 'asc' },
+      { created_at: 'asc' },
+      { id: 'asc' },
+    ],
+    take: 10,
   });
 
   return pendingApprovals;

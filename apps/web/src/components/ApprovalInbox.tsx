@@ -25,6 +25,16 @@ const mapUserRoleToSignatoryRoles = (role: string): string[] => {
   return mapping[role] || [];
 };
 
+const APPROVAL_ROLE_ORDER = [
+  'COORDINATOR', 'PURCHASING_MANAGER', 'MLO_ACCOUNT_HOLDER',
+  'MLO_PLANNING_MANAGER', 'SR_MANAGER_GLOBAL_PRODUCTION', 'MS_POLLY',
+  'ACCOUNTING_REVIEWER',
+];
+
+const orderedSignatures = (invoice: MockInvoice) => [...(invoice.signatures || [])].sort(
+  (a, b) => APPROVAL_ROLE_ORDER.indexOf(a.signatory_role) - APPROVAL_ROLE_ORDER.indexOf(b.signatory_role)
+);
+
 export default function ApprovalInbox() {
   const { invoices, approveInvoice, rejectInvoice } = useMockData();
   const { user } = useAuth();
@@ -38,7 +48,7 @@ export default function ApprovalInbox() {
   
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 5;
+  const itemsPerPage = 10;
 
   useEffect(() => {
     setLoading(false);
@@ -53,11 +63,22 @@ export default function ApprovalInbox() {
     // Exclude invoices below the user's tier threshold
     if (user && !isWithinRoleThreshold(user.role, Number(invoice.total_amount))) return false;
     // Find the first unsigned signature (sequential enforcement — signatures are in route order)
-    const firstPending = invoice.signatures.find(s => !s.signed_at);
+    const firstPending = orderedSignatures(invoice).find(s => !s.signed_at);
     if (!firstPending) return false;
     const userSignatoryRoles = user ? mapUserRoleToSignatoryRoles(user.role) : [];
     return userSignatoryRoles.length > 0 ? userSignatoryRoles.includes(firstPending.signatory_role) : false;
+  }).sort((a, b) => {
+    const receivedA = new Date(a.invoice_received_date || a.created_at || a.invoice_date || 0).getTime();
+    const receivedB = new Date(b.invoice_received_date || b.created_at || b.invoice_date || 0).getTime();
+    return receivedA - receivedB || String(a.id).localeCompare(String(b.id));
   });
+
+  const getCoordinatorName = (invoice: MockInvoice) => {
+    const coordinator = invoice.signatures?.find(sig =>
+      sig.signatory_role === 'COORDINATOR' && !!sig.signatory_name
+    );
+    return coordinator?.signatory_name || 'Not yet approved';
+  };
 
   // Pagination logic
   const totalPages = Math.ceil(pendingApprovals.length / itemsPerPage);
@@ -106,7 +127,7 @@ export default function ApprovalInbox() {
     
     const approved = invoice.signatures.filter(s => s.signed_at !== null).length;
     const total = invoice.signatures.length;
-    const pending = invoice.signatures.find(s => !s.signed_at);
+    const pending = orderedSignatures(invoice).find(s => !s.signed_at);
     
     if (pending) {
       return `Awaiting: ${pending.signatory_role}`;
@@ -174,6 +195,9 @@ export default function ApprovalInbox() {
                               <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
                                 {invoice.vendor_name}
                               </p>
+                              <p className="text-xs" style={{ color: 'var(--text-subtle)' }}>
+                                Coordinator: {getCoordinatorName(invoice)}
+                              </p>
                             </div>
                           </div>
                           <div className="text-right">
@@ -236,6 +260,12 @@ export default function ApprovalInbox() {
                       </p>
                     </div>
                     <div>
+                      <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Coordinator</p>
+                      <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                        {getCoordinatorName(selectedInvoice)}
+                      </p>
+                    </div>
+                    <div>
                       <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Vendor</p>
                       <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
                         {selectedInvoice.vendor_name}
@@ -263,7 +293,7 @@ export default function ApprovalInbox() {
                           Approval Progress
                         </p>
                         <div className="space-y-2">
-                          {selectedInvoice.signatures
+                          {orderedSignatures(selectedInvoice)
                             .map((sig) => (
                               <div
                                 key={sig.id}

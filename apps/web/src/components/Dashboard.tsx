@@ -16,6 +16,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { MockInvoice } from '../lib/mockData';
 import { hasPermission, filterInvoicesByRole, canUserApproveStatus, isWithinRoleThreshold } from '../lib/roleAccess';
 import { cn } from '../lib/utils';
+import { getAuditActorDisplay } from '../lib/auditActor';
 import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, ChevronRight, LogOut, Edit, Unlock, Pause, Users, Loader2, Menu, X, Trash2, Landmark, Paperclip, Upload, Download, Eye } from 'lucide-react';
 import { Skeleton, SkeletonBar } from './ui/Skeleton';
 
@@ -2690,7 +2691,7 @@ ${dataRows}
                       .map((log: any) => (
                         <div key={log.id} className="p-2 rounded-lg" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
                           <div className="flex items-center justify-between mb-1">
-                            <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>{log.performed_by || 'Unknown'}</span>
+                            <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>{getAuditActorDisplay(log.performed_by, log.note)}</span>
                             <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
                               {new Date(log.created_at).toLocaleString('en-US', { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
                             </span>

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { CheckCircle, XCircle, Clock, ArrowLeft, Loader2, ExternalLink } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, ArrowLeft, Loader2, ExternalLink, FileText } from 'lucide-react';
 import { MockInvoice } from '../lib/mockData';
 import { invoiceApi } from '../lib/api';
 import { Skeleton } from './ui/Skeleton';
@@ -335,6 +335,18 @@ export default function ApprovalInbox() {
                           : 'N/A'}
                       </p>
                     </div>
+
+                    {user?.role === 'PURCHASING_MANAGER' && (
+                      <Link
+                        to="/"
+                        state={{ selectedInvoiceId: selectedInvoice.id }}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border transition-all text-sm font-semibold"
+                        style={{ borderColor: 'var(--border-color)', color: 'var(--text-primary)', background: 'var(--bg-card-hover)' }}
+                      >
+                        <FileText className="h-4 w-4" />
+                        View Invoice in System
+                      </Link>
+                    )}
 
                     <button
                       type="button"

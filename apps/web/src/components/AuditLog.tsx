@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { auditLogApi } from '../lib/api';
 import { LayoutDashboard, LogOut, FileText, Download, Search, RefreshCw } from 'lucide-react';
 import { Skeleton } from './ui/Skeleton';
+import { getAuditActorDisplay } from '../lib/auditActor';
 
 interface AuditLogItem {
   id: string;
@@ -80,7 +81,7 @@ export default function AuditLog() {
     const rows = logs.map((log) => [
       new Date(log.created_at).toLocaleString(),
       log.action,
-      log.performed_by || '',
+      getAuditActorDisplay(log.performed_by, log.note),
       log.invoice_id || '',
       log.invoice?.invoice_number || '',
       log.note || '',
@@ -187,7 +188,7 @@ export default function AuditLog() {
                           {log.action}
                         </span>
                       </td>
-                      <td className="px-4 py-3" style={{ color: 'var(--text-primary)' }}>{log.performed_by || '-'}</td>
+                      <td className="px-4 py-3" style={{ color: 'var(--text-primary)' }}>{getAuditActorDisplay(log.performed_by, log.note)}</td>
                       <td className="px-4 py-3" style={{ color: 'var(--text-primary)' }}>{log.invoice?.invoice_number || log.invoice_id || '-'}</td>
                       <td className="px-4 py-3" style={{ color: 'var(--text-muted)' }}>{log.note || '-'}</td>
                     </tr>

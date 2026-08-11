@@ -74,10 +74,13 @@ export default function VendorManagement() {
         const payload: any = {
           name: editingVendor.name.trim(),
           name_aliases: editingVendor.name_aliases || [],
-          invoice_template_type: editingVendor.expected_template || 'STANDARD',
+          invoice_template_type: 'INVOICE',
           bank_name: editingVendor.bank_name || null,
           swift_code: editingVendor.swift_code || null,
           account_number: editingVendor.account_number || null,
+          bank_name_alt: [],
+          account_number_alt: [],
+          swift_code_alt: [],
           is_active: true,
         };
         if (editingVendor.supplier_location) payload.supplier_location = editingVendor.supplier_location;

@@ -3,6 +3,7 @@ import api from '../lib/api';
 import { invoiceApi } from '../lib/api';
 import { Clock, User, FileText, CheckCircle, XCircle, Upload, AlertTriangle, CreditCard, GitBranch, PenLine, ArrowRight } from 'lucide-react';
 import { formatDate } from '../lib/utils';
+import { getAuditActorDisplay } from '../lib/auditActor';
 
 interface AuditLog {
   id: string;
@@ -213,7 +214,7 @@ export default function AuditLogViewer({ invoiceId, performedBy, limit = 100, ti
                       {event.actor && (
                         <span className="flex items-center gap-1">
                           <User className="h-3 w-3" strokeWidth={1.75} />
-                          {event.actor}
+                          {getAuditActorDisplay(event.actor, event.detail)}
                         </span>
                       )}
                       {event.status && (
@@ -252,7 +253,7 @@ export default function AuditLogViewer({ invoiceId, performedBy, limit = 100, ti
                 {log.performed_by && (
                   <span className="flex items-center gap-1">
                     <User className="h-3 w-3" strokeWidth={1.75} />
-                    {log.performed_by}
+                    {getAuditActorDisplay(log.performed_by, log.note)}
                   </span>
                 )}
                 <span className="flex items-center gap-1">

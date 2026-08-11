@@ -32,6 +32,7 @@ import { uploadToStorage } from '../services/supabaseStorageService';
 import { syncToHetzner } from '../services/hetznerStorageService';
 import { mistralOCRService } from '../services/mistralOCRService';
 import { createJob, completeJob, failJob, getJob } from '../services/jobStore';
+import { invoiceUploadQueue, QueuedInvoiceUpload } from '../services/invoiceUploadQueue';
 
 // ─── Async upload job storage ───
 export const uploadInvoice = async (
@@ -1329,7 +1330,7 @@ export const uploadMadisonInvoiceAsync = async (
       throw new AppError('No file uploaded', 400);
     }
 
-    const jobId = createJob('madison-invoice-upload');
+    const jobId = createJob('madison-invoice-upload', 'queued');
     const fileBuffer = Buffer.from(req.file.buffer);
     const fileName = req.file.originalname;
     const mimeType = req.file.mimetype;
@@ -1337,43 +1338,12 @@ export const uploadMadisonInvoiceAsync = async (
 
     // Process in background — reuse the same logic as uploadMadisonInvoice
     // by calling the internal function with a mock req/res
-    setImmediate(async () => {
-      try {
-        const mockReq = {
-          file: { buffer: fileBuffer, originalname: fileName, mimetype: mimeType },
-          user,
-          headers: req.headers,
-          body: req.body,
-        } as any;
+    const queuePosition = invoiceUploadQueue.enqueue(
+      { jobId, fileName, mimeType, user, body: req.body },
+      fileBuffer
+    );
 
-        let resultData: any = null;
-        let resultError: string | null = null;
-
-        // Capture the response by intercepting res.json
-        const mockRes = {
-          status: () => mockRes,
-          json: (data: any) => { resultData = data; return mockRes; },
-        } as any;
-
-        const mockNext = (err?: any) => {
-          if (err) resultError = err.message || String(err);
-        };
-
-        await uploadMadisonInvoice(mockReq, mockRes, mockNext);
-
-        if (resultError) {
-          failJob(jobId, resultError);
-        } else if (resultData) {
-          completeJob(jobId, resultData);
-        } else {
-          failJob(jobId, 'No result returned from extraction');
-        }
-      } catch (err: any) {
-        failJob(jobId, err.message || String(err));
-      }
-    });
-
-    res.status(202).json({ jobId, status: 'processing', message: 'Upload received, processing started' });
+    res.status(202).json({ jobId, status: 'queued', queuePosition, message: 'Upload received and queued for processing' });
   } catch (error) {
     next(error);
   }
@@ -1400,3 +1370,25 @@ export const getUploadJobStatus = async (
     next(error);
   }
 };
+
+invoiceUploadQueue.start(async (item: QueuedInvoiceUpload, fileBuffer: Buffer) => {
+  const mockReq = {
+    file: { buffer: fileBuffer, originalname: item.fileName, mimetype: item.mimeType },
+    user: item.user,
+    headers: { 'content-type': item.mimeType },
+    body: item.body || {},
+  } as any;
+
+  let resultData: any = null;
+  let resultError: string | null = null;
+  const mockRes = {
+    status: () => mockRes,
+    json: (data: any) => { resultData = data; return mockRes; },
+  } as any;
+  const mockNext = (err?: any) => { if (err) resultError = err.message || String(err); };
+
+  await uploadMadisonInvoice(mockReq, mockRes, mockNext);
+  if (resultError) throw new Error(resultError);
+  if (!resultData) throw new Error('No result returned from extraction');
+  return resultData;
+});

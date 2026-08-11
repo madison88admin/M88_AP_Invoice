@@ -5,7 +5,7 @@ import path from 'path';
 export interface AsyncJob {
   id: string;
   type: string;
-  status: 'processing' | 'completed' | 'failed';
+  status: 'queued' | 'processing' | 'completed' | 'failed';
   result?: any;
   error?: string;
   createdAt: number;
@@ -49,12 +49,21 @@ function loadJobs(): void {
   }
 }
 
-export function createJob(type: string): string {
+export function createJob(type: string, initialStatus: AsyncJob['status'] = 'processing'): string {
   const id = crypto.randomUUID();
   const now = Date.now();
-  jobs.set(id, { id, type, status: 'processing', createdAt: now, updatedAt: now });
+  jobs.set(id, { id, type, status: initialStatus, createdAt: now, updatedAt: now });
   persistJobs();
   return id;
+}
+
+export function markJobProcessing(id: string): void {
+  const job = jobs.get(id);
+  if (!job) return;
+  job.status = 'processing';
+  job.error = undefined;
+  job.updatedAt = Date.now();
+  persistJobs();
 }
 
 export function completeJob(id: string, result: any): void {

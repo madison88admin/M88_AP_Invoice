@@ -46,6 +46,7 @@ import { qwenOCRService } from './services/qwenOCRService';
 import { checkAndSendSLAReminders } from './services/slaReminderService';
 import { startSharePointWatcher, stopSharePointWatcher } from './services/sharePointWatcherService';
 import { startFileWatcher, stopFileWatcher } from './services/fileWatcherService';
+import { invoiceUploadQueue } from './services/invoiceUploadQueue';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -152,6 +153,7 @@ app.get('/health/engines', async (req, res) => {
         enabled: process.env.DATABASE_URL && process.env.DATABASE_URL.length > 0,
         connected: await isDbConnected(),
       },
+      invoice_queue: invoiceUploadQueue.stats(),
     },
   });
 });

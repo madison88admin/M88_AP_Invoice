@@ -2,6 +2,7 @@ import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
 import * as invoiceService from '../services/invoiceService';
+import { downloadInvoicePdf } from '../services/reprocessService';
 import { InvoiceStatus, InvoiceType, InvoiceCategory } from '@ap-invoice/shared';
 
 export const createInvoice = async (
@@ -64,6 +65,30 @@ export const getInvoiceById = async (
       throw new AppError('Invoice not found', 404);
     }
     res.json(invoice);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const viewInvoiceDocument = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const invoice = await invoiceService.getInvoiceById(req.params.id);
+    if (!invoice) {
+      throw new AppError('Invoice not found', 404);
+    }
+
+    const file = await downloadInvoicePdf(invoice);
+    const safeNumber = String(invoice.invoice_number || 'invoice')
+      .replace(/[^a-zA-Z0-9._-]+/g, '_');
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${safeNumber}.pdf"`);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.send(file);
   } catch (error) {
     next(error);
   }

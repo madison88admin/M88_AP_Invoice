@@ -3,8 +3,9 @@ import { Link } from 'react-router-dom';
 import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { CheckCircle, XCircle, Clock, ArrowLeft, Loader2 } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, ArrowLeft, Loader2, ExternalLink } from 'lucide-react';
 import { MockInvoice } from '../lib/mockData';
+import { invoiceApi } from '../lib/api';
 import { Skeleton } from './ui/Skeleton';
 import { isWithinRoleThreshold } from '../lib/roleAccess';
 
@@ -43,6 +44,7 @@ export default function ApprovalInbox() {
   const [selectedInvoice, setSelectedInvoice] = useState<MockInvoice | null>(null);
   const [approving, setApproving] = useState(false);
   const [rejecting, setRejecting] = useState(false);
+  const [openingDocument, setOpeningDocument] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [showRejectModal, setShowRejectModal] = useState(false);
   
@@ -119,6 +121,47 @@ export default function ApprovalInbox() {
       showToast(msg, 'error');
     } finally {
       setRejecting(false);
+    }
+  };
+
+  const handleViewDocument = async () => {
+    if (!selectedInvoice) return;
+
+    const previewWindow = window.open('', '_blank');
+    try {
+      setOpeningDocument(true);
+      if (previewWindow) {
+        previewWindow.document.title = 'Loading invoice...';
+        previewWindow.document.body.textContent = 'Loading invoice PDF...';
+      }
+      const response = await invoiceApi.getDocument(selectedInvoice.id);
+      const contentType = String(response.headers['content-type'] || 'application/pdf');
+      const url = URL.createObjectURL(new Blob([response.data], { type: contentType }));
+      if (previewWindow) {
+        previewWindow.location.href = url;
+      } else {
+        const link = document.createElement('a');
+        link.href = url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.click();
+      }
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (error: any) {
+      previewWindow?.close();
+      const blob = error?.response?.data;
+      let message = 'The actual invoice PDF is not available for this record.';
+      if (blob instanceof Blob) {
+        try {
+          const parsed = JSON.parse(await blob.text());
+          message = parsed?.error?.message || parsed?.message || message;
+        } catch {
+          // Keep the user-friendly fallback for non-JSON failures.
+        }
+      }
+      showToast(message, 'error');
+    } finally {
+      setOpeningDocument(false);
     }
   };
 
@@ -285,6 +328,17 @@ export default function ApprovalInbox() {
                           : 'N/A'}
                       </p>
                     </div>
+
+                    <button
+                      type="button"
+                      onClick={handleViewDocument}
+                      disabled={openingDocument}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border transition-all text-sm font-semibold"
+                      style={{ borderColor: 'var(--border-color)', color: 'var(--accent-blue)', background: 'var(--bg-elevated)' }}
+                    >
+                      {openingDocument ? <Loader2 className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}
+                      {openingDocument ? 'Opening Invoice...' : 'View Actual Invoice'}
+                    </button>
 
                     {/* Approval Progress */}
                     {selectedInvoice.signatures && selectedInvoice.signatures.length > 0 && (

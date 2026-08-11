@@ -205,7 +205,7 @@ export async function reprocessInvoices(
  * Download the original PDF for an invoice.
  * Tries local pdf_path first, then falls back to SharePoint/raw_file_url.
  */
-async function downloadInvoicePdf(invoice: any): Promise<Buffer> {
+export async function downloadInvoicePdf(invoice: any): Promise<Buffer> {
   // 1. Try local pdf_path first (fastest — no network needed)
   if (invoice.pdf_path) {
     if (fs.existsSync(invoice.pdf_path)) {

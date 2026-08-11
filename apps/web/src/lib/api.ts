@@ -22,6 +22,7 @@ export const invoiceApi = {
   getAll: (filters?: any) => api.get('/api/invoices', { params: filters }),
   getById: (id: string) => api.get(`/api/invoices/${id}`),
   getTimeline: (id: string) => api.get(`/api/invoices/${id}/timeline`),
+  getDocument: (id: string) => api.get(`/api/invoices/${id}/document`, { responseType: 'blob' }),
   getPaymentTerms: () => api.get('/api/invoices/metadata/payment-terms'),
   create: (data: any) => api.post('/api/invoices', data),
   updateStatus: (id: string, status: string) => api.patch(`/api/invoices/${id}/status`, { status }),

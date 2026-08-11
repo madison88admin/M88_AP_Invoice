@@ -2,7 +2,7 @@ import prisma from '../config/database';
 import { InvoiceStatus, InvoiceType, InvoiceCategory, BrandTier, InvoiceSource } from '@ap-invoice/shared';
 import { AppError } from '../middleware/errorHandler';
 import { isTop10Brand, TOP_10_BRANDS } from '@ap-invoice/shared';
-import { logAudit } from './auditLogService';
+import { logAudit, resolveAuditActorNames } from './auditLogService';
 import { matchVendor } from './vendorMatchingService';
 import { fieldDecisionEngine } from './fieldDecisionEngine';
 import { inAppNotificationService } from './inAppNotificationService';
@@ -458,7 +458,9 @@ export const getInvoiceById = async (id: string) => {
     },
   });
 
-  return applyVendorDisplayFallbacks(invoice);
+  if (!invoice) return invoice;
+  const auditLogs = await resolveAuditActorNames(invoice.audit_logs);
+  return applyVendorDisplayFallbacks({ ...invoice, audit_logs: auditLogs });
 };
 
 export const updateInvoiceStatus = async (id: string, status: InvoiceStatus, userId: string) => {
@@ -754,9 +756,11 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     if (invoiceData[key] === undefined) continue;
     const oldVal = (existing as any)[key];
     const newVal = invoiceData[key];
-    if (oldVal !== undefined && String(oldVal) !== String(newVal)) {
-      const oldDisplay = oldVal instanceof Date ? oldVal.toISOString().split('T')[0] : String(oldVal ?? '—');
-      const newDisplay = newVal instanceof Date ? new Date(newVal).toISOString().split('T')[0] : String(newVal ?? '—');
+    if (oldVal !== undefined) {
+      const isDateField = dateFields.includes(key);
+      const oldDisplay = isDateField && oldVal ? new Date(oldVal).toISOString().split('T')[0] : String(oldVal ?? '—');
+      const newDisplay = isDateField && newVal ? new Date(newVal).toISOString().split('T')[0] : String(newVal ?? '—');
+      if (oldDisplay === newDisplay) continue;
       changedFields.push(`${key}: "${oldDisplay}" → "${newDisplay}"`);
     }
   }
@@ -771,7 +775,7 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
 
   await logAudit({
     invoice_id: invoice.id,
-    performed_by: userId,
+    performed_by: displayName,
     action: 'INVOICE_UPDATED',
     note: auditNote,
   });

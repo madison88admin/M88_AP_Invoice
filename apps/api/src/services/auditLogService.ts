@@ -8,6 +8,25 @@ export interface AuditLogEntry {
   metadata?: Record<string, any>;
 }
 
+export async function resolveAuditActorNames<T extends { performed_by: string | null }>(logs: T[]) {
+  const userIds = [...new Set(logs
+    .map((log) => log.performed_by)
+    .filter((value): value is string => Boolean(value && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(value))))];
+  if (userIds.length === 0) return logs;
+
+  const users = await prisma.user.findMany({
+    where: { id: { in: userIds } },
+    select: { id: true, name: true },
+  });
+  const namesById = new Map(users.map((user) => [user.id, user.name]));
+  return logs.map((log) => {
+    const actorName = log.performed_by ? namesById.get(log.performed_by) : undefined;
+    return actorName
+      ? { ...log, performed_by_id: log.performed_by, performed_by: actorName }
+      : log;
+  });
+}
+
 export async function logAudit(entry: AuditLogEntry) {
   try {
     await prisma.auditLog.create({
@@ -70,5 +89,5 @@ export async function getAuditLogs(filters: {
     prisma.auditLog.count({ where }),
   ]);
 
-  return { logs, total };
+  return { logs: await resolveAuditActorNames(logs), total };
 }

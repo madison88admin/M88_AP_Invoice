@@ -153,6 +153,9 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
         data: {
           name: vendorName.trim(),
           name_aliases: [],
+          bank_name_alt: [],
+          account_number_alt: [],
+          swift_code_alt: [],
           invoice_template_type: 'NO_DATA' as any,
         },
       });
@@ -587,6 +590,9 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
         data: {
           name: manualVendorName,
           name_aliases: [],
+          bank_name_alt: [],
+          account_number_alt: [],
+          swift_code_alt: [],
           invoice_template_type: 'NO_DATA' as any,
           onboarded_by: userName || userId,
         },

@@ -104,6 +104,10 @@ router.post('/', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_A
       data: {
         ...req.body,
         id: req.body.id || crypto.randomUUID(),
+        name_aliases: req.body.name_aliases || [],
+        bank_name_alt: req.body.bank_name_alt || [],
+        account_number_alt: req.body.account_number_alt || [],
+        swift_code_alt: req.body.swift_code_alt || [],
         created_at: new Date(),
         updated_at: new Date(),
       },

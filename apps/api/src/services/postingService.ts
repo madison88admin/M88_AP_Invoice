@@ -1,5 +1,5 @@
 import prisma from '../config/database';
-import { InvoiceStatus, ExceptionReason, SLA_LIMITS, calcWorkingHoursElapsed } from '@ap-invoice/shared';
+import { InvoiceStatus, ExceptionReason, SLA_LIMITS, BATCH_THRESHOLD_CONFIG, calcWorkingHoursElapsed } from '@ap-invoice/shared';
 import { AppError } from '../middleware/errorHandler';
 import { nextGenService } from './nextGenService';
 import { inAppNotificationService } from './inAppNotificationService';
@@ -158,6 +158,68 @@ export async function postInvoice(invoiceId: string, userId: string, bypassVaria
   const allSigned = invoice.signatures.every((sig: any) => sig.signed_at !== null);
   if (!allSigned) {
     throw new AppError('All approvals must be completed before posting', 400);
+  }
+
+  // The vendor batching threshold is enforced only after all Purchasing
+  // approvals are complete and Accounting attempts to post the invoice.
+  const accountingHeldInvoices = await prisma.invoice.findMany({
+    where: {
+      vendor_id: invoice.vendor_id,
+      status: InvoiceStatus.ON_HOLD as any,
+      id: { not: invoiceId },
+      exceptions: {
+        some: { reason: ExceptionReason.BATCH_THRESHOLD_NOT_MET as any, status: 'PENDING' as any },
+      },
+    },
+    select: { id: true, total_amount: true },
+  });
+  const accountingBatchTotal = accountingHeldInvoices.reduce((sum, item) => sum + Number(item.total_amount), 0)
+    + Number(invoice.total_amount);
+
+  if (accountingBatchTotal < BATCH_THRESHOLD_CONFIG.AMOUNT) {
+    const existingThresholdException = invoice.exceptions.find(
+      (exc: any) => exc.reason === ExceptionReason.BATCH_THRESHOLD_NOT_MET && exc.status === 'PENDING'
+    );
+    if (!existingThresholdException) {
+      await prisma.exception.create({
+        data: {
+          invoice_id: invoiceId,
+          reason: ExceptionReason.BATCH_THRESHOLD_NOT_MET as any,
+          detail: `[ACCOUNTING AUTO-HOLD] Vendor cumulative amount $${accountingBatchTotal.toFixed(2)} is below $${BATCH_THRESHOLD_CONFIG.AMOUNT}.`,
+        },
+      });
+    }
+    await prisma.invoice.update({ where: { id: invoiceId }, data: { status: InvoiceStatus.ON_HOLD as any } });
+    await prisma.auditLog.create({
+      data: {
+        invoice_id: invoiceId,
+        action: 'ACCOUNTING_AUTO_HOLD',
+        performed_by: userId,
+        note: `Accounting auto-hold applied. Vendor batch total $${accountingBatchTotal.toFixed(2)} is below $${BATCH_THRESHOLD_CONFIG.AMOUNT}.`,
+      },
+    });
+    return { posted: false, status: 'ON_HOLD', reason: 'BATCH_THRESHOLD_NOT_MET', cumulative: accountingBatchTotal };
+  }
+
+  if (accountingHeldInvoices.length > 0) {
+    const heldIds = accountingHeldInvoices.map(item => item.id);
+    await prisma.invoice.updateMany({
+      where: { id: { in: heldIds } },
+      data: { status: InvoiceStatus.PENDING_ACCOUNTING as any },
+    });
+    await prisma.exception.updateMany({
+      where: {
+        invoice_id: { in: heldIds },
+        reason: ExceptionReason.BATCH_THRESHOLD_NOT_MET as any,
+        status: 'PENDING' as any,
+      },
+      data: {
+        status: 'RESOLVED' as any,
+        resolved_at: new Date(),
+        resolved_by: userId,
+        resolution_notes: `Accounting batch threshold reached: $${accountingBatchTotal.toFixed(2)}.`,
+      },
+    });
   }
 
   // Check for any unresolved exceptions
@@ -643,13 +705,6 @@ export async function releaseFromHold(invoiceId: string, userId: string) {
     throw new AppError('Invoice is not on hold', 400);
   }
 
-  // Determine WHY the invoice was on hold:
-  // - BATCH_THRESHOLD_NOT_MET → should go back to VALIDATION_PENDING (pre-approval)
-  // - Other exceptions (pre-post check) → should go back to PENDING_ACCOUNTING (post-approval)
-  const batchThresholdException = invoice.exceptions.find(
-    (exc: any) => exc.reason === 'BATCH_THRESHOLD_NOT_MET' && exc.status === 'PENDING'
-  );
-
   // Resolve any PENDING exceptions that were created by the pre-post check
   const pendingExceptions = invoice.exceptions.filter(
     (exc: any) => exc.status === 'PENDING'
@@ -664,26 +719,6 @@ export async function releaseFromHold(invoiceId: string, userId: string) {
         resolution_notes: `Auto-resolved: invoice released from ON_HOLD by user. Pre-post issue manually addressed.`,
       },
     });
-  }
-
-  // If the invoice was held due to batch threshold, send it back to VALIDATION_PENDING
-  // so it goes through the full approval workflow (coordinator → manager → ... → accounting)
-  if (batchThresholdException) {
-    await prisma.invoice.update({
-      where: { id: invoiceId },
-      data: { status: InvoiceStatus.VALIDATION_PENDING as any },
-    });
-
-    await prisma.auditLog.create({
-      data: {
-        invoice_id: invoiceId,
-        action: 'RELEASED_FROM_HOLD',
-        performed_by: userId,
-        note: `Invoice released from ON_HOLD (batch threshold) back to VALIDATION_PENDING by user. ${pendingExceptions.length} exception(s) auto-resolved. Invoice will go through full approval workflow.`,
-      },
-    });
-
-    return { message: 'Invoice released from hold (batch threshold) — sent to validation pending for approval workflow', invoice_id: invoiceId };
   }
 
   // Normal case: invoice was held during posting (pre-post check failed)
@@ -736,18 +771,10 @@ export async function holdInvoiceForBatchThreshold(invoiceId: string, userId: st
   }
 
   // Only allow holding invoices that are in a pre-payment stage
-  const holdableStatuses = [
-    InvoiceStatus.VALIDATION_PENDING,
-    InvoiceStatus.APPROVED,
-    InvoiceStatus.PENDING_ACCOUNTING,
-    InvoiceStatus.PENDING_COORDINATOR,
-    InvoiceStatus.PENDING_MANAGER,
-    InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER,
-    InvoiceStatus.PENDING_SR_MANAGER,
-  ];
+  const holdableStatuses = [InvoiceStatus.PENDING_ACCOUNTING];
 
   if (!holdableStatuses.includes(invoice.status as any)) {
-    throw new AppError(`Cannot hold invoice in status ${invoice.status}`, 400);
+    throw new AppError(`Cannot hold invoice in ${invoice.status}. ON_HOLD is available only in PENDING_ACCOUNTING.`, 400);
   }
 
   const previousStatus = invoice.status;

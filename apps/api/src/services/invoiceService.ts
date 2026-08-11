@@ -326,7 +326,7 @@ const applyVendorDisplayFallbacks = (invoice: any) => {
 };
 
 const ALL_STAGES = [
-  'RECEIVED', 'VALIDATION_PENDING', 'EXCEPTION_FLAGGED', 'ON_HOLD',
+  'RECEIVED', 'VALIDATION_PENDING', 'EXCEPTION_FLAGGED',
   'PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_MLO_ACCOUNT_HOLDER',
   'PENDING_MLO_PLANNING_MANAGER', 'PENDING_SR_MANAGER', 'PENDING_POLLY',
   'APPROVED', 'PENDING_ACCOUNTING', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED',
@@ -538,7 +538,7 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
   // Once invoice is approved (PENDING_ACCOUNTING or APPROVED), accounting can ONLY edit bank details
   // All other fields are locked to preserve the approved invoice state
   const approvedStatuses = ['PENDING_ACCOUNTING', 'APPROVED'];
-  if (approvedStatuses.includes(existing.status)) {
+  if (approvedStatuses.includes(existing.status) && !canFullEdit) {
     const allowedFields = ['beneficiary_name', 'bank_name', 'swift_code', 'account_number'];
     const attemptedFields = Object.keys(invoiceData).filter(k => invoiceData[k] !== undefined && !protectedFields.includes(k));
     const disallowedFields = attemptedFields.filter(f => !allowedFields.includes(f));
@@ -576,29 +576,34 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
   }
 
   // Validate enum fields — skip invalid values to prevent Prisma errors
+  const nonNullableFields = ['invoice_number', 'total_amount', 'currency', 'invoice_type', 'category', 'bill_to_entity', 'vendor_id', 'vendor_name_raw'];
+  for (const field of nonNullableFields) {
+    if (data[field] === null || data[field] === '') delete data[field];
+  }
+
   const validCategories = Object.values(InvoiceCategory);
   if (data.category && !validCategories.includes(data.category)) {
-    delete data.category;
+    throw new AppError(`Invalid invoice category: ${data.category}`, 400);
   }
 
   const validInvoiceTypes = ['INVOICE', 'PROFORMA', 'COMMERCIAL', 'SALES', 'STATEMENT', 'PREPAID', 'PROTO_SAMPLE'];
   if (data.invoice_type && !validInvoiceTypes.includes(data.invoice_type)) {
-    delete data.invoice_type;
+    throw new AppError(`Invalid invoice type: ${data.invoice_type}`, 400);
   }
 
   const validOrderTypes = ['BULK', 'SMS', 'SAMPLE'];
   if (data.order_type && !validOrderTypes.includes(data.order_type)) {
-    delete data.order_type;
+    throw new AppError(`Invalid order type: ${data.order_type}`, 400);
   }
 
   const validBrandTiers = ['TOP_10', 'OTHER'];
   if (data.brand_tier && !validBrandTiers.includes(data.brand_tier)) {
-    delete data.brand_tier;
+    throw new AppError(`Invalid brand tier: ${data.brand_tier}`, 400);
   }
 
   const validBillToEntities = ['MADISON_88_LTD', 'MADISON_88_HK_LIMITED'];
   if (data.bill_to_entity && !validBillToEntities.includes(data.bill_to_entity)) {
-    delete data.bill_to_entity;
+    throw new AppError(`Invalid bill-to entity: ${data.bill_to_entity}`, 400);
   }
 
   // payment_terms is a free-text String field, not an enum — no validation needed
@@ -643,12 +648,12 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     'payment_terms', 'customer_po_number'
   ]);
   const materialChange = Object.keys(data).some((key) =>
-    materialFields.has(key) && String((existing as any)[key] ?? '') !== String(data[key] ?? '')
+    String((existing as any)[key] ?? '') !== String(data[key] ?? '')
   );
   if (materialChange && !String(invoiceData.edit_reason || '').trim()) {
     throw new AppError('A reason is required for material or financial invoice changes', 400);
   }
-  const approvalStarted = String(existing.status).startsWith('PENDING_') || existing.status === 'APPROVED';
+  const approvalStarted = String(existing.status).startsWith('PENDING_') || existing.status === 'APPROVED' || existing.status === 'ON_HOLD';
   const nextRevision = materialChange ? Number((existing as any).revision || 1) + 1 : Number((existing as any).revision || 1);
 
   if (materialChange && approvalStarted) {
@@ -756,6 +761,7 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
   const validationFields = [
     // Amount & charges
     'total_amount', 'subtotal', 'tax_amount', 'discount_amount',
+    'payment_penalty_rate',
     'bank_charges', 'freight_charges', 'additional_charges', 'courier_charges',
     'handling_fee', 'tt_charge', 'setup_charge', 'sample_charge',
     'min_order_charge', 'finance_surcharge',
@@ -788,7 +794,12 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     });
   }
 
-  return applyVendorDisplayFallbacks(invoice);
+  return {
+    ...applyVendorDisplayFallbacks(invoice),
+    _persisted_values: Object.fromEntries(
+      Object.keys(data).map((field) => [field, (invoice as any)[field]])
+    ),
+  };
 };
 
 export const checkDuplicate = async (invoiceData: any) => {

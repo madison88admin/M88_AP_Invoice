@@ -1343,6 +1343,12 @@ async function validateVendorThreshold(invoice: any): Promise<ValidationResult> 
  * Once reached, the vendor is "approved" and invoices proceed through the workflow.
  */
 export async function checkBatchThreshold(invoiceId: string): Promise<{ held: boolean; cumulative: number; released: number }> {
+  // ON_HOLD is Accounting-only. Purchasing validation always continues to
+  // approval; the threshold is enforced later by the posting workflow.
+  void invoiceId;
+  return { held: false, cumulative: 0, released: 0 };
+
+  /* Legacy pre-Accounting implementation retained temporarily for migration reference.
   const BATCH_THRESHOLD = BATCH_THRESHOLD_CONFIG.AMOUNT;
 
   const invoice = await prisma.invoice.findUnique({
@@ -1432,6 +1438,7 @@ export async function checkBatchThreshold(invoiceId: string): Promise<{ held: bo
   }
 
   return { held: false, cumulative, released: heldInvoiceIds.length };
+  */
 }
 
 /**

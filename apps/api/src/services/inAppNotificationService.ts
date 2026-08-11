@@ -91,7 +91,7 @@ class InAppNotificationService {
       PAYMENT_CONFIRMATION_SENT: null, // everyone
       REJECTED: UserRole.PURCHASING_COORDINATOR,
       EXCEPTION_FLAGGED: UserRole.PURCHASING_COORDINATOR,
-      ON_HOLD: UserRole.PURCHASING_COORDINATOR,
+      ON_HOLD: UserRole.ACCOUNTING_ASSOCIATE,
     };
 
     const targetRole = nextRole ? (nextRole as UserRole) : (roleMap[newStatus] || null);
@@ -125,7 +125,7 @@ class InAppNotificationService {
 
   async ensureActionableAlerts(userRole: string) {
     const targetStatuses: Record<string, InvoiceStatus[]> = {
-      [UserRole.PURCHASING_COORDINATOR]: [InvoiceStatus.RECEIVED, InvoiceStatus.VALIDATION_PENDING, InvoiceStatus.EXCEPTION_FLAGGED, InvoiceStatus.REJECTED, InvoiceStatus.ON_HOLD],
+      [UserRole.PURCHASING_COORDINATOR]: [InvoiceStatus.RECEIVED, InvoiceStatus.VALIDATION_PENDING, InvoiceStatus.EXCEPTION_FLAGGED, InvoiceStatus.REJECTED],
       [UserRole.PURCHASING_MANAGER]: [InvoiceStatus.PENDING_MANAGER],
       [UserRole.ACCOUNTING_SUPERVISOR]: [InvoiceStatus.PENDING_ACCOUNTING],
       [UserRole.ACCOUNTING_ASSOCIATE]: [InvoiceStatus.APPROVED, InvoiceStatus.POSTED_TO_QB, InvoiceStatus.PAYMENT_SCHEDULED],

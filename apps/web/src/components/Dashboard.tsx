@@ -756,8 +756,8 @@ export default function Dashboard() {
     
     setSavingEdit(true);
     try {
-      const parseNum = (val: string) => (val === '' || val === undefined || val === null) ? undefined : parseFloat(val);
-      const parseString = (val: string) => (val === '' || val === undefined || val === null) ? undefined : val;
+      const parseNum = (val: string) => (val === '' || val === undefined || val === null) ? null : parseFloat(val);
+      const parseString = (val: string) => (val === '' || val === undefined || val === null) ? null : val;
 
       // Remove bank fields from payload if user can't edit them — backend will reject anyway
       const canEditBank = user ? hasPermission(user.role, 'canEditBankDetails') : false;
@@ -798,6 +798,7 @@ export default function Dashboard() {
         bank_charges: canEditAll ? parseNum(editFormData.bank_charges) : undefined,
         freight_charges: canEditAll ? parseNum(editFormData.freight_charges) : undefined,
         additional_charges: canEditAll ? parseNum(editFormData.additional_charges) : undefined,
+        payment_penalty_rate: canEditAll ? parseNum(editFormData.payment_penalty_rate) : undefined,
         exchange_rate_to_usd: canEditAll ? parseNum(editFormData.exchange_rate_to_usd) : undefined,
         invoice_currency_original: canEditAll ? parseString(editFormData.invoice_currency_original) : undefined,
         incoterm: canEditAll ? parseString(editFormData.incoterm) : undefined,
@@ -811,6 +812,21 @@ export default function Dashboard() {
         date_range_end: canEditAll ? parseString(editFormData.date_range_end) : undefined,
       };
       const response = await invoiceApi.update(selectedInvoice.id, payload);
+      const mismatches = Object.entries(payload).filter(([field, expected]) => {
+        if (expected === undefined || field === 'edit_reason') return false;
+        if (field === 'vendor_name_raw' && (payload as any).vendor_id) return false;
+        const persistedValues = (response.data as any)._persisted_values || response.data;
+        const actual = persistedValues[field];
+        if (expected === null) return actual !== null && actual !== undefined;
+        if (typeof expected === 'number') return Number(actual) !== expected;
+        if (field.endsWith('_date') || field === 'invoice_date' || field === 'due_date') {
+          return !String(actual || '').startsWith(String(expected));
+        }
+        return String(actual ?? '') !== String(expected);
+      });
+      if (mismatches.length > 0) {
+        throw new Error(`Save verification failed for: ${mismatches.map(([field]) => field).join(', ')}`);
+      }
       await refresh();
       setSelectedInvoice(response.data);
       setShowEditModal(false);
@@ -2795,8 +2811,7 @@ ${dataRows}
               {/* Validation Button */}
               {(selectedInvoice.status === (InvoiceStatus.RECEIVED as any) ||
                 selectedInvoice.status === (InvoiceStatus.VALIDATION_PENDING as any) ||
-                selectedInvoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any) ||
-                selectedInvoice.status === (InvoiceStatus.ON_HOLD as any)) && user && hasPermission(user.role, 'canValidate') && (
+                selectedInvoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any)) && user && hasPermission(user.role, 'canValidate') && (
                 <button
                   onClick={handleValidate}
                   disabled={validating}
@@ -2964,10 +2979,7 @@ ${dataRows}
               )}
 
               {/* Hold for Batch Threshold — Accounting can manually hold invoices below $100 vendor cumulative */}
-              {selectedInvoice.status !== (InvoiceStatus.ON_HOLD as any) &&
-                selectedInvoice.status !== (InvoiceStatus.PAID as any) &&
-                selectedInvoice.status !== (InvoiceStatus.REJECTED as any) &&
-                selectedInvoice.status !== (InvoiceStatus.PAYMENT_CONFIRMATION_SENT as any) &&
+              {selectedInvoice.status === (InvoiceStatus.PENDING_ACCOUNTING as any) &&
                 user && hasPermission(user.role, 'canHoldInvoice') && (
                 <button
                   onClick={handleHoldForBatchThreshold}

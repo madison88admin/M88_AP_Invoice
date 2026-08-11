@@ -32,9 +32,9 @@ const APPROVAL_ROLE_ORDER = [
   'ACCOUNTING_REVIEWER',
 ];
 
-const orderedSignatures = (invoice: MockInvoice) => [...(invoice.signatures || [])].sort(
-  (a, b) => APPROVAL_ROLE_ORDER.indexOf(a.signatory_role) - APPROVAL_ROLE_ORDER.indexOf(b.signatory_role)
-);
+const orderedSignatures = (invoice: MockInvoice) => (invoice.signatures || [])
+  .filter(signature => !signature.ocr_detected && !signature.invalidated_at)
+  .sort((a, b) => APPROVAL_ROLE_ORDER.indexOf(a.signatory_role) - APPROVAL_ROLE_ORDER.indexOf(b.signatory_role));
 
 export default function ApprovalInbox() {
   const { invoices, approveInvoice, rejectInvoice } = useMockData();
@@ -58,7 +58,7 @@ export default function ApprovalInbox() {
 
   // Filter invoices to show only pending approvals for the current user's role
   const pendingApprovals = invoices.filter(invoice => {
-    if (!invoice.signatures || invoice.signatures.length === 0) return false;
+    if (orderedSignatures(invoice).length === 0) return false;
     // Exclude invoices not in an active approval workflow
     const status = String(invoice.status || '');
     if (!status.startsWith('PENDING_') || status === 'PENDING_ACCOUNTING') return false;
@@ -76,7 +76,7 @@ export default function ApprovalInbox() {
   });
 
   const getCoordinatorName = (invoice: MockInvoice) => {
-    const coordinator = invoice.signatures?.find(sig =>
+    const coordinator = orderedSignatures(invoice).find(sig =>
       sig.signatory_role === 'COORDINATOR' && !!sig.signatory_name
     );
     return coordinator?.signatory_name || 'Not yet approved';
@@ -166,11 +166,12 @@ export default function ApprovalInbox() {
   };
 
   const getApprovalStatus = (invoice: MockInvoice) => {
-    if (!invoice.signatures || invoice.signatures.length === 0) return 'No approvals';
+    const workflowSignatures = orderedSignatures(invoice);
+    if (workflowSignatures.length === 0) return 'No approvals';
     
-    const approved = invoice.signatures.filter(s => s.signed_at !== null).length;
-    const total = invoice.signatures.length;
-    const pending = orderedSignatures(invoice).find(s => !s.signed_at);
+    const approved = workflowSignatures.filter(s => s.signed_at != null).length;
+    const total = workflowSignatures.length;
+    const pending = workflowSignatures.find(s => !s.signed_at);
     
     if (pending) {
       return `Awaiting: ${pending.signatory_role}`;
@@ -341,7 +342,7 @@ export default function ApprovalInbox() {
                     </button>
 
                     {/* Approval Progress */}
-                    {selectedInvoice.signatures && selectedInvoice.signatures.length > 0 && (
+                    {orderedSignatures(selectedInvoice).length > 0 && (
                       <div className="pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
                         <p className="text-sm font-medium mb-3" style={{ color: 'var(--text-primary)' }}>
                           Approval Progress

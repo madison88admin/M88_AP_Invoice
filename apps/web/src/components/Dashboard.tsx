@@ -10,7 +10,6 @@ import PipelineTracker from './PipelineTracker';
 import MyTasksWidget from './MyTasksWidget';
 import StatusGuide from './StatusGuide';
 import StatCard from './ui/StatCard';
-import AuditTile from './ui/AuditTile';
 import { ThemeToggle } from './ThemeToggle';
 import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -180,17 +179,6 @@ export default function Dashboard() {
   const [quickFilter, setQuickFilter] = useState<'all' | 'returned' | 'urgent'>('all');
   const [paymentTermsOptions, setPaymentTermsOptions] = useState<string[]>([]);
   const [vendorList, setVendorList] = useState<{ id: string; name: string }[]>([]);
-  const [poAuditSummary, setPoAuditSummary] = useState({
-    matched: 0,
-    warnings: 0,
-    mismatches: 0,
-    pending: 0,
-    not_found: 0,
-    skipped: 0,
-    error: 0,
-    total: 0,
-  });
-  const [poAuditLoading] = useState(false);
 
   // Use live invoice data from the API
   const allInvoices = invoices;
@@ -398,56 +386,6 @@ export default function Dashboard() {
     }
   }, [location.state, location.search, invoices, navigate]);
 
-  // Compute PO audit summary dynamically from each invoice's NextGen validation result.
-  useEffect(() => {
-    const summary = allInvoices.reduce((acc, invoice) => {
-      const pv = invoice.po_validation;
-      acc.total++;
-      if (!pv) {
-        acc.pending++;
-        return acc;
-      }
-      if (pv.mode === 'AST_ISOLATED' && pv.skipped) {
-        acc.skipped++;
-        return acc;
-      }
-      if (!pv.po_found) {
-        acc.not_found++;
-        return acc;
-      }
-      const comparison = pv.comparison || pv.validation_result?.checks;
-      const hasMismatch = comparison &&
-        (comparison.vendor_match === false || comparison.amount_match === false ||
-         comparison.brand_match === false || comparison.season_match === false ||
-         comparison.order_type_match === false || comparison.currency_match === false);
-      const hasWarning = comparison &&
-        (typeof comparison.amount_variance_percent === 'number' && comparison.amount_variance_percent > 0 && comparison.amount_variance_percent <= 5);
-      if (hasMismatch) {
-        acc.mismatches++;
-      } else if (hasWarning) {
-        acc.warnings++;
-      } else if (pv.is_match || pv.validation_result?.status === 'AUTO_APPROVED') {
-        acc.matched++;
-      } else if (pv.validation_result?.status === 'REJECTED') {
-        acc.mismatches++;
-      } else if (pv.validation_result?.status === 'REVIEW_REQUIRED') {
-        acc.warnings++;
-      } else {
-        acc.matched++;
-      }
-      return acc;
-    }, {
-      matched: 0,
-      warnings: 0,
-      mismatches: 0,
-      pending: 0,
-      not_found: 0,
-      skipped: 0,
-      error: 0,
-      total: 0,
-    });
-    setPoAuditSummary(summary);
-  }, [allInvoices]);
 
   // Count-up animations for each KPI - calculate from live invoice data
   const pendingValidationCount = useCountUp(allInvoices.filter(i => i.status === InvoiceStatus.VALIDATION_PENDING).length, 1200, countUpStarted);
@@ -1779,74 +1717,6 @@ ${dataRows}
                 );
               })}
             </div>
-          )}
-
-          {/* PO Validation Audit — unified horizontal scorecard */}
-          {user?.role !== 'SUPERADMIN' && (
-          <div className="mb-6 rounded-2xl p-5" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <div className="p-1.5 rounded-lg" style={{ background: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-purple) 20%, transparent)' }}>
-                  <FileSearch className="h-4 w-4" style={{ color: 'var(--accent-purple)' }} strokeWidth={1.75} />
-                </div>
-                <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>NextGen Validation Audit</h3>
-              </div>
-              {poAuditLoading && (
-                <span className="text-xs flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
-                  <Loader2 className="h-3 w-3 animate-spin" strokeWidth={2} />
-                  Loading...
-                </span>
-              )}
-            </div>
-
-            <div className="flex flex-wrap items-stretch rounded-xl overflow-hidden" style={{ border: '1px solid var(--border-subtle)', background: 'color-mix(in srgb, var(--bg-elevated) 60%, transparent)' }}>
-              <AuditTile
-                label="Matched"
-                value={poAuditSummary.matched}
-                icon={CheckCircle}
-                status="success"
-              />
-              <AuditTile
-                label="Warnings"
-                value={poAuditSummary.warnings}
-                icon={AlertTriangle}
-                status="warning"
-              />
-              <AuditTile
-                label="Mismatches"
-                value={poAuditSummary.mismatches}
-                icon={XCircle}
-                status="danger"
-              />
-              <AuditTile
-                label="Pending"
-                value={poAuditSummary.pending}
-                icon={Clock}
-                status="info"
-              />
-              <AuditTile
-                label="Not Found"
-                value={poAuditSummary.not_found}
-                icon={Search}
-                status="warning"
-              />
-              <AuditTile
-                label="Skipped"
-                value={poAuditSummary.skipped}
-                icon={Shield}
-                status="neutral"
-              />
-              <AuditTile
-                label="Error"
-                value={poAuditSummary.error}
-                icon={AlertCircle}
-                status="danger"
-              />
-            </div>
-            <p className="text-xs mt-4" style={{ color: 'var(--text-muted)' }}>
-              {poAuditSummary.total} invoice(s) audited against NextGen PO data. Audit is async and informational only.
-            </p>
-          </div>
           )}
 
           {/* Bottleneck View - Hide for IT_ADMIN and SUPERADMIN */}

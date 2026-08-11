@@ -117,6 +117,7 @@ const apiInvoiceToMock = (invoice: any): MockInvoice => {
       signed_at: s.signed_at ? dateToString(s.signed_at) : undefined,
       signature_type: s.signature_type || 'DIGITAL',
       approval_status: s.approval_status || 'PENDING',
+      ocr_detected: Boolean(s.ocr_detected),
       invalidated_at: s.invalidated_at ? dateToString(s.invalidated_at) : undefined,
       invalidation_reason: s.invalidation_reason || undefined,
     })),

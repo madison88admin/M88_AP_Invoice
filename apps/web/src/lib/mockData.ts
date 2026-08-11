@@ -126,6 +126,7 @@ export interface MockSignature {
   signed_at?: string;
   signature_type: 'DIGITAL' | 'MANUAL';
   approval_status?: string;
+  ocr_detected?: boolean;
   invalidated_at?: string;
   invalidation_reason?: string;
 }

@@ -142,6 +142,14 @@ export default function ApprovalInbox() {
       }
       const response = await invoiceApi.getDocument(invoice.id);
       const contentType = String(response.headers['content-type'] || 'application/pdf');
+      const verificationWarning = response.headers['x-pdf-verification'];
+      if (verificationWarning) {
+        try {
+          showToast(decodeURIComponent(verificationWarning), 'warning');
+        } catch {
+          showToast(String(verificationWarning), 'warning');
+        }
+      }
       const url = URL.createObjectURL(new Blob([response.data], { type: contentType }));
       if (previewWindow) {
         previewWindow.location.href = url;

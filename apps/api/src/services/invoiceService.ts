@@ -433,6 +433,21 @@ export const getInvoices = async (filters: any, userRole?: string) => {
     where.category = filters.category;
   }
 
+  if (filters.search) {
+    const term = filters.search.trim();
+    if (term) {
+      where.OR = [
+        { invoice_number: { contains: term, mode: 'insensitive' } },
+        { vendor_name_raw: { contains: term, mode: 'insensitive' } },
+        { brand: { contains: term, mode: 'insensitive' } },
+        { brand_code: { contains: term, mode: 'insensitive' } },
+        { mpo_number: { contains: term, mode: 'insensitive' } },
+        { customer_po_number: { contains: term, mode: 'insensitive' } },
+        { vendor: { name: { contains: term, mode: 'insensitive' } } },
+      ];
+    }
+  }
+
   const invoices = await prisma.invoice.findMany({
     where,
     include: {

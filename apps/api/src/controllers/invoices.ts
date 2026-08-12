@@ -2,7 +2,7 @@ import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
 import * as invoiceService from '../services/invoiceService';
-import { downloadInvoicePdf } from '../services/reprocessService';
+import { downloadInvoicePdf, verifyPdfMatchesInvoice } from '../services/reprocessService';
 import { storeInvoiceHashFromStorage } from '../services/duplicateDetectionService';
 import { InvoiceStatus, InvoiceType, InvoiceCategory } from '@ap-invoice/shared';
 
@@ -69,6 +69,7 @@ export const getInvoices = async (
       dateTo: req.query.dateTo ? new Date(req.query.dateTo as string) : undefined,
       type: req.query.type as InvoiceType | undefined,
       category: req.query.category as InvoiceCategory | undefined,
+      search: req.query.search as string | undefined,
     };
     
     const invoices = await invoiceService.getInvoices(filters, req.user?.role);
@@ -122,9 +123,25 @@ export const viewInvoiceDocument = async (
     const safeNumber = String(invoice.invoice_number || 'invoice')
       .replace(/[^a-zA-Z0-9._-]+/g, '_');
 
+    // Verify the PDF actually contains this invoice's number
+    let verificationWarning: string | null = null;
+    try {
+      const verification = await verifyPdfMatchesInvoice(file, invoice.invoice_number || '');
+      if (!verification.matches) {
+        verificationWarning = verification.reason || 'PDF content does not match invoice number';
+        console.warn(`[PDF Verify] Mismatch for invoice ${invoice.invoice_number} (id: ${invoice.id}): ${verificationWarning}`);
+      }
+    } catch (verifyErr) {
+      // Non-blocking — still serve the PDF
+      console.warn(`[PDF Verify] Verification error for invoice ${invoice.id}:`, verifyErr instanceof Error ? verifyErr.message : 'unknown');
+    }
+
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="${safeNumber}.pdf"`);
     res.setHeader('Cache-Control', 'private, no-store');
+    if (verificationWarning) {
+      res.setHeader('X-PDF-Verification', encodeURIComponent(verificationWarning));
+    }
     res.send(file);
   } catch (error) {
     next(error);

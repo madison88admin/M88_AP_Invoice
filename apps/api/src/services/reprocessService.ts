@@ -16,6 +16,48 @@ import { geminiOCRService } from './geminiOCRService';
 import { qwenOCRService } from './qwenOCRService';
 import { groqOCRService } from './groqOCRService';
 import { ollamaOCRService } from './ollamaOCRService';
+import { extractInvoiceFields } from './ocrService';
+
+/**
+ * Verify that a downloaded PDF buffer actually contains the expected invoice number.
+ * Extracts text from the PDF and checks if the invoice_number appears anywhere.
+ * Returns { matches: boolean, reason?: string }.
+ */
+export async function verifyPdfMatchesInvoice(
+  pdfBuffer: Buffer,
+  invoiceNumber: string
+): Promise<{ matches: boolean; reason?: string }> {
+  if (!invoiceNumber) {
+    return { matches: true, reason: 'No invoice number to verify against' };
+  }
+
+  try {
+    const extracted = await extractInvoiceFields(pdfBuffer);
+    const pdfText = JSON.stringify(extracted).toLowerCase();
+    const normalizedInvoiceNum = invoiceNumber.toLowerCase().trim();
+
+    // Check if the invoice number appears in the extracted text
+    if (pdfText.includes(normalizedInvoiceNum)) {
+      return { matches: true };
+    }
+
+    // Also try without common separators (e.g., PI-123 vs PI123)
+    const stripped = normalizedInvoiceNum.replace(/[-\/\s]/g, '');
+    const pdfTextStripped = pdfText.replace(/[-\/\s]/g, '');
+    if (stripped.length >= 4 && pdfTextStripped.includes(stripped)) {
+      return { matches: true };
+    }
+
+    return {
+      matches: false,
+      reason: `Invoice number "${invoiceNumber}" not found in PDF content — this may be the wrong PDF file`,
+    };
+  } catch (err) {
+    // If text extraction fails, don't block the PDF — just skip verification
+    logger.warn(`[ReExtract] PDF verification failed (extraction error): ${err instanceof Error ? err.message : 'unknown'}`);
+    return { matches: true, reason: 'PDF text extraction failed — verification skipped' };
+  }
+}
 
 /**
  * Reprocess an invoice: cancel its current payment, reset status, re-validate,

@@ -17,7 +17,7 @@ import { MockInvoice } from '../lib/mockData';
 import { hasPermission, filterInvoicesByRole, canUserApproveStatus, isWithinRoleThreshold } from '../lib/roleAccess';
 import { cn } from '../lib/utils';
 import { getAuditActorDisplay } from '../lib/auditActor';
-import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, ChevronRight, LogOut, Edit, Unlock, Pause, Users, Loader2, Menu, X, Trash2, Landmark, Paperclip, Upload, Download, Eye } from 'lucide-react';
+import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, ChevronRight, LogOut, Edit, Unlock, Pause, Users, Loader2, Menu, X, Trash2, Landmark, Paperclip, Upload, Download, Eye, Copy } from 'lucide-react';
 import { Skeleton, SkeletonBar } from './ui/Skeleton';
 
 // Custom hook for number count-up animation
@@ -181,7 +181,8 @@ export default function Dashboard() {
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [editCollapsed, setEditCollapsed] = useState<Record<string, boolean>>({});
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
-  const [quickFilter, setQuickFilter] = useState<'all' | 'returned' | 'urgent'>('all');
+  const [quickFilter, setQuickFilter] = useState<'all' | 'returned' | 'urgent' | 'duplicates'>('all');
+  const [duplicateGroups, setDuplicateGroups] = useState<any[]>([]);
   const [paymentTermsOptions, setPaymentTermsOptions] = useState<string[]>([]);
   const [vendorList, setVendorList] = useState<{ id: string; name: string }[]>([]);
 
@@ -338,6 +339,13 @@ export default function Dashboard() {
       const elapsed = calcWorkingHoursElapsed(new Date(current.entered_at), new Date());
       return (current.sla_hours - elapsed) <= 24;
     }
+    if (quickFilter === 'duplicates') {
+      const num = String((inv as any).invoice_number || '').trim().toLowerCase();
+      if (!num) return false;
+      return duplicateGroups.some((g: any) =>
+        String(g.invoice_number || '').trim().toLowerCase() === num
+      );
+    }
     return true;
   });
 
@@ -381,6 +389,14 @@ export default function Dashboard() {
         .catch(() => {});
     }
   }, []);
+
+  // Duplicate-invoice report — refresh whenever the invoice list changes so
+  // duplicates (e.g. PI169580) are caught before approval.
+  useEffect(() => {
+    invoiceApi.getDuplicateInvoices()
+      .then((res) => setDuplicateGroups((res.data?.duplicates) || []))
+      .catch(() => {});
+  }, [invoices]);
 
   // Clamp the current page so it can never exceed the available pages.
   const safePage = Math.min(currentPage, totalPages);
@@ -1888,6 +1904,44 @@ ${dataRows}
             />
           )}
 
+          {/* Duplicate-invoice report banner — surface duplicates before approval */}
+          {duplicateGroups.length > 0 && (
+            <div className="p-4 mb-6 rounded-2xl" style={{ background: 'color-mix(in srgb, var(--accent-red) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 25%, transparent)' }}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <Copy className="h-5 w-5 mt-0.5 shrink-0" style={{ color: 'var(--accent-red)' }} strokeWidth={1.75} />
+                  <div>
+                    <p className="text-sm font-semibold" style={{ color: 'var(--accent-red)' }}>
+                      {duplicateGroups.length} duplicate invoice number{duplicateGroups.length > 1 ? 's' : ''} detected
+                    </p>
+                    <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>
+                      The same invoice number appears on {duplicateGroups.map((g: any) => g.count).join(', ')} records — resolve before approving to avoid double payment:
+                    </p>
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {duplicateGroups.map((g: any) => (
+                        <span key={g.invoice_number} className="px-2 py-0.5 rounded-md text-xs font-mono" style={{ background: 'color-mix(in srgb, var(--accent-red) 15%, transparent)', color: 'var(--accent-red)', border: '1px solid color-mix(in srgb, var(--accent-red) 30%, transparent)' }}>
+                          {g.invoice_number} ×{g.count}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setFilters((f: any) => ({ ...f, status: undefined }));
+                    setQuickFilter('duplicates');
+                  }}
+                  className="shrink-0 px-4 py-2 rounded-xl text-xs font-semibold transition-all"
+                  style={{ background: 'var(--accent-red)', color: 'var(--text-inverse)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.85'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
+                >
+                  View duplicates
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Filters — pill selectors */}
           {user && user.role !== 'MS_POLLY' && user.role !== 'IT_ADMIN' && user.role !== 'SUPERADMIN' && (
             <div className="p-4 mb-6 rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
@@ -1938,6 +1992,18 @@ ${dataRows}
                     </span>
                   )}
                 </button>
+                {duplicateGroups.length > 0 && (
+                  <button
+                    onClick={() => setQuickFilter('duplicates')}
+                    className="px-3 py-1.5 rounded-full text-xs font-medium transition-all inline-flex items-center gap-1.5"
+                    style={quickFilter === 'duplicates'
+                      ? { background: 'var(--accent-red)', color: 'var(--text-inverse)' }
+                      : { background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', color: 'var(--accent-red)', border: '1px solid color-mix(in srgb, var(--accent-red) 25%, transparent)' }}
+                  >
+                    <Copy className="h-3 w-3" strokeWidth={2} />
+                    Duplicates ({duplicateGroups.length})
+                  </button>
+                )}
               </div>
               {/* Primary filters — always visible */}
               <div className="flex flex-col md:flex-row items-start md:items-center gap-3">

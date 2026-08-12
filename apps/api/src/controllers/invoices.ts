@@ -67,6 +67,19 @@ export const getInvoices = async (
   }
 };
 
+export const getDuplicateInvoices = async (
+  _req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const duplicates = await invoiceService.getDuplicateInvoices();
+    res.json({ duplicates });
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const getInvoiceById = async (
   req: AuthRequest,
   res: Response,

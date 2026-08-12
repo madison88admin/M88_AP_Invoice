@@ -22,6 +22,7 @@ export const invoiceApi = {
   getAll: (filters?: any) => api.get('/api/invoices', { params: filters }),
   getById: (id: string) => api.get(`/api/invoices/${id}`),
   getTimeline: (id: string) => api.get(`/api/invoices/${id}/timeline`),
+  getDuplicateInvoices: () => api.get('/api/invoices/duplicates'),
   getDocument: (id: string) => api.get(`/api/invoices/${id}/document`, { responseType: 'blob' }),
   uploadPdf: (id: string, file: File) => {
     const fd = new FormData();

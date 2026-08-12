@@ -1253,3 +1253,56 @@ export const getBankChangeRequests = async () => {
     created_at: r.created_at,
   }));
 };
+
+/**
+ * Duplicate-invoice report — groups invoices by normalized (trimmed, case-
+ * insensitive) invoice number and returns every number that has more than one
+ * ACTIVE record, so duplicates like the PI169580 case are surfaced before
+ * approval. CANCELLED invoices are excluded (a cancelled pair is already
+ * resolved); REJECTED stays in so a re-created record is still visible.
+ */
+export async function getDuplicateInvoices() {
+  const invoices = await prisma.invoice.findMany({
+    where: {
+      invoice_number: { not: '' },
+      status: { not: InvoiceStatus.REJECTED },
+    },
+    select: {
+      id: true,
+      invoice_number: true,
+      invoice_type: true,
+      status: true,
+      total_amount: true,
+      created_at: true,
+      vendor: { select: { name: true } },
+    },
+  });
+
+  const byKey = new Map<string, any[]>();
+  for (const inv of invoices) {
+    const num = (inv.invoice_number || '').trim();
+    if (!num) continue;
+    const key = num.toLowerCase();
+    const arr = byKey.get(key) || [];
+    arr.push(inv);
+    byKey.set(key, arr);
+  }
+
+  return [...byKey.entries()]
+    .filter(([, arr]) => arr.length > 1)
+    .map(([, arr]) => ({
+      invoice_number: arr[0].invoice_number,
+      count: arr.length,
+      total_amount: arr.reduce((sum: number, i: any) => sum + Number(i.total_amount || 0), 0),
+      invoices: arr.map((i: any) => ({
+        id: i.id,
+        invoice_number: i.invoice_number,
+        invoice_type: i.invoice_type,
+        status: i.status,
+        total_amount: i.total_amount,
+        vendor_name: i.vendor?.name || null,
+        created_at: i.created_at,
+      })),
+    }))
+    .sort((a, b) => b.count - a.count || String(a.invoice_number).localeCompare(String(b.invoice_number)));
+}

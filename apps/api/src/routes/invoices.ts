@@ -58,6 +58,8 @@ router.post('/:id/check-nextgen', authorize(UserRole.PURCHASING_COORDINATOR, Use
 router.post('/:id/check-nextgen-sync', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), validationController.checkNextGenChangesController);
 router.get('/jobs/:jobId', validationController.getJobStatusController);
 router.get('/bank-change-requests', authenticate, invoiceController.getBankChangeRequests);
+// Duplicate-invoice report — MUST stay above the bare '/:id' route or it will be shadowed.
+router.get('/duplicates', authenticate, invoiceController.getDuplicateInvoices);
 router.post('/', authorize(...invoiceUploadRoles), invoiceController.createInvoice);
 router.get('/', invoiceController.getInvoices);
 router.get('/metadata/payment-terms', authenticate, invoiceController.getDistinctPaymentTerms);

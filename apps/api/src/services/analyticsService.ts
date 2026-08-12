@@ -253,8 +253,10 @@ export class AnalyticsService {
         }
         const v = vendorMap.get(vendor)!;
         v.invoice_count++;
-        const score = Number(inv.ocr_confidence_score);
-        if (!isNaN(score)) v.confidence_sum += score;
+        const rawScore = Number(inv.ocr_confidence_score);
+        // Clamp to 0-1 range — some legacy scores may be stored as 0-100
+        const score = !isNaN(rawScore) ? Math.max(0, Math.min(1, rawScore > 1 ? rawScore / 100 : rawScore)) : 0;
+        if (!isNaN(rawScore)) v.confidence_sum += score;
 
         // Check for fraud flags in raw data
         const rawData = inv.ocr_raw_data as any;

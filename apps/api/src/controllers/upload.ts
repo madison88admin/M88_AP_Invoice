@@ -35,6 +35,8 @@ import { syncToHetzner } from '../services/hetznerStorageService';
 import { mistralOCRService } from '../services/mistralOCRService';
 import { createJob, completeJob, failJob, getJob } from '../services/jobStore';
 import { invoiceUploadQueue, QueuedInvoiceUpload } from '../services/invoiceUploadQueue';
+import { generateFileHash } from '../services/emailDuplicateService';
+import { storeInvoiceHashFromStorage } from '../services/duplicateDetectionService';
 
 // ─── Async upload job storage ───
 export const uploadInvoice = async (
@@ -1271,6 +1273,15 @@ export const confirmOCR = async (
       console.log(`[DEBUG] PO audit transfer from ${po_audit_id} to invoice ${invoice.id}: ${transferred}`);
     }
 
+    // PI169580 lesson: manual uploads used to leave invoice_hash NULL, so the
+    // file watcher could not dedupe a re-ingested PDF by content hash. Store the
+    // hash now — best-effort, non-blocking (the watcher/email/sharepoint intake
+    // paths already store hashes).
+    if (storage_path && typeof storage_path === 'string') {
+      storeInvoiceHashFromStorage(invoice.id, storage_path)
+        .catch((err) => console.warn(`[Duplicate] Failed to store invoice hash for ${invoice.invoice_number || 'unknown'}:`, err instanceof Error ? err.message : err));
+    }
+
     // Sync to Hetzner Object Storage (non-blocking — runs in background)
     if (storage_path) {
       const vendorName = vendor_name_raw || invoice.vendor_name_raw || 'Unknown';
@@ -1431,7 +1442,7 @@ export const uploadInvoicePdf = async (
 
     await prisma.invoice.update({
       where: { id },
-      data: { pdf_path: uploadedPath, raw_file_url: uploadedPath },
+      data: { pdf_path: uploadedPath, raw_file_url: uploadedPath, invoice_hash: generateFileHash(req.file.buffer) },
     });
 
     await logAudit({

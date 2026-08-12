@@ -1,5 +1,6 @@
 import prisma from '../config/database';
 import crypto from 'crypto';
+import { generateFileHash } from './emailDuplicateService';
 
 export interface DuplicateDetectionResult {
   is_duplicate: boolean;
@@ -294,6 +295,25 @@ export async function storeInvoiceHash(invoiceId: string, hash: string): Promise
       invoice_hash: hash,
     },
   });
+}
+
+/**
+ * Best-effort backfill of invoice_hash for records created WITHOUT a file
+ * buffer — i.e. the manual upload flow (confirmOCR / createInvoice), where the
+ * invoice is created after upload and only the storage key is known.
+ *
+ * Why this matters (PI169580 incident): manual uploads used to leave
+ * invoice_hash NULL, so when the file watcher later saw the same PDF re-ingested
+ * from the SFTP folder, its Level-2 content-hash check could not match the
+ * manually-created record and a second invoice was created. Storing the hash on
+ * every intake path makes the watcher's dedupe complete: a re-ingested file can
+ * never create a second record.
+ */
+export async function storeInvoiceHashFromStorage(invoiceId: string, storagePath: string): Promise<void> {
+  const { downloadFromStorage } = await import('../services/supabaseStorageService');
+  const buffer = await downloadFromStorage(storagePath);
+  if (!buffer) return;
+  await storeInvoiceHash(invoiceId, generateFileHash(buffer));
 }
 
 /**

@@ -3,6 +3,7 @@ import { AuthRequest } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
 import * as invoiceService from '../services/invoiceService';
 import { downloadInvoicePdf } from '../services/reprocessService';
+import { storeInvoiceHashFromStorage } from '../services/duplicateDetectionService';
 import { InvoiceStatus, InvoiceType, InvoiceCategory } from '@ap-invoice/shared';
 
 export const createInvoice = async (
@@ -13,6 +14,16 @@ export const createInvoice = async (
   try {
     const invoiceData = req.body;
     const invoice = await invoiceService.createInvoice(invoiceData, req.user!.id, req.user!.role);
+
+    // PI169580 lesson: store the content hash for records created via the
+    // manual flow (only a storage key is available, no buffer), so the file
+    // watcher can dedupe a re-ingested PDF by hash. Best-effort, non-blocking.
+    const storagePath = invoiceData.storage_path || invoiceData.raw_file_url;
+    if (storagePath && typeof storagePath === 'string') {
+      storeInvoiceHashFromStorage(invoice.id, storagePath)
+        .catch((err) => console.warn(`[Duplicate] Failed to store invoice hash for ${invoice.invoice_number || 'unknown'}:`, err instanceof Error ? err.message : err));
+    }
+
     res.status(201).json(invoice);
   } catch (error) {
     next(error);

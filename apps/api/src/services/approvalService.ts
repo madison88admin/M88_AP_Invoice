@@ -906,7 +906,7 @@ export async function rejectInvoice(
       where: { id: targetSignature.id },
       data: {
         signed_at: null,
-        approval_status: 'PENDING',
+        approval_status: 'RECONFIRMATION_REQUIRED',
         invalidated_at: new Date(),
         invalidation_reason: `Re-opened after rejection by ${signedRole}: ${reason}`,
       },
@@ -1009,7 +1009,7 @@ async function rejectFromAccounting(
       where: { id: lastApprover.id },
       data: {
         signed_at: null,
-        approval_status: 'PENDING',
+        approval_status: 'RECONFIRMATION_REQUIRED',
         invalidated_at: new Date(),
         invalidation_reason: `Re-opened after rejection by Accounting (${userRole}): ${reason}`,
       },

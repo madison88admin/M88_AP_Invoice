@@ -37,6 +37,7 @@ import { createJob, completeJob, failJob, getJob } from '../services/jobStore';
 import { invoiceUploadQueue, QueuedInvoiceUpload } from '../services/invoiceUploadQueue';
 import { generateFileHash } from '../services/emailDuplicateService';
 import { storeInvoiceHashFromStorage } from '../services/duplicateDetectionService';
+import { eventBroadcaster } from '../services/eventBroadcaster';
 
 // ─── Async upload job storage ───
 export const uploadInvoice = async (
@@ -1453,6 +1454,7 @@ export const uploadInvoicePdf = async (
     });
 
     res.json({ success: true, pdf_path: uploadedPath });
+    eventBroadcaster.broadcast({ type: 'INVOICE_UPDATED', invoiceId: id, timestamp: Date.now() });
   } catch (error) {
     next(error);
   }

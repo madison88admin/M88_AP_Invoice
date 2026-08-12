@@ -24,9 +24,18 @@ export const authenticate = async (
   next: NextFunction
 ) => {
   try {
+    let token: string | null = null;
+
     const authHeader = req.headers.authorization;
 
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.substring(7);
+    } else if (typeof req.query.token === 'string' && req.query.token) {
+      // SSE EventSource can't set headers — allow token via query param
+      token = req.query.token;
+    }
+
+    if (!token) {
       throw new AppError('Authentication required', 401);
     }
 
@@ -34,7 +43,6 @@ export const authenticate = async (
       throw new AppError('JWT_SECRET is not configured', 500);
     }
 
-    const token = authHeader.substring(7);
     const decoded = jwt.verify(token, process.env.JWT_SECRET) as any;
 
     req.user = {

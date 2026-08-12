@@ -37,6 +37,7 @@ import soaReconciliationRoutes from './routes/soaReconciliation';
 import testRoutes from './routes/test';
 import workbenchRoutes from './routes/workbench';
 import qbRoutes from './routes/qb';
+import eventRoutes from './routes/events';
 import { errorHandler } from './middleware/errorHandler';
 import { logger } from './utils/logger';
 import { connectDatabase, disconnectDatabase, isDbConnected } from './config/database';
@@ -118,6 +119,7 @@ app.use('/api/citibusiness-export', citibusinessExportRoutes);
 app.use('/api/reprocess', reprocessRoutes);
 app.use('/api/soa-reconciliation', soaReconciliationRoutes);
 app.use('/api/qb', qbRoutes);
+app.use('/api/events', eventRoutes);
 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_TEST_ROUTES === 'true') {
   app.use('/api/test', testRoutes);
 }

@@ -18,6 +18,7 @@ import {
 } from '@ap-invoice/shared';
 import { sendApprovalRequestNotification } from './notificationService';
 import { inAppNotificationService } from './inAppNotificationService';
+import { eventBroadcaster } from './eventBroadcaster';
 import { logger } from '../utils/logger';
 
 interface ApprovalRouteStep {
@@ -798,6 +799,7 @@ export async function approveInvoice(
     });
   }
 
+  eventBroadcaster.broadcast({ type: 'INVOICE_STATUS_CHANGED', invoiceId, timestamp: Date.now() });
   return { message: 'Invoice approved successfully' };
 }
 
@@ -960,6 +962,7 @@ export async function rejectInvoice(
     },
   });
 
+  eventBroadcaster.broadcast({ type: 'INVOICE_STATUS_CHANGED', invoiceId, timestamp: Date.now() });
   return { message: `Invoice rejected — returned to ${targetApproverRole} for correction` };
 }
 
@@ -1080,6 +1083,7 @@ async function rejectFromAccounting(
     },
   }).catch(() => { /* workflow action table may not exist in all envs */ });
 
+  eventBroadcaster.broadcast({ type: 'INVOICE_STATUS_CHANGED', invoiceId, timestamp: Date.now() });
   return { message: `Invoice rejected — returned to ${targetApproverRole} for correction` };
 }
 
@@ -1193,6 +1197,7 @@ export async function returnInvoice(
   await inAppNotificationService.notifyStageTransition(
     invoiceId, invoice.invoice_number, invoice.vendor?.name || 'Unknown', invoice.status, targetStatus, target.signatory_role
   );
+  eventBroadcaster.broadcast({ type: 'INVOICE_STATUS_CHANGED', invoiceId, timestamp: Date.now() });
   return { message: 'Invoice returned for correction', status: targetStatus, target_role: target.signatory_role };
 }
 

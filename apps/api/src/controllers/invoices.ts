@@ -3,6 +3,7 @@ import { AuthRequest } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
 import * as invoiceService from '../services/invoiceService';
 import { downloadInvoicePdf, verifyPdfMatchesInvoice } from '../services/reprocessService';
+import { eventBroadcaster } from '../services/eventBroadcaster';
 import { storeInvoiceHashFromStorage } from '../services/duplicateDetectionService';
 import { InvoiceStatus, InvoiceType, InvoiceCategory } from '@ap-invoice/shared';
 
@@ -25,6 +26,7 @@ export const createInvoice = async (
     }
 
     res.status(201).json(invoice);
+    eventBroadcaster.broadcast({ type: 'INVOICE_CREATED', invoiceId: invoice.id, timestamp: Date.now() });
   } catch (error) {
     next(error);
   }
@@ -177,6 +179,7 @@ export const updateInvoiceStatus = async (
       req.user!.id
     );
     res.json(invoice);
+    eventBroadcaster.broadcast({ type: 'INVOICE_STATUS_CHANGED', invoiceId: req.params.id, timestamp: Date.now() });
   } catch (error) {
     next(error);
   }
@@ -196,6 +199,7 @@ export const updateInvoice = async (
       req.user!.name
     );
     res.json(invoice);
+    eventBroadcaster.broadcast({ type: 'INVOICE_UPDATED', invoiceId: req.params.id, timestamp: Date.now() });
   } catch (error) {
     next(error);
   }
@@ -214,6 +218,7 @@ export const deleteInvoice = async (
       req.user!.name
     );
     res.json(result);
+    eventBroadcaster.broadcast({ type: 'INVOICE_DELETED', invoiceId: req.params.id, timestamp: Date.now() });
   } catch (error) {
     next(error);
   }

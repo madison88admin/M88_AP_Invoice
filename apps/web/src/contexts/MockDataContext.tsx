@@ -286,16 +286,54 @@ export const MockDataProvider = ({ children }: MockDataProviderProps) => {
   useEffect(() => {
     if (!isAuthenticated) return;
     refresh();
-    const interval = setInterval(() => refresh(true), 10000);
+    const interval = setInterval(() => refresh(true), 30000);
     const syncWhenVisible = () => {
       if (document.visibilityState === 'visible') refresh(true);
     };
     window.addEventListener('focus', syncWhenVisible);
     document.addEventListener('visibilitychange', syncWhenVisible);
+
+    // ─── SSE: real-time updates from backend ───
+    let eventSource: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    const token = localStorage.getItem('auth_token');
+    const sseUrl = `${(import.meta as any).env.VITE_API_URL || ''}/api/events/stream?token=${encodeURIComponent(token || '')}`;
+
+    const connectSSE = () => {
+      try {
+        // EventSource doesn't support custom headers, so we pass token as query param
+        // The backend authenticate middleware needs to accept this
+        eventSource = new EventSource(sseUrl);
+        eventSource.onmessage = (ev) => {
+          try {
+            const event = JSON.parse(ev.data);
+            if (event.type === 'CONNECTED') return;
+            // Any invoice-related event → silent refresh
+            if (event.type?.startsWith('INVOICE_') || event.type === 'BATCH_UPDATED') {
+              refresh(true);
+            }
+          } catch {
+            // ignore parse errors
+          }
+        };
+        eventSource.onerror = () => {
+          eventSource?.close();
+          eventSource = null;
+          // Reconnect after 5s
+          reconnectTimer = setTimeout(connectSSE, 5000);
+        };
+      } catch {
+        // SSE not supported or connection failed — polling fallback covers this
+      }
+    };
+    connectSSE();
+
     return () => {
       clearInterval(interval);
       window.removeEventListener('focus', syncWhenVisible);
       document.removeEventListener('visibilitychange', syncWhenVisible);
+      eventSource?.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
     };
   }, [refresh, isAuthenticated]);
 

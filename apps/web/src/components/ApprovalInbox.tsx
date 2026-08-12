@@ -130,9 +130,7 @@ export default function ApprovalInbox() {
     }
   };
 
-  const handleViewDocument = async () => {
-    if (!selectedInvoice) return;
-
+  const openInvoicePdf = async (invoice: MockInvoice) => {
     const previewWindow = window.open('', '_blank');
     try {
       setOpeningDocument(true);
@@ -140,7 +138,7 @@ export default function ApprovalInbox() {
         previewWindow.document.title = 'Loading invoice...';
         previewWindow.document.body.textContent = 'Loading invoice PDF...';
       }
-      const response = await invoiceApi.getDocument(selectedInvoice.id);
+      const response = await invoiceApi.getDocument(invoice.id);
       const contentType = String(response.headers['content-type'] || 'application/pdf');
       const url = URL.createObjectURL(new Blob([response.data], { type: contentType }));
       if (previewWindow) {
@@ -170,6 +168,8 @@ export default function ApprovalInbox() {
       setOpeningDocument(false);
     }
   };
+
+  const handleViewDocument = () => { if (selectedInvoice) void openInvoicePdf(selectedInvoice); };
 
   const getApprovalStatus = (invoice: MockInvoice) => {
     const workflowSignatures = orderedSignatures(invoice);
@@ -257,6 +257,17 @@ export default function ApprovalInbox() {
                             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
                               {getApprovalStatus(invoice)}
                             </p>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); void openInvoicePdf(invoice); }}
+                              className="mt-2 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors"
+                              title="View actual invoice PDF"
+                              style={{ background: 'var(--bg-elevated)', color: 'var(--accent-blue)', border: '1px solid var(--border-color)' }}
+                              onMouseEnter={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-blue) 10%, transparent)'; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--bg-elevated)'; }}
+                            >
+                              <FileText className="h-3.5 w-3.5" strokeWidth={1.75} />
+                              PDF
+                            </button>
                           </div>
                         </div>
                       </div>

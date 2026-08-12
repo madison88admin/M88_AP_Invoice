@@ -1,5 +1,6 @@
 import prisma from '../config/database';
 import { InvoiceStatus, SignatoryRole, SignatureType, ExceptionReason, BrandTier, calcWorkingHoursElapsed } from '@ap-invoice/shared';
+import { getStageSLAStart } from '../utils/slaTime';
 import { AppError } from '../middleware/errorHandler';
 import {
   APPROVAL_THRESHOLDS,
@@ -661,7 +662,7 @@ export async function approveInvoice(
     where: { invoice_id: invoiceId, exited_at: null },
   });
   if (currentStage) {
-    const elapsedHours = calcWorkingHoursElapsed(new Date(currentStage.entered_at), new Date());
+    const elapsedHours = calcWorkingHoursElapsed(getStageSLAStart(invoice, currentStage.stage, currentStage.entered_at), new Date());
     await prisma.stageTimestamp.update({
       where: { id: currentStage.id },
       data: {
@@ -917,7 +918,7 @@ export async function rejectInvoice(
     where: { invoice_id: invoiceId, exited_at: null },
   });
   if (currentStage) {
-    const elapsedHours = calcWorkingHoursElapsed(new Date(currentStage.entered_at), new Date());
+    const elapsedHours = calcWorkingHoursElapsed(getStageSLAStart(invoice, currentStage.stage, currentStage.entered_at), new Date());
     await prisma.stageTimestamp.update({
       where: { id: currentStage.id },
       data: {
@@ -1020,7 +1021,7 @@ async function rejectFromAccounting(
     where: { invoice_id: invoiceId, exited_at: null },
   });
   if (currentStage) {
-    const elapsedHours = calcWorkingHoursElapsed(new Date(currentStage.entered_at), new Date());
+    const elapsedHours = calcWorkingHoursElapsed(getStageSLAStart(invoice, currentStage.stage, currentStage.entered_at), new Date());
     await prisma.stageTimestamp.update({
       where: { id: currentStage.id },
       data: {

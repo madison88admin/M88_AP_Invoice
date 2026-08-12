@@ -205,14 +205,26 @@ export async function reprocessInvoices(
  * Download the original PDF for an invoice.
  * Tries local pdf_path first, then falls back to SharePoint/raw_file_url.
  */
+// Supabase storage keys are written by uploadToStorage at intake
+// (invoices/{year}/{month}/{timestamp}_{filename}). A local file at the same
+// relative path is never this invoice's document — only local-style paths
+// (absolute, or data/… / ./…) may be served straight from disk.
+const STORAGE_KEY_RE = /^invoices\/\d{4}\/\d{2}\//;
+
 export async function downloadInvoicePdf(invoice: any): Promise<Buffer> {
-  // 1. Try local pdf_path first (fastest — no network needed)
+  // 1. pdf_path — authoritative copy lives in Supabase Storage for keys;
+  //    local-style paths keep local-first (file-watcher invoices).
   if (invoice.pdf_path) {
-    if (fs.existsSync(invoice.pdf_path)) {
+    const isStorageKey = STORAGE_KEY_RE.test(invoice.pdf_path);
+    const localExists = fs.existsSync(invoice.pdf_path);
+
+    // Local-style path with a real file: serve directly (fast, no network).
+    if (!isStorageKey && localExists) {
       logger.info(`[ReExtract] Using local pdf_path: ${invoice.pdf_path}`);
       return fs.readFileSync(invoice.pdf_path);
     }
-    // 1b. Try Supabase storage download (pdf_path is a Supabase storage key)
+
+    // Storage key (or anything that failed locally): fetch from Supabase first.
     try {
       logger.info(`[ReExtract] Trying Supabase storage download: ${invoice.pdf_path}`);
       const buffer = await downloadFromStorage(invoice.pdf_path);
@@ -222,6 +234,13 @@ export async function downloadInvoicePdf(invoice: any): Promise<Buffer> {
       }
     } catch (supabaseErr) {
       logger.warn(`[ReExtract] Supabase download failed: ${supabaseErr instanceof Error ? supabaseErr.message : 'unknown'}`);
+    }
+
+    // Storage-key invoices: a matching local file is only a last resort — it is
+    // probably a stale mirror, but better than nothing when storage is down.
+    if (isStorageKey && localExists) {
+      logger.warn(`[ReExtract] Supabase unavailable; serving local fallback for storage key: ${invoice.pdf_path}`);
+      return fs.readFileSync(invoice.pdf_path);
     }
     logger.warn(`[ReExtract] pdf_path exists in DB but file not found on disk or Supabase: ${invoice.pdf_path}`);
   }

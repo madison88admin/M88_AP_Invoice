@@ -23,6 +23,11 @@ export const invoiceApi = {
   getById: (id: string) => api.get(`/api/invoices/${id}`),
   getTimeline: (id: string) => api.get(`/api/invoices/${id}/timeline`),
   getDocument: (id: string) => api.get(`/api/invoices/${id}/document`, { responseType: 'blob' }),
+  uploadPdf: (id: string, file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return api.post(`/api/invoices/${id}/upload-pdf`, fd);
+  },
   getPaymentTerms: () => api.get('/api/invoices/metadata/payment-terms'),
   create: (data: any) => api.post('/api/invoices', data),
   updateStatus: (id: string, status: string) => api.patch(`/api/invoices/${id}/status`, { status }),

@@ -6,6 +6,8 @@ import { extractMadisonInvoiceFields, AST_SINGLE_SOURCE_MODE } from '../services
 import { matchVendor, matchOrCreateVendor } from '../services/vendorMatchingService';
 import { InvoiceStatus, SignatureType } from '@ap-invoice/shared';
 import { sanitizeInvoiceType, sanitizeCategory } from '../utils/enumSanitizer';
+import prisma from '../config/database';
+import { logAudit } from '../services/auditLogService';
 import { NextGenService } from '../services/nextGenService';
 import { validateInvoiceAgainstPO } from '../services/invoiceValidationAgent';
 import { poAuditService } from '../services/poAuditService';
@@ -1392,3 +1394,55 @@ invoiceUploadQueue.start(async (item: QueuedInvoiceUpload, fileBuffer: Buffer) =
   if (!resultData) throw new Error('No result returned from extraction');
   return resultData;
 });
+
+/**
+ * Replace / re-link the actual invoice PDF for an existing invoice.
+ * Uploads the file to Supabase Storage (authoritative copy) and updates the
+ * record's pdf_path / raw_file_url so "View Actual Invoice" always fetches the
+ * correct document — even after the invoice number is edited or a wrong file
+ * was attached at intake (e.g. file-watcher duplicate handling).
+ */
+export const uploadInvoicePdf = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { id } = req.params;
+    if (!req.file) {
+      throw new AppError('No file uploaded', 400);
+    }
+    const isPdf =
+      req.file.mimetype === 'application/pdf' ||
+      String(req.file.originalname || '').toLowerCase().endsWith('.pdf');
+    if (!isPdf) {
+      throw new AppError('Only PDF files can be linked to an invoice', 400);
+    }
+
+    const invoice = await prisma.invoice.findUnique({ where: { id } });
+    if (!invoice) {
+      throw new AppError('Invoice not found', 404);
+    }
+
+    const uploadedPath = await uploadToStorage(req.file.buffer, req.file.originalname, req.file.mimetype);
+    if (!uploadedPath) {
+      throw new AppError('Failed to upload PDF to storage — check storage configuration', 500);
+    }
+
+    await prisma.invoice.update({
+      where: { id },
+      data: { pdf_path: uploadedPath, raw_file_url: uploadedPath },
+    });
+
+    await logAudit({
+      invoice_id: id,
+      performed_by: req.user!.id,
+      action: 'PDF_REPLACED',
+      note: `Actual invoice PDF replaced/re-linked → ${uploadedPath} (was ${invoice.pdf_path || 'none'})`,
+    });
+
+    res.json({ success: true, pdf_path: uploadedPath });
+  } catch (error) {
+    next(error);
+  }
+};

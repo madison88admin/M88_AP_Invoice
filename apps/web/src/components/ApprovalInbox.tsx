@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { CheckCircle, XCircle, Clock, ArrowLeft, Loader2, ExternalLink, FileText } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, ArrowLeft, Loader2, ExternalLink, FileText, Upload } from 'lucide-react';
 import { MockInvoice } from '../lib/mockData';
 import { invoiceApi } from '../lib/api';
 import { Skeleton } from './ui/Skeleton';
@@ -43,6 +43,8 @@ export default function ApprovalInbox() {
   const { showToast } = useToast();
   const [loading, setLoading] = useState(true);
   const [selectedInvoice, setSelectedInvoice] = useState<MockInvoice | null>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
+  const [replacingPdf, setReplacingPdf] = useState(false);
   const [approving, setApproving] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [openingDocument, setOpeningDocument] = useState(false);
@@ -170,6 +172,22 @@ export default function ApprovalInbox() {
   };
 
   const handleViewDocument = () => { if (selectedInvoice) void openInvoicePdf(selectedInvoice); };
+
+  const handleReplacePdf = async (file: File) => {
+    if (!selectedInvoice) return;
+    try {
+      setReplacingPdf(true);
+      await invoiceApi.uploadPdf(selectedInvoice.id, file);
+      showToast('Actual invoice PDF updated', 'success');
+    } catch (error: any) {
+      console.error('Failed to replace invoice PDF:', error);
+      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to replace invoice PDF';
+      showToast(msg, 'error');
+    } finally {
+      setReplacingPdf(false);
+      if (pdfInputRef.current) pdfInputRef.current.value = '';
+    }
+  };
 
   const getApprovalStatus = (invoice: MockInvoice) => {
     const workflowSignatures = orderedSignatures(invoice);
@@ -369,6 +387,29 @@ export default function ApprovalInbox() {
                       {openingDocument ? <Loader2 className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}
                       {openingDocument ? 'Opening Invoice...' : 'View Actual Invoice'}
                     </button>
+
+                    {user && ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'PURCHASING_COORDINATOR', 'IT_ADMIN'].includes(user.role) && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => pdfInputRef.current?.click()}
+                          disabled={replacingPdf}
+                          title="Upload the correct PDF if the attached document is wrong"
+                          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border transition-all text-sm font-medium"
+                          style={{ borderColor: 'var(--border-color)', color: 'var(--text-secondary)', background: 'var(--bg-card)' }}
+                        >
+                          {replacingPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                          {replacingPdf ? 'Uploading...' : 'Replace PDF'}
+                        </button>
+                        <input
+                          ref={pdfInputRef}
+                          type="file"
+                          accept=".pdf,application/pdf"
+                          className="hidden"
+                          onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleReplacePdf(f); }}
+                        />
+                      </>
+                    )}
 
                     {/* Approval Progress */}
                     {orderedSignatures(selectedInvoice).length > 0 && (

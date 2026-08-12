@@ -66,6 +66,8 @@ router.get('/:id', invoiceController.getInvoiceById);
 router.patch('/:id/status', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), invoiceController.updateInvoiceStatus);
 router.patch('/:id', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.PURCHASING_MANAGER, UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), invoiceController.updateInvoice);
 router.post('/:id/request-bank-change', authenticate, upload.single('attachment'), invoiceController.requestBankDetailsChange);
+// Replace / re-link the actual invoice PDF (uploaded to Supabase Storage)
+router.post('/:id/upload-pdf', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), upload.single('file'), uploadController.uploadInvoicePdf);
 router.get('/:id/bank-change-requests', authenticate, invoiceController.getBankChangeRequestsForInvoice);
 router.get('/bank-change-requests/:requestId/attachment', authenticate, invoiceController.downloadBankChangeAttachment);
 router.post('/bank-change-requests/:requestId/approve', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), invoiceController.approveBankChangeRequest);

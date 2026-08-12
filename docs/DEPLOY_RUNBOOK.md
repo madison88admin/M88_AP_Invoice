@@ -91,6 +91,14 @@ pnpm test --filter @ap-invoice/api        # if any
 #    added a migrations/ folder entry, the DB MUST be migrated before the API
 #    ships. Deploying API code that reads new columns/tables before `migrate
 #    deploy` = instant 500s on every payment-batch endpoint.
+
+# 4. Untracked-src check — `git status --short apps/api/src` MUST be empty
+#    (or only deliberate scratch files). 2026-08-12 incident: six service files
+#    (controllers/qb.ts, routes/qb.ts, qbExportService, reconciliationExportService,
+#    rapidOCRService, upstageOCRService) were imported by index.ts/ocrService.ts but
+#    never committed — local builds passed (files on disk) while the VPS build
+#    failed with TS2307. Committed in f401df3. Best proof: build from a clean
+#    checkout (`git stash -u && build && git stash pop`) before shipping.
 ```
 
 ### 4.2 Ship code
@@ -109,6 +117,12 @@ git status --short                       # expect: any uncommitted files are int
 git stash list                           # know what is stashed before you pull
 git fetch origin
 git diff origin/main --stat              # confirm what the pull will bring
+
+# ⚠️ NEVER `git stash push -u` on the VPS.
+# `-u` removes untracked dirs (incl. dist.bak-* backups) from disk; dropping the
+# stash deletes them for good (2026-08-12 incident — backups had to be recovered
+# from the stash object via `git restore --source=<stash>^3`).
+# Instead, move conflicting local files aside with plain `mv`.
 
 # Record current build for rollback
 cp -r apps/api/dist apps/api/dist.bak-$(date +%Y%m%d-%H%M%S)

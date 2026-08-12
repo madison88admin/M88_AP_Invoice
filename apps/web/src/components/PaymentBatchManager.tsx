@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { Package, Play, X, AlertCircle, CheckCircle, Clock, DollarSign, ArrowLeft, CheckSquare, Calendar, Loader2, Paperclip, Pencil, Download } from 'lucide-react';
+import { Package, Play, X, AlertCircle, CheckCircle, Clock, DollarSign, ArrowLeft, CheckSquare, Calendar, Loader2, Paperclip, Pencil, Download, ChevronDown, ChevronUp, SlidersHorizontal } from 'lucide-react';
 import { paymentBatchApi, vendorApi, qbApi } from '../lib/api';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
@@ -182,6 +182,7 @@ export default function PaymentBatchManager() {
     approvalFrom: '', approvalTo: '',
     brand: '', memo: '', category: '', aging: '', status: '',
   });
+  const [showMoreFilters, setShowMoreFilters] = useState(false);
   const [vendorList, setVendorList] = useState<{ id: string; name: string }[]>([]);
   const [filteredTotals, setFilteredTotals] = useState<FilteredTotals[]>([]);
   const [remarksTarget, setRemarksTarget] = useState<ScheduledPayment | null>(null);
@@ -911,6 +912,7 @@ export default function PaymentBatchManager() {
   const dateCell = (d?: string | null) => (d ? new Date(d).toLocaleDateString() : '—');
   const filterLabel: React.CSSProperties = { display: 'block', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4, color: 'var(--text-muted)' };
   const filterInput: React.CSSProperties = { width: '100%', padding: '8px 12px', borderRadius: 8, fontSize: 13, background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' };
+  const filterRangeInput: React.CSSProperties = { flex: 1, minWidth: 0, padding: '8px 10px', borderRadius: 8, fontSize: 13, background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' };
   const emptyFilters = { vendorId: '', currency: '', dateFrom: '', dateTo: '', search: '', dueMonth: '', dueFrom: '', dueTo: '', invoiceDateFrom: '', invoiceDateTo: '', approvalFrom: '', approvalTo: '', brand: '', memo: '', category: '', aging: '', status: '' };
 
   return (
@@ -1124,116 +1126,120 @@ export default function PaymentBatchManager() {
                 );
               })()}
 
-              <div className="mb-4 p-4 rounded-xl space-y-3" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                  <div className="md:col-span-2">
-                    <label style={filterLabel}>Search</label>
-                    <input value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} placeholder="Invoice #, MPO, material, memo, brand, vendor" style={filterInput} />
+              {/* Filters — essentials always visible, the rest behind "More filters" */}
+              <div className="mb-4 rounded-xl overflow-hidden" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
+                <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-3 pb-2">
+                  <div className="flex items-center gap-2">
+                    <SlidersHorizontal className="h-4 w-4" style={{ color: 'var(--text-muted)' }} strokeWidth={1.75} />
+                    <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Find payments</span>
                   </div>
-                  <div>
-                    <label style={filterLabel}>Vendor</label>
-                    <select value={filters.vendorId} onChange={(e) => setFilters({ ...filters, vendorId: e.target.value })} style={filterInput}>
-                      <option value="">All vendors</option>
-                      {vendorList.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={filterLabel}>Currency</label>
-                    <select value={filters.currency} onChange={(e) => setFilters({ ...filters, currency: e.target.value })} style={filterInput}>
-                      <option value="">All currencies</option>
-                      {Array.from(new Set([...scheduledPayments.map(p => p.currency), 'USD', 'EUR', 'GBP', 'CNY', 'HKD'])).sort().map(currency => <option key={currency} value={currency}>{currency}</option>)}
-                    </select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-                  <div>
-                    <label style={filterLabel}>Payment Date From</label>
-                    <input type="date" value={filters.dateFrom} onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value })} style={filterInput} />
-                  </div>
-                  <div>
-                    <label style={filterLabel}>Payment Date To</label>
-                    <input type="date" value={filters.dateTo} onChange={(e) => setFilters({ ...filters, dateTo: e.target.value })} style={filterInput} />
-                  </div>
-                  <div>
-                    <label style={filterLabel}>Due Month (Cut-off)</label>
-                    <input type="month" value={filters.dueMonth} onChange={(e) => setFilters({ ...filters, dueMonth: e.target.value })} style={filterInput} />
-                  </div>
-                  <div>
-                    <label style={filterLabel}>Due From</label>
-                    <input type="date" value={filters.dueFrom} onChange={(e) => setFilters({ ...filters, dueFrom: e.target.value })} style={filterInput} />
-                  </div>
-                  <div>
-                    <label style={filterLabel}>Due To</label>
-                    <input type="date" value={filters.dueTo} onChange={(e) => setFilters({ ...filters, dueTo: e.target.value })} style={filterInput} />
-                  </div>
-                  <div>
-                    <label style={filterLabel}>Invoice Date From</label>
-                    <input type="date" value={filters.invoiceDateFrom} onChange={(e) => setFilters({ ...filters, invoiceDateFrom: e.target.value })} style={filterInput} />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-                  <div>
-                    <label style={filterLabel}>Invoice Date To</label>
-                    <input type="date" value={filters.invoiceDateTo} onChange={(e) => setFilters({ ...filters, invoiceDateTo: e.target.value })} style={filterInput} />
-                  </div>
-                  <div>
-                    <label style={filterLabel}>Manager Approved From</label>
-                    <input type="date" value={filters.approvalFrom} onChange={(e) => setFilters({ ...filters, approvalFrom: e.target.value })} style={filterInput} />
-                  </div>
-                  <div>
-                    <label style={filterLabel}>Manager Approved To</label>
-                    <input type="date" value={filters.approvalTo} onChange={(e) => setFilters({ ...filters, approvalTo: e.target.value })} style={filterInput} />
-                  </div>
-                  <div>
-                    <label style={filterLabel}>Brand</label>
-                    <input value={filters.brand} onChange={(e) => setFilters({ ...filters, brand: e.target.value })} placeholder="e.g. SAMPLE" style={filterInput} />
-                  </div>
-                  <div>
-                    <label style={filterLabel}>Memo Details</label>
-                    <input value={filters.memo} onChange={(e) => setFilters({ ...filters, memo: e.target.value })} placeholder="Memo / description" style={filterInput} />
-                  </div>
-                  <div>
-                    <label style={filterLabel}>Split / Account</label>
-                    <select value={filters.category} onChange={(e) => setFilters({ ...filters, category: e.target.value })} style={filterInput}>
-                      <option value="">All splits</option>
-                      {Array.from(new Set(['SAMPLE', 'YARNS', 'TRIMS', ...scheduledPayments.map(p => p.category).filter((c): c is string => !!c)])).sort().map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                    </select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-6 gap-3 items-end">
-                  <div>
-                    <label style={filterLabel}>Aging</label>
-                    <select value={filters.aging} onChange={(e) => setFilters({ ...filters, aging: e.target.value })} style={filterInput}>
-                      <option value="">All aging</option>
-                      <option value="overdue">Overdue (any)</option>
-                      <option value="not-due">Not yet due</option>
-                      <option value="0-30">0–30 days overdue</option>
-                      <option value="31-60">31–60 days overdue</option>
-                      <option value="60+">60+ days overdue</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label style={filterLabel}>Status</label>
-                    <select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })} style={filterInput}>
-                      <option value="">Scheduled + Approved</option>
-                      <option value="SCHEDULED">Scheduled</option>
-                      <option value="FOR_PAYMENT">For Payment (supervisor review)</option>
-                      <option value="APPROVED_FOR_PAYMENT">Approved for payment</option>
-                      <option value="HELD_BELOW_100">Held below $100 (Purchasing review)</option>
-                    </select>
-                  </div>
-                  <div className="md:col-start-6 flex justify-end">
+                  <div className="flex items-center gap-2">
                     <button
                       onClick={() => setFilters(emptyFilters)}
-                      className="flex items-center px-3 py-2 rounded-lg text-xs font-medium transition-colors"
+                      className="flex items-center px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
                       style={{ background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}
                       onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
                       onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
                     >
                       <X className="h-3.5 w-3.5 mr-1" strokeWidth={1.75} />
-                      Clear Filters
+                      Clear
+                    </button>
+                    <button
+                      onClick={() => setShowMoreFilters(v => !v)}
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                      style={{ background: showMoreFilters ? 'color-mix(in srgb, var(--accent-blue) 12%, transparent)' : 'var(--bg-card)', color: showMoreFilters ? 'var(--accent-blue)' : 'var(--text-secondary)', border: '1px solid var(--border-color)' }}
+                    >
+                      {showMoreFilters ? <ChevronUp className="h-3.5 w-3.5" strokeWidth={1.75} /> : <ChevronDown className="h-3.5 w-3.5" strokeWidth={1.75} />}
+                      {showMoreFilters ? 'Hide extras' : 'More filters'}
                     </button>
                   </div>
+                </div>
+                <div className="px-4 pb-4 pt-1 space-y-3">
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+                    <div className="md:col-span-4">
+                      <label style={filterLabel}>Search</label>
+                      <input value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} placeholder="Invoice #, vendor, MPO, memo, brand" style={filterInput} />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label style={filterLabel}>Vendor</label>
+                      <select value={filters.vendorId} onChange={(e) => setFilters({ ...filters, vendorId: e.target.value })} style={filterInput}>
+                        <option value="">All vendors</option>
+                        {vendorList.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+                      </select>
+                    </div>
+                    <div className="md:col-span-2">
+                      <label style={filterLabel}>Currency</label>
+                      <select value={filters.currency} onChange={(e) => setFilters({ ...filters, currency: e.target.value })} style={filterInput}>
+                        <option value="">All currencies</option>
+                        {Array.from(new Set([...scheduledPayments.map(p => p.currency), 'USD', 'EUR', 'GBP', 'CNY', 'HKD'])).sort().map(currency => <option key={currency} value={currency}>{currency}</option>)}
+                      </select>
+                    </div>
+                    <div className="md:col-span-2">
+                      <label style={filterLabel}>Status</label>
+                      <select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })} style={filterInput}>
+                        <option value="">Scheduled + Approved</option>
+                        <option value="SCHEDULED">Scheduled</option>
+                        <option value="FOR_PAYMENT">For Payment (supervisor review)</option>
+                        <option value="APPROVED_FOR_PAYMENT">Approved for payment</option>
+                        <option value="HELD_BELOW_100">Held below $100 (Purchasing review)</option>
+                      </select>
+                    </div>
+                    <div className="md:col-span-2">
+                      <label style={filterLabel}>Aging</label>
+                      <select value={filters.aging} onChange={(e) => setFilters({ ...filters, aging: e.target.value })} style={filterInput}>
+                        <option value="">All aging</option>
+                        <option value="overdue">Overdue (any)</option>
+                        <option value="not-due">Not yet due</option>
+                        <option value="0-30">0–30 days overdue</option>
+                        <option value="31-60">31–60 days overdue</option>
+                        <option value="60+">60+ days overdue</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
+                    <div className="md:col-span-3">
+                      <label style={filterLabel}>Due Month (Cut-off)</label>
+                      <input type="month" value={filters.dueMonth} onChange={(e) => setFilters({ ...filters, dueMonth: e.target.value })} style={filterInput} />
+                    </div>
+                    <div className="md:col-span-9 hidden md:block text-xs" style={{ color: 'var(--text-muted)' }}>
+                      Pick a month to see only payments due within that cut-off — the basis for the monthly batch.
+                    </div>
+                  </div>
+                  {showMoreFilters && (
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-3 pt-3" style={{ borderTop: '1px solid var(--border-color)' }}>
+                      <div className="md:col-span-3">
+                        <label style={filterLabel}>Due Date</label>
+                        <div className="flex items-center gap-2">
+                          <input type="date" value={filters.dueFrom} onChange={(e) => setFilters({ ...filters, dueFrom: e.target.value })} title="Due from" style={filterRangeInput} />
+                          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>–</span>
+                          <input type="date" value={filters.dueTo} onChange={(e) => setFilters({ ...filters, dueTo: e.target.value })} title="Due to" style={filterRangeInput} />
+                        </div>
+                      </div>
+                      <div className="md:col-span-3">
+                        <label style={filterLabel}>Manager Approved</label>
+                        <div className="flex items-center gap-2">
+                          <input type="date" value={filters.approvalFrom} onChange={(e) => setFilters({ ...filters, approvalFrom: e.target.value })} title="Approved from" style={filterRangeInput} />
+                          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>–</span>
+                          <input type="date" value={filters.approvalTo} onChange={(e) => setFilters({ ...filters, approvalTo: e.target.value })} title="Approved to" style={filterRangeInput} />
+                        </div>
+                      </div>
+                      <div className="md:col-span-2">
+                        <label style={filterLabel}>Brand</label>
+                        <input value={filters.brand} onChange={(e) => setFilters({ ...filters, brand: e.target.value })} placeholder="e.g. SAMPLE" style={filterInput} />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label style={filterLabel}>Memo Details</label>
+                        <input value={filters.memo} onChange={(e) => setFilters({ ...filters, memo: e.target.value })} placeholder="Memo / description" style={filterInput} />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label style={filterLabel}>Split / Account</label>
+                        <select value={filters.category} onChange={(e) => setFilters({ ...filters, category: e.target.value })} style={filterInput}>
+                          <option value="">All splits</option>
+                          {Array.from(new Set(['SAMPLE', 'YARNS', 'TRIMS', ...scheduledPayments.map(p => p.category).filter((c): c is string => !!c)])).sort().map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 

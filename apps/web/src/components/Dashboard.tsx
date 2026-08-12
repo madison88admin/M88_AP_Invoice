@@ -177,6 +177,7 @@ export default function Dashboard() {
   const [sendingConfirmation, setSendingConfirmation] = useState(false);
   const [showConfirmSendModal, setShowConfirmSendModal] = useState(false);
   const [detailTab, setDetailTab] = useState<'overview' | 'pipeline' | 'validation' | 'actions' | 'audit'>('overview');
+  const [openingDocument, setOpeningDocument] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [editCollapsed, setEditCollapsed] = useState<Record<string, boolean>>({});
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
@@ -663,6 +664,45 @@ export default function Dashboard() {
       console.error('Failed to approve invoice:', error);
       const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to approve invoice';
       showToast(msg, 'error');
+    }
+  };
+
+  const openInvoicePdf = async (invoice: MockInvoice) => {
+    const previewWindow = window.open('', '_blank');
+    try {
+      setOpeningDocument(true);
+      if (previewWindow) {
+        previewWindow.document.title = 'Loading invoice...';
+        previewWindow.document.body.textContent = 'Loading invoice PDF...';
+      }
+      const response = await invoiceApi.getDocument(invoice.id);
+      const contentType = String(response.headers['content-type'] || 'application/pdf');
+      const url = URL.createObjectURL(new Blob([response.data], { type: contentType }));
+      if (previewWindow) {
+        previewWindow.location.href = url;
+      } else {
+        const link = document.createElement('a');
+        link.href = url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.click();
+      }
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (error: any) {
+      previewWindow?.close();
+      const blob = error?.response?.data;
+      let message = 'The actual invoice PDF is not available for this record.';
+      if (blob instanceof Blob) {
+        try {
+          const parsed = JSON.parse(await blob.text());
+          message = parsed?.error?.message || parsed?.message || message;
+        } catch {
+          // Keep the user-friendly fallback for non-JSON failures.
+        }
+      }
+      showToast(message, 'error');
+    } finally {
+      setOpeningDocument(false);
     }
   };
 
@@ -2739,6 +2779,17 @@ ${dataRows}
             {/* Actions Tab */}
             {detailTab === 'actions' && (
             <div className="space-y-3">
+              {/* View Actual Invoice PDF — always available when an invoice is selected */}
+              <button
+                onClick={() => void openInvoicePdf(selectedInvoice)}
+                disabled={openingDocument}
+                className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
+                style={openingDocument ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--accent-blue)', color: 'var(--text-inverse)' }}
+              >
+                {openingDocument ? <Loader2 className="h-4 w-4 mr-2 animate-spin" strokeWidth={1.75} /> : <Eye className="h-4 w-4 mr-2" strokeWidth={1.75} />}
+                {openingDocument ? 'Opening PDF...' : 'View Actual Invoice PDF'}
+              </button>
+
               {/* Edit Invoice Button — shown if user can edit invoice OR edit bank details */}
               {user && (hasPermission(user.role, 'canEditInvoice') || hasPermission(user.role, 'canEditBankDetails')) && (
                 <button

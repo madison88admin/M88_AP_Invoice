@@ -61,7 +61,9 @@ export class CorrectionLogService {
           note: input.note,
           vendor_scope_key: correctionVendorScopeKey(input.vendor_name),
           layout_fingerprint: input.layout_fingerprint,
-          approved_for_learning: false,
+          approved_for_learning: true,
+          approved_at: new Date(),
+          approved_by: 'system-auto',
         },
       });
 

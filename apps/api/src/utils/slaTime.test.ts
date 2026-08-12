@@ -1,5 +1,25 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { getInvoiceSLAStart, getStageSLAStart } from './slaTime';
+
+describe('getInvoiceSLAStart', () => {
+  it('uses the actual invoice received date before any system timestamp', () => {
+    expect(getInvoiceSLAStart({
+      invoice_received_date: '2026-07-01T00:00:00.000Z',
+      created_at: '2026-07-10T00:00:00.000Z',
+    }).toISOString()).toBe('2026-07-01T00:00:00.000Z');
+  });
+
+  it('falls back to created_at for legacy invoices without a received date', () => {
+    expect(getInvoiceSLAStart({
+      invoice_received_date: null,
+      created_at: '2026-07-10T00:00:00.000Z',
+    }, '2026-07-12T00:00:00.000Z').toISOString()).toBe('2026-07-10T00:00:00.000Z');
+  });
+
+  it('falls back to the legacy fallback when the invoice has no dates', () => {
+    expect(getInvoiceSLAStart(null, new Date('2026-08-10T08:00:00Z'))).toEqual(new Date('2026-08-10T08:00:00Z'));
+  });
+});
 
 describe('getStageSLAStart', () => {
   const invoice = {
@@ -28,12 +48,5 @@ describe('getStageSLAStart', () => {
     expect(getStageSLAStart(invoice, 'PENDING_MANAGER', stageStart)).toEqual(stageStart);
     expect(getStageSLAStart(invoice, 'PENDING_ACCOUNTING', stageStart)).toEqual(stageStart);
     expect(getStageSLAStart(invoice, undefined, stageStart)).toEqual(stageStart);
-  });
-
-  it('getInvoiceSLAStart prefers received date, then created_at, then fallback', () => {
-    expect(getInvoiceSLAStart(invoice, null)).toEqual(new Date('2026-08-01T08:00:00Z'));
-    expect(getInvoiceSLAStart({ created_at: new Date('2026-08-02T09:00:00Z') }, new Date('2026-08-10T08:00:00Z')))
-      .toEqual(new Date('2026-08-02T09:00:00Z'));
-    expect(getInvoiceSLAStart(null, new Date('2026-08-10T08:00:00Z'))).toEqual(new Date('2026-08-10T08:00:00Z'));
   });
 });

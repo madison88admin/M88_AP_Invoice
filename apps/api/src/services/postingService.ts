@@ -1,5 +1,5 @@
 import prisma from '../config/database';
-import { InvoiceStatus, ExceptionReason, SLA_LIMITS, BATCH_THRESHOLD_CONFIG, calcWorkingHoursElapsed } from '@ap-invoice/shared';
+import { InvoiceStatus, ExceptionReason, SLA_LIMITS, BATCH_THRESHOLD_CONFIG, UserRole, calcWorkingHoursElapsed } from '@ap-invoice/shared';
 import { AppError } from '../middleware/errorHandler';
 import { nextGenService } from './nextGenService';
 import { inAppNotificationService } from './inAppNotificationService';
@@ -38,6 +38,26 @@ const GL_ACCOUNTS: Record<string, string> = {
   PROTO_SAMPLE: '6100-Maintenance Expenses',
 };
 
+/** Deterministic GL account for an invoice type (shared by posting + QB export). */
+export function deriveGLAccount(invoiceType: string): string {
+  return GL_ACCOUNTS[invoiceType] || '6900-Miscellaneous Expenses';
+}
+
+/**
+ * QB memo — existing string-concat logic (brand_season_ordertype_mpo_date),
+ * shared by posting and the QB Bills export.
+ */
+export function deriveQBMemo(invoice: any): string {
+  const memoParts = [
+    invoice.brand_code || invoice.brand || '',
+    invoice.season || '',
+    invoice.order_type || '',
+    invoice.mpo_number || '',
+    new Date().toISOString().split('T')[0],
+  ].filter(Boolean);
+  return invoice.qb_memo || memoParts.join('_');
+}
+
 const VARIANCE_WARN_PCT = 0.02;  // 2%
 const VARIANCE_BLOCK_PCT = 0.05; // 5%
 
@@ -45,7 +65,7 @@ async function prePostCheck(invoice: any): Promise<PrePostResult> {
   const flags: PrePostFlag[] = [];
 
   // 1. GL account — deterministic lookup
-  const gl_account = GL_ACCOUNTS[invoice.invoice_type] || '6900-Miscellaneous Expenses';
+  const gl_account = deriveGLAccount(invoice.invoice_type);
   if (!GL_ACCOUNTS[invoice.invoice_type]) {
     flags.push({
       type: 'GL_MAPPING_UNKNOWN',
@@ -55,14 +75,7 @@ async function prePostCheck(invoice: any): Promise<PrePostResult> {
   }
 
   // 2. QB memo — existing string concat logic
-  const memoParts = [
-    invoice.brand_code || invoice.brand || '',
-    invoice.season || '',
-    invoice.order_type || '',
-    invoice.mpo_number || '',
-    new Date().toISOString().split('T')[0],
-  ].filter(Boolean);
-  const qb_memo = invoice.qb_memo || memoParts.join('_');
+  const qb_memo = deriveQBMemo(invoice);
 
   // 3. Amount vs PO variance via NextGen (new check)
   // Skip for STATEMENT documents — monthly aggregates won't match a single PO
@@ -160,75 +173,17 @@ export async function postInvoice(invoiceId: string, userId: string, bypassVaria
     throw new AppError('All approvals must be completed before posting', 400);
   }
 
-  // The vendor batching threshold is enforced only after all Purchasing
-  // approvals are complete and Accounting attempts to post the invoice.
-  const accountingHeldInvoices = await prisma.invoice.findMany({
-    where: {
-      vendor_id: invoice.vendor_id,
-      status: InvoiceStatus.ON_HOLD as any,
-      id: { not: invoiceId },
-      exceptions: {
-        some: { reason: ExceptionReason.BATCH_THRESHOLD_NOT_MET as any, status: 'PENDING' as any },
-      },
-    },
-    select: { id: true, total_amount: true },
-  });
-  const accountingBatchTotal = accountingHeldInvoices.reduce((sum, item) => sum + Number(item.total_amount), 0)
-    + Number(invoice.total_amount);
-
-  if (accountingBatchTotal < BATCH_THRESHOLD_CONFIG.AMOUNT) {
-    const existingThresholdException = invoice.exceptions.find(
-      (exc: any) => exc.reason === ExceptionReason.BATCH_THRESHOLD_NOT_MET && exc.status === 'PENDING'
-    );
-    if (!existingThresholdException) {
-      await prisma.exception.create({
-        data: {
-          invoice_id: invoiceId,
-          reason: ExceptionReason.BATCH_THRESHOLD_NOT_MET as any,
-          detail: `[ACCOUNTING AUTO-HOLD] Vendor cumulative amount $${accountingBatchTotal.toFixed(2)} is below $${BATCH_THRESHOLD_CONFIG.AMOUNT}.`,
-        },
-      });
-    }
-    await prisma.invoice.update({ where: { id: invoiceId }, data: { status: InvoiceStatus.ON_HOLD as any } });
-    await prisma.auditLog.create({
-      data: {
-        invoice_id: invoiceId,
-        action: 'ACCOUNTING_AUTO_HOLD',
-        performed_by: userId,
-        note: `Accounting auto-hold applied. Vendor batch total $${accountingBatchTotal.toFixed(2)} is below $${BATCH_THRESHOLD_CONFIG.AMOUNT}.`,
-      },
-    });
-    return { posted: false, status: 'ON_HOLD', reason: 'BATCH_THRESHOLD_NOT_MET', cumulative: accountingBatchTotal };
-  }
-
-  if (accountingHeldInvoices.length > 0) {
-    const heldIds = accountingHeldInvoices.map(item => item.id);
-    await prisma.invoice.updateMany({
-      where: { id: { in: heldIds } },
-      data: { status: InvoiceStatus.PENDING_ACCOUNTING as any },
-    });
-    await prisma.exception.updateMany({
-      where: {
-        invoice_id: { in: heldIds },
-        reason: ExceptionReason.BATCH_THRESHOLD_NOT_MET as any,
-        status: 'PENDING' as any,
-      },
-      data: {
-        status: 'RESOLVED' as any,
-        resolved_at: new Date(),
-        resolved_by: userId,
-        resolution_notes: `Accounting batch threshold reached: $${accountingBatchTotal.toFixed(2)}.`,
-      },
-    });
-  }
+  // The sub-$100 hold is applied at payment scheduling time (HELD_BELOW_100 +
+  // Purchasing release approval), NOT here. Posting never blocks a fully approved
+  // invoice on a vendor-cumulative threshold — see schedulePayment below.
 
   // Check for any unresolved exceptions
   const unresolvedExceptions = invoice.exceptions.filter(
     (exc: any) => exc.status === 'PENDING'
   );
   
-  // Auto-resolve batch threshold exceptions when posting
-  // The invoice amount itself pushes the vendor over the threshold
+  // Auto-resolve batch-threshold exceptions created by a manual hold — the
+  // invoice is being posted now, so the hold no longer applies.
   const batchThresholdExceptions = unresolvedExceptions.filter(
     (exc: any) => exc.reason === ExceptionReason.BATCH_THRESHOLD_NOT_MET as any
   );
@@ -241,7 +196,7 @@ export async function postInvoice(invoiceId: string, userId: string, bypassVaria
         status: 'RESOLVED' as any,
         resolved_at: new Date(),
         resolved_by: userId,
-        resolution_notes: 'Auto-resolved: invoice posted to accounting. Vendor cumulative threshold met by this invoice.',
+        resolution_notes: 'Auto-resolved: manually held invoice posted to accounting.',
       },
     });
     // Remove from unresolved list
@@ -398,17 +353,30 @@ export async function postInvoice(invoiceId: string, userId: string, bypassVaria
       invoice_id: invoiceId,
       action: 'POSTED',
       performed_by: userId,
-      note: `Invoice ${invoice.invoice_number} posted to QuickBooks. QB Invoice ID: ${postingResult.qbInvoiceId}`,
+      note: `Invoice ${invoice.invoice_number} posted for QuickBooks — bill ready for manual import via the QB Bills export file (no live QB API call). GL: ${postingResult.gl_account}, Memo: ${postingResult.qb_memo}`,
     },
   });
 
-  return { ...postingResult, payment_scheduled: false };
+  // Auto-schedule the payment — no manual Schedule Payment step. The payment
+  // date derives from the invoice's due date (SCHEDULED = possible payment
+  // date). If scheduling unexpectedly fails, the invoice stays POSTED_TO_QB
+  // and can be scheduled via the API later.
+  let payment: any = null;
+  try {
+    payment = await schedulePayment(invoiceId, undefined, userId);
+  } catch (err) {
+    logger.warn(`Auto-schedule failed for invoice ${invoiceId}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  return { ...postingResult, payment_scheduled: !!payment, payment };
 }
 
 async function postToQuickBooks(invoice: any, glAccount: string, qbMemo: string) {
-  // In production, this would use the QuickBooks Online API
-  // For now, we'll simulate the posting process with QB-specific fields
-  const qbInvoiceId = `QB-${Date.now()}-${invoice.invoice_number}`;
+  // The QuickBooks API is NOT called here. Posting marks the invoice as ready
+  // for QuickBooks import; the actual artifact is the QB Bills export file
+  // (see qbExportService) which the accounting team imports into QB manually.
+  // The QB payload below documents the structure that export produces.
+  const qbInvoiceId: string | null = null;
 
   // Build line items for QuickBooks — export each MPO line separately
   let qbLines: any[] = [];
@@ -481,7 +449,7 @@ async function postToQuickBooks(invoice: any, glAccount: string, qbMemo: string)
 
 export async function schedulePayment(
   invoiceId: string,
-  paymentDate: Date,
+  paymentDate: Date | undefined,
   userId: string
 ) {
   const invoice = await prisma.invoice.findUnique({
@@ -497,17 +465,55 @@ export async function schedulePayment(
     throw new AppError('Invoice must be posted before scheduling payment', 400);
   }
 
+  // Payment date auto-derives from the invoice's due date — SCHEDULED is the
+  // "possible payment date", not a manually typed commitment. Falls back to
+  // today only when the invoice has no due date.
+  const resolvedPaymentDate =
+    paymentDate && !isNaN(paymentDate.getTime())
+      ? paymentDate
+      : invoice.due_date
+        ? new Date(invoice.due_date)
+        : new Date();
+
+  // Record how the payment date was set explicitly (DUE_DATE / MANUAL /
+  // DEFAULT) instead of inferring it later from date equality.
+  const paymentDateSource =
+    paymentDate && !isNaN(paymentDate.getTime())
+      ? 'MANUAL'
+      : invoice.due_date
+        ? 'DUE_DATE'
+        : 'DEFAULT';
+
+  // Sub-$100 invoices are HELD: they appear in the batch schedule only when
+  // they fall within the Associate's cut-off (due on or before the cut-off),
+  // and only proceed after the Purchasing Coordinator approves (item 8).
+  const heldBelow100 = Number(invoice.total_amount) < BATCH_THRESHOLD_CONFIG.AMOUNT;
+
   // Create payment record
   const payment = await prisma.payment.create({
     data: {
       invoice_id: invoiceId,
       amount: Number(invoice.total_amount),
       currency: invoice.currency,
-      payment_date: paymentDate,
-      status: 'SCHEDULED',
+      payment_date: resolvedPaymentDate,
+      payment_date_source: paymentDateSource,
+      status: heldBelow100 ? 'HELD_BELOW_100' : 'SCHEDULED',
       vendor_id: invoice.vendor_id || undefined,
     },
   });
+
+  if (heldBelow100) {
+    await inAppNotificationService.create({
+      invoice_id: invoiceId,
+      invoice_number: invoice.invoice_number,
+      vendor_name: invoice.vendor?.name || 'Unknown',
+      title: `Invoice ${invoice.invoice_number} held (below $${BATCH_THRESHOLD_CONFIG.AMOUNT})`,
+      message: `Payment of ${invoice.currency} ${Number(invoice.total_amount).toFixed(2)} is under the $${BATCH_THRESHOLD_CONFIG.AMOUNT} threshold — held (HELD_BELOW_100) until it falls within the batch cut-off. Approve release for it to proceed for payment or consolidation.`,
+      type: 'warning',
+      category: 'payment',
+      target_role: UserRole.PURCHASING_COORDINATOR,
+    });
+  }
 
   // Exit POSTED_TO_QB stage timestamp
   const postedStage = await prisma.stageTimestamp.findFirst({
@@ -547,7 +553,7 @@ export async function schedulePayment(
       invoice_id: invoiceId,
       action: 'PAYMENT_SCHEDULED',
       performed_by: userId,
-      note: `Payment of ${invoice.currency} ${Number(invoice.total_amount).toFixed(2)} scheduled for ${paymentDate.toISOString().split('T')[0]}`,
+      note: `Payment of ${invoice.currency} ${Number(invoice.total_amount).toFixed(2)} scheduled for ${resolvedPaymentDate.toISOString().split('T')[0]}${heldBelow100 ? ` — HELD_BELOW_100 (under $${BATCH_THRESHOLD_CONFIG.AMOUNT}); Purchasing notified for release approval` : ''}`,
     },
   });
 

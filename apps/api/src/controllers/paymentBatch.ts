@@ -18,7 +18,18 @@ import {
   returnPaymentBatch,
   returnInvoicesFromBatch,
   markPaymentBatchExported,
+  setPaymentRemarks,
+  markPaymentForPayment,
+  approvePaymentForPayment,
+  rejectPaymentForPayment,
+  bulkApprovePaymentsForPayment,
+  applyBankCharge,
+  removeBankCharge,
+  endorseBillStub,
+  matchPaymentConfirmation,
+  approveHeldPayment,
 } from '../services/paymentBatchService';
+import { exportPaymentReconciliation } from '../services/reconciliationExportService';
 import { exportBatchPerVendor } from '../services/perVendorExportService';
 
 export const createPaymentBatchController = async (
@@ -47,6 +58,18 @@ export const getScheduledPaymentsForBatchController = async (
       dateFrom: req.query.dateFrom as string | undefined,
       dateTo: req.query.dateTo as string | undefined,
       search: req.query.search as string | undefined,
+      dueMonth: req.query.dueMonth as string | undefined,
+      dueFrom: req.query.dueFrom as string | undefined,
+      dueTo: req.query.dueTo as string | undefined,
+      invoiceDateFrom: req.query.invoiceDateFrom as string | undefined,
+      invoiceDateTo: req.query.invoiceDateTo as string | undefined,
+      approvalFrom: req.query.approvalFrom as string | undefined,
+      approvalTo: req.query.approvalTo as string | undefined,
+      brand: req.query.brand as string | undefined,
+      memo: req.query.memo as string | undefined,
+      category: req.query.category as string | undefined,
+      aging: req.query.aging as string | undefined,
+      status: req.query.status as string | undefined,
     });
     res.json(payments);
   } catch (error) {
@@ -180,6 +203,210 @@ export const deselectPaymentsForBatchController = async (
     const { paymentIds } = req.body;
     const result = await deselectPaymentsForBatch(paymentIds, req.user!.id);
     res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const setPaymentRemarksController = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { paymentId } = req.params;
+    const { remarks } = req.body;
+    const result = await setPaymentRemarks(paymentId, remarks ?? null, req.user!.id);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const markPaymentForPaymentController = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { paymentId } = req.params;
+    const result = await markPaymentForPayment(paymentId, req.user!.id);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const approvePaymentForPaymentController = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { paymentId } = req.params;
+    const { note } = req.body;
+    const result = await approvePaymentForPayment(paymentId, note, req.user!.id);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const rejectPaymentForPaymentController = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { paymentId } = req.params;
+    const { reason } = req.body;
+    const result = await rejectPaymentForPayment(paymentId, reason, req.user!.id);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const bulkApprovePaymentsForPaymentController = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { paymentIds, note } = req.body;
+    const result = await bulkApprovePaymentsForPayment(paymentIds, note, req.user!.id);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const applyBankChargeController = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { batchId } = req.params;
+    const { paymentId, amount, note } = req.body;
+    const result = await applyBankCharge(batchId, paymentId, amount, note, req.user!.id);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const removeBankChargeController = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { batchId, paymentId } = req.params;
+    const result = await removeBankCharge(batchId, paymentId, req.user!.id);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const approveHeldPaymentController = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { paymentId } = req.params;
+    const result = await approveHeldPayment(paymentId, req.user!.id);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const endorseBillStubController = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { batchId, paymentId } = req.params;
+    let proofFileUrl: string | undefined;
+    let proofFileName: string | undefined;
+    const uploadedFile = (req as any).file;
+
+    if (uploadedFile?.buffer) {
+      const uploadRoot = process.env.PAYMENT_PROOF_DIR || path.join(process.cwd(), 'data', 'payment-proofs');
+      await fs.mkdir(uploadRoot, { recursive: true });
+      const extension = path.extname(uploadedFile.originalname || '').toLowerCase() || '.bin';
+      const storedName = `stub-${batchId}-${paymentId}-${Date.now()}-${crypto.randomBytes(6).toString('hex')}${extension}`;
+      const targetPath = path.join(uploadRoot, storedName);
+      await fs.writeFile(targetPath, uploadedFile.buffer);
+      proofFileUrl = `/api/payment-batches/proofs/${storedName}`;
+      proofFileName = uploadedFile.originalname;
+    }
+
+    const result = await endorseBillStub(
+      batchId,
+      paymentId,
+      {
+        stubDate: req.body.stubDate,
+        type: req.body.type,
+        reference: req.body.reference,
+        originalAmount: req.body.originalAmount,
+        balance: req.body.balance,
+        discount: req.body.discount,
+        paidAmount: req.body.paidAmount,
+        proofFileUrl,
+        proofFileName,
+      },
+      req.user!.id
+    );
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const matchPaymentConfirmationController = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { batchId } = req.params;
+    const { reference, amount, paidDate, paymentIds } = req.body;
+    const result = await matchPaymentConfirmation(
+      batchId,
+      { reference, amount, paidDate, paymentIds },
+      req.user!.id
+    );
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const exportReconciliationController = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const result = await exportPaymentReconciliation(
+      {
+        status: req.query.status as string | undefined,
+        dateFrom: req.query.dateFrom as string | undefined,
+        dateTo: req.query.dateTo as string | undefined,
+      },
+      req.user!.id
+    );
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.setHeader('Content-Length', result.buffer.length);
+
+    res.send(result.buffer);
   } catch (error) {
     next(error);
   }

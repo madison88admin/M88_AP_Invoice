@@ -1,0 +1,148 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// Mock the prisma client before importing the service.
+const {
+  invoiceFindUnique,
+  signatureUpdate,
+  stageTimestampFindFirst,
+  stageTimestampUpdate,
+  stageTimestampCreate,
+  invoiceUpdate,
+  auditLogCreate,
+  workflowActionCreate,
+  notifyStageTransition,
+  notificationCreate,
+} = vi.hoisted(() => ({
+  invoiceFindUnique: vi.fn(),
+  signatureUpdate: vi.fn(),
+  stageTimestampFindFirst: vi.fn(),
+  stageTimestampUpdate: vi.fn(),
+  stageTimestampCreate: vi.fn(),
+  invoiceUpdate: vi.fn(),
+  auditLogCreate: vi.fn(),
+  workflowActionCreate: vi.fn(),
+  notifyStageTransition: vi.fn(),
+  notificationCreate: vi.fn(),
+}));
+
+vi.mock('../config/database', () => ({
+  default: {
+    invoice: { findUnique: invoiceFindUnique, update: invoiceUpdate },
+    signature: { update: signatureUpdate },
+    stageTimestamp: { findFirst: stageTimestampFindFirst, update: stageTimestampUpdate, create: stageTimestampCreate },
+    auditLog: { create: auditLogCreate },
+    invoiceWorkflowAction: { create: workflowActionCreate },
+  },
+}));
+
+vi.mock('./inAppNotificationService', () => ({
+  inAppNotificationService: { create: notificationCreate, notifyStageTransition },
+}));
+
+vi.mock('./notificationService', () => ({
+  sendApprovalRequestNotification: vi.fn(),
+}));
+
+vi.mock('../utils/logger', () => ({
+  logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() },
+}));
+
+import { rejectInvoice } from './approvalService';
+import { InvoiceStatus, SignatoryRole } from '@ap-invoice/shared';
+
+const COORD = 'sig-coord';
+const MGR = 'sig-mgr';
+
+function makeSignedInvoice() {
+  return {
+    id: 'inv-1',
+    invoice_number: 'INV-001',
+    revision: 1,
+    status: InvoiceStatus.PENDING_ACCOUNTING,
+    vendor: { name: 'QA Test Vendor' },
+    signatures: [
+      {
+        id: COORD,
+        signatory_role: SignatoryRole.COORDINATOR,
+        signed_at: new Date('2026-08-10'),
+        invalidated_at: null,
+        approval_status: 'APPROVED',
+        ocr_detected: false,
+        invoice_revision: 1,
+      },
+      {
+        id: MGR,
+        signatory_role: SignatoryRole.PURCHASING_MANAGER,
+        signed_at: new Date('2026-08-11'),
+        invalidated_at: null,
+        approval_status: 'APPROVED',
+        ocr_detected: false,
+        invoice_revision: 1,
+      },
+    ],
+  };
+}
+
+beforeEach(() => {
+  invoiceFindUnique.mockReset();
+  signatureUpdate.mockReset();
+  stageTimestampFindFirst.mockReset();
+  stageTimestampUpdate.mockReset().mockResolvedValue({});
+  stageTimestampCreate.mockReset();
+  invoiceUpdate.mockReset();
+  auditLogCreate.mockReset();
+  workflowActionCreate.mockReset().mockResolvedValue({});
+  notifyStageTransition.mockReset();
+  notificationCreate.mockReset();
+
+  stageTimestampFindFirst.mockResolvedValue({
+    id: 'stage-1',
+    entered_at: new Date('2026-08-11'),
+    sla_hours: 168,
+  });
+  stageTimestampCreate.mockResolvedValue({});
+  auditLogCreate.mockResolvedValue({});
+  workflowActionCreate.mockResolvedValue({});
+  notifyStageTransition.mockResolvedValue({});
+  notificationCreate.mockResolvedValue({});
+});
+
+describe('rejectInvoice from PENDING_ACCOUNTING (rejectFromAccounting)', () => {
+  it('re-opens the last signed approver signature so they can re-approve', async () => {
+    invoiceFindUnique.mockResolvedValue(makeSignedInvoice());
+
+    await rejectInvoice('inv-1', 'qa-assoc', 'ACCOUNTING_ASSOCIATE', 'QA e2e: accounting rejects');
+
+    // The manager's signature must be re-opened (signed_at cleared, PENDING) so
+    // approveInvoice can find a pending signature for the returned stage.
+    const reOpenCall = signatureUpdate.mock.calls.find(([args]: any) => args.where.id === MGR)!;
+    expect(reOpenCall).toBeDefined();
+    const data = reOpenCall[0].data;
+    expect(data.signed_at).toBeNull();
+    expect(data.approval_status).toBe('PENDING');
+    expect(data.invalidated_at).toBeInstanceOf(Date);
+    expect(String(data.invalidation_reason)).toMatch(/Re-opened after rejection by Accounting/);
+
+    // Invoice returned to the manager stage.
+    const invUpdateCall = invoiceUpdate.mock.calls.find(([args]: any) => args.where.id === 'inv-1')!;
+    expect(invUpdateCall[0].data.status).toBe(InvoiceStatus.PENDING_MANAGER);
+    expect(invUpdateCall[0].data.current_approver_role).toBe(SignatoryRole.PURCHASING_MANAGER);
+
+    // A fresh stage timer for the returned stage.
+    const stageCall = stageTimestampCreate.mock.calls.find(([args]: any) => args.data.invoice_id === 'inv-1')!;
+    expect(stageCall[0].data.stage).toBe(InvoiceStatus.PENDING_MANAGER);
+  });
+
+  it('does not re-open signatures when there is no signed approver (fallback to coordinator)', async () => {
+    const invoice = makeSignedInvoice();
+    invoice.signatures = []; // no signed approver at all
+    invoiceFindUnique.mockResolvedValue(invoice);
+
+    await rejectInvoice('inv-1', 'qa-assoc', 'ACCOUNTING_ASSOCIATE', 'QA e2e: no prior approver');
+
+    expect(signatureUpdate).not.toHaveBeenCalled();
+    const invUpdateCall = invoiceUpdate.mock.calls.find(([args]: any) => args.where.id === 'inv-1')!;
+    expect(invUpdateCall[0].data.status).toBe(InvoiceStatus.PENDING_COORDINATOR);
+    expect(invUpdateCall[0].data.current_approver_role).toBe(SignatoryRole.COORDINATOR);
+  });
+});

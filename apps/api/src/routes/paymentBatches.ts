@@ -9,7 +9,8 @@ const router: Router = Router();
 
 router.use(authenticate);
 
-router.get('/scheduled-payments', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), paymentBatchController.getScheduledPaymentsForBatchController);
+router.get('/scheduled-payments', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), paymentBatchController.getScheduledPaymentsForBatchController);
+router.get('/reconciliation', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), paymentBatchController.exportReconciliationController);
 router.get('/', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), paymentBatchController.getPaymentBatchesController);
 router.get('/proofs/:fileName', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), (req, res) => {
   const uploadRoot = process.env.PAYMENT_PROOF_DIR || path.join(process.cwd(), 'data', 'payment-proofs');
@@ -19,6 +20,16 @@ router.get('/:batchId', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUN
 router.post('/', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), paymentBatchController.createPaymentBatchController);
 router.post('/select', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), paymentBatchController.selectPaymentsForBatchController);
 router.post('/deselect', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), paymentBatchController.deselectPaymentsForBatchController);
+router.post('/payments/bulk-approve-for-payment', authorize(UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.bulkApprovePaymentsForPaymentController);
+router.post('/payments/:paymentId/remarks', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.setPaymentRemarksController);
+router.post('/payments/:paymentId/for-payment', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.markPaymentForPaymentController);
+router.post('/payments/:paymentId/approve-for-payment', authorize(UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.approvePaymentForPaymentController);
+router.post('/payments/:paymentId/reject-for-payment', authorize(UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.rejectPaymentForPaymentController);
+router.post('/payments/:paymentId/approve-held', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), paymentBatchController.approveHeldPaymentController);
+router.post('/:batchId/bank-charge', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.applyBankChargeController);
+router.delete('/:batchId/bank-charge/:paymentId', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.removeBankChargeController);
+router.post('/:batchId/payments/:paymentId/endorse', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), upload.single('stubFile'), paymentBatchController.endorseBillStubController);
+router.post('/:batchId/match-confirmation', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.matchPaymentConfirmationController);
 router.post('/:batchId/submit', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.submitPaymentBatchController);
 router.post('/:batchId/review', authorize(UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.reviewPaymentBatchController);
 router.post('/:batchId/return', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.returnPaymentBatchController);

@@ -142,8 +142,6 @@ export default function Dashboard() {
   const [editFormData, setEditFormData] = useState<any>({});
   const [savingEdit, setSavingEdit] = useState(false);
   const [posting, setPosting] = useState(false);
-  const [showSchedulePaymentModal, setShowSchedulePaymentModal] = useState(false);
-  const [paymentDate, setPaymentDate] = useState('');
   const [filters, setFilters] = useState({
     status: undefined as InvoiceStatus | undefined,
     category: undefined as InvoiceCategory | undefined,
@@ -1013,23 +1011,6 @@ export default function Dashboard() {
       showToast(msg, 'error');
     } finally {
       setPosting(false);
-    }
-  };
-
-  const handleSchedulePayment = async () => {
-    if (!selectedInvoice || !paymentDate) return;
-
-    try {
-      await invoiceApi.schedulePayment(selectedInvoice.id, paymentDate);
-      showToast('Payment scheduled successfully', 'success');
-      await refresh();
-      setSelectedInvoice(null);
-      setShowSchedulePaymentModal(false);
-      setPaymentDate('');
-    } catch (error: any) {
-      console.error('Failed to schedule payment:', error);
-      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to schedule payment';
-      showToast(msg, 'error');
     }
   };
 
@@ -2969,20 +2950,6 @@ ${dataRows}
                 </button>
               )}
 
-              {/* Payment Scheduling */}
-              {selectedInvoice.status === (InvoiceStatus.POSTED_TO_QB as any) && user && hasPermission(user.role, 'canSchedulePayment') && (
-                <button
-                  onClick={() => setShowSchedulePaymentModal(true)}
-                  className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
-                  style={{ background: 'var(--accent-purple)', color: 'var(--text-inverse)' }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--accent-purple-hover)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--accent-purple)'; }}
-                >
-                  <Clock className="h-4 w-4 mr-2" strokeWidth={1.75} />
-                  Schedule Payment
-                </button>
-              )}
-
               {/* Send Payment Confirmation — only for PAID invoices, only Accounting roles */}
               {selectedInvoice.status === (InvoiceStatus.PAID as any) && user && user.role === 'ACCOUNTING_SUPERVISOR' && (
                 <button
@@ -3303,53 +3270,6 @@ ${dataRows}
                   style={{ background: 'var(--accent-red)', color: 'white' }}
                 >
                   Delete Permanently
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Schedule Payment Modal */}
-      {showSchedulePaymentModal && (
-        <div className="fixed inset-0 flex items-center justify-center z-50 animate-backdrop" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
-          <div className="max-w-md w-full mx-2 sm:mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
-            <div className="p-6">
-              <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
-                Schedule Payment
-              </h3>
-              <div className="mb-4">
-                <label className="block text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>
-                  Payment Date
-                </label>
-                <input
-                  type="date"
-                  value={paymentDate}
-                  onChange={(e) => setPaymentDate(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
-                  style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
-                />
-              </div>
-              <div className="mt-4 flex justify-end space-x-3">
-                <button
-                  onClick={() => {
-                    setShowSchedulePaymentModal(false);
-                    setPaymentDate('');
-                  }}
-                  className="px-4 py-2 transition-colors text-sm"
-                  style={{ color: 'var(--text-secondary)' }}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleSchedulePayment}
-                  disabled={!paymentDate}
-                  className="px-4 py-2 rounded-xl transition-colors text-sm font-medium"
-                  style={!paymentDate ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--accent-purple)', color: 'var(--text-inverse)' }}
-                >
-                  Schedule Payment
                 </button>
               </div>
             </div>

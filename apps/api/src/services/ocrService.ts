@@ -7,6 +7,8 @@ import { InvoiceType, InvoiceCategory, PaymentTerms, BillToEntity, OrderType, Si
 import { parsePOReference, matchSignerToRole, TOP_10_BRANDS, isTop10Brand } from '@ap-invoice/shared';
 import { logger } from '../utils/logger';
 import { extractTextWithOpenDataLoader } from './openDataLoaderService';
+import { rapidOCRService } from './rapidOCRService';
+import { upstageOCRService } from './upstageOCRService';
 
 export interface BankInfo {
   beneficiary_name?: string;
@@ -26,6 +28,16 @@ export interface BankInfo {
   bank_address?: string;
   intermediary_bank_name?: string;
   intermediary_bank_swift?: string;
+}
+
+// Sanitize values from Upstage that may return comma-separated multi-doc values (e.g. "2026-06-23, 2026-06-17")
+function sanitizeSingleValue(val: string | undefined | null): string | undefined {
+  if (!val || typeof val !== 'string') return val || undefined;
+  const trimmed = val.trim();
+  if (trimmed.includes(',')) {
+    return trimmed.split(',')[0].trim();
+  }
+  return trimmed || undefined;
 }
 
 // Map AI-returned document_type strings to valid InvoiceType enum values
@@ -144,8 +156,11 @@ async function extractTextFromPDF(fileBuffer: Buffer): Promise<string> {
 }
 
 export async function extractInvoiceFields(fileBuffer: Buffer) {
-  console.log('[OCR] Using pdf2json (local, no external APIs)');
   const text = await extractTextFromPDF(fileBuffer);
+  return extractInvoiceFieldsFromText(text, fileBuffer);
+}
+
+async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
   console.log('[OCR] Extracted text length:', text.length);
   console.log('[OCR] Text contains 8.62:', text.includes('8.62'));
   console.log('[OCR] Text contains TOTAL USD:', text.toUpperCase().includes('TOTAL USD'));
@@ -712,12 +727,17 @@ function convertPDFToImages(fileBuffer: Buffer): string[] {
 }
 
 /**
- * Try AI fallback OCR engines in order: Ollama (Qwen2.5 — local, no rate limits) → Gemini Vision → Groq → Mistral
- * Ollama is now 1st priority because:
- *   - OpenDataLoader provides clean Markdown (no need for vision models)
- *   - qwen2.5:3b-instruct achieved 100% accuracy in benchmarks
- *   - No rate limits (local), ~32s per invoice on CPU
- * Cloud engines (Gemini/Groq/Mistral) are fallbacks for when Ollama is down or for scanned PDFs.
+ * Try AI fallback OCR engines in order: Groq (fast, accurate, truncated for token limits) → Upstage (single-step PDF extraction, 300 PPM) → Ollama (slow, local, no rate limits) → Gemini Vision → Mistral
+ * Groq is 1st priority because:
+ *   - 1.9s per invoice (vs Ollama 73-88s on CPU)
+ *   - Best accuracy in benchmarks (perfect field extraction)
+ *   - Text truncated to 8000 chars to stay within 12K TPM free tier
+ * Upstage is 2nd priority because:
+ *   - Single-step: directly extracts fields from PDF (no separate OCR needed)
+ *   - 10-12s per invoice, 300 PPM rate limit (generous vs Groq 12K TPM)
+ *   - Good field accuracy with structured schema extraction
+ * Ollama is 3rd priority (unlimited, local) for when Groq/Upstage rate limits hit.
+ * Gemini Vision is 4th (sends PDF directly, best for scanned PDFs).
  * Returns the first successful result with engine name, or null if all fail.
  */
 async function tryAIFallbacks(
@@ -725,12 +745,72 @@ async function tryAIFallbacks(
   rawText: string,
   vendorName?: string
 ): Promise<{ engine: string; vendor_name?: string; invoice_number?: string; invoice_date?: string; due_date?: string; total_amount?: number; subtotal?: number; currency?: string; po_number?: string; mpo_number?: string; brand?: string; brand_code?: string; season?: string; payment_terms?: string; ship_to?: string; sold_to?: string; qty_shipped?: number; document_type?: string; bank_name?: string; swift_code?: string; account_number?: string; bank_info?: { swift_code?: string; account_number?: string }; line_items?: any[]; signatures?: { signatory_name: string; signatory_role?: string; signed_date?: string }[]; bank_charges?: number; tt_charge?: number; freight_charges?: number; courier_charges?: number; handling_fee?: number; finance_surcharge?: number; tax_amount?: number; discount_amount?: number; setup_charge?: number; sample_charge?: number; min_order_charge?: number; additional_charges?: number } | null> {
-  // 1st priority: Ollama (Qwen2.5:3b-instruct — local, no rate limits, 100% accuracy with clean Markdown)
+  // 1st priority: Groq (Llama 3.3 70B — fast 1.9s, best accuracy, text truncated to 8000 chars for 12K TPM limit)
+  if (rawText && rawText.length > 50) {
+    try {
+      const groqOCR = (await import('./groqOCRService')).groqOCRService;
+      if (groqOCR.isAvailable()) {
+        logger.info('[OCR] Trying Groq (Llama 3.3) — 1st priority (fast, accurate)...');
+        const groqResult = await groqOCR.extractFromText(rawText, { vendorName } as any);
+        if (groqResult && (groqResult.vendor_name || groqResult.invoice_number)) {
+          logger.info('[OCR] Groq (Llama 3.3) extraction succeeded');
+          return { engine: 'groq', ...groqResult };
+        }
+      }
+    } catch (e) {
+      logger.error('[OCR] Groq fallback failed:', e);
+    }
+  }
+
+  // 2nd priority: Upstage Info Extraction (single-step PDF → fields, 300 PPM, ~10-12s)
+  // Directly extracts structured fields from PDF — no separate OCR step needed
+  try {
+    if (upstageOCRService.isAvailable()) {
+      logger.info('[OCR] Trying Upstage Info Extraction — 2nd priority (single-step PDF extraction)...');
+      const upstageResult = await upstageOCRService.extractFromPDF(fileBuffer);
+      if (upstageResult && (upstageResult.vendor_name || upstageResult.invoice_number)) {
+        logger.info('[OCR] Upstage Info Extraction succeeded');
+        // Convert string values to numbers where needed
+        const converted: any = { ...upstageResult };
+        if (converted.total_amount) converted.total_amount = Number(converted.total_amount) || undefined;
+        if (converted.subtotal) converted.subtotal = Number(converted.subtotal) || undefined;
+        if (converted.qty_shipped) converted.qty_shipped = Number(converted.qty_shipped) || undefined;
+        if (converted.bank_charges) converted.bank_charges = Number(converted.bank_charges) || undefined;
+        if (converted.tt_charge) converted.tt_charge = Number(converted.tt_charge) || undefined;
+        if (converted.freight_charges) converted.freight_charges = Number(converted.freight_charges) || undefined;
+        if (converted.courier_charges) converted.courier_charges = Number(converted.courier_charges) || undefined;
+        if (converted.handling_fee) converted.handling_fee = Number(converted.handling_fee) || undefined;
+        if (converted.finance_surcharge) converted.finance_surcharge = Number(converted.finance_surcharge) || undefined;
+        if (converted.tax_amount) converted.tax_amount = Number(converted.tax_amount) || undefined;
+        if (converted.discount_amount) converted.discount_amount = Number(converted.discount_amount) || undefined;
+        if (converted.setup_charge) converted.setup_charge = Number(converted.setup_charge) || undefined;
+        if (converted.sample_charge) converted.sample_charge = Number(converted.sample_charge) || undefined;
+        if (converted.min_order_charge) converted.min_order_charge = Number(converted.min_order_charge) || undefined;
+        if (converted.additional_charges) converted.additional_charges = Number(converted.additional_charges) || undefined;
+        if (converted.exchange_rate) converted.exchange_rate = Number(converted.exchange_rate) || undefined;
+        // Convert line items
+        if (converted.line_items) {
+          converted.line_items = converted.line_items.map((li: any) => ({
+            ...li,
+            quantity: Number(li.quantity) || 0,
+            unit_price: Number(li.unit_price) || 0,
+            total_amount: Number(li.total_amount) || 0,
+          }));
+        }
+        return { engine: 'upstage', ...converted };
+      }
+    }
+  } catch (e) {
+    logger.error('[OCR] Upstage Info Extraction failed:', e);
+  }
+
+  // 3rd priority: Ollama (Qwen2.5 — local, no rate limits, ~73-88s on CPU)
+  // Used when Groq/Upstage rate limits are hit
   if (rawText && rawText.length > 50) {
     try {
       const ollamaOCR = (await import('./ollamaOCRService')).ollamaOCRService;
       if (ollamaOCR.isAvailable()) {
-        logger.info('[OCR] Trying Ollama (Qwen2.5) — 1st priority (local, no rate limits)...');
+        logger.info('[OCR] Trying Ollama (Qwen2.5) — 3rd priority (local, no rate limits)...');
         const ollamaResult = await ollamaOCR.extractFromText(rawText, { vendorName });
         if (ollamaResult && (ollamaResult.vendor_name || ollamaResult.invoice_number)) {
           logger.info('[OCR] Ollama (Qwen2.5) extraction succeeded');
@@ -741,7 +821,7 @@ async function tryAIFallbacks(
       logger.error('[OCR] Ollama (Qwen2.5) extraction failed:', e);
     }
   } else {
-    logger.warn('[OCR] No raw text from OpenDataLoader/pdf2json — trying PDF-to-image conversion for Ollama vision...');
+    logger.warn('[OCR] No raw text — trying PDF-to-image conversion for Ollama vision...');
     const imagesBase64 = convertPDFToImages(fileBuffer);
     if (imagesBase64.length > 0) {
       for (let i = 0; i < imagesBase64.length; i++) {
@@ -762,11 +842,11 @@ async function tryAIFallbacks(
     }
   }
 
-  // 2nd fallback: Gemini Vision (sends PDF as file directly — best for scanned PDFs or when Ollama fails)
+  // 4th fallback: Gemini Vision (sends PDF as file directly — best for scanned PDFs)
   try {
     const geminiOCR = (await import('./geminiOCRService')).geminiOCRService;
     if (geminiOCR.isAvailable()) {
-      logger.info('[OCR] Trying Gemini Vision fallback (2nd priority)...');
+      logger.info('[OCR] Trying Gemini Vision fallback (4th priority)...');
       const geminiResult = await geminiOCR.extractFromPDF(fileBuffer, vendorName);
       if (geminiResult && (geminiResult.vendor_name || geminiResult.invoice_number)) {
         logger.info('[OCR] Gemini Vision fallback succeeded');
@@ -777,24 +857,7 @@ async function tryAIFallbacks(
     logger.error('[OCR] Gemini Vision fallback failed:', e);
   }
 
-  // 3rd fallback: Groq (Llama 3.3 70B — text-based, fast, good free-tier limit)
-  if (rawText && rawText.length > 50) {
-    try {
-      const groqOCR = (await import('./groqOCRService')).groqOCRService;
-      if (groqOCR.isAvailable()) {
-        logger.info('[OCR] Trying Groq (Llama) fallback with raw text...');
-        const groqResult = await groqOCR.extractFromText(rawText, { vendorName } as any);
-        if (groqResult && (groqResult.vendor_name || groqResult.invoice_number)) {
-          logger.info('[OCR] Groq (Llama) fallback succeeded');
-          return { engine: 'groq', ...groqResult };
-        }
-      }
-    } catch (e) {
-      logger.error('[OCR] Groq fallback failed:', e);
-    }
-  }
-
-  // 4th fallback: Mistral (text-based, decent free-tier)
+  // 5th fallback: Mistral (text-based, decent free-tier)
   if (rawText && rawText.length > 50) {
     try {
       const mistralOCR = (await import('./mistralOCRService')).mistralOCRService;
@@ -958,172 +1021,184 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
   let extracted: any;
   let usedGeminiVision = false;
   let usedAIFallback = false;
-  let ocrEngine = 'ai-first';
+  let ocrEngine = 'rapidocr';
+  let rapidOcrConfidence = 0;
 
-  // ─── AI-FIRST APPROACH ───
-  // 1. Extract raw text from PDF (fast, free — needed for AI text engines)
-  let pdf2jsonRawText = '';
+  // ─── RAPIDOCR-FIRST APPROACH ───
+  // 1. Try RapidOCR (fast, 5-9s, 97% confidence, free, local)
+  let rapidOcrText = '';
   try {
-    pdf2jsonRawText = await extractTextFromPDF(fileBuffer);
-  } catch {
-    // pdf2json text extraction failed — Gemini Vision can still read the PDF directly
+    const rapidOcrResult = await rapidOCRService.extractText(fileBuffer);
+    if (rapidOcrResult && rapidOcrResult.text && rapidOcrResult.text.length > 20) {
+      rapidOcrText = rapidOcrResult.text;
+      rapidOcrConfidence = rapidOcrResult.confidence;
+      logger.info(`[OCR] RapidOCR extraction succeeded — ${rapidOcrText.length} chars, confidence: ${(rapidOcrConfidence * 100).toFixed(1)}%, ${rapidOcrResult.elapsed_ms}ms`);
+    }
+  } catch (e) {
+    logger.warn('[OCR] RapidOCR extraction failed:', e instanceof Error ? e.message : String(e));
   }
 
-  // 2. Try AI extraction FIRST (Gemini Vision → Ollama → Groq)
-  logger.info('[OCR] AI-first mode: attempting AI extraction before regex');
-  const aiResult = await tryAIFallbacks(fileBuffer, pdf2jsonRawText, undefined);
+  // 2. Confidence-based routing
+  // RapidOCR confidence reflects character recognition accuracy (97-98%),
+  // NOT field extraction quality. RapidOCR text lacks spaces between words,
+  // so regex patterns fail. Always use AI for field extraction.
+  // RapidOCR replaces OpenDataLoader as the text extractor (better quality text).
+  const CONFIDENCE_THRESHOLD = 1.01; // Always use AI fallback
 
-  if (aiResult && (aiResult.vendor_name || aiResult.invoice_number)) {
-    usedAIFallback = true;
-    ocrEngine = aiResult.engine;
-    if (aiResult.engine === 'gemini') {
-      usedGeminiVision = true;
+  if (rapidOcrText && rapidOcrConfidence >= CONFIDENCE_THRESHOLD) {
+    // High confidence — use regex extraction on RapidOCR text
+    logger.info(`[OCR] RapidOCR confidence ${(rapidOcrConfidence * 100).toFixed(1)}% ≥ ${CONFIDENCE_THRESHOLD * 100}% — using regex extraction (fast path)`);
+    try {
+      extracted = await extractInvoiceFieldsFromText(rapidOcrText, fileBuffer);
+      ocrEngine = 'rapidocr-regex';
+    } catch (regexErr) {
+      logger.warn('[OCR] Regex extraction on RapidOCR text failed, falling back to AI:', regexErr);
+      extracted = null;
+    }
+  }
+
+  if (!extracted) {
+    // Low confidence or RapidOCR unavailable — try AI fallback
+    // Use RapidOCR text if available, otherwise fall back to OpenDataLoader
+    let rawText = rapidOcrText;
+    if (!rawText) {
+      logger.info('[OCR] RapidOCR unavailable — falling back to OpenDataLoader for text extraction');
+      try {
+        rawText = await extractTextFromPDF(fileBuffer);
+      } catch {
+        // pdf2json text extraction failed — Gemini Vision can still read the PDF directly
+      }
     }
 
-    extracted = {
-      vendor_name: aiResult.vendor_name || '',
-      invoice_number: aiResult.invoice_number || '',
-      invoice_date: aiResult.invoice_date ? new Date(aiResult.invoice_date).toISOString().split('T')[0] : '',
-      due_date: aiResult.due_date ? new Date(aiResult.due_date).toISOString().split('T')[0] : '',
-      amount: aiResult.total_amount || 0,
-      grand_total: 0,
-      currency: aiResult.currency || 'USD',
-      po_reference: aiResult.po_number || '',
-      mpo_number: aiResult.mpo_number ? 'MPO' + aiResult.mpo_number.replace(/^MPO/i, '').replace(/^0+/, '').padStart(6, '0') : '',
-      brand_code: aiResult.brand_code || '',
-      payment_terms: aiResult.payment_terms || '',
-      bank_swift: aiResult.swift_code || aiResult.bank_info?.swift_code || '',
-      bank_account: aiResult.account_number || (aiResult.bank_info as any)?.account_usd || aiResult.bank_info?.account_number || '',
-      beneficiary_name: (aiResult as any).beneficiary_name || (aiResult as any).bank_info?.beneficiary_name || '',
-      invoice_type: mapDocumentType((aiResult as any).document_type) as any,
-      tax_id: '',
-      company_reg: '',
-      incoterm: (aiResult as any).incoterm || undefined,
-      exchange_rate: (aiResult as any).exchange_rate,
-      is_handwritten: (aiResult as any).is_handwritten || undefined,
-      is_statement: (aiResult as any).is_statement || undefined,
-    };
-    // Store extra AI-extracted fields
-    (extracted as any).qty_shipped = aiResult.qty_shipped;
-    (extracted as any).bank_name = aiResult.bank_name;
-    (extracted as any).ship_to = aiResult.ship_to;
-    (extracted as any).sold_to = aiResult.sold_to;
-    (extracted as any).brand = aiResult.brand;
-    (extracted as any).season = aiResult.season;
-    (extracted as any).line_items = aiResult.line_items;
-    (extracted as any).signatures = aiResult.signatures;
-    (extracted as any).subtotal = aiResult.subtotal;
-    (extracted as any).bank_charges = aiResult.bank_charges;
-    (extracted as any).tt_charge = aiResult.tt_charge;
-    (extracted as any).freight_charges = aiResult.freight_charges;
-    (extracted as any).courier_charges = aiResult.courier_charges;
-    (extracted as any).handling_fee = aiResult.handling_fee;
-    (extracted as any).finance_surcharge = aiResult.finance_surcharge;
-    (extracted as any).tax_amount = aiResult.tax_amount;
-    (extracted as any).discount_amount = aiResult.discount_amount;
-    (extracted as any).setup_charge = aiResult.setup_charge;
-    (extracted as any).sample_charge = aiResult.sample_charge;
-    (extracted as any).min_order_charge = aiResult.min_order_charge;
-    (extracted as any).additional_charges = aiResult.additional_charges;
+    if (rapidOcrText && rapidOcrConfidence < CONFIDENCE_THRESHOLD) {
+      logger.info(`[OCR] RapidOCR confidence ${(rapidOcrConfidence * 100).toFixed(1)}% < ${CONFIDENCE_THRESHOLD * 100}% — using AI fallback for better accuracy`);
+    } else if (!rapidOcrText) {
+      logger.info('[OCR] AI-first mode: attempting AI extraction with OpenDataLoader text');
+    }
 
-    logger.info(`[OCR] AI-first extraction succeeded with ${ocrEngine} — vendor: "${extracted.vendor_name}", invoice#: "${extracted.invoice_number}", amount: ${extracted.amount}`);
+    // AI fallback: Groq (fast, accurate, truncated for token limits) → Ollama (slow, unlimited) → Gemini
+    const aiResult = await tryAIFallbacks(fileBuffer, rawText, undefined);
 
-    // 2b. Vision-based bank info fallback — if bank fields are empty, the info may be in an image in the PDF
-    const hasBankInfo = (extracted as any).bank_name || extracted.bank_swift || extracted.bank_account;
-    if (!hasBankInfo) {
-      logger.info('[OCR] Bank info missing from text extraction — trying vision-based extraction for bank details...');
-      try {
-        const geminiOCR = (await import('./geminiOCRService')).geminiOCRService;
-        if (geminiOCR.isAvailable()) {
-          // Use a focused prompt for bank info only
-          const bankResult = await geminiOCR.extractFromPDF(fileBuffer, extracted.vendor_name);
-          if (bankResult && (bankResult.bank_name || bankResult.swift_code || bankResult.account_number)) {
-            logger.info(`[OCR] Vision bank fallback succeeded — bank_name: "${bankResult.bank_name}", swift: "${bankResult.swift_code}", account: "${bankResult.account_number}"`);
-            (extracted as any).bank_name = bankResult.bank_name || (extracted as any).bank_name;
-            extracted.bank_swift = bankResult.swift_code || extracted.bank_swift;
-            extracted.bank_account = bankResult.account_number || extracted.bank_account;
-          } else {
-            logger.info('[OCR] Vision bank fallback: Gemini did not return bank info');
+    if (aiResult && (aiResult.vendor_name || aiResult.invoice_number)) {
+      usedAIFallback = true;
+      ocrEngine = aiResult.engine;
+      if (aiResult.engine === 'gemini') {
+        usedGeminiVision = true;
+      }
+
+      extracted = {
+        vendor_name: sanitizeSingleValue(aiResult.vendor_name) || '',
+        invoice_number: sanitizeSingleValue(aiResult.invoice_number) || '',
+        invoice_date: aiResult.invoice_date ? new Date(sanitizeSingleValue(aiResult.invoice_date) || '').toISOString().split('T')[0] : '',
+        due_date: aiResult.due_date ? new Date(sanitizeSingleValue(aiResult.due_date) || '').toISOString().split('T')[0] : '',
+        amount: aiResult.total_amount || 0,
+        grand_total: 0,
+        currency: aiResult.currency || 'USD',
+        po_reference: aiResult.po_number || '',
+        mpo_number: aiResult.mpo_number ? 'MPO' + aiResult.mpo_number.replace(/^MPO/i, '').replace(/^0+/, '').padStart(6, '0') : '',
+        brand_code: aiResult.brand_code || '',
+        payment_terms: aiResult.payment_terms || '',
+        bank_swift: aiResult.swift_code || aiResult.bank_info?.swift_code || '',
+        bank_account: aiResult.account_number || (aiResult.bank_info as any)?.account_usd || aiResult.bank_info?.account_number || '',
+        beneficiary_name: (aiResult as any).beneficiary_name || (aiResult as any).bank_info?.beneficiary_name || '',
+        invoice_type: mapDocumentType(sanitizeSingleValue((aiResult as any).document_type)) as any,
+        tax_id: '',
+        company_reg: '',
+        incoterm: (aiResult as any).incoterm || undefined,
+        exchange_rate: (aiResult as any).exchange_rate,
+        is_handwritten: (aiResult as any).is_handwritten === true || (aiResult as any).is_handwritten === 'true' || undefined,
+        is_statement: (aiResult as any).is_statement === true || (aiResult as any).is_statement === 'true' || undefined,
+      };
+      // Store extra AI-extracted fields
+      (extracted as any).qty_shipped = aiResult.qty_shipped;
+      (extracted as any).bank_name = aiResult.bank_name;
+      (extracted as any).ship_to = aiResult.ship_to;
+      (extracted as any).sold_to = aiResult.sold_to;
+      (extracted as any).brand = aiResult.brand;
+      (extracted as any).season = aiResult.season;
+      (extracted as any).line_items = aiResult.line_items;
+      (extracted as any).signatures = aiResult.signatures;
+      (extracted as any).subtotal = aiResult.subtotal;
+      (extracted as any).bank_charges = aiResult.bank_charges;
+      (extracted as any).tt_charge = aiResult.tt_charge;
+      (extracted as any).freight_charges = aiResult.freight_charges;
+      (extracted as any).courier_charges = aiResult.courier_charges;
+      (extracted as any).handling_fee = aiResult.handling_fee;
+      (extracted as any).finance_surcharge = aiResult.finance_surcharge;
+      (extracted as any).tax_amount = aiResult.tax_amount;
+      (extracted as any).discount_amount = aiResult.discount_amount;
+      (extracted as any).setup_charge = aiResult.setup_charge;
+      (extracted as any).sample_charge = aiResult.sample_charge;
+      (extracted as any).min_order_charge = aiResult.min_order_charge;
+      (extracted as any).additional_charges = aiResult.additional_charges;
+
+      logger.info(`[OCR] AI extraction succeeded with ${ocrEngine} — vendor: "${extracted.vendor_name}", invoice#: "${extracted.invoice_number}", amount: ${extracted.amount}`);
+
+      // Vision-based bank info fallback
+      const hasBankInfo = (extracted as any).bank_name || extracted.bank_swift || extracted.bank_account;
+      if (!hasBankInfo) {
+        logger.info('[OCR] Bank info missing from text extraction — trying vision-based extraction for bank details...');
+        try {
+          const geminiOCR = (await import('./geminiOCRService')).geminiOCRService;
+          if (geminiOCR.isAvailable()) {
+            const bankResult = await geminiOCR.extractFromPDF(fileBuffer, extracted.vendor_name);
+            if (bankResult && (bankResult.bank_name || bankResult.swift_code || bankResult.account_number)) {
+              logger.info(`[OCR] Vision bank fallback succeeded — bank_name: "${bankResult.bank_name}", swift: "${bankResult.swift_code}", account: "${bankResult.account_number}"`);
+              (extracted as any).bank_name = bankResult.bank_name || (extracted as any).bank_name;
+              extracted.bank_swift = bankResult.swift_code || extracted.bank_swift;
+              extracted.bank_account = bankResult.account_number || extracted.bank_account;
+            }
           }
-        } else {
-          // Ollama vision bank fallback is too slow on CPU-only VPS (60+ seconds)
-          // Skip unless explicitly enabled via OLLAMA_VISION_BANK_FALLBACK=true
-          const enableOllamaVisionBank = process.env.OLLAMA_VISION_BANK_FALLBACK === 'true';
-          if (enableOllamaVisionBank) {
-            const ollamaOCR = (await import('./ollamaOCRService')).ollamaOCRService;
-            if (ollamaOCR.isAvailable()) {
-              const imagesBase64 = convertPDFToImages(fileBuffer);
-              // Try last page first (bank info is usually at the bottom), then fall back to first page
-              const tryImages = imagesBase64.length > 0
-                ? [imagesBase64[imagesBase64.length - 1], ...imagesBase64.slice(0, -1)]
-                : [];
-              for (const imageBase64 of tryImages) {
-                const ollamaBankResult = await ollamaOCR.extractFromImage(imageBase64, { vendorName: extracted.vendor_name });
-                if (ollamaBankResult && (ollamaBankResult.bank_name || ollamaBankResult.swift_code || ollamaBankResult.account_number)) {
-                  logger.info(`[OCR] Ollama vision bank fallback succeeded — bank_name: "${ollamaBankResult.bank_name}", swift: "${ollamaBankResult.swift_code}", account: "${ollamaBankResult.account_number}"`);
-                  (extracted as any).bank_name = ollamaBankResult.bank_name || (extracted as any).bank_name;
-                  extracted.bank_swift = ollamaBankResult.swift_code || extracted.bank_swift;
-                  extracted.bank_account = ollamaBankResult.account_number || extracted.bank_account;
-                  break;
-                }
+        } catch (visionErr) {
+          logger.warn('[OCR] Vision-based bank info fallback failed:', visionErr instanceof Error ? visionErr.message : String(visionErr));
+        }
+      }
+
+      // Cross-validate with regex if we have RapidOCR text
+      if (rapidOcrText && rapidOcrText.length > 50) {
+        try {
+          const regexResult = await extractInvoiceFieldsFromText(rapidOcrText, fileBuffer);
+          if (regexResult) {
+            if (regexResult.amount && extracted.amount &&
+                Math.abs(regexResult.amount - extracted.amount) > 0.01 &&
+                regexResult.amount > 0) {
+              const diff = Math.abs(regexResult.amount - extracted.amount) / Math.max(regexResult.amount, extracted.amount);
+              if (diff > 0.05) {
+                logger.warn(`[OCR] Amount mismatch: AI=${extracted.amount}, regex=${regexResult.amount} (diff: ${(diff * 100).toFixed(1)}%) — using AI value`);
               }
             }
-          } else {
-            logger.info('[OCR] Skipping Ollama vision bank fallback (disabled — set OLLAMA_VISION_BANK_FALLBACK=true to enable)');
-          }
-        }
-      } catch (visionErr) {
-        logger.warn('[OCR] Vision-based bank info fallback failed:', visionErr instanceof Error ? visionErr.message : String(visionErr));
-      }
-    }
-
-    // 3. Cross-validate with regex (pdf2json) for critical fields
-    if (pdf2jsonRawText && pdf2jsonRawText.length > 50) {
-      try {
-        const regexResult = await extractInvoiceFields(fileBuffer);
-        if (regexResult) {
-          // Cross-check amount — if regex found a significantly different amount, log warning
-          if (regexResult.amount && extracted.amount &&
-              Math.abs(regexResult.amount - extracted.amount) > 0.01 &&
-              regexResult.amount > 0) {
-            const diff = Math.abs(regexResult.amount - extracted.amount) / Math.max(regexResult.amount, extracted.amount);
-            if (diff > 0.05) {
-              logger.warn(`[OCR] Amount mismatch: AI=${extracted.amount}, regex=${regexResult.amount} (diff: ${(diff * 100).toFixed(1)}%) — using AI value`);
+            if ((!extracted.invoice_number || extracted.invoice_number.trim() === '') && regexResult.invoice_number) {
+              logger.info(`[OCR] AI missed invoice_number, regex found: "${regexResult.invoice_number}" — using regex value`);
+              extracted.invoice_number = regexResult.invoice_number;
+            }
+            if ((!extracted.vendor_name || extracted.vendor_name.trim() === '') && regexResult.vendor_name) {
+              logger.info(`[OCR] AI missed vendor_name, regex found: "${regexResult.vendor_name}" — using regex value`);
+              extracted.vendor_name = regexResult.vendor_name;
+            }
+            if ((!extracted.invoice_date || extracted.invoice_date === '') && regexResult.invoice_date) {
+              logger.info(`[OCR] AI missed invoice_date, regex found: "${regexResult.invoice_date}" — using regex value`);
+              extracted.invoice_date = regexResult.invoice_date;
             }
           }
-          // Cross-check invoice_number — if AI missed it but regex found it
-          if ((!extracted.invoice_number || extracted.invoice_number.trim() === '') && regexResult.invoice_number) {
-            logger.info(`[OCR] AI missed invoice_number, regex found: "${regexResult.invoice_number}" — using regex value`);
-            extracted.invoice_number = regexResult.invoice_number;
-          }
-          // Cross-check vendor_name — if AI missed it but regex found it
-          if ((!extracted.vendor_name || extracted.vendor_name.trim() === '') && regexResult.vendor_name) {
-            logger.info(`[OCR] AI missed vendor_name, regex found: "${regexResult.vendor_name}" — using regex value`);
-            extracted.vendor_name = regexResult.vendor_name;
-          }
-          // Cross-check dates — if AI missed but regex found
-          if ((!extracted.invoice_date || extracted.invoice_date === '') && regexResult.invoice_date) {
-            logger.info(`[OCR] AI missed invoice_date, regex found: "${regexResult.invoice_date}" — using regex value`);
-            extracted.invoice_date = regexResult.invoice_date;
-          }
-          if ((!extracted.due_date || extracted.due_date === '') && regexResult.due_date) {
-            extracted.due_date = regexResult.due_date;
-          }
+        } catch (regexErr) {
+          logger.warn('[OCR] Regex cross-validation skipped:', regexErr);
         }
-      } catch (regexErr) {
-        logger.warn('[OCR] Regex cross-validation skipped (pdf2json failed):', regexErr);
       }
-    }
-  } else {
-    // 4. AI failed — fall back to regex (pdf2json) as last resort
-    logger.warn('[OCR] AI-first extraction failed — falling back to pdf2json regex');
-    ocrEngine = 'pdf2json';
-    try {
-      extracted = await extractInvoiceFields(fileBuffer);
-    } catch (pdfError) {
-      console.error('[OCR] Both AI and pdf2json failed:', pdfError);
-      logger.error('[OCR] All extraction methods failed');
-      throw pdfError;
+    } else {
+      // AI failed — fall back to regex on whatever text we have
+      logger.warn('[OCR] AI extraction failed — falling back to regex');
+      ocrEngine = rapidOcrText ? 'rapidocr-regex' : 'pdf2json';
+      try {
+        if (rapidOcrText) {
+          extracted = await extractInvoiceFieldsFromText(rapidOcrText, fileBuffer);
+        } else {
+          extracted = await extractInvoiceFields(fileBuffer);
+        }
+      } catch (pdfError) {
+        console.error('[OCR] All extraction methods failed:', pdfError);
+        logger.error('[OCR] All extraction methods failed');
+        throw pdfError;
+      }
     }
   }
 

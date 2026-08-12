@@ -328,6 +328,9 @@ model Payment {
   amount        Decimal       @db.Decimal(15, 2)
   currency      String        @default("USD")
   payment_date DateTime
+  // How the payment date was set: DUE_DATE (derived from invoice.due_date),
+  // MANUAL (explicitly typed), or DEFAULT (fallback — invoice had no due date).
+  payment_date_source String    @default("DUE_DATE")
   status        String        @default("SCHEDULED")
   batch_id      String?
   batch         PaymentBatch? @relation(fields: [batch_id], references: [id])
@@ -335,6 +338,11 @@ model Payment {
   reference     String?
   bank_used     String?
   remarks       String?
+  // Bank charge applied at batch time (NOT at OCR). At most ONE payment per
+  // batch carries a charge (one per vendor per batch, duplicates blocked).
+  bank_charge_amount Decimal? @db.Decimal(15, 2)
+  bank_charge_note String?
+  bill_stub     BillStub?
   proof_file_url String?
   proof_file_name String?
   selected_for_batch Boolean  @default(false)
@@ -371,8 +379,33 @@ model PaymentBatch {
   cancelled_at         DateTime?
   cancellation_reason  String?
   payments             Payment[]
+  bill_stubs           BillStub[]
   created_at           DateTime           @default(now())
   @@map("APInvoice_PaymentBatch")
+}
+
+model BillStub {
+  id              String    @id @default(uuid())
+  batch_id        String?
+  batch           PaymentBatch? @relation(fields: [batch_id], references: [id], onDelete: SetNull)
+  payment_id      String    @unique
+  payment         Payment   @relation(fields: [payment_id], references: [id], onDelete: Cascade)
+  // QB Pay Bills bill-stub header
+  stub_date       DateTime?
+  type            String?
+  reference       String?
+  original_amount Decimal?  @db.Decimal(15, 2)
+  balance         Decimal?  @db.Decimal(15, 2)
+  discount        Decimal?  @db.Decimal(15, 2)
+  // "Payment" column of the bill stub = amount paid on this stub
+  paid_amount     Decimal?  @db.Decimal(15, 2)
+  proof_file_url  String?
+  proof_file_name String?
+  created_by      String?
+  created_at      DateTime  @default(now())
+
+  @@index([batch_id])
+  @@map("APInvoice_BillStub")
 }
 
 model PaymentConfirmation {

@@ -254,7 +254,7 @@ export class GroqOCRService {
     try {
       logger.info('Groq OCR fallback triggered — extracting invoice data');
 
-      const MAX_GROQ_TEXT_LENGTH = Number(process.env.GROQ_MAX_TEXT_LENGTH) || 30000;
+      const MAX_GROQ_TEXT_LENGTH = Number(process.env.GROQ_MAX_TEXT_LENGTH) || 8000;
       const truncatedText = rawText.length > MAX_GROQ_TEXT_LENGTH
         ? rawText.substring(0, MAX_GROQ_TEXT_LENGTH) + '\n[TEXT TRUNCATED]'
         : rawText;

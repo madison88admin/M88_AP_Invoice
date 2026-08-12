@@ -49,12 +49,19 @@ export const schedulePaymentController = async (
   try {
     const { id } = req.params;
     const { paymentDate } = req.body;
-    const result = await schedulePayment(id, new Date(paymentDate), req.user!.id);
+    // paymentDate is optional — when omitted, the service derives the payment
+    // date from the invoice's due date (SCHEDULED = possible payment date).
+    const result = await schedulePayment(
+      id,
+      paymentDate ? new Date(paymentDate) : undefined,
+      req.user!.id
+    );
+    const scheduledDate = result?.payment_date ? new Date(result.payment_date).toISOString().split('T')[0] : '';
     await logAudit({
       invoice_id: id,
       performed_by: req.user!.id,
       action: 'PAYMENT_SCHEDULED',
-      note: `Payment scheduled for ${paymentDate} by ${req.user!.role}`,
+      note: `Payment scheduled for ${scheduledDate} by ${req.user!.role}`,
     });
     res.json(result);
   } catch (error) {

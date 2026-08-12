@@ -133,8 +133,8 @@ export function determineApprovalRoute(
 /**
  * Check if an invoice qualifies for auto-approval (low-risk Planning Tier)
  * Criteria: Planning Tier (≤$2,000) + vendor bank verified + OCR confidence ≥90% + no exceptions + not duplicate
- * Note: Batch threshold ($100 cumulative) is handled separately by checkBatchThreshold in validationService.
- * Invoices below the batch threshold are held ON_HOLD and never reach this function.
+ * Note: The sub-$100 hold is applied at payment scheduling time (HELD_BELOW_100 +
+ * Purchasing release approval), never during validation or approval — see schedulePayment.
  */
 async function isAutoApprovalEligible(invoice: any): Promise<{ eligible: boolean; reason?: string }> {
   // Auto-approval disabled: ALL invoices must go through Purchasing Coordinator for validation
@@ -998,6 +998,21 @@ async function rejectFromAccounting(
     // No signed approver — return to coordinator as fallback
     targetStatus = InvoiceStatus.PENDING_COORDINATOR as any;
     targetApproverRole = SignatoryRole.COORDINATOR;
+  }
+
+  // Re-open the last approver's signature (same as the regular reject path).
+  // Without this, the signature stays signed and approveInvoice can find no
+  // pending signature for that role, stranding the invoice at the returned stage.
+  if (lastApprover) {
+    await prisma.signature.update({
+      where: { id: lastApprover.id },
+      data: {
+        signed_at: null,
+        approval_status: 'PENDING',
+        invalidated_at: new Date(),
+        invalidation_reason: `Re-opened after rejection by Accounting (${userRole}): ${reason}`,
+      },
+    });
   }
 
   // Exit current PENDING_ACCOUNTING stage

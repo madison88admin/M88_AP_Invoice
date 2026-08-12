@@ -56,8 +56,11 @@ export async function exportBatchPerVendor(batchId: string, userId?: string): Pr
   const vendorName = vendor?.name || 'Unknown Vendor';
   const currency = batch.payments[0]?.currency || batch.currency || 'USD';
 
-  // Calculate total
-  const totalAmount = batch.payments.reduce((sum: number, p: any) => sum + (Number(p.amount) || 0), 0);
+  // Calculate totals — the batch total includes the bank charge (one per
+  // vendor per batch, carried by a single payment).
+  const paymentsTotal = batch.payments.reduce((sum: number, p: any) => sum + (Number(p.amount) || 0), 0);
+  const bankChargeTotal = batch.payments.reduce((sum: number, p: any) => sum + (Number(p.bank_charge_amount) || 0), 0);
+  const totalAmount = Math.round((paymentsTotal + bankChargeTotal) * 100) / 100;
 
   // Build workbook
   const wb = XLSX.utils.book_new();
@@ -71,6 +74,7 @@ export async function exportBatchPerVendor(batchId: string, userId?: string): Pr
     'Brand': p.invoice?.brand || '',
     'Bill To Entity': p.invoice?.bill_to_entity || '',
     'Amount': Number(p.amount) || 0,
+    'Bank Charge': Number(p.bank_charge_amount) || 0,
     'Currency': p.currency || currency,
     'Payment Date': p.payment_date ? new Date(p.payment_date).toISOString().split('T')[0] : '',
     'Beneficiary Name': vendor?.beneficiary_name || vendor?.name || '',
@@ -81,7 +85,7 @@ export async function exportBatchPerVendor(batchId: string, userId?: string): Pr
     'Reference': p.reference || '',
   }));
 
-  // Total row
+  // Total row — Amount = payments + bank charge (matches batch total_amount)
   const totalRow = {
     '#': '',
     'Invoice Number': 'TOTAL',
@@ -90,6 +94,7 @@ export async function exportBatchPerVendor(batchId: string, userId?: string): Pr
     'Brand': '',
     'Bill To Entity': '',
     'Amount': totalAmount,
+    'Bank Charge': bankChargeTotal,
     'Currency': currency,
     'Payment Date': '',
     'Beneficiary Name': '',
@@ -103,7 +108,7 @@ export async function exportBatchPerVendor(batchId: string, userId?: string): Pr
   const allRows = [...rows, totalRow];
 
   const ws = XLSX.utils.json_to_sheet(allRows, {
-    header: ['#', 'Invoice Number', 'MPO Number', 'PO Number', 'Brand', 'Bill To Entity', 'Amount', 'Currency', 'Payment Date', 'Beneficiary Name', 'Bank Name', 'Bank Address', 'SWIFT Code', 'Account Number', 'Reference'],
+    header: ['#', 'Invoice Number', 'MPO Number', 'PO Number', 'Brand', 'Bill To Entity', 'Amount', 'Bank Charge', 'Currency', 'Payment Date', 'Beneficiary Name', 'Bank Name', 'Bank Address', 'SWIFT Code', 'Account Number', 'Reference'],
   });
 
   ws['!cols'] = [
@@ -114,6 +119,7 @@ export async function exportBatchPerVendor(batchId: string, userId?: string): Pr
     { wch: 12 },  // Brand
     { wch: 18 },  // Bill To Entity
     { wch: 14 },  // Amount
+    { wch: 12 },  // Bank Charge
     { wch: 10 },  // Currency
     { wch: 14 },  // Payment Date
     { wch: 25 },  // Beneficiary Name
@@ -136,7 +142,9 @@ export async function exportBatchPerVendor(batchId: string, userId?: string): Pr
     ['Beneficiary Name', vendor?.beneficiary_name || vendor?.name || ''],
     ['Bill To Entity', batch.payments[0]?.invoice?.bill_to_entity || ''],
     ['Invoice Count', batch.payments.length],
-    ['Total Amount', totalAmount],
+    ['Payments Total', paymentsTotal],
+    ['Bank Charge', bankChargeTotal],
+    ['Total Amount (incl. Bank Charge)', totalAmount],
     ['Currency', currency],
     ['Bank Name', vendor?.bank_name || ''],
     ['Bank Address', vendor?.bank_address || ''],

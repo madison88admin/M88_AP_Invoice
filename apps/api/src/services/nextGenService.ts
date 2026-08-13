@@ -100,10 +100,43 @@ async function fetchWithTimeout(url: string, options: RequestInit = {}): Promise
 // ─── MPO Header Cache ──────────────────────────────────────────────────────
 // Caches all MPO headers to avoid re-fetching 15,000+ records for every invoice
 // TTL: 10 minutes (MPOs don't change frequently during processing)
-const MPO_CACHE_TTL_MS = 30 * 60 * 1000;
+const MPO_CACHE_TTL_MS = 60 * 60 * 1000;
 let mpoHeaderCache: any[] | null = null;
 let mpoCacheTimestamp = 0;
 let mpoCacheFetchPromise: Promise<any[]> | null = null;
+
+// Full PO data cache — stores complete PO data (with line items) by MPO number
+// This avoids re-fetching PO details for validation checks
+const poDataCache = new Map<string, { data: any; timestamp: number }>();
+const PO_DATA_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+export function getCachedPOData(mpoNumber: string): any | null {
+  const entry = poDataCache.get(mpoNumber);
+  if (entry && (Date.now() - entry.timestamp) < PO_DATA_CACHE_TTL_MS) {
+    return entry.data;
+  }
+  if (entry) {
+    poDataCache.delete(mpoNumber); // expired
+  }
+  return null;
+}
+
+export function setCachedPOData(mpoNumber: string, data: any): void {
+  poDataCache.set(mpoNumber, { data, timestamp: Date.now() });
+  // Clean up old entries periodically
+  if (poDataCache.size > 500) {
+    const now = Date.now();
+    for (const [key, val] of poDataCache.entries()) {
+      if (now - val.timestamp > PO_DATA_CACHE_TTL_MS) {
+        poDataCache.delete(key);
+      }
+    }
+  }
+}
+
+export function clearPODataCache(): void {
+  poDataCache.clear();
+}
 let entityBrowserListBroken = false; // Skip GetEntityBrowserList after first 500 error
 
 // ─── NextGen API Types ──────────────────────────────────────────────────────
@@ -1269,7 +1302,7 @@ export class NextGenService {
     logger.info(`MPO ${mpoNumber} resolved to OrderId ${orderId} (Name: ${match.Name})`);
     const lineResult = await this.fetchMPOLinesWithStatus(orderId);
     const calculatedTotal = lineResult.lines.reduce((sum, li) => sum + (li.total_amount || 0), 0);
-    return {
+    const _po: NextGenPOData = {
       po_number: match.Name || mpoNumber,
       mpo_number: match.Name || mpoNumber,
       vendor_id: String(match.SupplierId || ''),
@@ -1285,6 +1318,8 @@ export class NextGenService {
       line_items_available: lineResult.available,
       line_items_source: lineResult.source,
     };
+    setCachedPOData(mpoNumber, _po);
+    return _po;
   }
 
   /**
@@ -1297,6 +1332,12 @@ export class NextGenService {
     mpoNumber: string,
     hint?: { vendor_name?: string; amount?: number; material_code?: string }
   ): Promise<NextGenPOData | null> {
+    // Check PO data cache first
+    const cached = getCachedPOData(mpoNumber);
+    if (cached) {
+      logger.info(`MPO ${mpoNumber}: PO data cache hit`);
+      return cached;
+    }
     try {
       if (this.useMock) return this.getMockPOData(mpoNumber);
 
@@ -1320,13 +1361,9 @@ export class NextGenService {
               logger.info(`MPO ${mpoNumber}: Fast path succeeded via GetById`);
               // Fetch lines separately
               const lineResult = await this.fetchMPOLinesWithStatus(orderId);
-              return {
-                ...mapped,
-                line_items: lineResult.lines,
-                line_items_available: lineResult.available,
-                line_items_source: lineResult.source,
-                mpo_number: mapped.mpo_number || lookupMpo,
-              };
+              const _po = { ...mapped, line_items: lineResult.lines, line_items_available: lineResult.available, line_items_source: lineResult.source, mpo_number: mapped.mpo_number || lookupMpo };
+              setCachedPOData(mpoNumber, _po);
+              return _po;
             }
           }
         }

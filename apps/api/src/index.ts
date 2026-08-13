@@ -271,6 +271,23 @@ const startServer = async () => {
       logger.info('MPO cache pre-load disabled (PRELOAD_MPO_CACHE not set) — using 10s timeout fallback');
     }
 
+    // MPO cache sync — refresh every 1 hour to keep NextGen PO data fresh
+    const MPO_CACHE_SYNC_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+    const mpoCacheSyncInterval = setInterval(async () => {
+      try {
+        logger.info('MPO cache: periodic sync started...');
+        // Clear the cache to force a fresh fetch on next access
+        (nextGenService as any).mpoHeaderCache = null;
+        (nextGenService as any).mpoCacheTimestamp = 0;
+        // Trigger a fresh fetch
+        await nextGenService.preloadMPOCache();
+        logger.info('MPO cache: periodic sync completed');
+      } catch (err) {
+        logger.error('MPO cache: periodic sync failed:', err instanceof Error ? err.message : String(err));
+      }
+    }, MPO_CACHE_SYNC_INTERVAL_MS);
+    mpoCacheSyncInterval.unref();
+
     // SLA reminder scheduler — runs every hour
     const SLA_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
     const slaInterval = setInterval(async () => {

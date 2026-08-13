@@ -55,7 +55,7 @@ router.post('/:id/hold', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOU
 router.post('/:id/schedule-payment', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), postingController.schedulePaymentController);
 router.post('/:id/send-payment-confirmation', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), postingController.sendPaymentConfirmationController);
 router.post('/:id/check-nextgen', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), validationController.checkNextGenAsyncController);
-router.post('/:id/check-nextgen-sync', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), validationController.checkNextGenChangesController);
+router.post('/:id/check-nextgen-sync', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN, UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), validationController.checkNextGenChangesController);
 router.get('/jobs/:jobId', validationController.getJobStatusController);
 router.get('/bank-change-requests', authenticate, invoiceController.getBankChangeRequests);
 // Duplicate-invoice report — MUST stay above the bare '/:id' route or it will be shadowed.

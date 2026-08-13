@@ -1511,7 +1511,7 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
   const changes: Array<{ field: string; old: any; new: any }> = [];
 
   if (storedNextGen) {
-    // Compare key fields
+    // Compare key fields (drift detection — needs a baseline)
     if (storedNextGen.amount !== currentNextGen.amount) {
       changes.push({ field: 'amount', old: storedNextGen.amount, new: currentNextGen.amount });
     }
@@ -1521,7 +1521,7 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
     if (storedNextGen.po_number !== currentNextGen.po_number) {
       changes.push({ field: 'po_number', old: storedNextGen.po_number, new: currentNextGen.po_number });
     }
-    
+
     // Compare line items quantity
     if (storedNextGen.line_items && currentNextGen.line_items) {
       const storedQty = storedNextGen.line_items.reduce((sum: number, item: any) => sum + (Number(item.quantity) || 0), 0);
@@ -1530,20 +1530,62 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
         changes.push({ field: 'total_quantity', old: storedQty, new: currentQty });
       }
     }
-    
-    // Compare extracted invoice fields with NextGen
-    if (invoice.qty_shipped && currentNextGen.line_items) {
-      const nextGenQty = currentNextGen.line_items.reduce((sum: number, item: any) => sum + (Number(item.quantity) || 0), 0);
-      if (Number(invoice.qty_shipped) !== nextGenQty) {
-        changes.push({ field: 'invoice_quantity_vs_nextgen', old: Number(invoice.qty_shipped), new: nextGenQty });
-      }
+  }
+
+  // ── Invoice vs NextGen — ALWAYS compared, including the first check ──────
+  // Mirrors Rule 17: resolve the invoice's specific PO lines (material/sequence),
+  // compare the net invoice amount (minus charges) with 5% tolerance so partial
+  // deliveries of multi-line MPOs don't produce false mismatches.
+  const ngLines = Array.isArray(currentNextGen.line_items) ? currentNextGen.line_items : [];
+  const parsedMpo = invoice.mpo_number ? parseMPOReference(invoice.mpo_number) : null;
+  const rawData = (invoice as any).ocr_raw_data || {};
+  const orderSequence = invoice.mpo_order_sequence || parsedMpo?.orderSequence || rawData.mpo_order_sequence;
+  const materialCode = invoice.material_code || parsedMpo?.materialCode || rawData.material_code;
+  const materialName = invoice.material_name || rawData.material_name;
+
+  let targetLines = ngLines;
+  let matchLevel = 'MPO_HEADER';
+  if (orderSequence || materialCode || materialName) {
+    const resolution = matchMPOLines(ngLines, { orderSequence, materialCode, materialName });
+    if (!resolution.error && resolution.lines.length > 0) {
+      targetLines = resolution.lines;
+      matchLevel = resolution.matchLevel;
     }
-    
-    if (invoice.total_amount && currentNextGen.amount) {
-      if (Number(invoice.total_amount) !== Number(currentNextGen.amount)) {
-        changes.push({ field: 'invoice_amount_vs_nextgen', old: Number(invoice.total_amount), new: Number(currentNextGen.amount) });
-      }
+  }
+
+  // Amount — net of charges, >5% variance = mismatch
+  const poAmount = matchLevel !== 'MPO_HEADER'
+    ? targetLines.reduce((sum: number, li: any) => sum + Number(li.total_amount || 0), 0)
+    : Number(currentNextGen.amount || 0);
+  const invoiceTotal = Number(invoice.total_amount || 0);
+  const totalCharges = Number(invoice.bank_charges || 0) + Number((invoice as any).tt_charge || 0)
+    + Number(invoice.freight_charges || 0) + Number((invoice as any).courier_charges || 0)
+    + Number((invoice as any).handling_fee || 0) + Number((invoice as any).finance_surcharge || 0)
+    + Number((invoice as any).setup_charge || 0) + Number((invoice as any).sample_charge || 0)
+    + Number((invoice as any).min_order_charge || 0) + Number(invoice.additional_charges || 0);
+  const netInvoiceAmount = invoiceTotal - totalCharges + Number(invoice.discount_amount || 0);
+
+  if (poAmount > 0 && netInvoiceAmount > 0) {
+    const variance = Math.abs(netInvoiceAmount - poAmount) / poAmount;
+    if (variance > 0.05) {
+      changes.push({ field: 'invoice_amount_vs_nextgen', old: invoiceTotal, new: poAmount });
     }
+  }
+
+  // Vendor — normalized exact match (informational, not critical)
+  if (invoice.vendor?.name && currentNextGen.vendor_name) {
+    const invVendor = invoice.vendor.name.toLowerCase().trim();
+    const ngVendor = currentNextGen.vendor_name.toLowerCase().trim();
+    if (invVendor !== ngVendor) {
+      changes.push({ field: 'invoice_vendor_vs_nextgen', old: invoice.vendor.name, new: currentNextGen.vendor_name });
+    }
+  }
+
+  // Quantity — line-aware (informational, not critical)
+  const invoiceQty = Number(invoice.qty_shipped || 0);
+  const poQty = targetLines.reduce((sum: number, li: any) => sum + Number(li.quantity || 0), 0);
+  if (invoiceQty > 0 && poQty > 0 && invoiceQty !== poQty) {
+    changes.push({ field: 'invoice_quantity_vs_nextgen', old: invoiceQty, new: poQty });
   }
 
   const hasChanges = changes.length > 0;

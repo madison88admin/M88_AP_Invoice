@@ -131,6 +131,62 @@ describe('checkNextGenChanges — NextGen availability', () => {
     expect(poValidation.nextgen_data.po_number).toBe('PO1');
   });
 
+  it('catches an amount mismatch on the FIRST check (no baseline needed)', async () => {
+    invoiceFindUnique.mockResolvedValue({
+      ...INVOICE,
+      total_amount: '200',
+    });
+    getFullPOByMPO.mockResolvedValue({
+      amount: 100,
+      vendor_name: 'Vendor A',
+      po_number: 'PO1',
+      line_items: [{ quantity: 10, total_amount: 100 }],
+    });
+
+    const result = await checkNextGenChanges('inv-1');
+
+    expect(result.firstCheck).toBe(true);
+    expect(result.hasChanges).toBe(true);
+    expect(result.changes).toContainEqual(
+      expect.objectContaining({ field: 'invoice_amount_vs_nextgen' })
+    );
+  });
+
+  it('catches a vendor mismatch on the FIRST check', async () => {
+    getFullPOByMPO.mockResolvedValue({
+      amount: 100,
+      vendor_name: 'Different Vendor Ltd',
+      po_number: 'PO1',
+      line_items: [{ quantity: 10, total_amount: 100 }],
+    });
+
+    const result = await checkNextGenChanges('inv-1');
+
+    expect(result.firstCheck).toBe(true);
+    expect(result.changes).toContainEqual(
+      expect.objectContaining({ field: 'invoice_vendor_vs_nextgen' })
+    );
+  });
+
+  it('tolerates small amount variance (5%) on the first check', async () => {
+    getFullPOByMPO.mockResolvedValue({
+      amount: 100,
+      vendor_name: 'Vendor A',
+      po_number: 'PO1',
+      line_items: [{ quantity: 10, total_amount: 100 }],
+    });
+    invoiceFindUnique.mockResolvedValue({
+      ...INVOICE,
+      total_amount: '104.99', // 4.99% variance — within tolerance
+    });
+
+    const result = await checkNextGenChanges('inv-1');
+
+    expect(result.firstCheck).toBe(true);
+    expect(result.hasChanges).toBe(false);
+    expect(result.changes.filter(c => c.field === 'invoice_amount_vs_nextgen')).toHaveLength(0);
+  });
+
   it('returns firstCheck=false when a baseline snapshot already exists', async () => {
     invoiceFindUnique.mockResolvedValue({
       ...INVOICE,

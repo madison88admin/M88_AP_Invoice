@@ -17,7 +17,7 @@ import { MockInvoice } from '../lib/mockData';
 import { hasPermission, filterInvoicesByRole, canUserApproveStatus, isWithinRoleThreshold } from '../lib/roleAccess';
 import { cn } from '../lib/utils';
 import { getAuditActorDisplay } from '../lib/auditActor';
-import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, ChevronRight, LogOut, Edit, Unlock, Pause, Users, Loader2, Menu, X, Trash2, Landmark, Paperclip, Upload, Download, Eye, Copy, Info } from 'lucide-react';
+import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, ChevronRight, LogOut, Edit, Unlock, Pause, Users, Loader2, Menu, X, Trash2, Landmark, Paperclip, Upload, Download, Eye, Copy } from 'lucide-react';
 import { Skeleton, SkeletonBar } from './ui/Skeleton';
 
 // Custom hook for number count-up animation
@@ -1087,9 +1087,8 @@ export default function Dashboard() {
   useEffect(() => {
     if (!selectedInvoice) return;
     const prev = nextgenResults[selectedInvoice.id];
-    // Re-check when the previous run ended in error/unavailable/baseline — NextGen may
-    // have recovered, or the first run only stored a snapshot and needs a real comparison.
-    if (prev && prev.status !== 'error' && prev.status !== 'unavailable' && prev.status !== 'baseline') return;
+    // Re-check when the previous run ended in error/unavailable — NextGen may have recovered.
+    if (prev && prev.status !== 'error' && prev.status !== 'unavailable') return;
     const validate = async () => {
       setNextgenResults(prev => ({ ...prev, [selectedInvoice.id]: { status: 'loading' } }));
       try {
@@ -1097,8 +1096,6 @@ export default function Dashboard() {
         const data = res.data;
         if (data?.nextGenUnavailable) {
           setNextgenResults(prev => ({ ...prev, [selectedInvoice.id]: { status: 'unavailable' } }));
-        } else if (data?.firstCheck) {
-          setNextgenResults(prev => ({ ...prev, [selectedInvoice.id]: { status: 'baseline' } }));
         } else if (!data || (!data.hasChanges && !data.hasCriticalChanges && !data.changes?.length)) {
           if (!selectedInvoice.mpo_number) {
             setNextgenResults(prev => ({ ...prev, [selectedInvoice.id]: { status: 'no-mpo' } }));
@@ -2808,14 +2805,6 @@ ${dataRows}
                     <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>No MPO reference — NextGen real-time validation skipped</span>
                   </div>
                 );
-                if (ng.status === 'baseline') return (
-                  <div className="p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-blue) 20%, transparent)' }}>
-                    <div className="flex items-center gap-2">
-                      <Info className="h-4 w-4" style={{ color: 'var(--accent-blue)' }} strokeWidth={1.75} />
-                      <span className="text-sm font-medium" style={{ color: 'var(--accent-blue)' }}>NextGen baseline saved — reopen the invoice to verify it against NextGen</span>
-                    </div>
-                  </div>
-                );
                 if (ng.status === 'unavailable') return (
                   <div className="p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}>
                     <div className="flex items-center justify-between gap-3">
@@ -2841,6 +2830,11 @@ ${dataRows}
                       <CheckCircle className="h-5 w-5 mr-2" style={{ color: 'var(--accent-green)' }} strokeWidth={1.75} />
                       <span className="text-sm font-medium" style={{ color: 'var(--accent-green)' }}>Invoice matches NextGen PO data (real-time check)</span>
                     </div>
+                    {(ng.changes || []).filter((c: any) => !['amount', 'vendor_name', 'po_number', 'invoice_amount_vs_nextgen'].includes(c.field)).map((c: any, i: number) => (
+                      <p key={i} className="text-xs mt-1" style={{ color: 'var(--accent-amber)' }}>
+                        {c.field === 'invoice_quantity_vs_nextgen' ? `Info: invoice qty ${c.old} vs NextGen ${c.new}` : `Info: ${c.field} differs (${c.old} vs ${c.new})`}
+                      </p>
+                    ))}
                   </div>
                 );
                 if (ng.status === 'mismatch') return (

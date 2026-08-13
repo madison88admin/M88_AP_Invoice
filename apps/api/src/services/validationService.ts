@@ -3,7 +3,7 @@ import { ExceptionReason, InvoiceStatus, InvoiceType, BillToEntity, SignatoryRol
 import { createApprovalRequest } from './approvalService';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils/logger';
-import { nextGenService } from './nextGenService';
+import { nextGenService, getNextGenMetrics } from './nextGenService';
 import { checkDuplicateInvoice as checkDuplicateDetailed } from './duplicateDetectionService';
 import { parseMPOReference } from '../utils/mpoReference';
 import { matchMPOLines } from '../utils/mpoLineMatching';
@@ -1451,6 +1451,7 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
   changes: Array<{ field: string; old: any; new: any }>;
   criticalChanges: Array<{ field: string; old: any; new: any }>;
   currentData: any;
+  nextGenUnavailable: boolean;
 }> {
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
@@ -1458,16 +1459,47 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
   });
 
   if (!invoice || !invoice.mpo_number) {
-    return { hasChanges: false, hasCriticalChanges: false, changes: [], criticalChanges: [], currentData: null };
+    return { hasChanges: false, hasCriticalChanges: false, changes: [], criticalChanges: [], currentData: null, nextGenUnavailable: false };
   }
 
-  const currentNextGen = await nextGenService.getFullPOByMPO(invoice.mpo_number, {
-    vendor_name: invoice.vendor?.name,
-    amount: Number(invoice.total_amount),
-  });
+  // Real-time check runs inside a hard 10s budget (same as Rule 17's NEXTGEN_TIMEOUT_10s)
+  // so a slow/hanging NextGen can never stall the invoice view past the frontend timeout.
+  let currentNextGen: any = null;
+  try {
+    currentNextGen = await Promise.race([
+      nextGenService.getFullPOByMPO(invoice.mpo_number, {
+        vendor_name: invoice.vendor?.name,
+        amount: Number(invoice.total_amount),
+      }),
+      new Promise<null>((_, reject) =>
+        setTimeout(() => reject(new Error('NEXTGEN_UNAVAILABLE_TIMEOUT')), 10000)
+      ),
+    ]);
+  } catch (timeoutErr: any) {
+    logger.warn(`[checkNextGenChanges] NextGen timed out after 10s for MPO ${invoice.mpo_number} — marking unavailable`);
+    return {
+      hasChanges: false,
+      hasCriticalChanges: false,
+      changes: [],
+      criticalChanges: [],
+      currentData: null,
+      nextGenUnavailable: true,
+    };
+  }
 
   if (!currentNextGen) {
-    return { hasChanges: false, hasCriticalChanges: false, changes: [], criticalChanges: [], currentData: null };
+    // A quick null can mean "PO not found" OR "NextGen down". Distinguish via metrics:
+    // cooldown active or recent consecutive failures ⇒ system is unavailable, not a data miss.
+    const metrics = getNextGenMetrics();
+    const systemDown = metrics.cooldown_active || metrics.consecutive_failures >= 2;
+    return {
+      hasChanges: false,
+      hasCriticalChanges: false,
+      changes: [],
+      criticalChanges: [],
+      currentData: null,
+      nextGenUnavailable: systemDown,
+    };
   }
 
   const storedNextGen = invoice.po_validation ? (typeof invoice.po_validation === 'string' ? JSON.parse(invoice.po_validation) : invoice.po_validation)?.nextgen_data : null;
@@ -1544,5 +1576,5 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
     },
   });
 
-  return { hasChanges, hasCriticalChanges, changes, criticalChanges, currentData: currentNextGen };
+  return { hasChanges, hasCriticalChanges, changes, criticalChanges, currentData: currentNextGen, nextGenUnavailable: false };
 }

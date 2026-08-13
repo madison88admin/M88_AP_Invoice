@@ -134,6 +134,7 @@ export default function Dashboard() {
   const [requestingApproval, setRequestingApproval] = useState(false);
   const [validationResult, setValidationResult] = useState<any>(null);
   const [nextgenResults, setNextgenResults] = useState<Record<string, any>>({});
+  const [nextgenRetryTick, setNextgenRetryTick] = useState(0);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [showReturnModal, setShowReturnModal] = useState(false);
@@ -1085,13 +1086,17 @@ export default function Dashboard() {
   // Auto-validate selected invoice against NextGen in real-time
   useEffect(() => {
     if (!selectedInvoice) return;
-    if (nextgenResults[selectedInvoice.id]) return;
+    const prev = nextgenResults[selectedInvoice.id];
+    // Re-check when the previous run ended in error/unavailable — NextGen may have recovered.
+    if (prev && prev.status !== 'error' && prev.status !== 'unavailable') return;
     const validate = async () => {
       setNextgenResults(prev => ({ ...prev, [selectedInvoice.id]: { status: 'loading' } }));
       try {
         const res = await invoiceApi.checkNextGenSync(selectedInvoice.id);
         const data = res.data;
-        if (!data || (!data.hasChanges && !data.hasCriticalChanges && !data.changes?.length)) {
+        if (data?.nextGenUnavailable) {
+          setNextgenResults(prev => ({ ...prev, [selectedInvoice.id]: { status: 'unavailable' } }));
+        } else if (!data || (!data.hasChanges && !data.hasCriticalChanges && !data.changes?.length)) {
           if (!selectedInvoice.mpo_number) {
             setNextgenResults(prev => ({ ...prev, [selectedInvoice.id]: { status: 'no-mpo' } }));
           } else {
@@ -1107,7 +1112,17 @@ export default function Dashboard() {
       }
     };
     validate();
-  }, [selectedInvoice]);
+  }, [selectedInvoice, nextgenRetryTick]);
+
+  const retryNextGenCheck = () => {
+    if (!selectedInvoice) return;
+    setNextgenResults(prev => {
+      const next = { ...prev };
+      delete next[selectedInvoice.id];
+      return next;
+    });
+    setNextgenRetryTick(t => t + 1);
+  };
 
   const handleCheckNextGen = async () => {
     if (!selectedInvoice) return;
@@ -2788,6 +2803,20 @@ ${dataRows}
                 if (ng.status === 'no-mpo') return (
                   <div className="p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--text-muted) 8%, transparent)', border: '1px solid var(--border-color)' }}>
                     <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>No MPO reference — NextGen real-time validation skipped</span>
+                  </div>
+                );
+                if (ng.status === 'unavailable') return (
+                  <div className="p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-medium" style={{ color: 'var(--accent-amber)' }}>NextGen system is unavailable — real-time check skipped (will re-check when reopened)</span>
+                      <button
+                        onClick={retryNextGenCheck}
+                        className="text-xs font-medium whitespace-nowrap"
+                        style={{ background: 'var(--accent-amber)', color: 'var(--text-inverse)', padding: '6px 12px', borderRadius: '8px', border: 'none', cursor: 'pointer' }}
+                      >
+                        Retry check
+                      </button>
+                    </div>
                   </div>
                 );
                 if (ng.status === 'error') return (

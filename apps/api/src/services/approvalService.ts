@@ -913,6 +913,22 @@ export async function rejectInvoice(
         invalidation_reason: `Re-opened after rejection by ${signedRole}: ${reason}`,
       },
     });
+  } else {
+    // No approval chain exists (e.g. accounting bulk-uploaded a pre-approved
+    // invoice straight into PENDING_ACCOUNTING). Returning to the coordinator
+    // without a signature strands the invoice — the coordinator could never
+    // approve it. Create the coordinator signature so the return is actionable.
+    await prisma.signature.create({
+      data: {
+        invoice_id: invoiceId,
+        signatory_role: SignatoryRole.COORDINATOR as any,
+        signatory_name: '',
+        signature_type: 'DIGITAL' as any,
+        signed_at: null,
+        invoice_revision: invoice.revision,
+        approval_status: 'PENDING',
+      },
+    });
   }
 
   // Exit current stage timestamp FIRST — before creating a new one
@@ -1015,6 +1031,23 @@ async function rejectFromAccounting(
         approval_status: 'RECONFIRMATION_REQUIRED',
         invalidated_at: new Date(),
         invalidation_reason: `Re-opened after rejection by Accounting (${userRole}): ${reason}`,
+      },
+    });
+  } else {
+    // No approval chain exists (accounting bulk-uploaded "pre-approved"
+    // invoices are created directly in PENDING_ACCOUNTING with no signatures).
+    // Without this, the returned invoice would strand at PENDING_COORDINATOR
+    // because no coordinator signature exists to approve. Create one so the
+    // coordinator can actually act on the returned invoice.
+    await prisma.signature.create({
+      data: {
+        invoice_id: invoiceId,
+        signatory_role: SignatoryRole.COORDINATOR as any,
+        signatory_name: '',
+        signature_type: 'DIGITAL' as any,
+        signed_at: null,
+        invoice_revision: invoice.revision,
+        approval_status: 'PENDING',
       },
     });
   }

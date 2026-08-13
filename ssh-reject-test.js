@@ -1,58 +1,45 @@
 const { Client } = require('C:\\Users\\JC\\OneDrive - Madison88\\AP Invoice\\node_modules\\.pnpm\\ssh2@1.17.0\\node_modules\\ssh2');
-const jwt = require('C:\\Users\\JC\\OneDrive - Madison88\\AP Invoice\\node_modules\\.pnpm\\jsonwebtoken@9.0.2\\node_modules\\jsonwebtoken');
 
 const conn = new Client();
 
-// 1. Get the JWT_SECRET from the VPS .env
-const getSecretCmd = 'grep "^JWT_SECRET" /opt/ap-invoice/apps/api/.env | head -1';
+const TARGET_ID = process.argv[2] || '';
+const TARGET_NUM = process.argv[3] || '';
+
+const commands = [
+  'grep "^JWT_SECRET" /opt/ap-invoice/apps/api/.env | head -1',
+].join(' && ');
 
 conn.on('ready', () => {
-  conn.exec(getSecretCmd, (err, stream) => {
+  conn.exec(commands, (err, stream) => {
     if (err) { console.error('Exec error:', err); conn.end(); return; }
     let out = '';
     stream.on('close', () => {
-      const line = out.trim();
-      const secret = line.replace(/^JWT_SECRET\s*=\s*["']?/, '').replace(/["']?\s*$/, '');
-      console.log('secret length:', secret.length);
-      // 2. Mint an ACCOUNTING_ASSOCIATE token
-      const token = jwt.sign(
-        { id: 'test-accounting-associate', email: 'qa-accounting@madison88.com', name: 'QA Accounting', role: 'ACCOUNTING_ASSOCIATE' },
-        secret,
-        { expiresIn: '1h' }
-      );
-      console.log('TOKEN_READY len=', token.length);
-      // 3. Query for a PENDING_ACCOUNTING invoice to test against (with signatures)
-      const findCmd = `cd /opt/ap-invoice/apps/api && cat > /tmp/find-inv.js <<'EOF'
+      const secret = out.trim().replace(/^JWT_SECRET\s*=\s*["']?/, '').replace(/["']?\s*$/, '');
+      // Mint token via node on the VPS (has jsonwebtoken installed)
+      const mintCmd = `cd /opt/ap-invoice/apps/api && node -e "
+const jwt = require('jsonwebtoken');
+const token = jwt.sign({ id: 'qa-accounting-associate', email: 'qa-accounting@madison88.com', name: 'QA Accounting', role: 'ACCOUNTING_ASSOCIATE' }, process.env.JWT_SECRET, { expiresIn: '1h' });
+require('fs').writeFileSync('/tmp/qa-token.txt', token);
+" JWT_SECRET="${secret}" 2>&1 && wc -c /tmp/qa-token.txt`;
+      conn.exec(mintCmd, (err2, stream2) => {
+        if (err2) { console.error('Exec2 error:', err2); conn.end(); return; }
+        let out2 = '';
+        stream2.on('close', () => {
+          console.log('mint:', out2.trim());
+          const rejectCmd = `TOKEN=$(cat /tmp/qa-token.txt); echo "== REJECT ${TARGET_NUM} (${TARGET_ID}) =="; curl -s -m 25 -w "\\nHTTP:%{http_code}\\n" -X POST "http://localhost:3001/api/invoices/${TARGET_ID}/reject" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"reason":"QA test: accounting reject path check"}'; echo; echo "== invoice state after =="; cd /opt/ap-invoice/apps/api && node -e "
 require('dotenv').config();
 const { PrismaClient } = require('@prisma/client');
 const p = new PrismaClient();
 (async () => {
-  const inv = await p.invoice.findFirst({
-    where: { status: 'PENDING_ACCOUNTING' },
-    include: { signatures: { orderBy: { created_at: 'asc' } } },
-    orderBy: { updated_at: 'desc' },
-  });
-  console.log(JSON.stringify({
-    id: inv.id, number: inv.invoice_number, status: inv.status,
-    sigs: inv.signatures.map(s => ({ role: s.signatory_role, signed: !!s.signed_at, invalidated: !!s.invalidated_at })),
-  }));
+  const inv = await p.invoice.findUnique({ where: { id: process.argv[1] }, include: { signatures: true } });
+  console.log(JSON.stringify({ number: inv.invoice_number, status: inv.status, current_approver_role: inv.current_approver_role, sigs: inv.signatures.map(s => ({ role: s.signatory_role, signed: !!s.signed_at, invalidated: !!s.invalidated_at, status: s.approval_status })) }));
   await p.$disconnect();
 })();
-EOF
-node /tmp/find-inv.js`;
-      conn.exec(findCmd, (err2, stream2) => {
-        if (err2) { console.error('Exec2 error:', err2); conn.end(); return; }
-        let out2 = '';
-        stream2.on('close', () => {
-          let info;
-          try { info = JSON.parse(out2.trim().split('\n').pop()); } catch { console.error('parse fail:', out2); conn.end(); return; }
-          console.log('target invoice:', JSON.stringify(info));
-          // 4. Call the reject endpoint on it
-          const rejectCmd = `curl -s -m 20 -X POST "http://localhost:3001/api/invoices/${info.id}/reject" -H "Authorization: Bearer ${token}" -H "Content-Type: application/json" -d '{"reason":"QA test of accounting reject path"}'`;
+" "${TARGET_ID}"`;
           conn.exec(rejectCmd, (err3, stream3) => {
             if (err3) { console.error('Exec3 error:', err3); conn.end(); return; }
             let out3 = '';
-            stream3.on('close', () => { console.log('REJECT RESPONSE:', out3.trim().slice(0, 1000)); conn.end(); });
+            stream3.on('close', () => { console.log(out3.trim()); conn.end(); });
             stream3.on('data', (d) => { out3 += d.toString(); });
             stream3.stderr.on('data', (d) => { out3 += d.toString(); });
           });

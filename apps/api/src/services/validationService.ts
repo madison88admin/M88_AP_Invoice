@@ -1588,6 +1588,31 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
     changes.push({ field: 'invoice_quantity_vs_nextgen', old: invoiceQty, new: poQty });
   }
 
+  // Brand / season / order type — informational (never critical). Skipped when
+  // either side is blank or a placeholder so missing data never false-positives.
+  const norm = (v: any): string => {
+    const s = String(v ?? '').trim().toLowerCase();
+    return (s === '—' || s === '-') ? '' : s;
+  };
+
+  const invBrand = norm(invoice.brand);
+  const ngBrand = norm(currentNextGen.brand);
+  if (invBrand && ngBrand && invBrand !== ngBrand) {
+    changes.push({ field: 'brand', old: invoice.brand, new: currentNextGen.brand });
+  }
+
+  const invSeason = norm(invoice.season);
+  const ngSeason = norm(currentNextGen.season);
+  if (invSeason && ngSeason && invSeason !== ngSeason) {
+    changes.push({ field: 'season', old: invoice.season, new: currentNextGen.season });
+  }
+
+  const invOrderType = norm(invoice.order_type);
+  const ngOrderType = norm(currentNextGen.order_type);
+  if (invOrderType && ngOrderType && invOrderType !== ngOrderType) {
+    changes.push({ field: 'order_type', old: invoice.order_type, new: currentNextGen.order_type });
+  }
+
   const hasChanges = changes.length > 0;
 
   // Separate critical changes from informational changes

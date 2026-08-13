@@ -168,6 +168,54 @@ describe('checkNextGenChanges — NextGen availability', () => {
     );
   });
 
+  it('flags brand/season/order-type differences as informational on the first check', async () => {
+    invoiceFindUnique.mockResolvedValue({
+      ...INVOICE,
+      brand: 'Burton',
+      season: 'F26',
+      order_type: 'BULK',
+    });
+    getFullPOByMPO.mockResolvedValue({
+      amount: 100,
+      vendor_name: 'Vendor A',
+      po_number: 'PO1',
+      line_items: [{ quantity: 10, total_amount: 100 }],
+      brand: 'Helly Hansen',
+      season: 'SS27',
+      order_type: 'SAMPLE',
+    });
+
+    const result = await checkNextGenChanges('inv-1');
+
+    expect(result.firstCheck).toBe(true);
+    expect(result.changes).toContainEqual(expect.objectContaining({ field: 'brand' }));
+    expect(result.changes).toContainEqual(expect.objectContaining({ field: 'season' }));
+    expect(result.changes).toContainEqual(expect.objectContaining({ field: 'order_type' }));
+    // Informational only — never critical, never creates an exception
+    expect(result.hasCriticalChanges).toBe(false);
+  });
+
+  it('skips brand/season/order-type comparison when either side is blank or a placeholder', async () => {
+    invoiceFindUnique.mockResolvedValue({
+      ...INVOICE,
+      brand: '—',
+      season: '',
+    });
+    getFullPOByMPO.mockResolvedValue({
+      amount: 100,
+      vendor_name: 'Vendor A',
+      po_number: 'PO1',
+      line_items: [{ quantity: 10, total_amount: 100 }],
+      brand: 'Helly Hansen',
+      season: 'SS27',
+      order_type: 'SAMPLE',
+    });
+
+    const result = await checkNextGenChanges('inv-1');
+
+    expect(result.changes.filter(c => ['brand', 'season', 'order_type'].includes(c.field))).toHaveLength(0);
+  });
+
   it('tolerates small amount variance (5%) on the first check', async () => {
     getFullPOByMPO.mockResolvedValue({
       amount: 100,

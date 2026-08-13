@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AP Invoice Quick User Guide</title>
+  <style>
+    :root {
+      --blue: #1f66d1;
+      --dark: #162033;
+      --text: #1f2937;
+      --muted: #5b6575;
+      --line: #d8e0eb;
+      --soft: #f5f8fc;
+      --green: #137a4d;
+      --orange: #b35c00;
+      --red: #b42318;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, "Segoe UI", sans-serif;
+      color: var(--text);
+      background: #eef2f7;
+      line-height: 1.45;
+    }
+    .sheet {
+      width: 980px;
+      margin: 0 auto;
+      background: white;
+      min-height: 100vh;
+    }
+    header {
+      background: linear-gradient(135deg, #101827, #1f66d1);
+      color: white;
+      padding: 34px 46px;
+    }
+    header img {
+      height: 52px;
+      background: white;
+      padding: 8px;
+      border-radius: 8px;
+    }
+    h1 {
+      font-size: 34px;
+      margin: 28px 0 8px;
+      line-height: 1.12;
+    }
+    header p {
+      max-width: 780px;
+      color: #dce8ff;
+      margin: 0;
+      font-size: 17px;
+    }
+    main { padding: 30px 46px 42px; }
+    h2 {
+      color: #174b91;
+      font-size: 24px;
+      margin: 34px 0 12px;
+      border-bottom: 2px solid #e5edf8;
+      padding-bottom: 6px;
+    }
+    h3 {
+      color: #1f4d78;
+      font-size: 17px;
+      margin: 20px 0 8px;
+    }
+    p { margin: 8px 0 12px; }
+    .simple {
+      background: #f7fbff;
+      border: 1px solid #cfe0f6;
+      border-left: 5px solid var(--blue);
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin: 16px 0;
+      font-size: 16px;
+    }
+    .warning {
+      background: #fff8ec;
+      border: 1px solid #f0d3a5;
+      border-left: 5px solid var(--orange);
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin: 14px 0;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 14px;
+      background: white;
+    }
+    .card h3 { margin-top: 0; }
+    ul, ol { margin: 8px 0 16px 24px; padding: 0; }
+    li { margin: 6px 0; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+      margin: 14px 0 20px;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 9px 10px;
+      vertical-align: top;
+    }
+    th {
+      background: #edf4ff;
+      color: #173b66;
+      text-align: left;
+    }
+    .tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #eaf2ff;
+      color: #174b91;
+      font-size: 12px;
+      font-weight: 700;
+      margin-right: 4px;
+    }
+    figure {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+      margin: 18px 0 24px;
+      background: white;
+      page-break-inside: avoid;
+    }
+    figure img, figure svg {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    figcaption {
+      padding: 10px 14px;
+      background: #f7f9fc;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .steps {
+      counter-reset: step;
+      list-style: none;
+      margin-left: 0;
+    }
+    .steps li {
+      counter-increment: step;
+      position: relative;
+      padding-left: 42px;
+      margin: 12px 0;
+    }
+    .steps li:before {
+      content: counter(step);
+      position: absolute;
+      left: 0;
+      top: -1px;
+      width: 28px;
+      height: 28px;
+      line-height: 28px;
+      border-radius: 50%;
+      background: var(--blue);
+      color: white;
+      font-weight: 700;
+      text-align: center;
+    }
+    .footer {
+      margin-top: 30px;
+      padding-top: 16px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 13px;
+    }
+    @media print {
+      body { background: white; }
+      .sheet { width: auto; }
+      h2 { page-break-after: avoid; }
+    }
+  </style>
+</head>
+<body>
+<div class="sheet">
+  <header>
+    <img src="apps/web/public/madison-logo.png" alt="Madison 88">
+    <h1>AP Invoice System Quick User Guide</h1>
+    <p>Simple guide para sa daily users. No technical background needed. Follow the steps, check the colored status, and use the correct screen for your task.</p>
+  </header>
+
+  <main>
+    <section>
+      <h2>1. Ano ang AP Invoice System?</h2>
+      <div class="simple">
+        <strong>Simple explanation:</strong> This system helps Madison 88 receive supplier invoices, read the PDF, check the details, route approvals, handle issues, and prepare payment. Parang tracking board siya ng invoice from upload hanggang payment.
+      </div>
+      <p>Instead of manually chasing email threads and files, users can see where each invoice is, who needs to act, and what problem is blocking it.</p>
+    </section>
+
+    <section>
+      <h2>2. Big Picture Workflow</h2>
+      <figure>
+        <img src="AP_Invoice_System_Flow_Image.svg" alt="AP Invoice system flow image">
+        <figcaption>Actual system flow map based on the AP Invoice app screens and workflow.</figcaption>
+      </figure>
+      <ol class="steps">
+        <li><strong>Upload invoice.</strong> Add the supplier PDF.</li>
+        <li><strong>Review OCR.</strong> Check if vendor, invoice number, amount, date, MPO, and bank details are correct.</li>
+        <li><strong>Validate.</strong> System checks vendor, duplicate, amount, bank, signatures, and NextGen MPO.</li>
+        <li><strong>Approve.</strong> Correct approver reviews and approves or rejects.</li>
+        <li><strong>Accounting review.</strong> Accounting checks final details before payment processing.</li>
+        <li><strong>Payment batch.</strong> Approved payments are grouped, reviewed, exported, and marked paid.</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>3. Main Screens and What They Are For</h2>
+      <table>
+        <thead>
+          <tr><th>Screen</th><th>Use This When...</th><th>Simple Meaning</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Dashboard</td><td>You want to see work pending, invoice counts, alerts, and recent activity.</td><td>Home page / command center.</td></tr>
+          <tr><td>Upload Invoice</td><td>You received a new supplier PDF invoice.</td><td>Start here for new invoices.</td></tr>
+          <tr><td>Invoice Repository</td><td>You need to search old or current invoices.</td><td>Invoice filing cabinet.</td></tr>
+          <tr><td>Approvals</td><td>An invoice is waiting for your approval.</td><td>Your approval inbox.</td></tr>
+          <tr><td>Exceptions</td><td>The system found a problem with an invoice.</td><td>Problem-solving area.</td></tr>
+          <tr><td>On-Hold Queue</td><td>An invoice is paused because something must be fixed first.</td><td>Paused invoices list.</td></tr>
+          <tr><td>Vendors</td><td>You need to check supplier name, aliases, or bank details.</td><td>Supplier master list.</td></tr>
+          <tr><td>Batches</td><td>You are preparing or reviewing multiple payments.</td><td>Payment grouping screen.</td></tr>
+          <tr><td>Reports</td><td>You need totals, trends, and management summaries.</td><td>Performance and finance summary.</td></tr>
+          <tr><td>Audit Logs</td><td>You need to know who changed or approved something.</td><td>System history / evidence trail.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>4. Daily Work by Role</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>Purchasing / MLO Users</h3>
+          <ul>
+            <li>Upload or review invoices.</li>
+            <li>Check OCR fields.</li>
+            <li>Resolve purchasing-related issues.</li>
+            <li>Approve if assigned to your role.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Accounting Users</h3>
+          <ul>
+            <li>Review approved invoices.</li>
+            <li>Check bank and payment details.</li>
+            <li>Create or review payment batches.</li>
+            <li>Monitor posted and paid status.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Managers / Supervisors</h3>
+          <ul>
+            <li>Approve invoices within authority.</li>
+            <li>Review exceptions and waivers.</li>
+            <li>Check SLA and reports.</li>
+            <li>Make sure blockers are handled quickly.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>IT / Admin</h3>
+          <ul>
+            <li>Manage users and settings.</li>
+            <li>Check system health.</li>
+            <li>Help with login or technical issues.</li>
+            <li>Maintain audit and configuration.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>5. How To Upload an Invoice</h2>
+      <ol class="steps">
+        <li>Click <strong>Upload Invoice</strong>.</li>
+        <li>Choose the PDF file from your computer.</li>
+        <li>Wait while the system reads the invoice.</li>
+        <li>Review the extracted fields carefully.</li>
+        <li>If something is wrong, edit it before saving.</li>
+        <li>Confirm the invoice so it can move to validation.</li>
+      </ol>
+      <div class="warning">
+        <strong>Important:</strong> Always check amount, invoice number, vendor, MPO number, and bank account. These are the most important fields.
+      </div>
+    </section>
+
+    <section>
+      <h2>6. What To Check During OCR Review</h2>
+      <table>
+        <thead><tr><th>Field</th><th>What To Check</th><th>Why Important</th></tr></thead>
+        <tbody>
+          <tr><td>Vendor</td><td>Supplier name should be correct, not Madison 88.</td><td>Wrong vendor can route or pay incorrectly.</td></tr>
+          <tr><td>Invoice Number</td><td>Match the PDF exactly.</td><td>Used for duplicate checking.</td></tr>
+          <tr><td>Invoice Date / Due Date</td><td>Check dates are not swapped or missing.</td><td>Used for SLA and payment timing.</td></tr>
+          <tr><td>Total Amount</td><td>Check final total, currency, and decimal points.</td><td>Used for approval and payment.</td></tr>
+          <tr><td>MPO / PO</td><td>Check the material purchase order number.</td><td>Used for NextGen validation.</td></tr>
+          <tr><td>Bank Details</td><td>Check bank name, SWIFT, and account number.</td><td>Critical for payment safety.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>7. Understanding Status and Warnings</h2>
+      <p><span class="tag">Green</span> Good or matched. Usually no action needed.</p>
+      <p><span class="tag">Yellow</span> Warning or review needed. Check details before proceeding.</p>
+      <p><span class="tag">Red</span> Problem or blocker. Resolve exception before moving forward.</p>
+      <table>
+        <thead><tr><th>Status</th><th>Meaning</th><th>What User Should Do</th></tr></thead>
+        <tbody>
+          <tr><td>Validation Pending</td><td>Invoice is waiting for system checks.</td><td>Wait or run validation if button is available.</td></tr>
+          <tr><td>Pending Approval</td><td>Someone needs to approve.</td><td>Approver should review and approve/reject.</td></tr>
+          <tr><td>Exception</td><td>System found an issue.</td><td>Open Exceptions and resolve or waive.</td></tr>
+          <tr><td>On Hold</td><td>Invoice is paused.</td><td>Check hold reason and release only after fixing.</td></tr>
+          <tr><td>Approved</td><td>Approval is complete.</td><td>Accounting can review next.</td></tr>
+          <tr><td>Payment Scheduled</td><td>Payment date is set.</td><td>Include in batch when ready.</td></tr>
+          <tr><td>Paid</td><td>Payment completed.</td><td>No further action unless audit/reconciliation is needed.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>8. Approving an Invoice</h2>
+      <ol class="steps">
+        <li>Open <strong>Approvals</strong>.</li>
+        <li>Click the invoice assigned to you.</li>
+        <li>Review vendor, amount, document, validation, and any notes.</li>
+        <li>Click <strong>Approve</strong> if everything is correct.</li>
+        <li>Click <strong>Reject</strong> if it should not proceed.</li>
+        <li>Use <strong>Return for Correction</strong> if someone needs to fix data first.</li>
+      </ol>
+      <div class="warning">
+        Put a clear reason when rejecting or returning. Example: "Wrong MPO number" or "Bank account does not match vendor master."
+      </div>
+    </section>
+
+    <section>
+      <h2>9. Handling Exceptions</h2>
+      <p>An exception means the invoice has a problem. Hindi ibig sabihin na rejected agad. It means someone must review and fix or approve the exception.</p>
+      <table>
+        <thead><tr><th>Exception</th><th>Plain Meaning</th><th>Usual Fix</th></tr></thead>
+        <tbody>
+          <tr><td>Amount Mismatch</td><td>Invoice amount does not match expected PO/MPO amount.</td><td>Check PDF, NextGen, and amount field.</td></tr>
+          <tr><td>PO Not Found</td><td>MPO/PO cannot be found in NextGen.</td><td>Correct MPO or check NextGen.</td></tr>
+          <tr><td>Bank Mismatch</td><td>Bank details differ from vendor records.</td><td>Request bank update or verify vendor master.</td></tr>
+          <tr><td>Duplicate Invoice</td><td>Same invoice may already exist.</td><td>Search repository before proceeding.</td></tr>
+          <tr><td>Missing Signature</td><td>Required approval/signature is missing.</td><td>Ask correct person to approve.</td></tr>
+        </tbody>
+      </table>
+      <p><strong>Resolve</strong> means the issue was fixed. <strong>Waive</strong> means the issue remains but management/accounting allows it to continue. Waive only with a proper reason.</p>
+    </section>
+
+    <section>
+      <h2>10. Payment Batch Basics</h2>
+      <ol class="steps">
+        <li>Accounting checks invoices ready for payment.</li>
+        <li>Select scheduled payments.</li>
+        <li>Create a batch.</li>
+        <li>Submit for supervisor review.</li>
+        <li>Export or process the payment.</li>
+        <li>Record paid date, reference number, bank used, remarks, and proof if required.</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>11. Simple Troubleshooting</h2>
+      <table>
+        <thead><tr><th>Problem</th><th>What To Try First</th></tr></thead>
+        <tbody>
+          <tr><td>I cannot find an invoice.</td><td>Clear filters, search invoice number, vendor, or date range in Repository.</td></tr>
+          <tr><td>Upload is stuck.</td><td>Wait a few minutes, then retry with a clean PDF. If still stuck, contact IT.</td></tr>
+          <tr><td>Approve button is missing.</td><td>The invoice may not be assigned to your role or stage.</td></tr>
+          <tr><td>Invoice has red warning.</td><td>Open the exception details and check what field is wrong.</td></tr>
+          <tr><td>Bank details are wrong.</td><td>Do not manually ignore it. Request/verify vendor bank change.</td></tr>
+          <tr><td>Payment cannot proceed.</td><td>Check for missing approval, unresolved exception, or on-hold status.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>12. Best Practices</h2>
+      <ul>
+        <li>Always compare important fields against the PDF before confirming.</li>
+        <li>Use clear notes. Short but specific is best.</li>
+        <li>Do not waive exceptions casually. Waivers are recorded in audit logs.</li>
+        <li>Check notifications and approvals daily.</li>
+        <li>Use the Repository before assuming an invoice is missing.</li>
+        <li>Ask IT/Admin if a screen is missing from your sidebar; it may be role-based.</li>
+      </ul>
+    </section>
+
+    <p class="footer">Prepared for Madison 88 AP Invoice Automation. Simple user version for non-IT users. Updated August 3, 2026.</p>
+  </main>
+</div>
+</body>
+</html>

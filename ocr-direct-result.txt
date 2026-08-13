@@ -1,0 +1,113 @@
+Loaded .env from /opt/ap-invoice/apps/api/.env
+
+========== Bo Hing_Inv_1609160_HT&DRT.pdf ==========
+File size: 423312 bytes
+[32minfo[39m: [RapidOCR] Extraction succeeded: 1619 chars, confidence: 0.9716889778684621, 4366ms {"timestamp":"2026-08-11T07:32:14.859Z"}
+[32minfo[39m: [OCR] RapidOCR extraction succeeded — 1619 chars, confidence: 97.2%, 4366ms {"timestamp":"2026-08-11T07:32:14.861Z"}
+[32minfo[39m: [OCR] RapidOCR confidence 97.2% ≥ 90% — using regex extraction (fast path) {"timestamp":"2026-08-11T07:32:14.861Z"}
+[OCR] Extracted text length: 1619
+[OCR] Text contains 8.62: false
+[OCR] Text contains TOTAL USD: true
+[32minfo[39m: [OCR] TOTAL USD match: YES {"timestamp":"2026-08-11T07:32:14.865Z"}
+[32minfo[39m: [OCR] TOTAL USD index: 1114 {"timestamp":"2026-08-11T07:32:14.865Z"}
+[32minfo[39m: [OCR] Search range: Total USD
+Delivery Address :
+Remarks :
+Country of Origin: HKHS code for Hangtag/Sticker: 48211000HS  {"timestamp":"2026-08-11T07:32:14.865Z"}
+[32minfo[39m: [OCR] Amount match in range: 2026.07 {"timestamp":"2026-08-11T07:32:14.865Z"}
+[32minfo[39m: [OCR] Amount from TOTAL USD search: 2026.07 {"timestamp":"2026-08-11T07:32:14.865Z"}
+[DEBUG] Extracted fields: {
+  "vendor_name": "BOHINGLABELINDUSTRIESCO",
+  "invoice_number": "1609160",
+  "invoice_date": "24/07/2026",
+  "due_date": "",
+  "amount": 2026.07,
+  "grand_total": 0,
+  "currency": "USD",
+  "po_reference": "Item",
+  "mpo_number": "MPO015868",
+  "brand_code": "",
+  "payment_terms": "Payment Terms :\nAttn ",
+  "bank_swift": "SCBLHKHHXXX",
+  "bank_account": "",
+  "invoice_type": "INVOICE",
+  "tax_id": "",
+  "company_reg": ""
+}
+[32minfo[39m: [OCR] Final extraction — engine: rapidocr-regex, vendor: "BOHINGLABELINDUSTRIESCO", invoice#: "1609160", amount: 2026.07 {"timestamp":"2026-08-11T07:32:14.867Z"}
+[32minfo[39m: [OCR] Confidence: 75% (engine: rapidocr-regex, vendor: "BOHINGLABELINDUSTRIESCO", invoice#: "1609160", amount: 2026.07, date: 24/07/2026) {"timestamp":"2026-08-11T07:32:14.868Z"}
+
+--- Final Result ---
+Total elapsed: 4426ms
+OCR Engine: rapidocr-regex
+Vendor: BOHINGLABELINDUSTRIESCO
+Invoice #: 1609160
+Date: Invalid Date
+Due Date: N/A
+Total: 2026.07
+Currency: USD
+PO #: Item
+MPO #: MPO015868
+Brand: ITEM
+Season: N/A
+Payment Terms: Payment Terms :
+Attn 
+Confidence: 0.75
+Bank Name: N/A
+Bank SWIFT: SCBLHKHHXXX
+Bank Account: N/A
+
+============================================
+
+
+========== test_invoice.pdf ==========
+File size: 430386 bytes
+[32minfo[39m: [RapidOCR] Extraction succeeded: 3361 chars, confidence: 0.9816571688983441, 9990ms {"timestamp":"2026-08-11T07:32:24.886Z"}
+[32minfo[39m: [OCR] RapidOCR extraction succeeded — 3361 chars, confidence: 98.2%, 9990ms {"timestamp":"2026-08-11T07:32:24.886Z"}
+[32minfo[39m: [OCR] RapidOCR confidence 98.2% ≥ 90% — using regex extraction (fast path) {"timestamp":"2026-08-11T07:32:24.887Z"}
+[OCR] Extracted text length: 3361
+[OCR] Text contains 8.62: false
+[OCR] Text contains TOTAL USD: false
+[32minfo[39m: [OCR] Amount extracted from pattern: 8.69 {"timestamp":"2026-08-11T07:32:24.888Z"}
+[DEBUG] Extracted fields: {
+  "vendor_name": "PT UWUJUMPINDONESIA",
+  "invoice_number": "3281747518",
+  "invoice_date": "6/23/2026",
+  "due_date": "",
+  "amount": 8.69,
+  "grand_total": 0,
+  "currency": "USD",
+  "po_reference": "",
+  "mpo_number": "MPO015569",
+  "brand_code": "",
+  "payment_terms": "NET30",
+  "bank_swift": "",
+  "bank_account": "050-063767-007",
+  "invoice_type": "PROFORMA",
+  "tax_id": "e",
+  "company_reg": ""
+}
+[32minfo[39m: [OCR] Final extraction — engine: rapidocr-regex, vendor: "PT UWUJUMPINDONESIA", invoice#: "3281747518", amount: 8.69 {"timestamp":"2026-08-11T07:32:24.890Z"}
+[32minfo[39m: [OCR] Confidence: 70% (engine: rapidocr-regex, vendor: "PT UWUJUMPINDONESIA", invoice#: "3281747518", amount: 8.69, date: 6/23/2026) {"timestamp":"2026-08-11T07:32:24.890Z"}
+
+--- Final Result ---
+Total elapsed: 10019ms
+OCR Engine: rapidocr-regex
+Vendor: PT UWUJUMPINDONESIA
+Invoice #: 3281747518
+Date: Tue Jun 23 2026 00:00:00 GMT+0000 (Coordinated Universal Time)
+Due Date: N/A
+Total: 8.69
+Currency: USD
+PO #: N/A
+MPO #: MPO015569
+Brand: N/A
+Season: N/A
+Payment Terms: NET30
+Confidence: 0.7
+Bank Name: N/A
+Bank SWIFT: N/A
+Bank Account: 050-063767-007
+
+============================================
+

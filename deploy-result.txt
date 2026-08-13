@@ -1,0 +1,26 @@
+Created symlink /etc/systemd/system/multi-user.target.wants/rapidocr.service → /etc/systemd/system/rapidocr.service.
+=== RapidOCR Health ===
+{"status":"ok","service":"rapidocr"}
+=== RapidOCR Status ===
+● rapidocr.service - RapidOCR Python Microservice
+     Loaded: loaded (/etc/systemd/system/rapidocr.service; enabled; preset: enabled)
+     Active: active (running) since Tue 2026-08-11 07:16:44 UTC; 5s ago
+   Main PID: 190335 (python3)
+      Tasks: 10 (limit: 18687)
+     Memory: 189.3M (peak: 189.6M)
+        CPU: 1.674s
+     CGroup: /system.slice/rapidocr.service
+             └─190335 /usr/bin/python3 /opt/ap-invoice/apps/ocr-service/main.py
+
+=== Build API ===
+@ap-invoice/api:build: ERROR: command finished with error: command (/opt/ap-invoice/apps/api) /root/.local/share/pnpm/.tools/pnpm/9.0.0/bin/pnpm run build exited (2)
+@ap-invoice/api#build: command (/opt/ap-invoice/apps/api) /root/.local/share/pnpm/.tools/pnpm/9.0.0/bin/pnpm run build exited (2)
+
+ Tasks:    1 successful, 2 total
+Cached:    1 cached, 2 total
+  Time:    13.596s 
+Failed:    @ap-invoice/api#build
+
+ ERROR  run failed: command  exited (2)
+ ELIFECYCLE  Command failed with exit code 2.
+=== Restart API ===

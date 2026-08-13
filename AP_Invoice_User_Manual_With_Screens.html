@@ -1,0 +1,631 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AP Invoice Automation System - User Manual</title>
+  <style>
+    :root {
+      --ink: #152033;
+      --muted: #5d6b82;
+      --line: #d9e1ec;
+      --soft: #f5f7fb;
+      --panel: #ffffff;
+      --blue: #2368d8;
+      --nav: #172033;
+      --green: #157347;
+      --amber: #a16207;
+      --red: #b42318;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      color: var(--ink);
+      background: #eef2f7;
+      line-height: 1.5;
+    }
+    .page {
+      max-width: 1120px;
+      margin: 0 auto;
+      background: var(--panel);
+      min-height: 100vh;
+      box-shadow: 0 12px 50px rgba(20, 32, 51, .12);
+    }
+    header {
+      padding: 42px 54px 34px;
+      background: linear-gradient(135deg, #111827 0%, #1d3357 55%, #2368d8 100%);
+      color: white;
+    }
+    header img { height: 54px; background: white; padding: 8px; border-radius: 8px; }
+    header h1 { margin: 28px 0 8px; font-size: 34px; letter-spacing: 0; }
+    header p { max-width: 760px; margin: 0; color: #dce8ff; font-size: 16px; }
+    main { padding: 34px 54px 54px; }
+    h2 { margin: 38px 0 12px; color: #153f7a; font-size: 23px; }
+    h3 { margin: 26px 0 8px; color: #1f4d78; font-size: 17px; }
+    p { margin: 8px 0 12px; }
+    ul, ol { margin: 8px 0 16px 24px; padding: 0; }
+    li { margin: 5px 0; }
+    code {
+      background: #f0f3f8;
+      border: 1px solid #dce3ee;
+      padding: 1px 5px;
+      border-radius: 5px;
+      font-size: 90%;
+    }
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 28px;
+    }
+    .meta div, .callout {
+      background: rgba(255,255,255,.12);
+      border: 1px solid rgba(255,255,255,.24);
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+    .meta span { display: block; color: #bcd0f2; font-size: 12px; }
+    .meta strong { display: block; color: white; font-size: 15px; margin-top: 2px; }
+    .toc {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px 26px;
+      padding: 18px 20px;
+      background: var(--soft);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+    }
+    .toc a { color: #1d4f91; text-decoration: none; }
+    .notice {
+      padding: 14px 16px;
+      border-left: 4px solid var(--amber);
+      background: #fff8e8;
+      color: #533f04;
+      border-radius: 8px;
+      margin: 18px 0;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 16px;
+      background: #fff;
+    }
+    .card h3 { margin-top: 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 14px 0 22px;
+      font-size: 14px;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 9px 10px;
+      vertical-align: top;
+    }
+    th { background: #edf3fb; color: #183b66; text-align: left; }
+    .status { font-weight: 700; }
+    .green { color: var(--green); }
+    .amber { color: var(--amber); }
+    .red { color: var(--red); }
+    figure {
+      margin: 22px 0 28px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+      background: white;
+    }
+    figcaption {
+      padding: 10px 14px;
+      color: var(--muted);
+      background: #f7f9fc;
+      border-top: 1px solid var(--line);
+      font-size: 13px;
+    }
+    .screen {
+      display: block;
+      width: 100%;
+      height: auto;
+      background: #f4f7fb;
+    }
+    .steps {
+      counter-reset: step;
+      padding: 0;
+      margin-left: 0;
+      list-style: none;
+    }
+    .steps li {
+      counter-increment: step;
+      position: relative;
+      padding-left: 42px;
+      margin: 12px 0;
+    }
+    .steps li:before {
+      content: counter(step);
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: var(--blue);
+      color: white;
+      text-align: center;
+      line-height: 26px;
+      font-weight: 700;
+      font-size: 13px;
+    }
+    .footer {
+      padding-top: 24px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 13px;
+    }
+    @media print {
+      body { background: white; }
+      .page { box-shadow: none; max-width: none; }
+      header, main { padding-left: 36px; padding-right: 36px; }
+      figure { break-inside: avoid; }
+      h2 { break-after: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <img src="apps/web/public/madison-logo.png" alt="Madison 88 logo">
+      <h1>AP Invoice Automation System User Manual</h1>
+      <p>Detailed operator guide for invoice upload, OCR review, validation, approval, exception handling, accounting review, payment batches, reporting, vendor controls, and audit logs.</p>
+      <div class="meta">
+        <div><span>System</span><strong>AP Invoice Automation</strong></div>
+        <div><span>Company</span><strong>Madison 88</strong></div>
+        <div><span>Audience</span><strong>AP, Purchasing, Accounting, IT</strong></div>
+        <div><span>Updated</span><strong>August 3, 2026</strong></div>
+      </div>
+    </header>
+    <main>
+      <section id="toc">
+        <h2>Contents</h2>
+        <div class="toc">
+          <a href="#overview">1. System Overview</a>
+          <a href="#roles">2. Roles and Permissions</a>
+          <a href="#navigation">3. Navigation and Screens</a>
+          <a href="#dashboard">4. Dashboard</a>
+          <a href="#upload">5. Upload and OCR Review</a>
+          <a href="#repository">6. Invoice Repository</a>
+          <a href="#validation">7. Validation and NextGen Checks</a>
+          <a href="#approvals">8. Approvals</a>
+          <a href="#exceptions">9. Exceptions and On-Hold Queue</a>
+          <a href="#accounting">10. Accounting Review</a>
+          <a href="#payments">11. Payment Batches</a>
+          <a href="#reports">12. Reports and Analytics</a>
+          <a href="#vendors">13. Vendor Management</a>
+          <a href="#audit">14. Audit Logs</a>
+          <a href="#troubleshooting">15. Troubleshooting</a>
+          <a href="#best-practices">16. Best Practices</a>
+        </div>
+        <div class="notice">
+          Screenshot note: live browser screenshot capture for the local app was blocked by the browser security policy during this run. The images below are annotated screen maps generated from the actual app routes and components. They are intended for training and orientation; they can be replaced with live screenshots after browser capture is explicitly authorized.
+        </div>
+      </section>
+
+      <section id="overview">
+        <h2>1. System Overview</h2>
+        <p>The AP Invoice Automation System manages invoice intake from upload through OCR extraction, validation, approval, exception resolution, accounting review, posting preparation, payment batching, and audit tracking.</p>
+        <div class="grid">
+          <div class="card">
+            <h3>Primary Business Goal</h3>
+            <p>Reduce manual AP effort while keeping invoice decisions traceable, role-based, and supported by validation checks.</p>
+          </div>
+          <div class="card">
+            <h3>Core Capabilities</h3>
+            <ul>
+              <li>Invoice PDF upload and AI/OCR extraction.</li>
+              <li>Vendor, bank, signature, amount, and MPO validation.</li>
+              <li>Role-based approvals and accounting review.</li>
+              <li>Exception handling, on-hold tracking, and audit logs.</li>
+            </ul>
+          </div>
+        </div>
+        <figure>
+          <svg class="screen" viewBox="0 0 980 360" role="img" aria-label="Workflow screen map">
+            <rect width="980" height="360" fill="#f4f7fb"/>
+            <text x="36" y="46" font-family="Segoe UI, Arial" font-size="24" font-weight="700" fill="#152033">Invoice Workflow</text>
+            <g font-family="Segoe UI, Arial" font-size="14" font-weight="600">
+              <rect x="36" y="88" width="118" height="64" rx="10" fill="#ffffff" stroke="#b9c7d8"/>
+              <text x="61" y="124" fill="#152033">Upload</text>
+              <rect x="186" y="88" width="118" height="64" rx="10" fill="#ffffff" stroke="#b9c7d8"/>
+              <text x="215" y="116" fill="#152033">OCR</text><text x="206" y="136" fill="#152033">Review</text>
+              <rect x="336" y="88" width="118" height="64" rx="10" fill="#ffffff" stroke="#b9c7d8"/>
+              <text x="363" y="124" fill="#152033">Validate</text>
+              <rect x="486" y="88" width="118" height="64" rx="10" fill="#ffffff" stroke="#b9c7d8"/>
+              <text x="515" y="124" fill="#152033">Approve</text>
+              <rect x="636" y="88" width="118" height="64" rx="10" fill="#ffffff" stroke="#b9c7d8"/>
+              <text x="658" y="116" fill="#152033">Accounting</text><text x="680" y="136" fill="#152033">Review</text>
+              <rect x="786" y="88" width="118" height="64" rx="10" fill="#ffffff" stroke="#b9c7d8"/>
+              <text x="816" y="124" fill="#152033">Payment</text>
+              <path d="M154 120 H186 M304 120 H336 M454 120 H486 M604 120 H636 M754 120 H786" stroke="#2368d8" stroke-width="3"/>
+              <rect x="336" y="216" width="268" height="64" rx="10" fill="#fff8e8" stroke="#e0ad34"/>
+              <text x="385" y="244" fill="#533f04">Exceptions / On-Hold Queue</text>
+              <text x="382" y="264" fill="#533f04" font-size="12">Resolve, waive, correct, or release</text>
+              <path d="M395 152 V216" stroke="#e0ad34" stroke-width="3"/>
+            </g>
+          </svg>
+          <figcaption>Figure 1. End-to-end process flow from upload to payment, including the exception branch.</figcaption>
+        </figure>
+      </section>
+
+      <section id="roles">
+        <h2>2. Roles and Permissions</h2>
+        <table>
+          <thead><tr><th>Role</th><th>Typical Responsibilities</th><th>Main Screens</th></tr></thead>
+          <tbody>
+            <tr><td>Purchasing Coordinator</td><td>Upload invoices, review OCR, correct invoice fields, monitor purchasing items.</td><td>Dashboard, Upload, Repository, Approvals, Exceptions, Vendors, Extraction Analytics</td></tr>
+            <tr><td>Purchasing Manager</td><td>Review purchasing approvals and escalated invoices.</td><td>Dashboard, Approvals, Exceptions, Repository</td></tr>
+            <tr><td>MLO Account Holder / Planning Manager / Sr. Manager / Ms Polly</td><td>Role-specific approval review based on amount, brand, or workflow stage.</td><td>Dashboard, Approvals</td></tr>
+            <tr><td>Accounting Associate</td><td>Accounting review, on-hold handling, payment batch preparation, reports, audit review.</td><td>Dashboard, Review, Batches, Reports, Audit Logs, On-Hold Queue</td></tr>
+            <tr><td>Accounting Supervisor</td><td>Supervisor accounting review, variance oversight, vendor controls, reports, audit trail review.</td><td>Dashboard, Vendors, Batches, Reports, Review, Audit Logs, SLA Analytics</td></tr>
+            <tr><td>IT Admin</td><td>System-wide administration, user management, settings, and support.</td><td>All administrative screens</td></tr>
+            <tr><td>Superadmin</td><td>High-level access for dashboard and audit review in the current UI configuration.</td><td>Dashboard, Audit Logs</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="navigation">
+        <h2>3. Navigation and Screens</h2>
+        <p>The left sidebar is the main navigation surface. Menu items are role-aware, so users only see screens relevant to their access level.</p>
+        <figure>
+          <svg class="screen" viewBox="0 0 980 520" role="img" aria-label="Navigation screen map">
+            <rect width="980" height="520" fill="#eef2f7"/>
+            <rect x="24" y="24" width="214" height="472" rx="14" fill="#172033"/>
+            <rect x="48" y="48" width="116" height="38" rx="6" fill="#ffffff"/>
+            <text x="58" y="73" font-family="Segoe UI, Arial" font-size="14" font-weight="700" fill="#172033">Madison 88</text>
+            <g font-family="Segoe UI, Arial" font-size="14">
+              <rect x="44" y="118" width="170" height="38" rx="8" fill="#2368d8"/><text x="70" y="142" fill="#fff">Dashboard</text>
+              <text x="70" y="188" fill="#c6d1e2">Invoice Repository</text>
+              <text x="70" y="230" fill="#c6d1e2">Approvals</text>
+              <text x="70" y="272" fill="#c6d1e2">Exceptions</text>
+              <text x="70" y="314" fill="#c6d1e2">On-Hold Queue</text>
+              <text x="70" y="356" fill="#c6d1e2">Vendors</text>
+              <text x="70" y="398" fill="#c6d1e2">Batches</text>
+              <text x="70" y="440" fill="#c6d1e2">Reports / Audit Logs</text>
+            </g>
+            <rect x="266" y="24" width="690" height="78" rx="14" fill="#ffffff" stroke="#d9e1ec"/>
+            <text x="296" y="56" font-family="Segoe UI, Arial" font-size="14" fill="#5d6b82">Good morning • Monday, August 3, 2026</text>
+            <rect x="792" y="44" width="116" height="34" rx="8" fill="#2368d8"/><text x="812" y="66" font-family="Segoe UI, Arial" font-size="13" font-weight="700" fill="#fff">Upload Invoice</text>
+            <rect x="266" y="126" width="690" height="370" rx="14" fill="#ffffff" stroke="#d9e1ec"/>
+            <text x="296" y="168" font-family="Segoe UI, Arial" font-size="25" font-weight="700" fill="#152033">Screen Content Area</text>
+            <text x="296" y="198" font-family="Segoe UI, Arial" font-size="14" fill="#5d6b82">Dashboard widgets, invoice tables, forms, reports, and detail panels load here.</text>
+          </svg>
+          <figcaption>Figure 2. Main layout: role-aware sidebar, top action bar, and working content area.</figcaption>
+        </figure>
+      </section>
+
+      <section id="dashboard">
+        <h2>4. Dashboard</h2>
+        <p>The Dashboard gives each user a consolidated view of invoice volume, pending work, exceptions, SLA exposure, and approval activity.</p>
+        <h3>Common Dashboard Actions</h3>
+        <ul>
+          <li>Use quick filters to focus on returned, urgent, or aging invoices.</li>
+          <li>Search by invoice number, vendor, MPO, brand, status, or category.</li>
+          <li>Select an invoice row to open the detail panel.</li>
+          <li>Use invoice detail tabs for overview, pipeline, validation, actions, and audit history.</li>
+        </ul>
+        <figure>
+          <svg class="screen" viewBox="0 0 980 560" role="img" aria-label="Dashboard screen map">
+            <rect width="980" height="560" fill="#f4f7fb"/>
+            <rect x="24" y="24" width="932" height="70" rx="12" fill="#fff" stroke="#d9e1ec"/>
+            <text x="48" y="66" font-family="Segoe UI, Arial" font-size="24" font-weight="700" fill="#152033">Dashboard</text>
+            <rect x="744" y="42" width="154" height="34" rx="8" fill="#2368d8"/><text x="775" y="64" font-family="Segoe UI, Arial" font-size="13" fill="#fff" font-weight="700">Upload Invoice</text>
+            <g font-family="Segoe UI, Arial">
+              <rect x="24" y="118" width="216" height="90" rx="12" fill="#fff" stroke="#d9e1ec"/><text x="44" y="150" font-size="13" fill="#5d6b82">Total Invoices</text><text x="44" y="184" font-size="28" font-weight="700" fill="#152033">128</text>
+              <rect x="260" y="118" width="216" height="90" rx="12" fill="#fff" stroke="#d9e1ec"/><text x="280" y="150" font-size="13" fill="#5d6b82">Pending Approval</text><text x="280" y="184" font-size="28" font-weight="700" fill="#152033">14</text>
+              <rect x="496" y="118" width="216" height="90" rx="12" fill="#fff" stroke="#d9e1ec"/><text x="516" y="150" font-size="13" fill="#5d6b82">Exceptions</text><text x="516" y="184" font-size="28" font-weight="700" fill="#b42318">6</text>
+              <rect x="732" y="118" width="224" height="90" rx="12" fill="#fff" stroke="#d9e1ec"/><text x="752" y="150" font-size="13" fill="#5d6b82">SLA At Risk</text><text x="752" y="184" font-size="28" font-weight="700" fill="#a16207">9</text>
+              <rect x="24" y="236" width="932" height="52" rx="10" fill="#fff" stroke="#d9e1ec"/>
+              <text x="48" y="268" font-size="14" fill="#5d6b82">Search • Status • Category • Vendor • Date Range • Advanced Filters</text>
+              <rect x="24" y="312" width="570" height="210" rx="12" fill="#fff" stroke="#d9e1ec"/>
+              <text x="48" y="346" font-size="18" font-weight="700" fill="#152033">Invoice Table</text>
+              <line x1="48" y1="374" x2="558" y2="374" stroke="#d9e1ec"/>
+              <text x="48" y="406" font-size="13" fill="#5d6b82">Vendor • Invoice # • Amount • Status • NextGen Badge • Aging</text>
+              <text x="48" y="446" font-size="13" fill="#5d6b82">Click any row to open the invoice detail panel.</text>
+              <rect x="620" y="312" width="336" height="210" rx="12" fill="#fff" stroke="#d9e1ec"/>
+              <text x="644" y="346" font-size="18" font-weight="700" fill="#152033">My Tasks / Detail Panel</text>
+              <text x="644" y="384" font-size="13" fill="#5d6b82">Approvals, exceptions, validation results,</text>
+              <text x="644" y="406" font-size="13" fill="#5d6b82">pipeline timeline, and audit events.</text>
+            </g>
+          </svg>
+          <figcaption>Figure 3. Dashboard orientation: KPI cards, filters, invoice table, and task/detail panel.</figcaption>
+        </figure>
+      </section>
+
+      <section id="upload">
+        <h2>5. Upload and OCR Review</h2>
+        <p>The upload workflow creates invoice records from PDF files. The system extracts invoice fields, detects multi-invoice documents, validates PO/MPO references, and lets users correct extracted data before saving.</p>
+        <ol class="steps">
+          <li>Click <strong>Upload Invoice</strong> from the header or sidebar route.</li>
+          <li>Select or drag a PDF into the upload area.</li>
+          <li>Wait for extraction. The system may use PDF parsing plus available AI/OCR engines.</li>
+          <li>Review vendor, invoice number, dates, amount, currency, category, brand, MPO, quantity, payment terms, bank, SWIFT, and account number.</li>
+          <li>If multiple invoices are detected, review each split item before confirming.</li>
+          <li>Save corrections when OCR extraction was wrong so future extraction can improve.</li>
+          <li>Confirm the invoice to move it into validation and workflow routing.</li>
+        </ol>
+        <figure>
+          <svg class="screen" viewBox="0 0 980 600" role="img" aria-label="Upload modal screen map">
+            <rect width="980" height="600" fill="#eff3f8"/>
+            <rect x="160" y="44" width="660" height="512" rx="16" fill="#fff" stroke="#cfd9e7"/>
+            <text x="196" y="88" font-family="Segoe UI, Arial" font-size="22" font-weight="700" fill="#152033">Upload Invoice</text>
+            <rect x="196" y="116" width="588" height="118" rx="12" fill="#f7faff" stroke="#9bb8e8" stroke-dasharray="8 6"/>
+            <text x="376" y="164" font-family="Segoe UI, Arial" font-size="16" font-weight="700" fill="#2368d8">Drop PDF here or browse</text>
+            <text x="335" y="192" font-family="Segoe UI, Arial" font-size="13" fill="#5d6b82">Supported: vendor invoices, statements, PI/CI/SI documents</text>
+            <rect x="196" y="260" width="280" height="232" rx="10" fill="#ffffff" stroke="#d9e1ec"/>
+            <text x="220" y="292" font-family="Segoe UI, Arial" font-size="16" font-weight="700" fill="#152033">Extracted Fields</text>
+            <text x="220" y="326" font-family="Segoe UI, Arial" font-size="13" fill="#5d6b82">Vendor • Invoice # • Date</text>
+            <text x="220" y="354" font-family="Segoe UI, Arial" font-size="13" fill="#5d6b82">Amount • Currency • Category</text>
+            <text x="220" y="382" font-family="Segoe UI, Arial" font-size="13" fill="#5d6b82">Brand • Season • Order Type</text>
+            <text x="220" y="410" font-family="Segoe UI, Arial" font-size="13" fill="#5d6b82">PO/MPO • Qty Shipped</text>
+            <text x="220" y="438" font-family="Segoe UI, Arial" font-size="13" fill="#5d6b82">Bank • SWIFT • Account</text>
+            <rect x="504" y="260" width="280" height="232" rx="10" fill="#ffffff" stroke="#d9e1ec"/>
+            <text x="528" y="292" font-family="Segoe UI, Arial" font-size="16" font-weight="700" fill="#152033">Review Signals</text>
+            <text x="528" y="326" font-family="Segoe UI, Arial" font-size="13" fill="#5d6b82">Vendor match confidence</text>
+            <text x="528" y="354" font-family="Segoe UI, Arial" font-size="13" fill="#5d6b82">PO/MPO validation result</text>
+            <text x="528" y="382" font-family="Segoe UI, Arial" font-size="13" fill="#5d6b82">Manual vendor assignment flag</text>
+            <text x="528" y="410" font-family="Segoe UI, Arial" font-size="13" fill="#5d6b82">Correction saved status</text>
+            <rect x="584" y="508" width="96" height="32" rx="8" fill="#eef2f7"/><text x="614" y="529" font-family="Segoe UI, Arial" font-size="13" fill="#152033">Cancel</text>
+            <rect x="692" y="508" width="92" height="32" rx="8" fill="#2368d8"/><text x="714" y="529" font-family="Segoe UI, Arial" font-size="13" font-weight="700" fill="#fff">Confirm</text>
+          </svg>
+          <figcaption>Figure 4. Upload/OCR review map showing file drop, extracted fields, review signals, and confirmation actions.</figcaption>
+        </figure>
+      </section>
+
+      <section id="repository">
+        <h2>6. Invoice Repository</h2>
+        <p>The repository is the searchable historical store for invoice records. Use it when you need to find an invoice by vendor, invoice number, status, date, category, MPO, or payment stage.</p>
+        <h3>Recommended Use</h3>
+        <ul>
+          <li>Start broad with date/status filters, then narrow by vendor or invoice number.</li>
+          <li>Open invoice details to view pipeline stage, validation result, corrections, exceptions, and audit history.</li>
+          <li>Use the repository for investigation rather than workflow-only task queues.</li>
+        </ul>
+      </section>
+
+      <section id="validation">
+        <h2>7. Validation and NextGen Checks</h2>
+        <p>Validation protects the workflow from bad vendor data, duplicate invoices, missing approvals, mismatched bank details, incorrect amounts, and PO/MPO mismatches.</p>
+        <table>
+          <thead><tr><th>Validation Area</th><th>What It Checks</th><th>User Action</th></tr></thead>
+          <tbody>
+            <tr><td>Vendor</td><td>Vendor exists, alias match, known bank details.</td><td>Correct vendor or request vendor update.</td></tr>
+            <tr><td>Invoice Identity</td><td>Invoice number, document type, duplicate detection.</td><td>Correct OCR fields or investigate duplicate.</td></tr>
+            <tr><td>Dates and SLA</td><td>Invoice date, due date, late submission aging.</td><td>Confirm dates or resolve SLA exception.</td></tr>
+            <tr><td>Bank Details</td><td>Bank name, SWIFT, account number against vendor master.</td><td>Request bank change or resolve mismatch.</td></tr>
+            <tr><td>NextGen MPO</td><td>MPO existence, amount, vendor, line/quantity consistency.</td><td>Run NextGen check, correct MPO, or resolve exception.</td></tr>
+            <tr><td>Approvals</td><td>Required signatures and role routing.</td><td>Request approval or return for correction.</td></tr>
+          </tbody>
+        </table>
+        <p><strong>Critical NextGen changes</strong>, such as amount, vendor, or PO mismatch, should create exceptions. Informational changes, such as quantity-only differences, may appear as notifications or warnings depending on workflow rules.</p>
+      </section>
+
+      <section id="approvals">
+        <h2>8. Approvals</h2>
+        <p>The Approval Inbox shows invoices awaiting the current user’s action. Approval visibility depends on role, threshold, brand scope, and workflow stage.</p>
+        <ol class="steps">
+          <li>Open <strong>Approvals</strong> from the sidebar.</li>
+          <li>Review invoice details, extracted fields, validation outcome, and any comments.</li>
+          <li>Approve if the invoice is correct and within your authority.</li>
+          <li>Reject if the invoice should not proceed. Always enter a clear rejection reason.</li>
+          <li>Return for correction if the invoice can proceed after purchasing or accounting edits.</li>
+        </ol>
+        <figure>
+          <svg class="screen" viewBox="0 0 980 430" role="img" aria-label="Approvals and exceptions screen map">
+            <rect width="980" height="430" fill="#f4f7fb"/>
+            <rect x="32" y="32" width="430" height="342" rx="14" fill="#fff" stroke="#d9e1ec"/>
+            <text x="60" y="72" font-family="Segoe UI, Arial" font-size="22" font-weight="700" fill="#152033">Approval Inbox</text>
+            <rect x="60" y="104" width="360" height="54" rx="8" fill="#f7faff" stroke="#d9e1ec"/><text x="82" y="137" font-family="Segoe UI, Arial" font-size="13" fill="#5d6b82">Invoice row: vendor, amount, status, age</text>
+            <rect x="60" y="176" width="360" height="54" rx="8" fill="#f7faff" stroke="#d9e1ec"/><text x="82" y="209" font-family="Segoe UI, Arial" font-size="13" fill="#5d6b82">Review validation and attachments</text>
+            <rect x="60" y="260" width="92" height="34" rx="8" fill="#157347"/><text x="84" y="282" font-family="Segoe UI, Arial" font-size="13" fill="#fff">Approve</text>
+            <rect x="164" y="260" width="92" height="34" rx="8" fill="#b42318"/><text x="190" y="282" font-family="Segoe UI, Arial" font-size="13" fill="#fff">Reject</text>
+            <rect x="268" y="260" width="122" height="34" rx="8" fill="#a16207"/><text x="288" y="282" font-family="Segoe UI, Arial" font-size="13" fill="#fff">Return</text>
+            <rect x="518" y="32" width="430" height="342" rx="14" fill="#fff" stroke="#d9e1ec"/>
+            <text x="546" y="72" font-family="Segoe UI, Arial" font-size="22" font-weight="700" fill="#152033">Exception Manager</text>
+            <rect x="546" y="104" width="360" height="54" rx="8" fill="#fff8e8" stroke="#e0ad34"/><text x="568" y="137" font-family="Segoe UI, Arial" font-size="13" fill="#533f04">Open exception with reason and owner</text>
+            <rect x="546" y="176" width="360" height="54" rx="8" fill="#fff8e8" stroke="#e0ad34"/><text x="568" y="209" font-family="Segoe UI, Arial" font-size="13" fill="#533f04">Correct data, request update, or document waiver</text>
+            <rect x="546" y="260" width="104" height="34" rx="8" fill="#157347"/><text x="570" y="282" font-family="Segoe UI, Arial" font-size="13" fill="#fff">Resolve</text>
+            <rect x="662" y="260" width="92" height="34" rx="8" fill="#6b7280"/><text x="690" y="282" font-family="Segoe UI, Arial" font-size="13" fill="#fff">Waive</text>
+          </svg>
+          <figcaption>Figure 5. Approval and exception handling screens share a review-first pattern: inspect, decide, document.</figcaption>
+        </figure>
+      </section>
+
+      <section id="exceptions">
+        <h2>9. Exceptions and On-Hold Queue</h2>
+        <p>Exceptions stop or slow the invoice until an authorized user resolves, waives, or corrects the underlying issue. The On-Hold Queue focuses on invoices held for batch threshold, validation, or accounting reasons.</p>
+        <h3>Common Exception Types</h3>
+        <ul>
+          <li><code>AMOUNT_MISMATCH</code>: Invoice amount differs from PO/MPO or expected amount.</li>
+          <li><code>PO_NOT_FOUND</code>: MPO cannot be found in NextGen.</li>
+          <li><code>BANK_MISMATCH</code>: Bank details differ from vendor master records.</li>
+          <li><code>DUPLICATE_INVOICE</code>: Matching invoice number/vendor already exists.</li>
+          <li><code>MISSING_SIGNATURE</code>: Required signatory was not detected or has not approved.</li>
+          <li><code>LATE_SUBMISSION</code>: Invoice falls outside expected submission timing.</li>
+        </ul>
+        <h3>Resolve vs Waive</h3>
+        <p><strong>Resolve</strong> when the invoice data has been corrected or the issue is no longer present. <strong>Waive</strong> only when the issue is real but business-approved to proceed. Waivers should include a clear reason because they are part of the audit trail.</p>
+      </section>
+
+      <section id="accounting">
+        <h2>10. Accounting Review</h2>
+        <p>Accounting Review is used after purchasing approval or when invoices are ready for posting/payment preparation. Accounting users should confirm all required signatures, validate bank details, review pre-post warnings, and check whether any override is needed.</p>
+        <ul>
+          <li>Use <strong>Review</strong> for invoices in accounting-facing stages such as pending accounting, approved, posted, or paid.</li>
+          <li>Check the detail panel before posting or scheduling payment.</li>
+          <li>Use variance bypass only when authorized and documented.</li>
+          <li>Release invoices from hold only after the hold reason is addressed.</li>
+        </ul>
+      </section>
+
+      <section id="payments">
+        <h2>11. Payment Batches</h2>
+        <p>Payment batching groups scheduled payments for review, export, bank processing, and completion tracking.</p>
+        <table>
+          <thead><tr><th>Batch Stage</th><th>Meaning</th><th>Typical Action</th></tr></thead>
+          <tbody>
+            <tr><td>Draft</td><td>Payments selected but not submitted for review.</td><td>Add/remove payments, then submit.</td></tr>
+            <tr><td>Pending Supervisor Review</td><td>Batch is waiting for accounting supervisor review.</td><td>Review and approve or return for correction.</td></tr>
+            <tr><td>Reviewed</td><td>Batch is approved for export/processing.</td><td>Mark exported or process.</td></tr>
+            <tr><td>Exported to Bank</td><td>Bank file or payment instruction has been sent.</td><td>Monitor bank status.</td></tr>
+            <tr><td>Processed / Partially Paid / Failed</td><td>Final or exception outcome from payment processing.</td><td>Attach proof, reference, bank used, remarks, or failure reason.</td></tr>
+          </tbody>
+        </table>
+        <figure>
+          <svg class="screen" viewBox="0 0 980 390" role="img" aria-label="Payment batch screen map">
+            <rect width="980" height="390" fill="#f4f7fb"/>
+            <rect x="34" y="34" width="912" height="86" rx="14" fill="#fff" stroke="#d9e1ec"/>
+            <text x="62" y="72" font-family="Segoe UI, Arial" font-size="23" font-weight="700" fill="#152033">Payment Batches</text>
+            <text x="62" y="98" font-family="Segoe UI, Arial" font-size="13" fill="#5d6b82">Select scheduled payments, create a batch, submit for review, export, and mark payment completion.</text>
+            <rect x="34" y="146" width="280" height="190" rx="12" fill="#fff" stroke="#d9e1ec"/>
+            <text x="58" y="182" font-family="Segoe UI, Arial" font-size="16" font-weight="700" fill="#152033">Scheduled Payments</text>
+            <text x="58" y="214" font-family="Segoe UI, Arial" font-size="13" fill="#5d6b82">Filter by vendor, due date, status</text>
+            <text x="58" y="242" font-family="Segoe UI, Arial" font-size="13" fill="#5d6b82">Select payment rows</text>
+            <rect x="350" y="146" width="280" height="190" rx="12" fill="#fff" stroke="#d9e1ec"/>
+            <text x="374" y="182" font-family="Segoe UI, Arial" font-size="16" font-weight="700" fill="#152033">Batch Detail</text>
+            <text x="374" y="214" font-family="Segoe UI, Arial" font-size="13" fill="#5d6b82">Payment count, total amount, status</text>
+            <text x="374" y="242" font-family="Segoe UI, Arial" font-size="13" fill="#5d6b82">Submit, review, return, export</text>
+            <rect x="666" y="146" width="280" height="190" rx="12" fill="#fff" stroke="#d9e1ec"/>
+            <text x="690" y="182" font-family="Segoe UI, Arial" font-size="16" font-weight="700" fill="#152033">Payment Completion</text>
+            <text x="690" y="214" font-family="Segoe UI, Arial" font-size="13" fill="#5d6b82">Paid date, reference, bank used</text>
+            <text x="690" y="242" font-family="Segoe UI, Arial" font-size="13" fill="#5d6b82">Remarks and proof attachment</text>
+          </svg>
+          <figcaption>Figure 6. Payment batch map showing the flow from selected scheduled payments to completion evidence.</figcaption>
+        </figure>
+      </section>
+
+      <section id="reports">
+        <h2>12. Reports and Analytics</h2>
+        <p>Reports help supervisors and accounting users monitor operational performance, payment status, vendor spending, exception rates, SLA bottlenecks, and extraction quality.</p>
+        <div class="grid">
+          <div class="card"><h3>Operational Reports</h3><p>Invoice volume, payment status, vendor spending, exception rates, and KPI metrics.</p></div>
+          <div class="card"><h3>SLA Analytics</h3><p>Cycle time, breaches, bottlenecks, and aging by workflow stage.</p></div>
+          <div class="card"><h3>Extraction Analytics</h3><p>OCR confidence, vendor extraction behavior, error trends, and benchmark results.</p></div>
+          <div class="card"><h3>Audit Reports</h3><p>Exportable audit log records for compliance, investigation, and management review.</p></div>
+        </div>
+      </section>
+
+      <section id="vendors">
+        <h2>13. Vendor Management</h2>
+        <p>Vendor Management stores supplier identity, aliases, bank details, and verification status. Bank updates are sensitive and should be requested and approved through the controlled workflow.</p>
+        <ul>
+          <li>Search for existing vendors before creating a new vendor.</li>
+          <li>Keep aliases up to date so OCR/vendor matching stays accurate.</li>
+          <li>Verify bank details before allowing payment processing.</li>
+          <li>Use bank change requests instead of directly overwriting sensitive fields where approval is required.</li>
+        </ul>
+      </section>
+
+      <section id="audit">
+        <h2>14. Audit Logs</h2>
+        <p>Audit logs preserve the who, what, when, and why of invoice processing. They are especially important for approvals, exceptions, waivers, bank changes, posting, payment completion, and user management.</p>
+        <h3>Common Audit Events</h3>
+        <ul>
+          <li>User login and demo login.</li>
+          <li>Invoice upload, OCR confirmation, field correction, and validation.</li>
+          <li>Approval requested, approved, rejected, or returned.</li>
+          <li>Exception created, resolved, or waived.</li>
+          <li>Bank change requested, approved, or rejected.</li>
+          <li>Payment batch submitted, reviewed, exported, processed, failed, or cancelled.</li>
+        </ul>
+      </section>
+
+      <section id="troubleshooting">
+        <h2>15. Troubleshooting</h2>
+        <table>
+          <thead><tr><th>Issue</th><th>Likely Cause</th><th>What To Do</th></tr></thead>
+          <tbody>
+            <tr><td>Cannot log in</td><td>Wrong password, disabled demo login, API not running, or NextGen authentication issue.</td><td>Confirm credentials, check API health, contact IT if NextGen is unavailable.</td></tr>
+            <tr><td>Upload takes too long</td><td>Large PDF, OCR engine delay, multi-invoice split, or external model timeout.</td><td>Wait for async job, retry with a clean PDF, or contact IT if job remains stuck.</td></tr>
+            <tr><td>Vendor not matched</td><td>Supplier name differs from vendor master or alias is missing.</td><td>Manually assign vendor and ask admin to add alias if needed.</td></tr>
+            <tr><td>MPO not found</td><td>Wrong MPO, NextGen unavailable, or PO missing/deleted.</td><td>Verify MPO in NextGen and rerun check.</td></tr>
+            <tr><td>Cannot approve</td><td>User role is not assigned to the current stage or amount threshold.</td><td>Check the pipeline and ask the proper approver to act.</td></tr>
+            <tr><td>Cannot post or schedule payment</td><td>Missing approval, unresolved exception, hold status, or bank details problem.</td><td>Resolve blockers in detail panel, then retry.</td></tr>
+            <tr><td>No items in a screen</td><td>Role filtering, search filters, or no assigned work.</td><td>Clear filters and confirm your role has access to that queue.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="best-practices">
+        <h2>16. Best Practices</h2>
+        <div class="grid">
+          <div class="card">
+            <h3>For Purchasing</h3>
+            <ul>
+              <li>Review OCR carefully before confirming.</li>
+              <li>Correct vendor, amount, MPO, and bank data early.</li>
+              <li>Use clear rejection or return reasons.</li>
+              <li>Monitor aging and SLA warnings.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>For Accounting</h3>
+            <ul>
+              <li>Confirm approvals and signatures before posting/payment steps.</li>
+              <li>Do not waive exceptions without business justification.</li>
+              <li>Attach payment proof and reference when processing batches.</li>
+              <li>Use audit logs to investigate unusual activity.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>For Supervisors</h3>
+            <ul>
+              <li>Review variance bypasses and waivers regularly.</li>
+              <li>Monitor SLA analytics for bottlenecks.</li>
+              <li>Keep vendor bank verification disciplined.</li>
+              <li>Use reports to coach process improvement.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>For IT/Admin</h3>
+            <ul>
+              <li>Maintain user roles and active status.</li>
+              <li>Confirm API, database, NextGen, and OCR engine health.</li>
+              <li>Preserve audit integrity and avoid direct data edits.</li>
+              <li>Update this manual when workflows change.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section id="appendix">
+        <h2>Appendix: Screen Reference</h2>
+        <table>
+          <thead><tr><th>Screen</th><th>Route</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td>Dashboard</td><td><code>/</code> or <code>/dashboard</code></td><td>Main KPI, task, filter, and invoice detail surface.</td></tr>
+            <tr><td>Upload Invoice</td><td><code>/upload</code></td><td>Manual PDF upload and OCR extraction workflow.</td></tr>
+            <tr><td>Invoice Repository</td><td><code>/repository</code></td><td>Searchable historical invoice store.</td></tr>
+            <tr><td>Approvals</td><td><code>/approvals</code></td><td>Role-specific approval queue.</td></tr>
+            <tr><td>Exceptions</td><td><code>/exceptions</code></td><td>Resolve or waive validation exceptions.</td></tr>
+            <tr><td>On-Hold Queue</td><td><code>/on-hold-queue</code></td><td>Manage held invoices and release conditions.</td></tr>
+            <tr><td>Vendors</td><td><code>/vendors</code></td><td>Vendor master and bank verification controls.</td></tr>
+            <tr><td>Payment Batches</td><td><code>/payment-batches</code></td><td>Payment selection, review, export, processing, and proof.</td></tr>
+            <tr><td>Reports</td><td><code>/reports</code></td><td>Operational and finance reporting.</td></tr>
+            <tr><td>Accounting Review</td><td><code>/accounting-review</code></td><td>Accounting-facing invoice review and posting preparation.</td></tr>
+            <tr><td>Audit Logs</td><td><code>/audit-logs</code></td><td>Compliance and investigation trail.</td></tr>
+            <tr><td>SLA Analytics</td><td><code>/sla-analytics</code></td><td>Cycle times, bottlenecks, and SLA breach analysis.</td></tr>
+            <tr><td>Extraction Analytics</td><td><code>/extraction-analytics</code></td><td>OCR/extraction performance and error analytics.</td></tr>
+            <tr><td>Users</td><td><code>/users</code></td><td>User management for administrators.</td></tr>
+            <tr><td>Settings</td><td><code>/settings</code></td><td>System configuration for administrators.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <p class="footer">Prepared for Madison 88 AP Invoice Automation. This guide was generated from the local application routes, components, README, and existing user manual content in the AP Invoice workspace.</p>
+    </main>
+  </div>
+</body>
+</html>

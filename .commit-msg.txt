@@ -1,0 +1,23 @@
+feat: per-invoice return from payment batch, Ollama OCR integration, PO/MPO extraction fixes
+
+Payment Batch:
+- Add per-invoice return with multiple selection from payment batches
+- Supervisors and associates can return individual invoices for revision
+- Returned invoices reset to PENDING_ACCOUNTING, payments unlinked from batch
+- Batch auto-cancels if all invoices are returned
+- Align accounting associate and supervisor invoice viewing (same visibility)
+
+OCR/Extraction:
+- Switch primary OCR engine to Ollama (qwen2.5:3b-instruct) with fallbacks
+- Fix invoice_type enum mapping (INV -> INVOICE, PI -> PROFORMA, etc.)
+- Prefer AI-first values over Madison regex during re-extraction
+- Improve PO/MPO extraction prompts and parsing logic
+- Add raw_file_url as Supabase storage fallback for PDF download
+
+Approvals:
+- Remove auto-signing based on OCR-detected signatures
+- Prevent defaulting unknown signers to COORDINATOR role
+
+Generated with [Devin](https://devin.ai)
+
+Co-Authored-By: Devin <158243242+devin-ai-integration[bot]@users.noreply.github.com>

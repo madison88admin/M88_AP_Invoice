@@ -1,0 +1,14 @@
+[Unit]
+Description=RapidOCR Python Microservice
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/ap-invoice/apps/ocr-service
+ExecStart=/usr/bin/python3 /opt/ap-invoice/apps/ocr-service/main.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

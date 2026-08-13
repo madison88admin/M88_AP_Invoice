@@ -1,0 +1,279 @@
+[
+  {
+    "name": "Bo Hing_Inv_1609160_HT&DRT.pdf",
+    "size": 423312,
+    "tests": {
+      "documentOCR": {
+        "success": true,
+        "elapsed_ms": 2437,
+        "text_length": 1378,
+        "confidence": "N/A",
+        "pages": 1,
+        "text_preview": "Bill To: MADISON 88 LTD B151792 Account No. : 2433 Curtis Street, 2 floor, Denver, CO 1609160 Invoice No. : 80205, United States 24 / 07 / 2026 Date : 1 of 1 Page : Tel : 843-816-3860 Fax : 843-816-3860 Payment Terms : Attn : Mary / Earl Mobile : LING Salesman : 訂訂訂訂訂訂訂訂訂訂訂訂訂 訂 貨貨貨貨貨訂訂訂訂訂訂訂訂 貨 貨貨貨貨貨貨貨貨貨貨貨貨貨 貨 數數數數數 數 訂單單單單 訂 金 金 額額額額 訂 訂 貨 貨 貨 貨 數 數 訂 訂 金 金 Customer PO Item No. Description Quantity Unit Price Amount USD USD HAL BBCAPS- W5037 Halfdays Small Hangtag 3,000Pcs 0.2240 672.00 MPO15868"
+      },
+      "documentParse": {
+        "success": true,
+        "elapsed_ms": 4261,
+        "text_length": 1881,
+        "text_preview": "![image](/image/placeholder)\n\n寶興商標實業有限公司\nBO HING LABEL INDUSTRIES CO. LTD.\n正本 Original\nTel : (852) 2419 2918\nFax : (852) 2419 9106\nE-mail : bh@bohinglabel.com.hk\n香港新界葵涌葵豊街 18-26 號永康工業大厦 14楼L室\nFLATL, 14/F., WING HONG INDUSTRIAL BUILDING, 18-26 KWAI FUNG CRESCENT, KWAI CHUNG, N.T., H.K.\nAccount No. :\nInvoice No. :\nDate :\nPage :\nPayment Terms :\nSalesman :\nB151792\n1609160\n24 / 07 / 2026\n1 of 1\nLING\n發 票 Invoice\nBill To: MADISON 88 LTD\n2433 Curtis Street, 2 floor, Denver, CO\n80205, United States\n| Tel",
+        "raw_keys": [
+          "api",
+          "content",
+          "elements",
+          "model",
+          "ocr",
+          "usage"
+        ]
+      },
+      "informationExtraction": {
+        "success": true,
+        "elapsed_ms": 7261,
+        "fields_extracted": [
+          "vendor_name",
+          "invoice_number",
+          "invoice_date",
+          "due_date",
+          "payment_terms",
+          "total_amount",
+          "currency",
+          "po_number",
+          "mpo_number",
+          "brand",
+          "season",
+          "sold_to",
+          "qty_shipped",
+          "document_type",
+          "beneficiary_name",
+          "bank_name",
+          "swift_code",
+          "account_number",
+          "subtotal",
+          "bank_charges",
+          "line_items",
+          "signatures"
+        ],
+        "field_count": 22,
+        "extracted": {
+          "vendor_name": "BO HING LABEL INDUSTRIES CO. LTD.",
+          "invoice_number": "1609160",
+          "invoice_date": "2026-07-24",
+          "due_date": "2026-08-04",
+          "payment_terms": "T/T",
+          "total_amount": "1441.20",
+          "currency": "USD",
+          "po_number": "HAL",
+          "mpo_number": "MPO15868",
+          "brand": "Halfdays",
+          "brand_code": "",
+          "season": "SS27",
+          "ship_to": "",
+          "sold_to": "MADISON 88 LTD, 2433 Curtis Street, 2 floor, Denver, CO 80205, United States",
+          "qty_shipped": "9800",
+          "document_type": "INVOICE",
+          "beneficiary_name": "BO HING LABEL INDUSTRIES CO. LTD.",
+          "bank_name": "STANDARD CHARTERED BANK HK LTD.",
+          "swift_code": "SCBLHKHHXXX",
+          "account_number": "329 0 029493 4",
+          "subtotal": "1411.20",
+          "bank_charges": "30.00",
+          "tt_charge": "",
+          "freight_charges": "",
+          "courier_charges": "",
+          "handling_fee": "",
+          "finance_surcharge": "",
+          "tax_amount": "",
+          "discount_amount": "",
+          "incoterm": "",
+          "exchange_rate": "",
+          "is_handwritten": "",
+          "is_statement": "",
+          "line_items": [
+            {
+              "description": "Halfdays Small Hangtag",
+              "quantity": "3000",
+              "unit_price": "0.2240",
+              "total_amount": "672.00",
+              "item_code": "BBCAPS- W5037",
+              "size": "",
+              "mpo_number": "",
+              "po_number": ""
+            },
+            {
+              "description": "Halfdays Small Hangtag",
+              "quantity": "1200",
+              "unit_price": "0.2240",
+              "total_amount": "268.80",
+              "item_code": "W5038",
+              "size": "",
+              "mpo_number": "MPO15868",
+              "po_number": ""
+            },
+            {
+              "description": "Halfdays Small Hangtag",
+              "quantity": "700",
+              "unit_price": "0.2240",
+              "total_amount": "156.80",
+              "item_code": "W5050",
+              "size": "SS27",
+              "mpo_number": "",
+              "po_number": "Halfdays"
+            },
+            {
+              "description": "'DO NOT REMOVE' Tag",
+              "quantity": "4900",
+              "unit_price": "0.0640",
+              "total_amount": "313.60",
+              "item_code": "",
+              "size": "",
+              "mpo_number": "",
+              "po_number": ""
+            },
+            {
+              "description": "Bank Charges",
+              "quantity": "1",
+              "unit_price": "30.0000",
+              "total_amount": "30.00",
+              "item_code": "",
+              "size": "",
+              "mpo_number": "",
+              "po_number": ""
+            }
+          ],
+          "signatures": [
+            {
+              "signatory_name": "Earl Reburiano",
+              "signatory_role": "",
+              "signed_date": "2026-07-28"
+            }
+          ]
+        },
+        "usage": {
+          "prompt_tokens": 7198,
+          "completion_tokens": 568,
+          "total_tokens": 7766
+        }
+      }
+    }
+  },
+  {
+    "name": "test_invoice.pdf",
+    "size": 430386,
+    "tests": {
+      "documentOCR": {
+        "success": true,
+        "elapsed_ms": 1931,
+        "text_length": 3671,
+        "confidence": "N/A",
+        "pages": 3,
+        "text_preview": "✓ n voice ID:6909D214616 Page 1 of 1 1111111111111111111111111111111 Ill PT SML Indonesia Private Kawasan lndustri Candi Tahap V Blok C-7 No. 5A-6A, Desa/Kelurahan Ngaliyan, Kee. Ngaliyan Kota Semarang, Prov. Jawa Tengah, INDONESIA OS-ID ION ION Telephone: Fax: Website: Invoi ce date:6/23/2026 INVOICE RECEIVED: 06/23/2026 Ship to: PT UWU JUMP INDONESIA Customer name: Madison88, Ltd.(USA200008) Customer address: 2433 Curtis Street, 2 Floor, KP JATIRAWING RT 013 RW 006, Ship to address: DESA CO 80"
+      },
+      "documentParse": {
+        "success": true,
+        "elapsed_ms": 4595,
+        "text_length": 4914,
+        "text_preview": "Invoice ID:6909D214616\nPage 1 of 1\nPT SML Indonesia Private\nKawasan Industri Candi Tahap V Blok C-7 No. 5A-6A, Desa/Kelurahan\nNgaliyan, Kec. Ngaliyan Kota Semarang, Prov. Jawa Tengah,\nINDONESIA OS-ID IDN IDN\nSML\n| Telephone: | Fax: | Website: |\n| --- | --- | --- |\n\n| INVOICE | Invoice date:6/23/2026 |\n| --- | --- |\n|  | RECEIVED: 06/23/2026 |\n\n| <table><thead></thead><tbody><tr><td>Customer name: Madison88, Ltd.(USA200008) Customer address: 2433 Curtis Street, 2 Floor, CD 80205 Denver USA Contac",
+        "raw_keys": [
+          "api",
+          "content",
+          "elements",
+          "model",
+          "ocr",
+          "usage"
+        ]
+      },
+      "informationExtraction": {
+        "success": true,
+        "elapsed_ms": 7184,
+        "fields_extracted": [
+          "vendor_name",
+          "invoice_number",
+          "invoice_date",
+          "due_date",
+          "payment_terms",
+          "total_amount",
+          "currency",
+          "po_number",
+          "mpo_number",
+          "brand",
+          "ship_to",
+          "sold_to",
+          "qty_shipped",
+          "document_type",
+          "beneficiary_name",
+          "bank_name",
+          "account_number",
+          "subtotal",
+          "discount_amount",
+          "is_handwritten",
+          "line_items",
+          "signatures"
+        ],
+        "field_count": 22,
+        "extracted": {
+          "vendor_name": "PT SML Indonesia Private",
+          "invoice_number": "6909D214616, 6906D122157",
+          "invoice_date": "2026-06-23, 2026-06-17",
+          "due_date": "2026-07-17",
+          "payment_terms": "NET 30 DAYS",
+          "total_amount": "8.69",
+          "currency": "USD",
+          "po_number": "PO2978",
+          "mpo_number": "MPO15569",
+          "brand": "Travis Mathew",
+          "brand_code": "",
+          "season": "",
+          "ship_to": "PT UWU JUMP INDONESIA, KP JATIRAWING RT 013 RW 006, DESA GUNUNGSARI, KEC. PAGADEN, KAB. SUBANG, JAWA BARAT 41252 INDONESIA OS-ID IDN IDN",
+          "sold_to": "Madison88, Ltd.(USA200008), 2433 Curtis Street, 2 Floor, CO 80205 Denver USA",
+          "qty_shipped": "790",
+          "document_type": "INVOICE, PROFORMA",
+          "beneficiary_name": "PT.SML INDONESIA PRIVATE",
+          "bank_name": "HSBC INDONESIA",
+          "swift_code": "",
+          "account_number": "050-063767-007",
+          "subtotal": "8.69",
+          "bank_charges": "",
+          "tt_charge": "",
+          "freight_charges": "",
+          "courier_charges": "",
+          "handling_fee": "",
+          "finance_surcharge": "",
+          "tax_amount": "",
+          "discount_amount": "0.00",
+          "incoterm": "",
+          "exchange_rate": "",
+          "is_handwritten": "true",
+          "is_statement": "",
+          "line_items": [
+            {
+              "description": "Travis Mathew MENS / Womens non-RFID Polybag Sticker (TRTRHKV002#001) BLACK",
+              "quantity": "790.0000",
+              "unit_price": "0.011000",
+              "total_amount": "8.69",
+              "item_code": "TRTRHKV002#001",
+              "size": "OS",
+              "mpo_number": "MPO15569",
+              "po_number": "PO2978"
+            }
+          ],
+          "signatures": [
+            {
+              "signatory_name": "Maricar Tanaleon",
+              "signatory_role": "AUTHORIZED SIGNATURE",
+              "signed_date": "2026-07-22"
+            },
+            {
+              "signatory_name": "Mary Joy Yco",
+              "signatory_role": "RECEIVED AND ACCEPTED BY",
+              "signed_date": "2026-07-22"
+            }
+          ]
+        },
+        "usage": {
+          "prompt_tokens": 11053,
+          "completion_tokens": 508,
+          "total_tokens": 11561
+        }
+      }
+    }
+  }
+]

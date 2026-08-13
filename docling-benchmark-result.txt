@@ -1,0 +1,798 @@
+expected kernel version 6.8.0-137-generic.
+
+Restarting the system to load the new kernel will not be handled automatically, 
+so you should consider rebooting.
+
+=== Verify libGL ===
+	libGLdispatch.so.0 (libc6,x86-64) => /lib/x86_64-linux-gnu/libGLdispatch.so.0
+	libGLX_mesa.so.0 (libc6,x86-64) => /lib/x86_64-linux-gnu/libGLX_mesa.so.0
+	libGLX.so.0 (libc6,x86-64) => /lib/x86_64-linux-gnu/libGLX.so.0
+	libGL.so.1 (libc6,x86-64) => /lib/x86_64-linux-gnu/libGL.so.1
+=== Re-run Docling test ===
+[32m[INFO] 2026-08-11 07:01:19,230 [RapidOCR] base.py:23: Using engine_name: onnxruntime[0m
+[32m[INFO] 2026-08-11 07:01:19,238 [RapidOCR] download_file.py:60: File exists and is valid: /usr/local/lib/python3.12/dist-packages/rapidocr/models/PP-OCRv6_det_small.onnx[0m
+[32m[INFO] 2026-08-11 07:01:19,238 [RapidOCR] main.py:63: Using /usr/local/lib/python3.12/dist-packages/rapidocr/models/PP-OCRv6_det_small.onnx[0m
+[32m[INFO] 2026-08-11 07:01:19,295 [RapidOCR] base.py:23: Using engine_name: onnxruntime[0m
+[32m[INFO] 2026-08-11 07:01:19,296 [RapidOCR] download_file.py:60: File exists and is valid: /usr/local/lib/python3.12/dist-packages/rapidocr/models/ch_ppocr_mobile_v2.0_cls_mobile.onnx[0m
+[32m[INFO] 2026-08-11 07:01:19,296 [RapidOCR] main.py:63: Using /usr/local/lib/python3.12/dist-packages/rapidocr/models/ch_ppocr_mobile_v2.0_cls_mobile.onnx[0m
+[32m[INFO] 2026-08-11 07:01:19,330 [RapidOCR] base.py:23: Using engine_name: onnxruntime[0m
+[32m[INFO] 2026-08-11 07:01:19,346 [RapidOCR] download_file.py:60: File exists and is valid: /usr/local/lib/python3.12/dist-packages/rapidocr/models/PP-OCRv6_rec_small.onnx[0m
+[32m[INFO] 2026-08-11 07:01:19,346 [RapidOCR] main.py:63: Using /usr/local/lib/python3.12/dist-packages/rapidocr/models/PP-OCRv6_rec_small.onnx[0m
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+=== DOCLING BENCHMARK ===
+
+========== Bo Hing_Inv_1609160_HT&DRT.pdf ==========
+File size: 423312 bytes
+Running Docling...
+Loading weights:   0%|          | 0/770 [00:00<?, ?it/s]Loading weights:  36%|███▌      | 279/770 [00:00<00:00, 2744.22it/s]Loading weights:  75%|███████▌  | 578/770 [00:00<00:00, 2887.25it/s]Loading weights: 100%|██████████| 770/770 [00:00<00:00, 3279.79it/s]
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0] Graph break from `Tensor.item()`, consider setting:
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]     torch._dynamo.config.capture_scalar_outputs = True
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0] or:
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]     env TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0] to include these operations in the captured graph.
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0] 
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0] Graph break: from user code at:
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]   File "/usr/local/lib/python3.12/dist-packages/transformers/utils/generic.py", line 939, in wrapper
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]     output = func(self, *args, **kwargs)
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]   File "/usr/local/lib/python3.12/dist-packages/transformers/models/rt_detr_v2/modeling_rt_detr_v2.py", line 1864, in forward
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]     outputs = self.model(
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]               ^^^^^^^^^^^
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]   File "/usr/local/lib/python3.12/dist-packages/transformers/utils/generic.py", line 939, in wrapper
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]     output = func(self, *args, **kwargs)
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]   File "/usr/local/lib/python3.12/dist-packages/transformers/models/rt_detr_v2/modeling_rt_detr_v2.py", line 1626, in forward
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]     decoder_outputs = self.decoder(
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]                       ^^^^^^^^^^^^^
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]   File "/usr/local/lib/python3.12/dist-packages/transformers/utils/generic.py", line 1068, in wrapper
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]     output = func(self, *args, **kwargs)
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]   File "/usr/local/lib/python3.12/dist-packages/transformers/utils/output_capturing.py", line 262, in wrapper
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]     outputs = func(self, *args, **kwargs)
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]   File "/usr/local/lib/python3.12/dist-packages/transformers/models/rt_detr_v2/modeling_rt_detr_v2.py", line 623, in forward
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]     hidden_states = decoder_layer(
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]                     ^^^^^^^^^^^^^^
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]   File "/usr/local/lib/python3.12/dist-packages/transformers/models/rt_detr_v2/modeling_rt_detr_v2.py", line 409, in forward
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]     hidden_states, _ = self.encoder_attn(
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]                        ^^^^^^^^^^^^^^^^^^
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]   File "/usr/local/lib/python3.12/dist-packages/transformers/models/rt_detr_v2/modeling_rt_detr_v2.py", line 185, in forward
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]     torch_compilable_check(
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]   File "/usr/local/lib/python3.12/dist-packages/transformers/utils/import_utils.py", line 1832, in torch_compilable_check
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0]     torch._check_tensor_all(cond)
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0] 
+W0811 07:01:27.196000 147257 torch/_dynamo/variables/tensor.py:1759] [0/0] 
+Docling elapsed: 78.21s
+Text length: 1180 chars
+Page count: 1
+
+--- Extracted text (first 1000 chars) ---
+<!-- image -->
+
+## 正本 Original
+
+Tel:(852)24192918
+
+Fax: (852)2419 9106
+
+E-mail : bh@bohinglabel.com.hk
+
+香港新界葵涌葵豐街18-26號永康工業大廈14樓L室
+
+FLAT L, 14/F., WING HONG INDUSTRIAL BUILDING, 18-26 KWAI FUNG CRESCENT, KWAI CHUNG, N.T., H.K.
+
+## 發票 Invoice
+
+Account No. : Account No. :
+
+B151792
+
+Invoice No. :
+
+1609160
+
+Date :
+
+24 / 07 / 2026
+
+Page :
+
+1 of 1
+
+Payment Terms :
+
+Salesman :
+
+Bill To:
+
+MADISON 88 LTD
+
+2433 Curtis Street, 2 floor, Denver, CO
+
+80205, United States
+
+Tel :
+
+843-816-3860
+
+Fax :
+
+843-816-3860
+
+Attn :
+
+Mary / Earl
+
+Mobile :
+
+LING 訂單
+
+金
+
+額
+
+Total USD
+
+1,441.20
+
+<!-- image -->
+
+訂訂訂訂
+
+## Delivery Address :
+
+## Remarks :
+
+Country of Origin: HK     HS code for Hangtag/Sticker: 48211000    HS Code for Label: 58071000
+
+Payment: T/T to our A/C 329 0 029493 4 - STANDARD CHARTERED BANK HK LTD.    Swift Code: SCBLHKHHXXX
+
+Bank Address: Shop No.473B, Level 4, Metroplaza, Kwai Fong, 223 Hing Fong Rd, Kwai Chung, NT, HK    Bank Code: 003
+
+Accepted by
+
+\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\
+
+--- Full text ---
+<!-- image -->
+
+## 正本 Original
+
+Tel:(852)24192918
+
+Fax: (852)2419 9106
+
+E-mail : bh@bohinglabel.com.hk
+
+香港新界葵涌葵豐街18-26號永康工業大廈14樓L室
+
+FLAT L, 14/F., WING HONG INDUSTRIAL BUILDING, 18-26 KWAI FUNG CRESCENT, KWAI CHUNG, N.T., H.K.
+
+## 發票 Invoice
+
+Account No. : Account No. :
+
+B151792
+
+Invoice No. :
+
+1609160
+
+Date :
+
+24 / 07 / 2026
+
+Page :
+
+1 of 1
+
+Payment Terms :
+
+Salesman :
+
+Bill To:
+
+MADISON 88 LTD
+
+2433 Curtis Street, 2 floor, Denver, CO
+
+80205, United States
+
+Tel :
+
+843-816-3860
+
+Fax :
+
+843-816-3860
+
+Attn :
+
+Mary / Earl
+
+Mobile :
+
+LING 訂單
+
+金
+
+額
+
+Total USD
+
+1,441.20
+
+<!-- image -->
+
+訂訂訂訂
+
+## Delivery Address :
+
+## Remarks :
+
+Country of Origin: HK     HS code for Hangtag/Sticker: 48211000    HS Code for Label: 58071000
+
+Payment: T/T to our A/C 329 0 029493 4 - STANDARD CHARTERED BANK HK LTD.    Swift Code: SCBLHKHHXXX
+
+Bank Address: Shop No.473B, Level 4, Metroplaza, Kwai Fong, 223 Hing Fong Rd, Kwai Chung, NT, HK    Bank Code: 003
+
+Accepted by
+
+\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_
+
+For and on behalf of
+
+BO HING LABEL INDUSTRIES CO. LTD.
+
+<!-- image -->
+
+\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_
+
+Authorized Signature
+
+貨貨貨貨
+
+貨貨訂訂
+
+數數
+
+============================================
+
+
+========== test_invoice.pdf ==========
+File size: 430386 bytes
+Running Docling...
+Docling elapsed: 89.25s
+Text length: 3428 chars
+Page count: 3
+
+--- Extracted text (first 1000 chars) ---
+✓
+
+11 1111 11111111 1 11111111 11111 111
+
+<!-- image -->
+
+Ill
+
+## PT SML Indonesia Private
+
+Kawasan lndustri Candi Tahap V Blok C-7 No. 5A-6A, Desa/Kelurahan Ngaliyan,  Kee. Ngaliyan Kota Semarang, Prov. Jawa Tengah, INDONESIA OS-ID ION ION
+
+<!-- image -->
+
+Telephone:
+
+Fax:
+
+Website:
+
+## INVOICE
+
+RECEIVED: 06/23/2026 Invoi ce  date:6/23/2026
+
+Ship to: PT UWU JUMP INDONESIA
+
+Customer name:
+
+Madison88, Ltd.(USA200008)
+
+Customer address:
+
+2433 Curtis Street, 2 Floor, CO 80205 Denver USA
+
+Ship to address:
+
+KP JATIRAWING RT 013 RW 006, DESA GUNUNGSARI, KEG. PAGADEN, KAB. SUBANG, JAWA BARAT 41252 INDONESIA OS-ID ION ION
+
+Contact person:
+
+TEL:
+
+SALES/COORD:
+
+(IDAJ0001) AdiJuliardi /pavitasoeharto
+
+Cust Coard:
+
+pavitasoeharto
+
+CONTRACT NO:
+
+TM PO2978 MPO15569 REORDER
+
+Carton:
+
+6907D962855
+
+Consignee:
+
+LAILOU, KHELL  Y
+
+TEL:
+
+'+62 0260-7609110
+
+Driver Id:
+
+Forwarder:
+
+BESTINDO
+
+Airway Bill Number:
+
+3281747518
+
+Customer receipt
+
+Monday to Friday
+
+day:
+
+Method of payment:
+
+Delivery terms:
+
+TOTAL 
+
+--- Full text ---
+✓
+
+11 1111 11111111 1 11111111 11111 111
+
+<!-- image -->
+
+Ill
+
+## PT SML Indonesia Private
+
+Kawasan lndustri Candi Tahap V Blok C-7 No. 5A-6A, Desa/Kelurahan Ngaliyan,  Kee. Ngaliyan Kota Semarang, Prov. Jawa Tengah, INDONESIA OS-ID ION ION
+
+<!-- image -->
+
+Telephone:
+
+Fax:
+
+Website:
+
+## INVOICE
+
+RECEIVED: 06/23/2026 Invoi ce  date:6/23/2026
+
+Ship to: PT UWU JUMP INDONESIA
+
+Customer name:
+
+Madison88, Ltd.(USA200008)
+
+Customer address:
+
+2433 Curtis Street, 2 Floor, CO 80205 Denver USA
+
+Ship to address:
+
+KP JATIRAWING RT 013 RW 006, DESA GUNUNGSARI, KEG. PAGADEN, KAB. SUBANG, JAWA BARAT 41252 INDONESIA OS-ID ION ION
+
+Contact person:
+
+TEL:
+
+SALES/COORD:
+
+(IDAJ0001) AdiJuliardi /pavitasoeharto
+
+Cust Coard:
+
+pavitasoeharto
+
+CONTRACT NO:
+
+TM PO2978 MPO15569 REORDER
+
+Carton:
+
+6907D962855
+
+Consignee:
+
+LAILOU, KHELL  Y
+
+TEL:
+
+'+62 0260-7609110
+
+Driver Id:
+
+Forwarder:
+
+BESTINDO
+
+Airway Bill Number:
+
+3281747518
+
+Customer receipt
+
+Monday to Friday
+
+day:
+
+Method of payment:
+
+Delivery terms:
+
+TOTAL CARTON:
+
+TTL WT(KGS):
+
+0.32
+
+NT(KGS): 0.31
+
+Customer Invoice Remark:
+
+<!-- image -->
+
+REORDERED DUE TO LATE COLOR UPDATE
+
+TOTAL:  (USO)  Eight and  Sixty Nine  CENTS Only
+
+RECEIVED AND ACCEPTED BY
+
+Madison88,  Ltd.(USA200008)
+
+FOR &amp; ON BEHALF OF PT SML Indonesia Private
+
+Please include in other incoming invoices below USD 100.00
+
+<!-- image -->
+
+<!-- image -->
+
+## PT SML Indonesia Private
+
+Kawasan Industri Candi Tahap V Blok C-7 No. 5A-6A, Desa/Kelurahan Ngaliyan, Kec. Ngaliyan Kota Semarang, Prov. Jawa Tengah, INDONESIA
+
+OS-ID
+
+IDN
+
+IDN
+
+Phone:
+
+Fax number:
+
+Website:
+
+<!-- image -->
+
+<!-- image -->
+
+Proforma Invoice No.:
+
+6906D122157
+
+Proforma Invoice Date:
+
+6/17/2026
+
+ISO Num:
+
+6/17/2026
+
+4:38 PM
+
+VAT Num:
+
+Customer name:
+
+Bill-to:
+
+Contact person:
+
+Contact Telephone
+
+Cont No:
+
+Delivery name:
+
+Delivery Address:
+
+KP JATIRAWING RT 013 RW 006, DESA GUNUNGSARI, KEC. PAGADEN, KAB. SUBANG, JAWA BARAT 41252 INDONESIA OS-ID IDN
+
+PT UWU JUMP INDONESIA
+
+SALESMAN/CSR::
+
+Coord:
+
+(USA200008)Madison88, Ltd.
+
+2433 Curtis Street, 2 Floor,
+
+CO 80205 Denver USA
+
+USA
+
+USA
+
+USA
+
+JOY YCO
+
+TM PO2978 MPO15569 REORDER
+
+AdiJuliardi(IDAJ0001)
+
+(pavitasoeharto)pavitasoeharto
+
+LAILOU, KHELLY
+
+Contact person:
+
+Contact Telephone
+
+'+62 0260-7609110
+
+Mode of delivery:
+
+WAIT
+
+Delivery terms:
+
+Terms of payment:
+
+NET 30 DAYS
+
+## Description
+
+Sales order:6900D820434
+
+## CUSTOMER PO:TM PO2978 MPO15569 REORDER
+
+Sticker
+
+Travis Mathew MENS / Womens non-RFID Polybag Sticker (Travis Mathew MENS / Womens non-RFID Pol) (TRTRHKV002 #001 BLACK) Travis Mathew MENS / Womens non-RFID Polybag Sticker
+
+LOT\SIZE
+
+A
+
+Var Size
+
+OS
+
+TotalAmount:USD Eight and  Sixty Nine CENTS
+
+Sales order:
+
+6900D820434
+
+ePlatform Sales Order:
+
+EPTRMY130956557
+
+## Quantity Units
+
+790.00 PCS
+
+Sell Price(USD)
+
+0.011000
+
+Quantity Units
+
+790.00 PCS
+
+Quantity:
+
+790.00
+
+Sales subtotal amount:
+
+8.69
+
+Total discount:
+
+0.00
+
+Invoice amount:
+
+8.69
+
+Amount(USD)
+
+8.690000
+
+790
+
+<!-- image -->
+
+Remarks: 1.PAYMENT TERM : NET 30 DAYS
+
+2. PLEASE CONFIRM THE AMOUNT,QUANTITY AND THE GOODS DELIVERED IN GOOD ORDER AND CONDITION WITHIN 7 DAYS. OTHERWISE,NO CLAIM WILL BE ENTERTAINED.
+
+3. PLEASE ADVISE INVOICE NUMBER TOGETHER WITH YOUR PAYMENT.
+
+BANK         : HSBC INDONESIA ADDRESS  : WTC, JL. JEND. SUDIRMAN KAV 29-31, JAKARTA SELATAN 12920 A/C NAME : PT.SML INDONESIA PRIVATE
+
+A/C NO.    : 050-063767-007 (USD currency) : 050-063767-001 (IDR currency)
+
+Sales order remarks:
+
+============================================
+
+
+
+=== RAPIDOCR BENCHMARK ===
+
+========== RapidOCR: Bo Hing_Inv_1609160_HT&DRT.pdf ==========
+Converting PDF to images...
+Converted to 1 images in 0.32s
+Page 1: 1619 chars, confidence: 0.97
+
+RapidOCR total elapsed: 5.28s
+Text length: 1619 chars
+Average confidence: 0.97
+
+--- Extracted text (first 1000 chars) ---
+寶兴商標實業有限公司
+正本Original
+BOHINGLABELINDUSTRIESCO.LTD.
+Tel:(852) 2419 2918
+Fax:(852) 2419 9106
+E-mail:bh@bohinglabel.com.hk
+香港新界葵涌葵豐街18-26号永康工業大厦14楼L室
+FLATL,14/F.,WINGHONGINDUSTRIALBUILDING,18-26KWAIFUNGCRESCENT,KWAICHUNG,N.T.,H.K.
+發票
+Invoice
+Bill To:
+MADISON88LTD
+Account No. :
+B151792
+2433 Curtis Street,2floor,Denver,CO
+Invoice No. :
+1609160
+80205,United States
+Date :
+24/07/2026
+Page :
+1 of 1
+Tel :
+843-816-3860
+Fax:
+843-816-3860
+Payment Terms :
+Attn :
+Mary / Earl
+Mobile :
+Salesman :
+LING
+訂單编號
+货品编號
+貨品内容
+數量
+單價
+金额
+Customer PO
+Item No.
+Description
+Quantity
+Unit Price
+Amount
+USD
+USD
+HAL BBCAPS-
+W5037 Halfdays SmallHangtag
+3,000PcS
+0.2240
+672.00√
+MPO15868
+W5038HalfdaysSmallHangtag
+1,200Pcs
+0.2240√
+268.80√
+Halfdays SS27
+W5050HalfdaysSmallHangtag
+700PcS/
+0.2240√
+156.80√
+"DONOTREMOVE"Tag√
+4,900Pcs
+0.0640√
+313.60
+Bank Charges
+1JOB
+30.0000
+30.00
+(REVISED)
+ETD: Mid August
+Please Pay on or before Aug 4, 2026
+Received Date:July 24,2026
+Endorse Date:J uly 28, 2026
+Received above goods,please check it, i
+
+============================================
+
+
+========== RapidOCR: test_invoice.pdf ==========
+Converting PDF to images...
+Converted to 3 images in 0.47s
+Page 1: 1645 chars, confidence: 0.98
+Page 2: 1452 chars, confidence: 0.98
+Page 3: 260 chars, confidence: 0.98
+
+RapidOCR total elapsed: 9.45s
+Text length: 3361 chars
+Average confidence: 0.98
+
+--- Extracted text (first 1000 chars) ---
+InvoiceID:6909D214616
+Page 1 of 1
+PT SML Indonesia Private
+SML
+KawasanIndustriCandiTahapVBlokC-7No.5A-6A,Desa/Kelurahan
+Ngaliyan,Kec. Ngaliyan Kota Semarang,Prov. Jawa Tengah,
+INDONESIAOS-IDIDNIDN
+Telephone:
+Fax:
+Website:
+INVOICE
+Invoicedate:6/23/2026
+RECEIVED:06/23/2026
+Customer name: Madison88,Ltd.(USA200008)
+Ship to: PT UWU JUMP INDONESIA
+Customer address:2433Curtis Street,2Floor,
+Ship to addreSs:KPJATIRAWINGRT013RW006,DESA
+CD80205DenverUSA
+GUNUNGSARI,KEC.PAGADEN,KAB.SUBANG,
+Contact person:
+JAWABARAT41252INDONESIAOS-IDIDNIDN
+Consignee: LAILOU,KHELLY
+TEL:
+TEL:'+62 0260-7609110
+SALES/COoRD:(IDAJoo01)AdiJuliardi/pavitasoeharto
+Driver Id:
+Cust Coord:pavitasoeharto
+Forwarder:BESTINDO
+CONTRACTNO:TMPO2978MPO15569REORDER
+AirwayBill Number:3281747518
+Customerreceipt Monday to Friday
+Carton:6907D962855
+:Aep
+Method of payment:
+Delivery terms:
+Item
+Customs No
+Quantity
+Price(USD)
+Discount Amount(USD)
+description
+TravisMathewMENS/Womensnon-RFIDPol TravisMathewMENS/Womensnon-RFIDPolybagSticker(TRT
+
+============================================
+
+
+=== ALL DONE ===

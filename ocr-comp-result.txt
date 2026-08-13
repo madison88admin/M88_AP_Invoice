@@ -1,0 +1,15 @@
+=== OCR COMPARISON TEST ===
+
+Token obtained: ...
+
+=== TEST 1: Bo Hing_Inv_1609160_HT&DRT.pdf ===
+File size: 423312 bytes
+{"error":{"message":"Authentication failed","status":401}}
+Elapsed: 21ms
+
+=== TEST 2: test_invoice.pdf ===
+File size: 430386 bytes
+{"error":{"message":"Authentication failed","status":401}}
+Elapsed: 21ms
+
+=== DONE ===

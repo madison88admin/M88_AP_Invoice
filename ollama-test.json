@@ -1,0 +1,5 @@
+{
+  "model": "qwen3:4b",
+  "prompt": "Say hello in one word",
+  "stream": false
+}

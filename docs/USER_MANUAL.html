@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AP Invoice Automation System - User Manual</title>
+<style>
+  :root {
+    --bg: #0D0D0F;
+    --bg-card: #151518;
+    --bg-elevated: #1a1a22;
+    --text: #E8E8ED;
+    --text-muted: #8888A0;
+    --accent: #6C5CE7;
+    --accent-lime: #C6FF3D;
+    --accent-red: #FF5C5C;
+    --accent-amber: #FFB84D;
+    --border: #2a2a35;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    padding: 0;
+  }
+  .cover {
+    background: linear-gradient(135deg, #0D0D0F 0%, #151518 50%, #1a1a22 100%);
+    padding: 80px 40px;
+    text-align: center;
+    border-bottom: 3px solid var(--accent);
+  }
+  .cover h1 {
+    font-size: 2.8rem;
+    background: linear-gradient(135deg, var(--accent), var(--accent-lime));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 10px;
+  }
+  .cover h2 { color: var(--text-muted); font-weight: 400; font-size: 1.3rem; }
+  .cover .meta { margin-top: 30px; color: var(--text-muted); font-size: 0.9rem; }
+  .container { max-width: 900px; margin: 0 auto; padding: 40px 30px; }
+  h2 {
+    color: var(--accent);
+    font-size: 1.6rem;
+    margin-top: 50px;
+    margin-bottom: 15px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  h3 {
+    color: var(--accent-lime);
+    font-size: 1.2rem;
+    margin-top: 30px;
+    margin-bottom: 10px;
+  }
+  h4 { color: var(--text); font-size: 1rem; margin-top: 20px; margin-bottom: 8px; }
+  p { margin-bottom: 12px; color: var(--text); }
+  ul, ol { margin-left: 25px; margin-bottom: 15px; }
+  li { margin-bottom: 6px; color: var(--text); }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 15px 0;
+    font-size: 0.9rem;
+  }
+  th {
+    background: var(--bg-elevated);
+    color: var(--accent-lime);
+    padding: 10px 12px;
+    text-align: left;
+    border: 1px solid var(--border);
+    font-weight: 600;
+  }
+  td {
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+  tr:nth-child(even) td { background: var(--bg-card); }
+  .screenshot-placeholder {
+    background: var(--bg-elevated);
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 60px 20px;
+    text-align: center;
+    margin: 20px 0;
+    color: var(--text-muted);
+  }
+  .screenshot-placeholder .icon { font-size: 2rem; margin-bottom: 10px; }
+  .screenshot-placeholder .label { font-size: 0.9rem; }
+  .note {
+    background: color-mix(in srgb, var(--accent-amber) 10%, transparent);
+    border-left: 3px solid var(--accent-amber);
+    padding: 12px 16px;
+    border-radius: 8px;
+    margin: 15px 0;
+    font-size: 0.9rem;
+  }
+  .note strong { color: var(--accent-amber); }
+  .code-block {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 15px;
+    font-family: 'Consolas', monospace;
+    font-size: 0.85rem;
+    overflow-x: auto;
+    margin: 15px 0;
+    color: var(--accent-lime);
+  }
+  .toc {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 25px 30px;
+    margin: 30px 0;
+  }
+  .toc h3 { color: var(--accent); margin-top: 0; margin-bottom: 15px; }
+  .toc ol { columns: 2; column-gap: 30px; }
+  .toc li { margin-bottom: 4px; font-size: 0.9rem; }
+  .toc a { color: var(--text); text-decoration: none; }
+  .toc a:hover { color: var(--accent-lime); }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+  .badge-green { background: color-mix(in srgb, var(--accent-lime) 15%, transparent); color: var(--accent-lime); }
+  .badge-red { background: color-mix(in srgb, var(--accent-red) 15%, transparent); color: var(--accent-red); }
+  .badge-amber { background: color-mix(in srgb, var(--accent-amber) 15%, transparent); color: var(--accent-amber); }
+  .badge-purple { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
+  .page-break { page-break-after: always; }
+  @media print {
+    .cover { padding: 40px 20px; }
+    .screenshot-placeholder { display: none; }
+    body { background: white; color: black; }
+    h2, h3, h4, p, li, td, th { color: black; }
+    .toc { background: #f5f5f5; }
+  }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <h1>AP Invoice Automation System</h1>
+  <h2>User Manual</h2>
+  <div class="meta">
+    <p>Version 2.0 &nbsp;|&nbsp; July 31, 2026 &nbsp;|&nbsp; Madison 88</p>
+  </div>
+</div>
+
+<div class="container">
+
+<div class="toc">
+  <h3>Table of Contents</h3>
+  <ol>
+    <li><a href="#overview">System Overview</a></li>
+    <li><a href="#getting-started">Getting Started</a></li>
+    <li><a href="#roles">User Roles & Permissions</a></li>
+    <li><a href="#dashboard">Dashboard</a></li>
+    <li><a href="#repository">Invoice Repository</a></li>
+    <li><a href="#upload">Upload Invoice</a></li>
+    <li><a href="#approvals">Approvals</a></li>
+    <li><a href="#exceptions">Exceptions Management</a></li>
+    <li><a href="#onhold">On-Hold Queue</a></li>
+    <li><a href="#batches">Payment Batches</a></li>
+    <li><a href="#accounting">Accounting Review</a></li>
+    <li><a href="#vendors">Vendor Management</a></li>
+    <li><a href="#reports">Reports</a></li>
+    <li><a href="#sla">SLA Analytics</a></li>
+    <li><a href="#extraction">Extraction Analytics</a></li>
+    <li><a href="#audit">Audit Logs</a></li>
+    <li><a href="#users">User Management</a></li>
+    <li><a href="#settings">System Configuration</a></li>
+    <li><a href="#notifications">Notifications</a></li>
+    <li><a href="#workflow">Invoice Workflow</a></li>
+    <li><a href="#troubleshooting">Troubleshooting</a></li>
+  </ol>
+</div>
+
+<!-- 1. OVERVIEW -->
+<h2 id="overview">1. System Overview</h2>
+<p>The AP Invoice Automation System is a comprehensive web-based platform that automates the accounts payable invoice processing workflow for Madison 88.</p>
+
+<h3>Key Capabilities</h3>
+<ul>
+  <li><strong>OCR-based invoice extraction</strong> from PDF files using AI (Ollama qwen3:14b)</li>
+  <li><strong>Multi-stage approval workflow</strong> with role-based signatories</li>
+  <li><strong>PO validation</strong> against NextGen MPO data</li>
+  <li><strong>Exception handling</strong> for discrepancies and variances</li>
+  <li><strong>Payment batch management</strong> and scheduling</li>
+  <li><strong>Bank detail change tracking</strong> with approval workflow</li>
+  <li><strong>Vendor management</strong> with bank detail verification</li>
+  <li><strong>SLA tracking</strong> and analytics</li>
+  <li><strong>Audit logging</strong> for full compliance traceability</li>
+  <li><strong>Browser notifications</strong> for real-time alerts</li>
+</ul>
+
+<h3>System Architecture</h3>
+<table>
+  <tr><th>Component</th><th>Technology</th></tr>
+  <tr><td>Frontend</td><td>React + TypeScript (Vite)</td></tr>
+  <tr><td>Backend</td><td>Node.js + Express + TypeScript</td></tr>
+  <tr><td>Database</td><td>PostgreSQL (Supabase)</td></tr>
+  <tr><td>OCR Engine</td><td>Ollama (qwen3:14b model)</td></tr>
+  <tr><td>External Integration</td><td>NextGen (AVPS) for PO/MPO validation</td></tr>
+  <tr><td>Deployment</td><td>VPS (5.223.78.194) + Netlify</td></tr>
+</table>
+
+<!-- 2. GETTING STARTED -->
+<h2 id="getting-started">2. Getting Started</h2>
+
+<h3>2.1 Login Page</h3>
+<div class="screenshot-placeholder">
+  <div class="icon">[Screenshot]</div>
+  <div class="label">Login Page — Email/password fields with quick login buttons</div>
+</div>
+
+<h3>2.2 How to Log In</h3>
+<ol>
+  <li>Open the web application URL in your browser</li>
+  <li>Enter your <strong>email address</strong> (e.g., <code>pamela@madison88.com</code>)</li>
+  <li>Enter your <strong>password</strong> (e.g., <code>madison88</code>)</li>
+  <li>Click <strong>Sign In</strong> or press Enter</li>
+  <li>You will be redirected to the Dashboard</li>
+</ol>
+
+<div class="note">
+  <strong>Note:</strong> Click the eye icon next to the password field to toggle password visibility.
+</div>
+
+<h3>2.3 Quick Login Buttons</h3>
+<p>For convenience, quick login buttons are available for demo accounts (Maryan, Edwin, Glecie, Lindsey, Polly). Click any button to instantly log in as that user.</p>
+
+<h3>2.4 Logging Out</h3>
+<ol>
+  <li>Click your <strong>profile avatar</strong> in the bottom-left of the sidebar</li>
+  <li>Click <strong>Logout</strong></li>
+  <li>You will be returned to the login page</li>
+</ol>
+
+<h3>2.5 Browser Notifications</h3>
+<p>When you first log in, your browser may ask permission to show notifications:</p>
+<ul>
+  <li>Click <strong>Allow</strong> to receive system notifications when you're away from the tab</li>
+  <li>Notifications appear in your OS notification center when new invoice events occur</li>
+  <li>Clicking a notification brings you back to the application</li>
+</ul>
+
+<!-- 3. ROLES -->
+<h2 id="roles">3. User Roles & Permissions</h2>
+
+<table>
+  <tr><th>Role</th><th>Description</th><th>Key Permissions</th></tr>
+  <tr><td><span class="badge badge-purple">SUPERADMIN</span></td><td>System administrator</td><td>Manage users, system config, audit logs</td></tr>
+  <tr><td><span class="badge badge-purple">IT_ADMIN</span></td><td>IT support</td><td>Full access to all modules</td></tr>
+  <tr><td><span class="badge badge-green">PURCHASING_COORDINATOR</span></td><td>Validates invoices</td><td>Upload, validate, approve/reject, request approval</td></tr>
+  <tr><td><span class="badge badge-green">PURCHASING_MANAGER</span></td><td>Manages purchasing team</td><td>Approve/reject, team performance, escalate</td></tr>
+  <tr><td><span class="badge badge-purple">ACCOUNTING_ASSOCIATE</span></td><td>Posts to QuickBooks</td><td>Post, schedule payments, manage batches, edit</td></tr>
+  <tr><td><span class="badge badge-purple">ACCOUNTING_SUPERVISOR</span></td><td>Oversees accounting</td><td>Approve/reject, post, view all, reports</td></tr>
+  <tr><td><span class="badge badge-amber">MLO_ACCOUNT_HOLDER</span></td><td>Brand-level approver</td><td>Approve/reject brand-filtered invoices</td></tr>
+  <tr><td><span class="badge badge-amber">PLANNING_MANAGER</span></td><td>Brand-scoped planning</td><td>Approve/reject brand-filtered invoices</td></tr>
+  <tr><td><span class="badge badge-red">SR_MANAGER_GLOBAL_PRODUCTION</span></td><td>Senior production manager</td><td>Approve/reject, production costs, reports</td></tr>
+  <tr><td><span class="badge badge-purple">MS_POLLY</span></td><td>Executive approval</td><td>Approve/reject high-value, executive summary</td></tr>
+</table>
+
+<h3>Sidebar Access by Role</h3>
+<table>
+  <tr><th>Menu Item</th><th>Visible To</th></tr>
+  <tr><td>Dashboard</td><td>All users</td></tr>
+  <tr><td>Invoice Repository</td><td>All users</td></tr>
+  <tr><td>Upload Invoice</td><td>Coordinator, Accounting Associate, IT Admin</td></tr>
+  <tr><td>Approvals</td><td>Coordinator, Manager, Planning Mgr, Sr Manager, Ms Polly, Acct Supervisor</td></tr>
+  <tr><td>Exceptions</td><td>Coordinator, Manager, IT Admin</td></tr>
+  <tr><td>On-Hold Queue</td><td>Accounting Supervisor, Accounting Associate, IT Admin</td></tr>
+  <tr><td>Payment Batches</td><td>Accounting Associate, Accounting Supervisor, IT Admin</td></tr>
+  <tr><td>Accounting Review</td><td>Accounting Associate, Accounting Supervisor, IT Admin</td></tr>
+  <tr><td>Vendors</td><td>Accounting Supervisor, Accounting Associate, IT Admin</td></tr>
+  <tr><td>Reports</td><td>Purchasing Manager, Accounting Supervisor, IT Admin, Accounting Associate</td></tr>
+  <tr><td>SLA Analytics</td><td>Accounting Supervisor, IT Admin, Accounting Associate</td></tr>
+  <tr><td>Extraction Analytics</td><td>Purchasing Coordinator, IT Admin, Accounting Supervisor</td></tr>
+  <tr><td>Audit Logs</td><td>Accounting Supervisor, IT Admin, Accounting Associate</td></tr>
+  <tr><td>User Management</td><td>IT Admin, SuperAdmin</td></tr>
+  <tr><td>System Configuration</td><td>IT Admin, SuperAdmin</td></tr>
+</table>
+
+<!-- 4. DASHBOARD -->
+<h2 id="dashboard">4. Dashboard</h2>
+<div class="screenshot-placeholder">
+  <div class="icon">[Screenshot]</div>
+  <div class="label">Dashboard — Metrics cards, invoice table, filters</div>
+</div>
+
+<h3>4.1 Metrics Cards</h3>
+<ul>
+  <li><strong>Total Invoices</strong> — Total count in the system</li>
+  <li><strong>Pending Approval</strong> — Awaiting approval action</li>
+  <li><strong>Exceptions</strong> — Invoices with validation issues</li>
+  <li><strong>Posted to QB</strong> — Successfully posted to QuickBooks</li>
+  <li><strong>SLA Compliance</strong> — Percentage within SLA</li>
+</ul>
+
+<h3>4.2 Invoice Table</h3>
+<table>
+  <tr><th>Column</th><th>Description</th></tr>
+  <tr><td>Invoice Number</td><td>Vendor invoice number</td></tr>
+  <tr><td>Vendor</td><td>Vendor name</td></tr>
+  <tr><td>Amount</td><td>Invoice total</td></tr>
+  <tr><td>Status</td><td>Color-coded workflow status badge</td></tr>
+  <tr><td>SLA Timer</td><td>Countdown for SLA deadline</td></tr>
+  <tr><td>Created Date</td><td>When the invoice was uploaded</td></tr>
+</table>
+
+<h3>4.3 Filters</h3>
+<ul>
+  <li><strong>Status filter</strong> — Dropdown to filter by invoice status</li>
+  <li><strong>Search bar</strong> — Search by invoice number, vendor, or PO number</li>
+  <li><strong>Vendor filter</strong> — Filter by specific vendor (advanced)</li>
+  <li><strong>Clear filters</strong> — Reset all filters</li>
+</ul>
+
+<h3>4.4 Invoice Detail Modal</h3>
+<div class="screenshot-placeholder">
+  <div class="icon">[Screenshot]</div>
+  <div class="label">Invoice Detail Modal — Full invoice view with action buttons</div>
+</div>
+<p>Click any invoice row to open the detail modal showing:</p>
+<ul>
+  <li>Invoice header (number, date, vendor, amount, PO number)</li>
+  <li>Line items with quantities and amounts</li>
+  <li>OCR confidence score</li>
+  <li>Approval chain timeline</li>
+  <li>Action buttons (role-dependent): Approve, Reject, Return, Edit, Post, Schedule, Delete, Re-extract, Download</li>
+</ul>
+
+<h3>4.5 Toast Notifications</h3>
+<p>Small popups at bottom-right:</p>
+<ul>
+  <li><span class="badge badge-green">Green</span> Success</li>
+  <li><span class="badge badge-red">Red</span> Error</li>
+  <li><span class="badge badge-amber">Amber</span> Warning</li>
+  <li><span class="badge badge-purple">Purple</span> Info</li>
+</ul>
+
+<!-- 5. REPOSITORY -->
+<h2 id="repository">5. Invoice Repository</h2>
+<div class="screenshot-placeholder">
+  <div class="icon">[Screenshot]</div>
+  <div class="label">Invoice Repository — Full archive with advanced filters</div>
+</div>
+<ul>
+  <li><strong>Advanced filtering</strong> — By status, vendor, date range, amount</li>
+  <li><strong>Search</strong> — By invoice number, vendor, PO number</li>
+  <li><strong>Sort</strong> — Click column headers to sort</li>
+  <li><strong>Export</strong> — Download filtered results as CSV</li>
+  <li><strong>Pagination</strong> — Navigate through large result sets</li>
+</ul>
+
+<!-- 6. UPLOAD -->
+<h2 id="upload">6. Upload Invoice</h2>
+<div class="screenshot-placeholder">
+  <div class="icon">[Screenshot]</div>
+  <div class="label">Upload Page — Drag & drop PDF upload</div>
+</div>
+<p><strong>Available to:</strong> Purchasing Coordinator, Accounting Associate, IT Admin</p>
+
+<h3>How to Upload</h3>
+<ol>
+  <li>Navigate to <strong>Upload Invoice</strong> from the sidebar</li>
+  <li>Drag and drop a PDF file, or click to browse</li>
+  <li>The system automatically:
+    <ul>
+      <li>Extracts text using OCR (Ollama qwen3:14b)</li>
+      <li>Parses invoice fields (number, date, vendor, amount, line items)</li>
+      <li>Validates against NextGen MPO data</li>
+      <li>Creates the invoice record</li>
+    </ul>
+  </li>
+  <li>Review the extracted data in the preview</li>
+  <li>Click <strong>Confirm</strong> to save or <strong>Edit</strong> to correct</li>
+</ol>
+
+<h3>Auto-Processing</h3>
+<p>Invoices placed in the <code>incoming-invoices/</code> folder on the server are automatically picked up every 30 seconds by the File Watcher service, processed through OCR, and routed to the Purchasing Coordinator.</p>
+
+<!-- 7. APPROVALS -->
+<h2 id="approvals">7. Approvals</h2>
+<div class="screenshot-placeholder">
+  <div class="icon">[Screenshot]</div>
+  <div class="label">Approvals Inbox — Pending approval invoices</div>
+</div>
+
+<h3>How to Approve</h3>
+<ol>
+  <li>Click an invoice to open the detail modal</li>
+  <li>Review invoice details, line items, and PO validation</li>
+  <li>Click <strong>Approve</strong></li>
+  <li>The invoice moves to the next approval stage</li>
+</ol>
+
+<h3>How to Reject</h3>
+<ol>
+  <li>Open the invoice detail modal</li>
+  <li>Click <strong>Reject</strong></li>
+  <li>A modal appears — enter the rejection reason</li>
+  <li>Click <strong>Confirm Rejection</strong></li>
+</ol>
+
+<h3>Return to Previous Approver</h3>
+<ol>
+  <li>Open the invoice detail modal</li>
+  <li>Click <strong>Return to Previous Approver</strong></li>
+  <li>A modal appears — enter the reason for return</li>
+  <li>Click <strong>Return Invoice</strong></li>
+</ol>
+
+<!-- 8. EXCEPTIONS -->
+<h2 id="exceptions">8. Exceptions Management</h2>
+<div class="screenshot-placeholder">
+  <div class="icon">[Screenshot]</div>
+  <div class="label">Exceptions — Invoices with validation issues</div>
+</div>
+
+<h3>Exception Types</h3>
+<ul>
+  <li><strong>Amount mismatch</strong> — Invoice amount doesn't match PO</li>
+  <li><strong>Quantity variance</strong> — Quantities exceed PO limits</li>
+  <li><strong>Missing PO</strong> — No matching PO found in NextGen</li>
+  <li><strong>Vendor mismatch</strong> — Invoice vendor doesn't match PO vendor</li>
+  <li><strong>Duplicate invoice</strong> — Same invoice number already exists</li>
+</ul>
+
+<h3>Actions</h3>
+<ul>
+  <li><strong>Resolve</strong> — Fix the issue and re-validate</li>
+  <li><strong>Override</strong> — Approve despite exception (requires reason)</li>
+  <li><strong>Escalate</strong> — Send to a manager for review</li>
+  <li><strong>Reject</strong> — Reject the invoice</li>
+</ul>
+
+<!-- 9. ON-HOLD -->
+<h2 id="onhold">9. On-Hold Queue</h2>
+<div class="screenshot-placeholder">
+  <div class="icon">[Screenshot]</div>
+  <div class="label">On-Hold Queue — Held invoices with reasons</div>
+</div>
+<p><strong>Available to:</strong> Accounting Supervisor, Accounting Associate, IT Admin</p>
+
+<h3>Hold Reasons</h3>
+<ul>
+  <li>Missing documentation</li>
+  <li>Vendor verification (bank details)</li>
+  <li>Internal review</li>
+  <li>Payment hold</li>
+</ul>
+
+<h3>Actions</h3>
+<ul>
+  <li><strong>Release hold</strong> — Resume processing</li>
+  <li><strong>Update reason</strong> — Modify hold reason</li>
+  <li><strong>Add note</strong> — Internal notes about the hold</li>
+</ul>
+
+<!-- 10. BATCHES -->
+<h2 id="batches">10. Payment Batches</h2>
+<div class="screenshot-placeholder">
+  <div class="icon">[Screenshot]</div>
+  <div class="label">Payment Batches — Batch management with vendor/currency filters</div>
+</div>
+
+<h3>Creating a Payment Batch</h3>
+<ol>
+  <li>Navigate to <strong>Payment Batches</strong></li>
+  <li>Click <strong>Create Batch</strong></li>
+  <li>Select invoices to include</li>
+  <li>Set the payment date</li>
+  <li>Click <strong>Create</strong></li>
+</ol>
+
+<h3>Batch Statuses</h3>
+<table>
+  <tr><th>Status</th><th>Description</th></tr>
+  <tr><td><span class="badge badge-amber">DRAFT</span></td><td>Being assembled, can add/remove invoices</td></tr>
+  <tr><td><span class="badge badge-purple">READY</span></td><td>Ready for approval</td></tr>
+  <tr><td><span class="badge badge-green">APPROVED</span></td><td>Approved for payment</td></tr>
+  <tr><td><span class="badge badge-green">PAID</span></td><td>Payment confirmed</td></tr>
+  <tr><td><span class="badge badge-red">CANCELLED</span></td><td>Batch cancelled</td></tr>
+</table>
+
+<!-- 11. ACCOUNTING -->
+<h2 id="accounting">11. Accounting Review</h2>
+<div class="screenshot-placeholder">
+  <div class="icon">[Screenshot]</div>
+  <div class="label">Accounting Review — Posted invoices, SOA, bank change requests</div>
+</div>
+
+<h3>Three Tabs</h3>
+<h4>Posted Invoices</h4>
+<ul>
+  <li>View invoices posted to QuickBooks</li>
+  <li>Verify posting details</li>
+  <li>Download posting confirmations</li>
+</ul>
+
+<h4>Statement of Account (SOA)</h4>
+<ul>
+  <li>View vendor SOA invoices</li>
+  <li>Match SOA against individual invoices</li>
+</ul>
+
+<h4>Bank Change Requests</h4>
+<ul>
+  <li>Review pending bank detail change requests</li>
+  <li><strong>Approve</strong> — Apply the change (green checkmark)</li>
+  <li><strong>Reject</strong> — Deny the change (red X)</li>
+  <li>View requested field, old value, and new value</li>
+</ul>
+
+<!-- 12. VENDORS -->
+<h2 id="vendors">12. Vendor Management</h2>
+<div class="screenshot-placeholder">
+  <div class="icon">[Screenshot]</div>
+  <div class="label">Vendor Management — Vendor list with bank verification</div>
+</div>
+
+<h3>Features</h3>
+<ul>
+  <li><strong>Search</strong> by vendor name or alias</li>
+  <li><strong>Bank verified badge</strong> — Indicates verification status</li>
+  <li><strong>Vendor details</strong> — Bank name, account number, SWIFT, IBAN</li>
+  <li><strong>Alternative bank details</strong> — Multiple accounts</li>
+  <li><strong>Invoice history</strong> — All invoices from vendor</li>
+  <li><strong>Add Vendor</strong> — Create new vendor with bank details</li>
+</ul>
+
+<!-- 13. REPORTS -->
+<h2 id="reports">13. Reports</h2>
+<div class="screenshot-placeholder">
+  <div class="icon">[Screenshot]</div>
+  <div class="label">Reports — Processing summary, exception, vendor spend reports</div>
+</div>
+
+<h3>Report Types</h3>
+<ul>
+  <li><strong>Processing Summary</strong> — Total processed, approval times</li>
+  <li><strong>Exception Report</strong> — Exceptions by type, resolution time</li>
+  <li><strong>Vendor Spend Report</strong> — Total spend per vendor</li>
+  <li><strong>SLA Compliance Report</strong> — On-time vs. late processing</li>
+  <li><strong>Approval Cycle Time</strong> — Average time per stage</li>
+  <li><strong>Export</strong> — Download as CSV/PDF</li>
+</ul>
+
+<!-- 14. SLA -->
+<h2 id="sla">14. SLA Analytics</h2>
+<div class="screenshot-placeholder">
+  <div class="icon">[Screenshot]</div>
+  <div class="label">SLA Analytics — Compliance rate, bottleneck analysis, trends</div>
+</div>
+<ul>
+  <li><strong>SLA countdown timers</strong> — Real-time per invoice</li>
+  <li><strong>Compliance rate</strong> — Percentage within SLA</li>
+  <li><strong>Bottleneck analysis</strong> — Identify slow stages</li>
+  <li><strong>Color indicators</strong> — <span class="badge badge-green">Green</span> on track, <span class="badge badge-amber">Amber</span> warning, <span class="badge badge-red">Red</span> breached</li>
+</ul>
+
+<!-- 15. EXTRACTION -->
+<h2 id="extraction">15. Extraction Analytics</h2>
+<div class="screenshot-placeholder">
+  <div class="icon">[Screenshot]</div>
+  <div class="label">Extraction Analytics — OCR confidence, field accuracy, volume</div>
+</div>
+<ul>
+  <li><strong>OCR confidence scores</strong> — Average extraction confidence</li>
+  <li><strong>Field accuracy</strong> — Per-field extraction success rate</li>
+  <li><strong>Processing time</strong> — OCR extraction duration</li>
+  <li><strong>Volume trends</strong> — Invoices processed over time</li>
+  <li><strong>Error analysis</strong> — Common extraction errors</li>
+</ul>
+
+<!-- 16. AUDIT -->
+<h2 id="audit">16. Audit Logs</h2>
+<div class="screenshot-placeholder">
+  <div class="icon">[Screenshot]</div>
+  <div class="label">Audit Logs — All system actions with filtering</div>
+</div>
+
+<h3>Logged Actions</h3>
+<table>
+  <tr><th>Action</th><th>Description</th></tr>
+  <tr><td>USER_LOGIN</td><td>User logged in</td></tr>
+  <tr><td>USER_CREATED</td><td>New user created</td></tr>
+  <tr><td>USER_UPDATED</td><td>User details changed</td></tr>
+  <tr><td>USER_DELETED</td><td>User deleted</td></tr>
+  <tr><td>INVOICE_APPROVED</td><td>Invoice approved</td></tr>
+  <tr><td>INVOICE_REJECTED</td><td>Invoice rejected</td></tr>
+  <tr><td>INVOICE_POSTED</td><td>Posted to QuickBooks</td></tr>
+  <tr><td>INVOICE_RETURNED</td><td>Returned to previous approver</td></tr>
+  <tr><td>BANK_CHANGE_APPROVED</td><td>Bank change approved</td></tr>
+  <tr><td>PAYMENT_SCHEDULED</td><td>Payment scheduled</td></tr>
+  <tr><td>EXCEPTION_RESOLVED</td><td>Exception resolved</td></tr>
+</table>
+
+<!-- 17. USERS -->
+<h2 id="users">17. User Management</h2>
+<div class="screenshot-placeholder">
+  <div class="icon">[Screenshot]</div>
+  <div class="label">User Management — User list with stats, search, add/edit/delete</div>
+</div>
+<p><strong>Available to:</strong> IT Admin, SuperAdmin only</p>
+
+<h3>17.1 User List</h3>
+<ul>
+  <li><strong>Stats summary</strong> — Total, active, inactive, admin count</li>
+  <li><strong>Search</strong> — By name, email, or role</li>
+  <li><strong>Role color coding</strong> — Each role has a distinct color</li>
+  <li><strong>Active/Inactive toggle</strong> — Power icon to activate/deactivate</li>
+</ul>
+
+<h3>17.2 Adding a User</h3>
+<ol>
+  <li>Click <strong>Add User</strong> (top-right, green button)</li>
+  <li>Fill in the modal:
+    <ul>
+      <li><strong>Name</strong> — Full name</li>
+      <li><strong>Email</strong> — Must be unique</li>
+      <li><strong>Role</strong> — Select from dropdown</li>
+      <li><strong>Password</strong> — Minimum 4 characters (eye icon to toggle visibility)</li>
+      <li><strong>Active</strong> — Toggle on/off</li>
+    </ul>
+  </li>
+  <li>Click <strong>Save</strong></li>
+</ol>
+
+<h3>17.3 Editing a User</h3>
+<ol>
+  <li>Click the <strong>Edit</strong> (pencil) icon</li>
+  <li>Modify name, email, role, password, or active status</li>
+  <li>Click <strong>Save</strong></li>
+  <li>Changes take effect on next login</li>
+</ol>
+
+<h3>17.4 Deleting a User</h3>
+<ol>
+  <li>Click the <strong>Delete</strong> (trash) icon</li>
+  <li>Confirmation modal appears with warning</li>
+  <li>Click <strong>Delete Permanently</strong> to confirm</li>
+</ol>
+<div class="note">
+  <strong>Restrictions:</strong> You cannot delete your own account or the last SuperAdmin account.
+</div>
+
+<h3>17.5 Activate/Deactivate</h3>
+<p>Click the <strong>Power</strong> icon to toggle. Deactivated users cannot log in.</p>
+
+<!-- 18. SETTINGS -->
+<h2 id="settings">18. System Configuration</h2>
+<div class="screenshot-placeholder">
+  <div class="icon">[Screenshot]</div>
+  <div class="label">System Configuration — OCR, SLA, thresholds, integrations</div>
+</div>
+<p><strong>Available to:</strong> IT Admin, SuperAdmin only</p>
+
+<ul>
+  <li><strong>OCR Model</strong> — Configure Ollama model</li>
+  <li><strong>SLA thresholds</strong> — Time limits per stage</li>
+  <li><strong>Approval thresholds</strong> — Amount-based tiers</li>
+  <li><strong>Auto-approval</strong> — Currently disabled</li>
+  <li><strong>File watcher</strong> — Incoming invoice folder</li>
+  <li><strong>NextGen integration</strong> — API URL</li>
+  <li><strong>System health</strong> — API, database, OCR status</li>
+</ul>
+
+<!-- 19. NOTIFICATIONS -->
+<h2 id="notifications">19. Notifications</h2>
+
+<h3>19.1 In-App Notifications (Bell Icon)</h3>
+<div class="screenshot-placeholder">
+  <div class="icon">[Screenshot]</div>
+  <div class="label">Notification Bell — Unread count, dropdown with notification list</div>
+</div>
+<ul>
+  <li><strong>Bell icon</strong> — Top-right of sidebar, shows unread count</li>
+  <li><strong>Click bell</strong> — Opens notification dropdown</li>
+  <li><strong>Types:</strong> Stage transitions, exceptions, approvals, uploads, payments</li>
+  <li><strong>Mark as read</strong> — Click a notification</li>
+  <li><strong>Mark all read</strong> — Click "Mark all read"</li>
+</ul>
+
+<h3>19.2 Browser/System Notifications</h3>
+<ul>
+  <li><strong>When away from tab:</strong> OS-level notifications appear in notification center</li>
+  <li><strong>When on tab:</strong> In-app toast notifications at bottom-right</li>
+  <li><strong>Auto-close:</strong> Browser notifications close after 8 seconds</li>
+  <li><strong>Click to focus:</strong> Clicking brings you back to the app</li>
+</ul>
+
+<h3>19.3 Enabling Browser Notifications</h3>
+<ol>
+  <li>Log in to the system</li>
+  <li>Browser shows permission prompt: "Allow notifications?"</li>
+  <li>Click <strong>Allow</strong></li>
+</ol>
+
+<!-- 20. WORKFLOW -->
+<h2 id="workflow">20. Invoice Workflow & Status Flow</h2>
+
+<h3>20.1 Status Flow</h3>
+<div class="code-block">
+UPLOAD → PENDING_COORDINATOR → PENDING_PURCHASING_MGR → PENDING_MLO → PENDING_PLANNING_MGR → PENDING_SR_MANAGER → PENDING_MS_POLLY → PENDING_ACCOUNTING → POSTED_TO_QB → PAID
+</div>
+
+<h3>20.2 Status Definitions</h3>
+<table>
+  <tr><th>Status</th><th>Description</th><th>Who Acts</th></tr>
+  <tr><td>UPLOADED</td><td>OCR extraction in progress</td><td>System</td></tr>
+  <tr><td>PENDING_COORDINATOR</td><td>Awaiting Coordinator validation</td><td>Purchasing Coordinator</td></tr>
+  <tr><td>PENDING_PURCHASING_MGR</td><td>Awaiting Manager approval</td><td>Purchasing Manager</td></tr>
+  <tr><td>PENDING_MLO</td><td>Awaiting MLO approval</td><td>MLO Account Holder</td></tr>
+  <tr><td>PENDING_PLANNING_MGR</td><td>Awaiting Planning Mgr approval</td><td>Planning Manager</td></tr>
+  <tr><td>PENDING_SR_MANAGER</td><td>Awaiting Sr Manager approval</td><td>Sr Manager Global Production</td></tr>
+  <tr><td>PENDING_MS_POLLY</td><td>Awaiting executive approval</td><td>Ms Polly</td></tr>
+  <tr><td>PENDING_ACCOUNTING</td><td>Awaiting Accounting review</td><td>Accounting Associate/Supervisor</td></tr>
+  <tr><td>POSTED_TO_QB</td><td>Posted to QuickBooks</td><td>Accounting Associate</td></tr>
+  <tr><td>PAID</td><td>Payment confirmed</td><td>Accounting Associate</td></tr>
+  <tr><td>REJECTED</td><td>Invoice rejected</td><td>(Terminal)</td></tr>
+  <tr><td>ON_HOLD</td><td>Placed on hold</td><td>Accounting Supervisor</td></tr>
+  <tr><td>EXCEPTION</td><td>Exception detected</td><td>Purchasing Coordinator</td></tr>
+</table>
+
+<h3>20.3 Approval Tiers by Amount</h3>
+<table>
+  <tr><th>Amount Range</th><th>Required Approvals</th></tr>
+  <tr><td>&lt; $1,000</td><td>Coordinator → Accounting</td></tr>
+  <tr><td>$1,000 - $10,000</td><td>Coordinator → Purchasing Manager → Accounting</td></tr>
+  <tr><td>$10,000 - $50,000</td><td>Coordinator → Purchasing Manager → MLO → Accounting</td></tr>
+  <tr><td>$50,000 - $100,000</td><td>Coordinator → Purchasing Manager → MLO → Planning Mgr → Sr Manager → Accounting</td></tr>
+  <tr><td>&gt; $100,000</td><td>All approvers including Ms Polly</td></tr>
+</table>
+
+<div class="note">
+  <strong>Note:</strong> Auto-approval is currently <strong>disabled</strong> — all invoices go through the Purchasing Coordinator regardless of amount.
+</div>
+
+<!-- 21. TROUBLESHOOTING -->
+<h2 id="troubleshooting">21. Troubleshooting</h2>
+
+<h3>21.1 Cannot Log In</h3>
+<table>
+  <tr><th>Problem</th><th>Solution</th></tr>
+  <tr><td>"Invalid email or password"</td><td>Check credentials. Default password: <code>madison88</code>. JC uses secure password.</td></tr>
+  <tr><td>Forgot password</td><td>Contact SuperAdmin (JC) or IT Admin to reset via User Management</td></tr>
+  <tr><td>Login page doesn't load</td><td>Check internet. API server may be down — contact IT.</td></tr>
+</table>
+
+<h3>21.2 Invoice Issues</h3>
+<table>
+  <tr><th>Problem</th><th>Solution</th></tr>
+  <tr><td>Uploaded PDF not showing</td><td>Wait 30-60s for OCR. Check Invoice Repository.</td></tr>
+  <tr><td>Invoice stuck in UPLOADED</td><td>OCR may have failed. Try re-extraction.</td></tr>
+  <tr><td>Can't see approval button</td><td>Your role may not have approval permissions.</td></tr>
+  <tr><td>Low OCR confidence</td><td>Use Re-extract OCR button in invoice detail.</td></tr>
+</table>
+
+<h3>21.3 Browser Notifications</h3>
+<table>
+  <tr><th>Problem</th><th>Solution</th></tr>
+  <tr><td>No notification prompt</td><td>Check browser settings → Site permissions → Notifications</td></tr>
+  <tr><td>Notifications don't appear</td><td>Ensure you allowed notifications. Try re-login.</td></tr>
+</table>
+
+<h3>21.4 Contact Support</h3>
+<ul>
+  <li><strong>SuperAdmin:</strong> JC (jc@madison88.com)</li>
+  <li><strong>IT Support:</strong> Contact IT Admin</li>
+</ul>
+
+<!-- APPENDIX A -->
+<h2>Appendix A: Default User Accounts</h2>
+<table>
+  <tr><th>Name</th><th>Email</th><th>Role</th><th>Password</th></tr>
+  <tr><td>JC</td><td>jc@madison88.com</td><td><span class="badge badge-purple">SUPERADMIN</span></td><td>(secure)</td></tr>
+  <tr><td>Maryan</td><td>maryan.untiveros@madison88.com</td><td><span class="badge badge-amber">MLO_ACCOUNT_HOLDER</span></td><td>madison88</td></tr>
+  <tr><td>Edwin</td><td>edwin.garcia@madison88.com</td><td><span class="badge badge-amber">PLANNING_MANAGER</span></td><td>madison88</td></tr>
+  <tr><td>Glecie</td><td>glecie.yumena@madison88.com</td><td><span class="badge badge-amber">PLANNING_MANAGER</span></td><td>madison88</td></tr>
+  <tr><td>Lindsey</td><td>lindsey.castro@madison88.com</td><td><span class="badge badge-red">SR_MANAGER</span></td><td>madison88</td></tr>
+  <tr><td>Polly</td><td>polly.madison@madison88.com</td><td><span class="badge badge-purple">MS_POLLY</span></td><td>madison88</td></tr>
+  <tr><td>Meann</td><td>meann@madison88.com</td><td><span class="badge badge-green">PURCHASING_MANAGER</span></td><td>madison88</td></tr>
+  <tr><td>Maricar</td><td>maricar@madison88.com</td><td><span class="badge badge-green">PURCHASING_MANAGER</span></td><td>madison88</td></tr>
+  <tr><td>Maricon</td><td>maricon@madison88.com</td><td><span class="badge badge-green">PURCHASING_COORDINATOR</span></td><td>madison88</td></tr>
+  <tr><td>Pamela</td><td>pamela@madison88.com</td><td><span class="badge badge-green">PURCHASING_COORDINATOR</span></td><td>madison88</td></tr>
+  <tr><td>Sarah</td><td>sarah@madison88.com</td><td><span class="badge badge-green">PURCHASING_COORDINATOR</span></td><td>madison88</td></tr>
+  <tr><td>April</td><td>april@madison88.com</td><td><span class="badge badge-green">PURCHASING_COORDINATOR</span></td><td>madison88</td></tr>
+  <tr><td>Jasmine</td><td>jasmine@madison88.com</td><td><span class="badge badge-green">PURCHASING_COORDINATOR</span></td><td>madison88</td></tr>
+  <tr><td>Earl</td><td>earl@madison88.com</td><td><span class="badge badge-green">PURCHASING_COORDINATOR</span></td><td>madison88</td></tr>
+  <tr><td>MJ Santiago</td><td>mjsantiago@madison88.com</td><td><span class="badge badge-green">PURCHASING_COORDINATOR</span></td><td>madison88</td></tr>
+  <tr><td>Joy</td><td>joy@madison88.com</td><td><span class="badge badge-green">PURCHASING_COORDINATOR</span></td><td>madison88</td></tr>
+  <tr><td>Wyssa</td><td>wyssa@madison88.com</td><td><span class="badge badge-purple">ACCOUNTING_ASSOCIATE</span></td><td>madison88</td></tr>
+  <tr><td>Aldrin</td><td>Aldrin@madison88.com</td><td><span class="badge badge-purple">ACCOUNTING_SUPERVISOR</span></td><td>madison88</td></tr>
+</table>
+
+<!-- APPENDIX B -->
+<h2>Appendix B: System Requirements</h2>
+<ul>
+  <li><strong>Browser:</strong> Chrome, Edge, Firefox, or Safari (latest)</li>
+  <li><strong>JavaScript:</strong> Must be enabled</li>
+  <li><strong>Notifications:</strong> Browser notification support (optional)</li>
+  <li><strong>PDF Viewer:</strong> Built-in browser PDF viewer</li>
+  <li><strong>Internet:</strong> Stable connection to API server</li>
+</ul>
+
+<p style="margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--border); color: var(--text-muted); font-size: 0.85rem; text-align: center;">
+  AP Invoice Automation System v2.0 &nbsp;|&nbsp; Madison 88 &nbsp;|&nbsp; Generated July 31, 2026
+</p>
+
+</div>
+</body>
+</html>

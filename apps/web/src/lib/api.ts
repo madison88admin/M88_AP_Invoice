@@ -110,6 +110,10 @@ export const invoiceApi = {
   post: (id: string, bypassVarianceCheck: boolean = false) => api.post(`/.netlify/functions/proxy-api/invoices/${id}/post`, { bypassVarianceCheck }, { timeout: 300000 }),
   releaseHold: (id: string) => api.post(`/api/invoices/${id}/release-hold`),
   holdForBatchThreshold: (id: string, reason?: string) => api.post(`/api/invoices/${id}/hold`, { reason }),
+  checkNextGenSync: async (id: string) => {
+    const res = await api.post(`/api/invoices/${id}/check-nextgen-sync`, {}, { timeout: 30000 });
+    return res;
+  },
   checkNextGen: async (id: string) => {
     const res = await api.post(`/api/invoices/${id}/check-nextgen`, {}, { timeout: 30000 });
     const jobId = res.data.jobId;

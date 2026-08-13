@@ -133,6 +133,7 @@ export default function Dashboard() {
   const [validating, setValidating] = useState(false);
   const [requestingApproval, setRequestingApproval] = useState(false);
   const [validationResult, setValidationResult] = useState<any>(null);
+  const [nextgenResults, setNextgenResults] = useState<Record<string, any>>({});
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [showReturnModal, setShowReturnModal] = useState(false);
@@ -1080,6 +1081,33 @@ export default function Dashboard() {
       setHoldingInvoice(false);
     }
   };
+
+  // Auto-validate selected invoice against NextGen in real-time
+  useEffect(() => {
+    if (!selectedInvoice) return;
+    if (nextgenResults[selectedInvoice.id]) return;
+    const validate = async () => {
+      setNextgenResults(prev => ({ ...prev, [selectedInvoice.id]: { status: 'loading' } }));
+      try {
+        const res = await invoiceApi.checkNextGenSync(selectedInvoice.id);
+        const data = res.data;
+        if (!data || (!data.hasChanges && !data.hasCriticalChanges && !data.changes?.length)) {
+          if (!selectedInvoice.mpo_number) {
+            setNextgenResults(prev => ({ ...prev, [selectedInvoice.id]: { status: 'no-mpo' } }));
+          } else {
+            setNextgenResults(prev => ({ ...prev, [selectedInvoice.id]: { status: 'matched', data } }));
+          }
+        } else if (data.hasCriticalChanges) {
+          setNextgenResults(prev => ({ ...prev, [selectedInvoice.id]: { status: 'mismatch', changes: data.changes, criticalChanges: data.criticalChanges, data } }));
+        } else {
+          setNextgenResults(prev => ({ ...prev, [selectedInvoice.id]: { status: 'matched', changes: data.changes, data } }));
+        }
+      } catch (err) {
+        setNextgenResults(prev => ({ ...prev, [selectedInvoice.id]: { status: 'error' } }));
+      }
+    };
+    validate();
+  }, [selectedInvoice]);
 
   const handleCheckNextGen = async () => {
     if (!selectedInvoice) return;
@@ -2746,6 +2774,60 @@ ${dataRows}
                 </div>
               )}
 
+              {/* NextGen Real-time Validation */}
+              {(() => {
+                const ng = nextgenResults[selectedInvoice.id];
+                if (!ng || ng.status === 'loading') return (
+                  <div className="p-4 rounded-xl" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
+                    <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-muted)' }}>
+                      <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
+                      Validating against NextGen in real-time...
+                    </div>
+                  </div>
+                );
+                if (ng.status === 'no-mpo') return (
+                  <div className="p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--text-muted) 8%, transparent)', border: '1px solid var(--border-color)' }}>
+                    <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>No MPO reference — NextGen real-time validation skipped</span>
+                  </div>
+                );
+                if (ng.status === 'error') return (
+                  <div className="p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}>
+                    <span className="text-sm font-medium" style={{ color: 'var(--accent-amber)' }}>NextGen unavailable — real-time check skipped</span>
+                  </div>
+                );
+                if (ng.status === 'matched') return (
+                  <div className="p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-green) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-green) 20%, transparent)' }}>
+                    <div className="flex items-center">
+                      <CheckCircle className="h-5 w-5 mr-2" style={{ color: 'var(--accent-green)' }} strokeWidth={1.75} />
+                      <span className="text-sm font-medium" style={{ color: 'var(--accent-green)' }}>Invoice matches NextGen PO data (real-time check)</span>
+                    </div>
+                  </div>
+                );
+                if (ng.status === 'mismatch') return (
+                  <div className="p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}>
+                    <div className="flex items-center mb-2">
+                      <XCircle className="h-5 w-5 mr-2" style={{ color: 'var(--accent-red)' }} strokeWidth={1.75} />
+                      <span className="text-sm font-medium" style={{ color: 'var(--accent-red)' }}>NextGen mismatches detected (real-time check)</span>
+                    </div>
+                    <div className="space-y-1.5 mt-2">
+                      {(ng.criticalChanges || []).map((c: any, i: number) => (
+                        <div key={i} className="flex items-center justify-between text-xs" style={{ color: 'var(--text-secondary)' }}>
+                          <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{c.field.replace(/_/g, ' ')}</span>
+                          <span>Invoice: {String(c.old)} → NextGen: {String(c.new)}</span>
+                        </div>
+                      ))}
+                      {(ng.changes || []).filter((c: any) => !(ng.criticalChanges || []).some((cc: any) => cc.field === c.field)).map((c: any, i: number) => (
+                        <div key={i} className="flex items-center justify-between text-xs" style={{ color: 'var(--text-muted)' }}>
+                          <span>{c.field.replace(/_/g, ' ')}</span>
+                          <span>{String(c.old)} → {String(c.new)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+                return null;
+              })()}
+
               {/* Bank Details Change Requests */}
               {invoiceBankRequests.length > 0 && (
                 <div className="p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-blue) 6%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-blue) 20%, transparent)' }}>
@@ -2854,6 +2936,10 @@ ${dataRows}
                 </div>
                 );
               })()}
+
+              
+
+              
 
               {/* Payment Confirmation Sent — read-only label */}
               {selectedInvoice.status === (InvoiceStatus.PAYMENT_CONFIRMATION_SENT as any) && (selectedInvoice as any).confirmation_sent_at && (

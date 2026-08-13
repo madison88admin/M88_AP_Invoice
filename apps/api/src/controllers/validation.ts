@@ -4,6 +4,18 @@ import { validateInvoice, checkNextGenChanges } from '../services/validationServ
 import { logAudit } from '../services/auditLogService';
 import { createJob, completeJob, failJob, getJob, cleanupOldJobs } from '../services/jobStore';
 
+// Format failing validation rules into a readable audit note so the trail shows
+// exactly what failed and what changed (amounts, variance, vendor, etc.).
+function buildValidationAuditNote(result: any): string {
+  const failing = (result?.results || [])
+    .filter((r: any) => !r.passed)
+    .map((r: any) => `${r.message}${r.detail ? ` — ${r.detail}` : ''}`);
+  const note = `Validation completed. Passed: ${result?.passed}. Rules checked: ${result?.results?.length || 0}`
+    + (failing.length > 0 ? `. Failing: ${failing.join(' | ')}` : '');
+  // Keep the audit note bounded even when OCR/NextGen details are verbose
+  return note.length > 2000 ? note.slice(0, 2000) + '…' : note;
+}
+
 export const validateInvoiceController = async (
   req: AuthRequest,
   res: Response,
@@ -16,7 +28,7 @@ export const validateInvoiceController = async (
       invoice_id: id,
       performed_by: req.user!.id,
       action: 'INVOICE_VALIDATED',
-      note: `Validation completed. Passed: ${result?.passed}. Rules checked: ${result?.results?.length || 0}`,
+      note: buildValidationAuditNote(result),
     });
     res.json(result);
   } catch (error) {
@@ -47,7 +59,7 @@ export const validateInvoiceAsyncController = async (
           invoice_id: id,
           performed_by: userId,
           action: 'INVOICE_VALIDATED',
-          note: `Validation completed. Passed: ${result?.passed}. Rules checked: ${result?.results?.length || 0}`,
+          note: buildValidationAuditNote(result),
         });
         completeJob(jobId, result);
       } catch (error: any) {

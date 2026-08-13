@@ -276,10 +276,9 @@ const startServer = async () => {
     const mpoCacheSyncInterval = setInterval(async () => {
       try {
         logger.info('MPO cache: periodic sync started...');
-        // Clear the cache to force a fresh fetch on next access
-        (nextGenService as any).mpoHeaderCache = null;
-        (nextGenService as any).mpoCacheTimestamp = 0;
-        // Trigger a fresh fetch
+        // Warm swap — do NOT clear the live cache first. The preload fetches a
+        // fresh full set and swaps it in on completion, so checks never hit a
+        // cold cache while the refresh is running.
         await nextGenService.preloadMPOCache();
         logger.info('MPO cache: periodic sync completed');
       } catch (err) {

@@ -104,13 +104,14 @@ export async function resolveException(
     },
   });
 
-  // Create audit log entry
+  // Create audit log entry — include the original exception detail so the trail
+  // shows exactly what was flagged (e.g. "Amount: invoice $X vs PO $Y")
   await prisma.auditLog.create({
     data: {
       invoice_id: exception.invoice_id,
       action: 'EXCEPTION_RESOLVED',
       performed_by: userId,
-      note: `Exception "${exception.reason}" resolved: ${resolution}`,
+      note: `Exception "${exception.reason}" resolved: ${resolution}${exception.detail ? ` — flagged: ${exception.detail}` : ''}`,
     },
   });
 
@@ -244,6 +245,17 @@ export async function autoResolveLowRiskExceptions(invoiceId: string): Promise<{
         },
       });
 
+      // Audit the auto-resolution with the flagged detail so the trail shows
+      // exactly what was auto-cleared (e.g. LATE_SUBMISSION day counts).
+      await prisma.auditLog.create({
+        data: {
+          invoice_id: invoiceId,
+          action: 'EXCEPTION_AUTO_RESOLVED',
+          performed_by: 'system',
+          note: `Exception "${reason}" auto-resolved: ${resolutionNote}${exception.detail ? ` — flagged: ${exception.detail}` : ''}`,
+        },
+      });
+
       results.push({ reason, action: resolutionNote });
       resolvedCount++;
     } else {
@@ -332,13 +344,14 @@ export async function waiveException(
     },
   });
 
-  // Create audit log entry
+  // Create audit log entry — include the original exception detail so the trail
+  // shows exactly what was flagged (e.g. "Amount: invoice $X vs PO $Y")
   await prisma.auditLog.create({
     data: {
       invoice_id: exception.invoice_id,
       action: 'EXCEPTION_WAIVED',
       performed_by: userId,
-      note: `Exception "${exception.reason}" waived: ${waiverReason}`,
+      note: `Exception "${exception.reason}" waived: ${waiverReason}${exception.detail ? ` — flagged: ${exception.detail}` : ''}`,
     },
   });
 

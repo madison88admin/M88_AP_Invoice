@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { logger } from '../utils/logger';
 import { parseMPOReference } from '../utils/mpoReference';
 import { matchMPOLines } from '../utils/mpoLineMatching';
@@ -5,7 +7,11 @@ import { matchMPOLines } from '../utils/mpoLineMatching';
 // Timeout helper for fetch calls — prevents indefinite hangs
 const FETCH_TIMEOUT_MS = Math.max(1000, Number(process.env.NEXTGEN_REQUEST_TIMEOUT_MS || 30000));
 const MAX_CONCURRENT_REQUESTS = Math.max(1, Number(process.env.NEXTGEN_MAX_CONCURRENT_REQUESTS || 2));
-const REQUEST_DELAY_MS = Math.max(0, Number(process.env.NEXTGEN_REQUEST_DELAY_MS || 150));
+// NextGen throttles sessions after bursts of rapid requests — pace requests so
+// bulk pagination can complete without the session being invalidated mid-scan.
+const REQUEST_DELAY_MS = Math.max(0, Number(process.env.NEXTGEN_REQUEST_DELAY_MS || 350));
+// Persisted MPO header cache — survives API restarts so the cache is never cold
+const MPO_CACHE_FILE = process.env.MPO_CACHE_FILE || path.join(process.cwd(), 'data', 'mpo-header-cache.json');
 const SERVER_RETRY_DELAY_MS = Math.max(0, Number(process.env.NEXTGEN_RETRY_DELAY_MS || 300));
 const AMOUNT_TOLERANCE_PERCENT = Math.max(0, Number(process.env.NEXTGEN_AMOUNT_TOLERANCE_PERCENT || 5));
 const AMOUNT_WARNING_PERCENT = Math.min(
@@ -329,6 +335,53 @@ export class NextGenService {
     // Write mode: only enabled when NEXTGEN_WRITE_ENABLED=true AND a separate test URL is configured
     this.writeEnabled = process.env.NEXTGEN_WRITE_ENABLED === 'true';
     this.writeBaseUrl = process.env.NEXTGEN_TEST_API_URL || '';
+    // Restore the MPO header cache from disk so a restart never leaves it cold
+    this.loadMPOHeaderCacheFromDisk();
+  }
+
+  /** Load a previously persisted MPO header cache (best-effort, non-fatal). */
+  private loadMPOHeaderCacheFromDisk(): void {
+    try {
+      if (fs.existsSync(MPO_CACHE_FILE)) {
+        const raw = JSON.parse(fs.readFileSync(MPO_CACHE_FILE, 'utf-8')) as { saved_at: number; headers: any[] };
+        if (Array.isArray(raw.headers) && raw.headers.length > 0) {
+          mpoHeaderCache = raw.headers;
+          mpoCacheTimestamp = Date.now(); // treat as fresh; TTL refresh handles staleness
+          logger.info(`MPO cache: loaded ${raw.headers.length} headers from disk (${MPO_CACHE_FILE})`);
+        }
+      }
+    } catch (err) {
+      logger.warn(`MPO cache: could not load persisted cache (${err instanceof Error ? err.message : String(err)})`);
+    }
+  }
+
+  /** Fields the cache consumers actually read (keeps the persisted file small). */
+  private static readonly MPO_HEADER_FIELDS = [
+    'Id', 'Name', 'Comments', 'Description', 'SupplierDescription', 'SupplierName',
+    'TotalCost', 'TotalValue', 'SupplierId', 'SupplierCurrencyName', 'CurrencyName',
+    'KeyDate', 'CustomerName', 'RangeName', 'TemplateName', 'StatusName',
+  ] as const;
+
+  private slimHeader(h: any): any {
+    const out: Record<string, any> = {};
+    for (const f of NextGenService.MPO_HEADER_FIELDS) {
+      if (h[f] !== undefined) out[f] = h[f];
+    }
+    return out;
+  }
+
+  /** Persist the current MPO header cache to disk (best-effort, fire-and-forget). */
+  private saveMPOHeaderCacheToDisk(): void {
+    try {
+      if (!mpoHeaderCache || mpoHeaderCache.length === 0) return;
+      const slim = mpoHeaderCache.map((h) => this.slimHeader(h));
+      const dir = path.dirname(MPO_CACHE_FILE);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(MPO_CACHE_FILE, JSON.stringify({ saved_at: Date.now(), headers: slim }), 'utf-8');
+      logger.info(`MPO cache: persisted ${slim.length} headers to disk (${(fs.statSync(MPO_CACHE_FILE).size / 1024 / 1024).toFixed(1)} MB)`);
+    } catch (err) {
+      logger.warn(`MPO cache: could not persist cache (${err instanceof Error ? err.message : String(err)})`);
+    }
   }
 
   static getInstance(): NextGenService {
@@ -1118,6 +1171,7 @@ export class NextGenService {
         mpoHeaderCache = result.headers;
         mpoCacheTimestamp = Date.now();
         logger.info(`MPO cache: populated with ${result.headers.length} complete headers`);
+        this.saveMPOHeaderCacheToDisk();
       } else {
         logger.info(`MPO targeted lookup returned ${result.headers.length} headers; global cache not updated`);
       }
@@ -1241,6 +1295,10 @@ export class NextGenService {
     // Fetch more pages around estimated position for safety (expand to 15 pages)
     const pages = new Set<number>();
     for (let p = Math.max(1, startPage - 5); p <= Math.min(totalPages, startPage + 10); p++) pages.add(p);
+    // Full preload (no mpoNumber) must scan EVERY page so the global cache is complete
+    if (!mpoNumber) {
+      for (let p = 1; p <= totalPages; p++) pages.add(p);
+    }
 
     const results: any[] = [];
     for (const p of pages) {
@@ -1270,8 +1328,10 @@ export class NextGenService {
       i.Name?.includes(mpoNumber)
     );
 
-    if (mpoNumber && !found) {
-      logger.warn(`MPO ${mpoNumber} not found in targeted pages, searching all pages`);
+    if (!mpoNumber || (mpoNumber && !found)) {
+      if (mpoNumber) {
+        logger.warn(`MPO ${mpoNumber} not found in targeted pages, searching all pages`);
+      }
       const allResults = [...firstItems];
       let page = 2;
       while (allResults.length < total) {

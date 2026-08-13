@@ -24,7 +24,7 @@ vi.mock('../utils/logger', () => ({
   logger: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
 }));
 
-import { resolveException, waiveException } from './exceptionService';
+import { resolveException, waiveException, autoResolveLowRiskExceptions } from './exceptionService';
 
 const flaggedInvoice = {
   id: 'invoice-smoke-1',
@@ -36,6 +36,7 @@ const pendingException = {
   invoice_id: flaggedInvoice.id,
   reason: 'AMOUNT_MISMATCH',
   status: 'PENDING',
+  detail: 'Amount: invoice $184.85 vs PO $200.00 (7.6% variance)',
   invoice: flaggedInvoice,
 };
 
@@ -82,6 +83,15 @@ describe('exception workflow smoke test', () => {
         data: expect.objectContaining({ action: 'EXCEPTIONS_ALL_RESOLVED' }),
       })
     );
+    // The resolve audit note must include the flagged detail (what changed)
+    expect(prismaMock.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: 'EXCEPTION_RESOLVED',
+          note: expect.stringContaining('flagged: Amount: invoice $184.85 vs PO $200.00'),
+        }),
+      })
+    );
   });
 
   it('keeps the invoice flagged while another exception remains', async () => {
@@ -120,5 +130,54 @@ describe('exception workflow smoke test', () => {
       status: 'VALIDATION_PENDING',
       exception_count: 0,
     });
+    // Waive audit note also carries the flagged detail
+    expect(prismaMock.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: 'EXCEPTION_WAIVED',
+          note: expect.stringContaining('flagged: Amount: invoice $184.85 vs PO $200.00'),
+        }),
+      })
+    );
+  });
+
+  it('audits auto-resolved exceptions with the flagged detail', async () => {
+    prismaMock.exception.findMany.mockResolvedValue([
+      {
+        id: 'exc-late',
+        reason: 'LATE_SUBMISSION',
+        status: 'PENDING',
+        detail: 'Invoice submitted 9 days after invoice date',
+      },
+    ]);
+    prismaMock.invoice.findUnique.mockResolvedValue({
+      ...flaggedInvoice,
+      total_amount: '150.00',
+      invoice_date: new Date('2026-08-01'),
+      vendor: { bank_verified_at: null },
+      exceptions: [
+        {
+          id: 'exc-late',
+          reason: 'LATE_SUBMISSION',
+          status: 'PENDING',
+          detail: 'Invoice submitted 9 days after invoice date',
+        },
+      ],
+    });
+    prismaMock.exception.update.mockResolvedValue({});
+    prismaMock.exception.count.mockResolvedValueOnce(0);
+    prismaMock.invoice.update.mockResolvedValue({});
+
+    const result = await autoResolveLowRiskExceptions(flaggedInvoice.id);
+
+    expect(result.resolved).toBe(1);
+    expect(prismaMock.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: 'EXCEPTION_AUTO_RESOLVED',
+          note: expect.stringContaining('flagged: Invoice submitted 9 days after invoice date'),
+        }),
+      })
+    );
   });
 });

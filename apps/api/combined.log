@@ -19300,3 +19300,27 @@
 {"level":"error","message":"Error sending SLA reminder for invoice 5181de98-bcbd-4129-8ea4-f8baf74bc96f: Failed to send email: Error: SMTP credentials not configured (SMTP_HOST, SMTP_USER, SMTP_PASS)","stack":"Error: Failed to send email: Error: SMTP credentials not configured (SMTP_HOST, SMTP_USER, SMTP_PASS)\n    at sendEmail (C:\\Users\\JC\\OneDrive - Madison88\\AP Invoice\\apps\\api\\dist\\services\\notificationService.js:57:15)\n    at sendSLAReminder (C:\\Users\\JC\\OneDrive - Madison88\\AP Invoice\\apps\\api\\dist\\services\\slaReminderService.js:148:51)\n    at async checkAndSendSLAReminders (C:\\Users\\JC\\OneDrive - Madison88\\AP Invoice\\apps\\api\\dist\\services\\slaReminderService.js:75:38)\n    at async Timeout._onTimeout (C:\\Users\\JC\\OneDrive - Madison88\\AP Invoice\\apps\\api\\dist\\index.js:281:32)","timestamp":"2026-08-13T06:33:21.472Z"}
 {"level":"info","message":"SLA reminder check completed: 0 reminders sent, 0 escalations sent","timestamp":"2026-08-13T06:33:21.472Z"}
 {"level":"info","message":"Initial SLA check: 0 reminders, 0 escalations","timestamp":"2026-08-13T06:33:21.472Z"}
+{"level":"warn","message":"NextGen FormLinesGridRead unavailable for OrderId 18544; trying MPOLIGridRead fallback","timestamp":"2026-08-13T06:37:51.303Z"}
+{"level":"warn","message":"NextGen FormLinesGridRead unavailable for OrderId 18544; trying MPOLIGridRead fallback","timestamp":"2026-08-13T06:37:51.307Z"}
+{"level":"error","message":"NextGen line data unavailable for OrderId 18544 after primary and fallback requests","timestamp":"2026-08-13T06:37:51.307Z"}
+{"level":"info","message":"Payment reconciliation export: 2 batches, 3 payments, bank charges 25.5","timestamp":"2026-08-13T06:37:51.377Z"}
+{"level":"info","message":"Payment reconciliation export: 1 batches, 2 payments, bank charges 0","timestamp":"2026-08-13T06:37:51.393Z"}
+{"level":"info","message":"Payment reconciliation export: 0 batches, 0 payments, bank charges 0","timestamp":"2026-08-13T06:37:51.397Z"}
+{"level":"warn","message":"NextGen postForm /MaterialPurchaseOrder/FormLinesGridRead returned 500, forcing a fresh session and retrying once...","timestamp":"2026-08-13T06:37:51.467Z"}
+{"level":"info","message":"[FieldDecisionEngine] Decided 14 fields from 3 engines: confidence=36, status=REVIEW_REQUIRED, conflicts=9, review_fields=9","timestamp":"2026-08-13T06:37:51.512Z"}
+{"level":"info","message":"[PaymentBatch] Bulk-approved 2 payment(s) awaiting review (by sup-1)","timestamp":"2026-08-13T06:37:51.516Z"}
+{"level":"info","message":"QB Bills export: 1 bills, total 100.00","timestamp":"2026-08-13T06:37:51.522Z"}
+{"level":"info","message":"[PaymentBatch] Bulk-approved 1 payment(s) awaiting review (by sup-1)","timestamp":"2026-08-13T06:37:51.519Z"}
+{"level":"info","message":"[PaymentBatch] Bank charge 25.50 applied to pay-1 in batch PB202608110001","timestamp":"2026-08-13T06:37:51.521Z"}
+{"level":"info","message":"[PaymentBatch] Bank charge removed from pay-1 in batch PB202608110001","timestamp":"2026-08-13T06:37:51.524Z"}
+{"level":"info","message":"[PaymentBatch] Bill stub endorsed for pay-1 in batch PB202608110001","timestamp":"2026-08-13T06:37:51.526Z"}
+{"level":"info","message":"[PaymentBatch] Matched 1 payment(s) as PAID in batch PB202608110001","timestamp":"2026-08-13T06:37:51.528Z"}
+{"level":"info","message":"[PaymentBatch] Matched 1 payment(s) as PAID in batch PB202608110001","timestamp":"2026-08-13T06:37:51.529Z"}
+{"level":"info","message":"[PaymentBatch] Matched 1 payment(s) as PAID in batch PB202608110001","timestamp":"2026-08-13T06:37:51.530Z"}
+{"level":"info","message":"[PaymentBatch] Matched 1 payment(s) as PAID in batch PB202608110001","timestamp":"2026-08-13T06:37:51.530Z"}
+{"level":"info","message":"[PaymentBatch] Purchasing approved release of held payment pay-held","timestamp":"2026-08-13T06:37:51.531Z"}
+{"level":"info","message":"QB Bills export: 1 bills, total 100.00","timestamp":"2026-08-13T06:37:51.538Z"}
+{"level":"info","message":"QB Bills export: 1 bills, total 300.00","timestamp":"2026-08-13T06:37:51.542Z"}
+{"level":"info","message":"QB Bills export: 1 bills, total 75.00","timestamp":"2026-08-13T06:37:51.546Z"}
+{"level":"info","message":"QB Bills export: 0 bills, total 0.00","timestamp":"2026-08-13T06:37:51.550Z"}
+{"level":"warn","message":"UPSTAGE_API_KEY not configured — Upstage OCR fallback disabled","timestamp":"2026-08-13T06:37:51.687Z"}

@@ -107,7 +107,7 @@ describe('checkNextGenChanges — NextGen availability', () => {
     expect(result.hasChanges).toBe(false);
   });
 
-  it('returns nextGenUnavailable=false and stores data on a healthy check', async () => {
+  it('returns nextGenUnavailable=false, stores data, and marks firstCheck on a healthy first check', async () => {
     getFullPOByMPO.mockResolvedValue({
       amount: 100,
       vendor_name: 'Vendor A',
@@ -119,6 +119,8 @@ describe('checkNextGenChanges — NextGen availability', () => {
 
     expect(result.nextGenUnavailable).toBe(false);
     expect(result.hasChanges).toBe(false);
+    // No stored baseline yet → firstCheck must be true so the UI never claims "matches"
+    expect(result.firstCheck).toBe(true);
     expect(invoiceUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'inv-1' },
@@ -127,5 +129,24 @@ describe('checkNextGenChanges — NextGen availability', () => {
     const updateArg = invoiceUpdate.mock.calls[0][0];
     const poValidation = JSON.parse(updateArg.data.po_validation);
     expect(poValidation.nextgen_data.po_number).toBe('PO1');
+  });
+
+  it('returns firstCheck=false when a baseline snapshot already exists', async () => {
+    invoiceFindUnique.mockResolvedValue({
+      ...INVOICE,
+      po_validation: JSON.stringify({ nextgen_data: { amount: 100, vendor_name: 'Vendor A', po_number: 'PO1', line_items: [{ quantity: 10 }] } }),
+    });
+    getFullPOByMPO.mockResolvedValue({
+      amount: 100,
+      vendor_name: 'Vendor A',
+      po_number: 'PO1',
+      line_items: [{ quantity: 10 }],
+    });
+
+    const result = await checkNextGenChanges('inv-1');
+
+    expect(result.nextGenUnavailable).toBe(false);
+    expect(result.hasChanges).toBe(false);
+    expect(result.firstCheck).toBe(false);
   });
 });

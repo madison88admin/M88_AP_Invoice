@@ -1452,6 +1452,9 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
   criticalChanges: Array<{ field: string; old: any; new: any }>;
   currentData: any;
   nextGenUnavailable: boolean;
+  /** True when there was no stored baseline yet — the check only saved the
+   *  snapshot and did NOT compare invoice fields, so "matches" must not be shown. */
+  firstCheck: boolean;
 }> {
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
@@ -1459,7 +1462,7 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
   });
 
   if (!invoice || !invoice.mpo_number) {
-    return { hasChanges: false, hasCriticalChanges: false, changes: [], criticalChanges: [], currentData: null, nextGenUnavailable: false };
+    return { hasChanges: false, hasCriticalChanges: false, changes: [], criticalChanges: [], currentData: null, nextGenUnavailable: false, firstCheck: false };
   }
 
   // Real-time check runs inside a hard 10s budget (same as Rule 17's NEXTGEN_TIMEOUT_10s)
@@ -1484,6 +1487,7 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
       criticalChanges: [],
       currentData: null,
       nextGenUnavailable: true,
+      firstCheck: false,
     };
   }
 
@@ -1499,6 +1503,7 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
       criticalChanges: [],
       currentData: null,
       nextGenUnavailable: systemDown,
+      firstCheck: false,
     };
   }
 
@@ -1576,5 +1581,5 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
     },
   });
 
-  return { hasChanges, hasCriticalChanges, changes, criticalChanges, currentData: currentNextGen, nextGenUnavailable: false };
+  return { hasChanges, hasCriticalChanges, changes, criticalChanges, currentData: currentNextGen, nextGenUnavailable: false, firstCheck: !storedNextGen };
 }

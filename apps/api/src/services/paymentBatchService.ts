@@ -379,6 +379,9 @@ export async function markPaymentForPayment(paymentId: string, userId: string) {
   if (payment.status !== 'SCHEDULED') {
     throw new AppError('Only a scheduled payment can be marked for payment', 400);
   }
+  if (payment.batch_id) {
+    throw new AppError('A payment already inside a batch cannot be marked for payment — remove it from the batch first', 400);
+  }
   const updated = await prisma.payment.update({
     where: { id: paymentId },
     data: {
@@ -1367,7 +1370,9 @@ export async function returnInvoicesFromBatch(
   const paymentsToReturn = batch.payments.filter((p: any) => paymentIds.includes(p.id));
   const remainingPayments = batch.payments.filter((p: any) => !paymentIds.includes(p.id));
 
-  // 1. Unlink returned payments from batch, reset to SCHEDULED
+  // 1. Unlink returned payments from batch, reset to SCHEDULED (available for
+  //    future batches) — status is explicitly reset so a payment that was
+  //    APPROVED_FOR_PAYMENT does not stay in that state with no batch.
   await prisma.payment.updateMany({
     where: { id: { in: paymentIds } },
     data: {
@@ -1375,6 +1380,7 @@ export async function returnInvoicesFromBatch(
       selected_for_batch: false,
       selected_by: null,
       selected_at: null,
+      status: 'SCHEDULED',
     },
   });
 

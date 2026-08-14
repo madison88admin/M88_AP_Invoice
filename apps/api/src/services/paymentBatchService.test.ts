@@ -35,7 +35,7 @@ vi.mock('./inAppNotificationService', () => ({
   inAppNotificationService: { create: notificationCreate, notifyStageTransition: vi.fn() },
 }));
 
-import { getScheduledPaymentsForBatch, bulkApprovePaymentsForPayment, applyBankCharge, removeBankCharge, endorseBillStub, matchPaymentConfirmation, approveHeldPayment } from './paymentBatchService';
+import { getScheduledPaymentsForBatch, bulkApprovePaymentsForPayment, applyBankCharge, removeBankCharge, endorseBillStub, matchPaymentConfirmation, approveHeldPayment, markPaymentForPayment, returnInvoicesFromBatch } from './paymentBatchService';
 
 /** Midnight n days ago (avoids DST / time-of-day flakiness in aging math). */
 function daysAgo(n: number): Date {
@@ -55,6 +55,7 @@ function makePayment(overrides: Record<string, any> = {}) {
     payment_date: overrides.payment_date ?? new Date(),
     payment_date_source: overrides.payment_date_source ?? 'DUE_DATE',
     status: overrides.status ?? 'SCHEDULED',
+    batch_id: overrides.batch_id ?? null,
     bank_charge_amount: overrides.bank_charge_amount ?? null,
     bank_charge_note: overrides.bank_charge_note ?? null,
     bill_stub: overrides.bill_stub ?? null,
@@ -756,5 +757,139 @@ describe('approveHeldPayment', () => {
 
     await expect(approveHeldPayment('missing', 'purch-1')).rejects.toThrow('Payment not found');
     expect(paymentUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe('markPaymentForPayment', () => {
+  it('marks a scheduled, unbatched payment FOR_PAYMENT and clears batch selection', async () => {
+    paymentFindUnique.mockResolvedValue(makePayment({
+      id: 'pay-fp',
+      invoice_id: 'inv-fp',
+      status: 'SCHEDULED',
+      batch_id: null,
+      selected_for_batch: true,
+      selected_by: 'assoc-1',
+      selected_at: new Date(),
+    }));
+    paymentUpdate.mockResolvedValue({ id: 'pay-fp', status: 'FOR_PAYMENT' });
+
+    const result = await markPaymentForPayment('pay-fp', 'assoc-1');
+
+    expect(paymentUpdate).toHaveBeenCalledWith({
+      where: { id: 'pay-fp' },
+      data: {
+        status: 'FOR_PAYMENT',
+        selected_for_batch: false,
+        selected_by: null,
+        selected_at: null,
+      },
+    });
+    expect(result.status).toBe('FOR_PAYMENT');
+    expect(auditLogCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        invoice_id: 'inv-fp',
+        action: 'PAYMENT_MARKED_FOR_PAYMENT',
+        performed_by: 'assoc-1',
+      }),
+    }));
+  });
+
+  it('blocks a payment that is already inside a batch (stuck-batch guard)', async () => {
+    paymentFindUnique.mockResolvedValue(makePayment({
+      id: 'pay-in-batch',
+      status: 'SCHEDULED',
+      batch_id: 'batch-9',
+    }));
+
+    await expect(markPaymentForPayment('pay-in-batch', 'assoc-1')).rejects.toThrow('already inside a batch');
+    expect(paymentUpdate).not.toHaveBeenCalled();
+    expect(auditLogCreate).not.toHaveBeenCalled();
+  });
+
+  it('still rejects a payment that is not SCHEDULED', async () => {
+    paymentFindUnique.mockResolvedValue(makePayment({ id: 'pay-x', status: 'APPROVED_FOR_PAYMENT' }));
+
+    await expect(markPaymentForPayment('pay-x', 'assoc-1')).rejects.toThrow('Only a scheduled payment');
+    expect(paymentUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe('returnInvoicesFromBatch', () => {
+  it('resets returned payment status to SCHEDULED, unlinks the batch, and recomputes batch totals', async () => {
+    paymentBatchFindUnique.mockResolvedValue(makeBatch({
+      id: 'batch-r',
+      batch_number: 'PB202608120001',
+      status: 'PENDING_SUPERVISOR_REVIEW',
+      payments: [
+        makePayment({ id: 'pay-1', invoice_id: 'inv-1', amount: 100, status: 'APPROVED_FOR_PAYMENT' }),
+        makePayment({ id: 'pay-2', invoice_id: 'inv-2', amount: 50, status: 'SCHEDULED' }),
+      ],
+    }));
+    paymentUpdateMany.mockResolvedValue({ count: 1 });
+    invoiceUpdate.mockResolvedValue({});
+    paymentBatchUpdate.mockResolvedValue({});
+
+    const result = await returnInvoicesFromBatch('batch-r', ['pay-1'], 'sup-1', 'Vendor details wrong');
+
+    // The critical fix: status is explicitly reset so the payment is batchable again
+    expect(paymentUpdateMany).toHaveBeenCalledWith({
+      where: { id: { in: ['pay-1'] } },
+      data: expect.objectContaining({
+        batch_id: null,
+        selected_for_batch: false,
+        status: 'SCHEDULED',
+      }),
+    });
+    // Invoice returns to accounting review
+    expect(invoiceUpdate).toHaveBeenCalledWith({
+      where: { id: 'inv-1' },
+      data: { status: 'PENDING_ACCOUNTING' },
+    });
+    // Batch total recomputed from remaining payments
+    expect(paymentBatchUpdate).toHaveBeenCalledWith({
+      where: { id: 'batch-r' },
+      data: expect.objectContaining({ total_amount: '50.00', payment_count: 1 }),
+    });
+    expect(result.returned_count).toBe(1);
+    expect(result.batch_cancelled).toBe(false);
+  });
+
+  it('cancels the batch when every payment is returned', async () => {
+    paymentBatchFindUnique.mockResolvedValue(makeBatch({
+      id: 'batch-all',
+      batch_number: 'PB202608120002',
+      status: 'RETURNED_FOR_CORRECTION',
+      payments: [
+        makePayment({ id: 'pay-1', invoice_id: 'inv-1', amount: 100 }),
+      ],
+    }));
+    paymentUpdateMany.mockResolvedValue({ count: 1 });
+    invoiceUpdate.mockResolvedValue({});
+    paymentBatchUpdate.mockResolvedValue({});
+
+    const result = await returnInvoicesFromBatch('batch-all', ['pay-1'], 'assoc-1', 'Fix amounts');
+
+    expect(paymentUpdateMany).toHaveBeenCalledWith({
+      where: { id: { in: ['pay-1'] } },
+      data: expect.objectContaining({ status: 'SCHEDULED', batch_id: null }),
+    });
+    expect(paymentBatchUpdate).toHaveBeenCalledWith({
+      where: { id: 'batch-all' },
+      data: expect.objectContaining({ status: 'CANCELLED', total_amount: 0, payment_count: 0 }),
+    });
+    expect(result.batch_cancelled).toBe(true);
+  });
+
+  it('rejects returns from a batch that is not returnable (e.g. REVIEWED)', async () => {
+    paymentBatchFindUnique.mockResolvedValue(makeBatch({
+      id: 'batch-reviewed',
+      status: 'REVIEWED',
+      payments: [makePayment({ id: 'pay-1', invoice_id: 'inv-1' })],
+    }));
+
+    await expect(returnInvoicesFromBatch('batch-reviewed', ['pay-1'], 'sup-1', 'Nope'))
+      .rejects.toThrow('Only draft, pending-review, or returned batches');
+    expect(paymentUpdateMany).not.toHaveBeenCalled();
+    expect(paymentBatchUpdate).not.toHaveBeenCalled();
   });
 });

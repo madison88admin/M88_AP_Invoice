@@ -7,6 +7,16 @@ import { Building2, Search, Plus, Edit, Trash2, ArrowLeft, Building, Save, X, Lo
 import { MockVendor } from '../lib/mockData';
 import { vendorApi } from '../lib/api';
 
+/** Required bank fields for a pay-ready vendor — used for the completeness badge. */
+function bankMissingFields(v: MockVendor): string[] {
+  const missing: string[] = [];
+  if (!v.beneficiary_name) missing.push('Beneficiary');
+  if (!v.bank_name) missing.push('Bank');
+  if (!v.account_number) missing.push('Account');
+  if (!v.swift_code) missing.push('SWIFT');
+  return missing;
+}
+
 export default function VendorManagement() {
   const { vendors } = useMockData();
   const { user } = useAuth();
@@ -214,24 +224,58 @@ export default function VendorManagement() {
                     onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
                     onMouseLeave={(e) => { e.currentTarget.style.background = ''; }}
                   >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4">
-                        <div className="p-3 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-purple) 20%, transparent)' }}>
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex items-start gap-4 min-w-0 flex-1">
+                        <div className="p-3 rounded-xl shrink-0" style={{ background: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-purple) 20%, transparent)' }}>
                           <Building className="h-5 w-5" style={{ color: 'var(--accent-purple)' }} strokeWidth={1.75} />
                         </div>
-                        <div>
-                          <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{vendor.name}</h3>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{vendor.name_aliases.length > 0 ? vendor.name_aliases.length + ' aliases' : 'No aliases'}</span>
-                            {vendor.name_aliases.length > 0 && (
-                              <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-                                Aliases: {vendor.name_aliases.join(', ')}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{vendor.name}</h3>
+                            {vendor.bank_verified_at && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-lime) 14%, transparent)', color: 'var(--accent-lime)', border: '1px solid color-mix(in srgb, var(--accent-lime) 25%, transparent)' }}>
+                                Verified
+                              </span>
+                            )}
+                            {bankMissingFields(vendor).length === 0 ? (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-green) 14%, transparent)', color: 'var(--accent-green)', border: '1px solid color-mix(in srgb, var(--accent-green) 25%, transparent)' }}>
+                                Bank info complete
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-amber) 14%, transparent)', color: 'var(--accent-amber)', border: '1px solid color-mix(in srgb, var(--accent-amber) 25%, transparent)' }}>
+                                Missing: {bankMissingFields(vendor).join(', ')}
                               </span>
                             )}
                           </div>
+                          <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                            {vendor.supplier_location || 'No location'}
+                            {vendor.name_aliases.length > 0 && <> · {vendor.name_aliases.length} alias{vendor.name_aliases.length === 1 ? '' : 'es'}</>}
+                            {vendor.classification ? ` · ${vendor.classification}` : ''}
+                          </div>
+                          {/* Bank details breakdown — visible right in the list */}
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2 mt-3">
+                            {[
+                              { label: 'Beneficiary', value: vendor.beneficiary_name },
+                              { label: 'Bank', value: vendor.bank_name },
+                              { label: 'Account', value: vendor.account_number },
+                              { label: 'SWIFT', value: vendor.swift_code },
+                            ].map((f) => (
+                              <div key={f.label} className="min-w-0">
+                                <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>{f.label}</p>
+                                <p className="text-xs font-medium truncate" style={{ color: f.value ? 'var(--text-primary)' : 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+                                  {f.value || '—'}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                          {vendor.iban && (
+                            <p className="text-xs mt-1.5" style={{ color: 'var(--text-secondary)' }}>
+                              IBAN: <span className="font-medium" style={{ fontVariantNumeric: 'tabular-nums' }}>{vendor.iban}</span>
+                            </p>
+                          )}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 shrink-0">
                         {canEditVendor && (
                         <button
                           onClick={(e) => {
@@ -285,18 +329,121 @@ export default function VendorManagement() {
                       ))}
                     </div>
                   </div>
-                  <div>
-                    <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Bank Name</p>
-                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedVendor.bank_name}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Bank Status</p>
+                    {bankMissingFields(selectedVendor).length === 0 ? (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-green) 14%, transparent)', color: 'var(--accent-green)', border: '1px solid color-mix(in srgb, var(--accent-green) 25%, transparent)' }}>
+                        Complete
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-amber) 14%, transparent)', color: 'var(--accent-amber)', border: '1px solid color-mix(in srgb, var(--accent-amber) 25%, transparent)' }}>
+                        Missing: {bankMissingFields(selectedVendor).join(', ')}
+                      </span>
+                    )}
+                    {selectedVendor.bank_verified_at && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-lime) 14%, transparent)', color: 'var(--accent-lime)', border: '1px solid color-mix(in srgb, var(--accent-lime) 25%, transparent)' }}>
+                        Verified
+                      </span>
+                    )}
                   </div>
-                  <div>
-                    <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>SWIFT Code</p>
-                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedVendor.swift_code}</p>
+
+                  <div className="p-3 rounded-xl" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--accent-purple)' }}>Bank Details</p>
+                    <div className="space-y-2.5">
+                      <div>
+                        <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Beneficiary Name</p>
+                        <p className="text-sm font-medium" style={{ color: selectedVendor.beneficiary_name ? 'var(--text-primary)' : 'var(--text-muted)' }}>{selectedVendor.beneficiary_name || '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Bank Name</p>
+                        <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedVendor.bank_name || '—'}</p>
+                        {selectedVendor.bank_name_alt && selectedVendor.bank_name_alt.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {selectedVendor.bank_name_alt.map((a, i) => (
+                              <span key={i} className="px-1.5 py-0.5 text-[10px] rounded" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}>{a}</span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      {selectedVendor.bank_address && (
+                        <div>
+                          <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Bank Address</p>
+                          <p className="text-sm" style={{ color: 'var(--text-primary)' }}>{selectedVendor.bank_address}</p>
+                        </div>
+                      )}
+                      <div>
+                        <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Account Number</p>
+                        <p className="text-sm font-medium" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{selectedVendor.account_number || '—'}</p>
+                        {selectedVendor.account_number_alt && selectedVendor.account_number_alt.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {selectedVendor.account_number_alt.map((a, i) => (
+                              <span key={i} className="px-1.5 py-0.5 text-[10px] rounded" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}>{a}</span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>SWIFT Code</p>
+                        <p className="text-sm font-medium" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{selectedVendor.swift_code || '—'}</p>
+                        {selectedVendor.swift_code_alt && selectedVendor.swift_code_alt.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {selectedVendor.swift_code_alt.map((a, i) => (
+                              <span key={i} className="px-1.5 py-0.5 text-[10px] rounded" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}>{a}</span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      {selectedVendor.iban && (
+                        <div>
+                          <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>IBAN</p>
+                          <p className="text-sm font-medium" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{selectedVendor.iban}</p>
+                        </div>
+                      )}
+                      <div className="grid grid-cols-2 gap-3">
+                        {selectedVendor.sort_code && (
+                          <div>
+                            <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Sort Code</p>
+                            <p className="text-sm font-medium" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{selectedVendor.sort_code}</p>
+                          </div>
+                        )}
+                        {selectedVendor.aba_routing_number && (
+                          <div>
+                            <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>ABA Routing</p>
+                            <p className="text-sm font-medium" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{selectedVendor.aba_routing_number}</p>
+                          </div>
+                        )}
+                      </div>
+                      {(selectedVendor.intermediary_bank_name || selectedVendor.intermediary_bank_swift) && (
+                        <div>
+                          <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Intermediary Bank</p>
+                          <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedVendor.intermediary_bank_name || '—'}{selectedVendor.intermediary_bank_swift ? ` · ${selectedVendor.intermediary_bank_swift}` : ''}</p>
+                        </div>
+                      )}
+                      <div>
+                        <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Multiple Accounts</p>
+                        <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedVendor.has_multiple_accounts ? 'Yes' : 'No'}</p>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Account Number</p>
-                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedVendor.account_number || 'N/A'}</p>
-                  </div>
+
+                  {selectedVendor.contact_email && (
+                    <div>
+                      <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Contact Email</p>
+                      <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedVendor.contact_email}</p>
+                    </div>
+                  )}
+
+                  {(selectedVendor.vat_number || selectedVendor.bir_tin || selectedVendor.eori_number || selectedVendor.gstin_number) && (
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--accent-purple)' }}>Tax IDs</p>
+                      <div className="space-y-1.5">
+                        {selectedVendor.vat_number && <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>VAT: <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{selectedVendor.vat_number}</span></p>}
+                        {selectedVendor.bir_tin && <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>BIR TIN: <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{selectedVendor.bir_tin}</span></p>}
+                        {selectedVendor.eori_number && <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>EORI: <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{selectedVendor.eori_number}</span></p>}
+                        {selectedVendor.gstin_number && <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>GSTIN: <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{selectedVendor.gstin_number}</span></p>}
+                      </div>
+                    </div>
+                  )}
                   {!canEditBankInfo && (
                     <button
                       onClick={() => handleRequestBankUpdate(selectedVendor)}

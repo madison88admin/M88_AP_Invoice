@@ -548,9 +548,10 @@ export async function rejectPaymentForPayment(paymentId: string, reason: string,
 /**
  * Apply a bank charge to ONE payment in a batch (Accounting Associate).
  *
- * - At most ONE charged payment per batch (batches are single-vendor, so this
- *   is "one bank charge per vendor per batch"). Duplicates are blocked — an
- *   existing charge must be removed before a different one can be applied.
+ * - At most ONE charged payment PER VENDOR per batch (a batch may combine
+ *   multiple vendors, so each vendor gets its own single charge). Duplicates
+ *   for the same vendor are blocked — the existing charge must be removed
+ *   before a different one can be applied.
  * - Only allowed while the batch is DRAFT or RETURNED_FOR_CORRECTION.
  * - batch.total_amount is recomputed to include the charge (payments + charge).
  */
@@ -569,7 +570,7 @@ export async function applyBankCharge(
 
   const batch = await prisma.paymentBatch.findUnique({
     where: { id: batchId },
-    include: { payments: true },
+    include: { payments: { include: { invoice: { include: { vendor: true } } } } },
   });
   if (!batch) throw new AppError('Payment batch not found', 404);
   if (![PaymentBatchStatus.DRAFT, PaymentBatchStatus.RETURNED_FOR_CORRECTION].includes(batch.status as any)) {
@@ -579,10 +580,13 @@ export async function applyBankCharge(
   const target = batch.payments.find((p: any) => p.id === paymentId);
   if (!target) throw new AppError('Payment is not part of this batch', 400);
 
-  // Duplicate block — one bank charge per vendor per batch
-  const existingCharge = batch.payments.find((p: any) => p.bank_charge_amount != null);
+  // Duplicate block — one bank charge per vendor per batch (batches may now
+  // combine multiple vendors, so only the same vendor's charge is blocked).
+  const existingCharge = batch.payments.find(
+    (p: any) => p.bank_charge_amount != null && p.invoice?.vendor_id === target.invoice?.vendor_id
+  );
   if (existingCharge) {
-    throw new AppError('This batch already has a bank charge — remove it first before applying a different one', 400);
+    throw new AppError('This vendor already has a bank charge in this batch — remove it first before applying a different one', 400);
   }
 
   await prisma.payment.update({
@@ -999,16 +1003,9 @@ export async function createPaymentBatch(
     throw new AppError('Some payments are not found, not selected for batch, or not in SCHEDULED/APPROVED_FOR_PAYMENT status', 400);
   }
 
-  // One payment batch must have one vendor, currency, beneficiary account and legal entity.
-  const compatibilityKeys = new Set(payments.map((p: any) => [
-    p.invoice.vendor_id,
-    p.currency,
-    p.invoice.vendor?.account_number || '',
-    p.invoice.bill_to_entity || '',
-  ].join('|')));
-  if (compatibilityKeys.size > 1) {
-    throw new AppError('A batch can only combine payments for the same vendor, currency, beneficiary account, and legal entity', 400);
-  }
+  // A batch may combine payments from ANY vendors (Accounting Associate decides
+  // the grouping). Banking controls are preserved at export time — each payment
+  // row carries its own vendor's bank details in the exported file.
 
   // Calculate total batch amount
   const totalAmount = payments.reduce((sum: number, p: any) => sum + Number(p.amount), 0);
@@ -1053,49 +1050,17 @@ export async function createPaymentBatch(
 }
 
 /**
- * Create one batch per compatible vendor/payment group. This lets Accounting
- * Associates select payments across vendors while preserving banking controls.
+ * Create ONE batch for all selected payments — regardless of vendor. Accounting
+ * Associates select payments across vendors and they land in the same batch;
+ * each payment keeps its own vendor's bank details for the export.
  */
 export async function createGroupedPaymentBatches(paymentIds: string[], userId: string) {
-  if (!Array.isArray(paymentIds) || paymentIds.length === 0) {
-    throw new AppError('Select at least one scheduled payment to create a batch', 400);
-  }
-
   const uniquePaymentIds = [...new Set(paymentIds)];
-  const payments = await prisma.payment.findMany({
-    where: {
-      id: { in: uniquePaymentIds },
-      status: { in: ['SCHEDULED', 'APPROVED_FOR_PAYMENT'] },
-      selected_for_batch: true,
-      selected_by: userId,
-      batch_id: null,
-    },
-    include: { invoice: { include: { vendor: true } } },
-  });
-
-  if (payments.length !== uniquePaymentIds.length) {
-    throw new AppError('Some payments are no longer available or were selected by another user. Refresh the schedule and try again.', 400);
-  }
-
-  const groups = new Map<string, string[]>();
-  for (const payment of payments as any[]) {
-    const key = [
-      payment.invoice.vendor_id,
-      payment.currency,
-      payment.invoice.vendor?.account_number || '',
-      payment.invoice.bill_to_entity || '',
-    ].join('|');
-    groups.set(key, [...(groups.get(key) || []), payment.id]);
-  }
-
-  const batches = [];
-  for (const ids of groups.values()) {
-    batches.push(await createPaymentBatch(ids, userId));
-  }
+  const batch = await createPaymentBatch(uniquePaymentIds, userId);
 
   return {
-    batches,
-    batch_count: batches.length,
+    batches: [batch],
+    batch_count: 1,
     payment_count: uniquePaymentIds.length,
   };
 }

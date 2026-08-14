@@ -917,14 +917,9 @@ export default function PaymentBatchManager() {
 
   const overdueCount = scheduledPayments.filter(p => p.status === 'SCHEDULED' && (p.aging_days ?? 0) > 0).length;
 
-  const selectedTotal = scheduledPayments
-    .filter(p => selectedPaymentIds.has(p.id))
-    .reduce((sum, p) => sum + p.amount, 0);
-  const previewGroups = Array.from(scheduledPayments.filter(p => selectedPaymentIds.has(p.id)).reduce((groups, payment) => {
-    const key = [payment.invoice.vendor.id, payment.currency, payment.invoice.vendor.account_number, payment.invoice.bill_to_entity].join('|');
-    const current = groups.get(key) || { vendor: payment.invoice.vendor.name, currency: payment.currency, account: payment.invoice.vendor.account_number || 'Missing account', entity: payment.invoice.bill_to_entity || 'Missing entity', count: 0, total: 0 };
-    current.count++; current.total += payment.amount; groups.set(key, current); return groups;
-  }, new Map<string, {vendor:string;currency:string;account:string;entity:string;count:number;total:number}>()).values());
+  const selectedPayments = scheduledPayments.filter(p => selectedPaymentIds.has(p.id));
+  const selectedTotal = selectedPayments.reduce((sum, p) => sum + p.amount, 0);
+  const previewVendors = Array.from(new Set(selectedPayments.map(p => p.invoice.vendor.name))).filter(Boolean);
 
   const dateCell = (d?: string | null) => (d ? new Date(d).toLocaleDateString() : '—');
   const filterLabel: React.CSSProperties = { display: 'block', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4, color: 'var(--text-muted)' };
@@ -1300,7 +1295,7 @@ export default function PaymentBatchManager() {
                       onMouseLeave={(e) => { if (!processing) e.currentTarget.style.background = 'var(--accent-lime)'; }}
                     >
                       {processing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Package className="h-4 w-4 mr-2" />}
-                      Create {previewGroups.length} Batch{previewGroups.length === 1 ? '' : 'es'}
+                      Create Batch
                     </button>
                   )}
                   {isSupervisor && (
@@ -1310,7 +1305,15 @@ export default function PaymentBatchManager() {
                   )}
                 </div>
               )}
-              {selectedPaymentIds.size > 0 && <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-2 mb-4">{previewGroups.map((group, index) => <div key={`${group.vendor}-${index}`} className="p-3 rounded-lg text-xs" style={{background:'var(--bg-card)',border:'1px solid var(--border-color)'}}><div className="font-semibold">Batch {index + 1}: {group.vendor}</div><div>{group.count} invoice{group.count === 1 ? '' : 's'} · {group.currency} {group.total.toLocaleString()}</div><div style={{color:'var(--text-muted)'}}>{group.entity} · Account {group.account}</div></div>)}</div>}
+              {selectedPaymentIds.size > 0 && (
+                <div className="grid gap-2 mb-4">
+                  <div className="p-3 rounded-lg text-xs" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+                    <div className="font-semibold">One batch · {selectedPaymentIds.size} invoice{selectedPaymentIds.size === 1 ? '' : 's'} from {previewVendors.length} vendor{previewVendors.length === 1 ? '' : 's'}</div>
+                    <div className="mt-1">Total {selectedPayments[0]?.currency || 'USD'} {selectedTotal.toLocaleString()}</div>
+                    <div style={{ color: 'var(--text-muted)' }} className="mt-0.5">{previewVendors.slice(0, 4).join(', ')}{previewVendors.length > 4 ? ` +${previewVendors.length - 4} more` : ''}</div>
+                  </div>
+                </div>
+              )}
 
               {scheduledPayments.length === 0 ? (
                 <div className="text-center py-12">
@@ -1690,7 +1693,7 @@ export default function PaymentBatchManager() {
                 <div className="flex items-center gap-3 mb-6">
                   <button onClick={() => handleExportPerVendor(selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2" style={{ background: 'var(--accent-blue)', color: 'white' }}>
                     <Paperclip className="h-4 w-4" strokeWidth={1.75} />
-                    {processing ? 'Exporting...' : 'Export Per-Vendor (Excel)'}
+                    {processing ? 'Exporting...' : 'Export Batch (Excel)'}
                   </button>
                   <button onClick={() => handleBatchAction('export', selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'var(--accent-purple)', color: 'white' }}>Mark Exported to Bank</button>
                 </div>
@@ -1700,7 +1703,7 @@ export default function PaymentBatchManager() {
                 <div className="flex items-center gap-3 mb-6">
                   <button onClick={() => handleExportPerVendor(selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2" style={{ background: 'var(--accent-blue)', color: 'white' }}>
                     <Paperclip className="h-4 w-4" strokeWidth={1.75} />
-                    {processing ? 'Exporting...' : 'Export Per-Vendor (Excel)'}
+                    {processing ? 'Exporting...' : 'Export Batch (Excel)'}
                   </button>
                   {isSupervisor && (
                     <button onClick={() => handleBatchAction('export', selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'var(--accent-purple)', color: 'white' }}>Mark Exported to Bank</button>

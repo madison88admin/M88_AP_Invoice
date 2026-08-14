@@ -7,13 +7,13 @@ import { logger } from '../utils/logger';
 /**
  * Export a payment batch as a single Excel file.
  *
- * Since each payment batch already enforces single vendor + single currency +
- * single beneficiary account + single legal entity (see createPaymentBatch),
- * this produces ONE Excel file with all invoices for that vendor + a TOTAL row.
+ * A batch may combine payments from multiple vendors, so this produces ONE
+ * Excel file where each row carries ITS OWN vendor's bank details, plus a
+ * TOTAL row. The Summary sheet lists every vendor in the batch.
  *
  * Worksheet structure:
- *  - "Payments" sheet: all invoice rows + TOTAL row at the bottom
- *  - "Summary" sheet: batch metadata (batch number, vendor, count, total)
+ *  - "Payments" sheet: all invoice rows (per-row vendor bank details) + TOTAL row
+ *  - "Summary" sheet: batch metadata (batch number, vendors, count, total)
  */
 export async function exportBatchPerVendor(batchId: string, userId?: string): Promise<{
   buffer: Buffer;
@@ -51,9 +51,15 @@ export async function exportBatchPerVendor(batchId: string, userId?: string): Pr
     throw new AppError('Batch must be reviewed by Accounting Supervisor before export', 400);
   }
 
-  // All payments in a batch share the same vendor (enforced at creation)
-  const vendor = batch.payments[0]?.invoice?.vendor;
-  const vendorName = vendor?.name || 'Unknown Vendor';
+  // A batch may combine multiple vendors — each payment row carries its own
+  // vendor's bank details; the summary lists all distinct vendors.
+  const distinctVendors = Array.from(new Map(
+    (batch.payments as any[]).map((p: any) => [p.invoice?.vendor_id ?? 'unknown', p.invoice?.vendor])
+  ).values()).filter(Boolean);
+  const vendor = distinctVendors[0];
+  const vendorNames = distinctVendors.map((v: any) => v.name).join(', ');
+  const vendorName = vendorNames || 'Unknown Vendor';
+  const singleVendor = distinctVendors.length <= 1;
   const currency = batch.payments[0]?.currency || batch.currency || 'USD';
 
   // Calculate totals — the batch total includes the bank charge (one per
@@ -77,11 +83,11 @@ export async function exportBatchPerVendor(batchId: string, userId?: string): Pr
     'Bank Charge': Number(p.bank_charge_amount) || 0,
     'Currency': p.currency || currency,
     'Payment Date': p.payment_date ? new Date(p.payment_date).toISOString().split('T')[0] : '',
-    'Beneficiary Name': vendor?.beneficiary_name || vendor?.name || '',
-    'Bank Name': vendor?.bank_name || '',
-    'Bank Address': vendor?.bank_address || '',
-    'SWIFT Code': vendor?.swift_code || '',
-    'Account Number': vendor?.account_number || '',
+    'Beneficiary Name': p.invoice?.vendor?.beneficiary_name || p.invoice?.vendor?.name || '',
+    'Bank Name': p.invoice?.vendor?.bank_name || '',
+    'Bank Address': p.invoice?.vendor?.bank_address || '',
+    'SWIFT Code': p.invoice?.vendor?.swift_code || '',
+    'Account Number': p.invoice?.vendor?.account_number || '',
     'Reference': p.reference || '',
   }));
 
@@ -138,18 +144,18 @@ export async function exportBatchPerVendor(batchId: string, userId?: string): Pr
     [''],
     ['Batch Number', batch.batch_number],
     ['Batch Date', batch.created_at.toISOString().split('T')[0]],
-    ['Vendor', vendorName],
-    ['Beneficiary Name', vendor?.beneficiary_name || vendor?.name || ''],
+    ['Vendor(s)', singleVendor ? vendorName : `${vendorName} (${distinctVendors.length} vendors)`],
+    ['Beneficiary Name', singleVendor ? (vendor?.beneficiary_name || vendor?.name || '') : 'Multiple — see Payments sheet'],
     ['Bill To Entity', batch.payments[0]?.invoice?.bill_to_entity || ''],
     ['Invoice Count', batch.payments.length],
     ['Payments Total', paymentsTotal],
     ['Bank Charge', bankChargeTotal],
     ['Total Amount (incl. Bank Charge)', totalAmount],
     ['Currency', currency],
-    ['Bank Name', vendor?.bank_name || ''],
-    ['Bank Address', vendor?.bank_address || ''],
-    ['SWIFT Code', vendor?.swift_code || ''],
-    ['Account Number', vendor?.account_number || ''],
+    ['Bank Name', singleVendor ? (vendor?.bank_name || '') : 'Multiple — see Payments sheet'],
+    ['Bank Address', singleVendor ? (vendor?.bank_address || '') : 'Multiple — see Payments sheet'],
+    ['SWIFT Code', singleVendor ? (vendor?.swift_code || '') : 'Multiple — see Payments sheet'],
+    ['Account Number', singleVendor ? (vendor?.account_number || '') : 'Multiple — see Payments sheet'],
     ['Status', batch.status],
     ['Generated', new Date().toISOString()],
   ];
@@ -171,8 +177,10 @@ export async function exportBatchPerVendor(batchId: string, userId?: string): Pr
 
   logger.info(`Per-vendor export: batch ${batch.batch_number}, vendor ${vendorName}, ${batch.payments.length} payments, total ${totalAmount.toFixed(2)}`);
 
-  // Sanitize vendor name for filename
-  const safeVendorName = vendorName.replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 50);
+  // Sanitize vendor name for filename (multi-vendor batches get a generic name)
+  const safeVendorName = singleVendor
+    ? vendorName.replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 50)
+    : 'multi_vendor';
   const filename = `${batch.batch_number}_${safeVendorName}.xlsx`;
 
   return {

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock the prisma client before importing the service.
-const { paymentFindMany, auditLogFindMany, paymentUpdateMany, auditLogCreate, paymentBatchFindUnique, paymentBatchFindMany, paymentUpdate, paymentBatchUpdate, billStubUpsert, invoiceUpdate, paymentCount, paymentFindUnique, notificationCreate } = vi.hoisted(() => ({
+const { paymentFindMany, auditLogFindMany, paymentUpdateMany, auditLogCreate, paymentBatchFindUnique, paymentBatchFindMany, paymentUpdate, paymentBatchUpdate, paymentBatchCreate, billStubUpsert, invoiceUpdate, paymentCount, paymentFindUnique, notificationCreate } = vi.hoisted(() => ({
   paymentFindMany: vi.fn(),
   auditLogFindMany: vi.fn(),
   paymentUpdateMany: vi.fn(),
@@ -10,6 +10,7 @@ const { paymentFindMany, auditLogFindMany, paymentUpdateMany, auditLogCreate, pa
   paymentBatchFindMany: vi.fn(),
   paymentUpdate: vi.fn(),
   paymentBatchUpdate: vi.fn(),
+  paymentBatchCreate: vi.fn(),
   billStubUpsert: vi.fn(),
   invoiceUpdate: vi.fn(),
   paymentCount: vi.fn(),
@@ -20,7 +21,7 @@ const { paymentFindMany, auditLogFindMany, paymentUpdateMany, auditLogCreate, pa
 vi.mock('../config/database', () => ({
   default: {
     payment: { findMany: paymentFindMany, updateMany: paymentUpdateMany, update: paymentUpdate, count: paymentCount, findUnique: paymentFindUnique },
-    paymentBatch: { findUnique: paymentBatchFindUnique, findMany: paymentBatchFindMany, update: paymentBatchUpdate },
+    paymentBatch: { findUnique: paymentBatchFindUnique, findMany: paymentBatchFindMany, update: paymentBatchUpdate, create: paymentBatchCreate },
     invoice: { update: invoiceUpdate },
     billStub: { upsert: billStubUpsert },
     auditLog: { findMany: auditLogFindMany, create: auditLogCreate },
@@ -36,7 +37,7 @@ vi.mock('./inAppNotificationService', () => ({
   inAppNotificationService: { create: notificationCreate, notifyStageTransition: vi.fn() },
 }));
 
-import { getScheduledPaymentsForBatch, bulkApprovePaymentsForPayment, applyBankCharge, removeBankCharge, endorseBillStub, matchPaymentConfirmation, approveHeldPayment, markPaymentForPayment, returnInvoicesFromBatch, getStuckBatches, markPaymentBatchExported } from './paymentBatchService';
+import { getScheduledPaymentsForBatch, bulkApprovePaymentsForPayment, applyBankCharge, removeBankCharge, endorseBillStub, matchPaymentConfirmation, approveHeldPayment, markPaymentForPayment, returnInvoicesFromBatch, getStuckBatches, markPaymentBatchExported, createPaymentBatch, createGroupedPaymentBatches } from './paymentBatchService';
 
 /** Midnight n days ago (avoids DST / time-of-day flakiness in aging math). */
 function daysAgo(n: number): Date {
@@ -64,13 +65,15 @@ function makePayment(overrides: Record<string, any> = {}) {
     remarks: overrides.remarks ?? null,
     invoice: {
       id: invoice.id ?? 'inv-1',
+      vendor_id: invoice.vendor_id ?? overrides.vendor_id ?? 'vendor-1',
       invoice_number: invoice.invoice_number ?? 'INV-001',
       invoice_date: invoice.invoice_date ?? null,
       due_date: invoice.due_date ?? null,
       brand: invoice.brand ?? null,
       category: invoice.category ?? null,
       qb_memo: invoice.qb_memo ?? null,
-      vendor: invoice.vendor ?? { name: 'Test Vendor' },
+      vendor: invoice.vendor ?? { id: 'vendor-1', name: 'Test Vendor' },
+      bill_to_entity: invoice.bill_to_entity ?? null,
       signatures: invoice.signatures ?? [],
     },
   };
@@ -101,6 +104,7 @@ beforeEach(() => {
   paymentBatchFindMany.mockReset();
   paymentUpdate.mockReset();
   paymentBatchUpdate.mockReset();
+  paymentBatchCreate.mockReset();
   billStubUpsert.mockReset();
   invoiceUpdate.mockReset();
   paymentCount.mockReset();
@@ -468,11 +472,11 @@ describe('applyBankCharge', () => {
     expect(result).toMatchObject({ payment_id: 'pay-1', bank_charge_amount: 25.5, total_amount: 175.5 });
   });
 
-  it('blocks a second charge in the same batch (one per vendor per batch)', async () => {
+  it('blocks a second charge for the SAME vendor in the batch (one per vendor per batch)', async () => {
     paymentBatchFindUnique.mockResolvedValue(makeBatch({
       payments: [
-        makePayment({ id: 'pay-1', invoice_id: 'inv-1', amount: 100, bank_charge_amount: 10 }),
-        makePayment({ id: 'pay-2', invoice_id: 'inv-2', amount: 50 }),
+        makePayment({ id: 'pay-1', invoice_id: 'inv-1', vendor_id: 'vendor-1', amount: 100, bank_charge_amount: 10 }),
+        makePayment({ id: 'pay-2', invoice_id: 'inv-2', vendor_id: 'vendor-1', amount: 50 }),
       ],
     }));
 
@@ -480,6 +484,28 @@ describe('applyBankCharge', () => {
       .rejects.toThrow('already has a bank charge');
     expect(paymentUpdate).not.toHaveBeenCalled();
     expect(paymentBatchUpdate).not.toHaveBeenCalled();
+  });
+
+  it('allows a charge for a DIFFERENT vendor in the same batch (multi-vendor batch)', async () => {
+    paymentBatchFindUnique.mockResolvedValue(makeBatch({
+      payments: [
+        makePayment({ id: 'pay-1', invoice_id: 'inv-1', vendor_id: 'vendor-1', amount: 100, bank_charge_amount: 10 }),
+        makePayment({ id: 'pay-2', invoice_id: 'inv-2', vendor_id: 'vendor-2', amount: 50 }),
+      ],
+    }));
+
+    const result = await applyBankCharge('batch-1', 'pay-2', 15, 'vendor-2 fee', 'assoc-1');
+
+    expect(paymentUpdate).toHaveBeenCalledWith({
+      where: { id: 'pay-2' },
+      data: { bank_charge_amount: 15, bank_charge_note: 'vendor-2 fee' },
+    });
+    // 100 + 50 + 10 (existing vendor-1 charge) + 15 (new vendor-2 charge) = 175
+    expect(paymentBatchUpdate).toHaveBeenCalledWith({
+      where: { id: 'batch-1' },
+      data: { total_amount: '175.00' },
+    });
+    expect(result).toMatchObject({ payment_id: 'pay-2', bank_charge_amount: 15, total_amount: 175 });
   });
 
   it('rejects a payment that is not part of the batch', async () => {
@@ -994,5 +1020,50 @@ describe('getStuckBatches', () => {
     const overrideCutoff = new Date(overrideCall.where.OR[0].exported_at.lte).getTime();
     expect(overrideCutoff).toBeGreaterThanOrEqual(Date.now() - 1 * 86400000);
     expect(overrideCutoff).toBeLessThan(Date.now() - 1 * 86400000 + 60000);
+  });
+});
+
+describe('createPaymentBatch / createGroupedPaymentBatches (multi-vendor)', () => {
+  it('creates ONE batch combining payments from different vendors', async () => {
+    paymentFindMany.mockResolvedValue([
+      makePayment({ id: 'pay-1', invoice_id: 'inv-1', vendor_id: 'vendor-1', amount: 100 }),
+      makePayment({ id: 'pay-2', invoice_id: 'inv-2', vendor_id: 'vendor-2', amount: 50 }),
+    ]);
+    paymentBatchCreate.mockResolvedValue({ id: 'batch-new', batch_number: 'PB202608140001', total_amount: '150.00', payment_count: 2, status: 'DRAFT' });
+
+    const result = await createPaymentBatch(['pay-1', 'pay-2'], 'assoc-1');
+
+    // No compatibility error — both vendors land in the same batch
+    expect(paymentBatchCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        total_amount: '150.00',
+        payment_count: 2,
+        payments: { connect: [{ id: 'pay-1' }, { id: 'pay-2' }] },
+      }),
+    });
+    expect(paymentUpdateMany).toHaveBeenCalledWith({
+      where: { id: { in: ['pay-1', 'pay-2'] } },
+      data: expect.objectContaining({ batch_id: 'batch-new', selected_for_batch: false }),
+    });
+    expect(auditLogCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ action: 'PAYMENT_BATCH_CREATED' }),
+    });
+    expect(result).toMatchObject({ payment_count: 2, total_amount: '150.00' });
+  });
+
+  it('createGroupedPaymentBatches returns a single batch for mixed-vendor selection', async () => {
+    paymentFindMany.mockResolvedValue([
+      makePayment({ id: 'pay-1', invoice_id: 'inv-1', vendor_id: 'vendor-1', amount: 100 }),
+      makePayment({ id: 'pay-2', invoice_id: 'inv-2', vendor_id: 'vendor-2', amount: 50 }),
+      makePayment({ id: 'pay-3', invoice_id: 'inv-3', vendor_id: 'vendor-1', amount: 75 }),
+    ]);
+    paymentBatchCreate.mockResolvedValue({ id: 'batch-new', batch_number: 'PB202608140002', total_amount: '225.00', payment_count: 3, status: 'DRAFT' });
+
+    const result = await createGroupedPaymentBatches(['pay-1', 'pay-2', 'pay-3'], 'assoc-1');
+
+    expect(result.batch_count).toBe(1);
+    expect(result.payment_count).toBe(3);
+    expect(paymentBatchCreate).toHaveBeenCalledTimes(1);
+    expect(paymentBatchCreate.mock.calls[0][0].data.payments.connect).toHaveLength(3);
   });
 });

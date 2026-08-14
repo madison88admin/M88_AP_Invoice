@@ -2160,34 +2160,54 @@ export default function PaymentBatchManager() {
                   <input value={stubForm.reference} onChange={(e) => setStubForm({ ...stubForm, reference: e.target.value })} placeholder="Bank ref / stub ref — used to match the payment confirmation" style={filterInput} />
                 </div>
 
-                {/* Amounts — 2x2 so each field has room */}
+                {/* Amounts — 2x2 grid, currency as its own segment (never overlaps the amount) */}
                 <div className="grid grid-cols-2 gap-4 mb-1.5">
                   <div>
                     <label style={filterLabel}>Original Amount</label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{stubTarget.currency || 'USD'}</span>
-                      <input type="number" min="0" step="0.01" inputMode="decimal" value={stubForm.originalAmount} onChange={(e) => setStubForm({ ...stubForm, originalAmount: e.target.value })} className="pl-12" style={filterInput} />
+                    <div
+                      className="flex items-stretch overflow-hidden rounded-lg transition-colors"
+                      style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)' }}
+                      onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--accent-blue)'; }}
+                      onBlur={(e) => { e.currentTarget.style.borderColor = 'var(--input-border)'; }}
+                    >
+                      <span className="flex items-center px-2.5 text-xs font-medium shrink-0" style={{ color: 'var(--text-muted)', borderRight: '1px solid var(--input-border)' }}>{stubTarget.currency || 'USD'}</span>
+                      <input type="number" min="0" step="0.01" inputMode="decimal" value={stubForm.originalAmount} onChange={(e) => setStubForm({ ...stubForm, originalAmount: e.target.value })} className="w-full focus:outline-none" style={{ background: 'transparent', border: 'none', padding: '8px 12px', fontSize: 13, color: 'var(--text-primary)' }} />
                     </div>
                   </div>
                   <div>
                     <label style={filterLabel}>Payment</label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{stubTarget.currency || 'USD'}</span>
-                      <input type="number" min="0" step="0.01" inputMode="decimal" value={stubForm.paidAmount} onChange={(e) => setStubForm({ ...stubForm, paidAmount: e.target.value })} className="pl-12" style={filterInput} />
+                    <div
+                      className="flex items-stretch overflow-hidden rounded-lg transition-colors"
+                      style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)' }}
+                      onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--accent-blue)'; }}
+                      onBlur={(e) => { e.currentTarget.style.borderColor = 'var(--input-border)'; }}
+                    >
+                      <span className="flex items-center px-2.5 text-xs font-medium shrink-0" style={{ color: 'var(--text-muted)', borderRight: '1px solid var(--input-border)' }}>{stubTarget.currency || 'USD'}</span>
+                      <input type="number" min="0" step="0.01" inputMode="decimal" value={stubForm.paidAmount} onChange={(e) => setStubForm({ ...stubForm, paidAmount: e.target.value })} className="w-full focus:outline-none" style={{ background: 'transparent', border: 'none', padding: '8px 12px', fontSize: 13, color: 'var(--text-primary)' }} />
                     </div>
                   </div>
                   <div>
                     <label style={filterLabel}>Discount</label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{stubTarget.currency || 'USD'}</span>
-                      <input type="number" min="0" step="0.01" inputMode="decimal" value={stubForm.discount} onChange={(e) => setStubForm({ ...stubForm, discount: e.target.value })} className="pl-12" style={filterInput} />
+                    <div
+                      className="flex items-stretch overflow-hidden rounded-lg transition-colors"
+                      style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)' }}
+                      onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--accent-blue)'; }}
+                      onBlur={(e) => { e.currentTarget.style.borderColor = 'var(--input-border)'; }}
+                    >
+                      <span className="flex items-center px-2.5 text-xs font-medium shrink-0" style={{ color: 'var(--text-muted)', borderRight: '1px solid var(--input-border)' }}>{stubTarget.currency || 'USD'}</span>
+                      <input type="number" min="0" step="0.01" inputMode="decimal" value={stubForm.discount} onChange={(e) => setStubForm({ ...stubForm, discount: e.target.value })} className="w-full focus:outline-none" style={{ background: 'transparent', border: 'none', padding: '8px 12px', fontSize: 13, color: 'var(--text-primary)' }} />
                     </div>
                   </div>
                   <div>
                     <label style={filterLabel}>Balance</label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{stubTarget.currency || 'USD'}</span>
-                      <input type="number" min="0" step="0.01" inputMode="decimal" value={stubForm.balance} onChange={(e) => setStubForm({ ...stubForm, balance: e.target.value })} className="pl-12" style={filterInput} />
+                    <div
+                      className="flex items-stretch overflow-hidden rounded-lg transition-colors"
+                      style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)' }}
+                      onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--accent-blue)'; }}
+                      onBlur={(e) => { e.currentTarget.style.borderColor = 'var(--input-border)'; }}
+                    >
+                      <span className="flex items-center px-2.5 text-xs font-medium shrink-0" style={{ color: 'var(--text-muted)', borderRight: '1px solid var(--input-border)' }}>{stubTarget.currency || 'USD'}</span>
+                      <input type="number" min="0" step="0.01" inputMode="decimal" value={stubForm.balance} onChange={(e) => setStubForm({ ...stubForm, balance: e.target.value })} className="w-full focus:outline-none" style={{ background: 'transparent', border: 'none', padding: '8px 12px', fontSize: 13, color: 'var(--text-primary)' }} />
                     </div>
                   </div>
                 </div>

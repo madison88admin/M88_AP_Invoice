@@ -372,6 +372,7 @@ model PaymentBatch {
   reviewed_by          String?
   reviewed_at          DateTime?
   review_note          String?
+  exported_at          DateTime?
   returned_by          String?
   returned_at          DateTime?
   return_reason        String?

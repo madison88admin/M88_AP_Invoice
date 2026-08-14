@@ -1265,7 +1265,62 @@ export async function markPaymentBatchExported(batchId: string, userId: string) 
   if (!batch) throw new AppError('Payment batch not found', 404);
   if (batch.status !== PaymentBatchStatus.REVIEWED) throw new AppError('Only a reviewed batch can be exported', 400);
   await prisma.auditLog.create({ data: { action: 'PAYMENT_BATCH_EXPORTED', performed_by: userId, note: `Batch ${batch.batch_number} exported to bank` } });
-  return prisma.paymentBatch.update({ where: { id: batchId }, data: { status: PaymentBatchStatus.EXPORTED_TO_BANK as any } });
+  return prisma.paymentBatch.update({
+    where: { id: batchId },
+    data: { status: PaymentBatchStatus.EXPORTED_TO_BANK as any, exported_at: new Date() },
+  });
+}
+
+/**
+ * Stuck-batch alert: EXPORTED_TO_BANK batches whose payments have not been
+ * endorsed (bill stub) or confirmed PAID within the alert window. The window
+ * defaults to STUCK_BATCH_ALERT_DAYS (env, default 3) and can be overridden
+ * per request via `days`.
+ *
+ * A batch is "stuck" when it was exported more than N days ago AND at least
+ * one payment is still SCHEDULED/APPROVED_FOR_PAYMENT (no stub endorsed, no
+ * confirmation matched). Those payments are the ones that need action.
+ */
+export async function getStuckBatches(daysOverride?: number | string) {
+  const parsed = Number(daysOverride);
+  const days = Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : Number(process.env.STUCK_BATCH_ALERT_DAYS) || 3;
+  const cutoff = new Date(Date.now() - days * 86400000);
+
+  const batches = await prisma.paymentBatch.findMany({
+    where: {
+      status: PaymentBatchStatus.EXPORTED_TO_BANK as any,
+      // exported_at is null only for batches exported before this field existed
+      // (pre-feature) — those are treated as older than the window.
+      OR: [{ exported_at: { lte: cutoff } }, { exported_at: null }],
+      payments: {
+        some: {
+          status: { notIn: ['PAID', 'ENDORSED'] },
+        },
+      },
+    },
+    include: {
+      payments: {
+        include: {
+          invoice: { include: { vendor: true } },
+          bill_stub: true,
+        },
+      },
+    },
+    orderBy: { exported_at: 'asc' as const },
+  });
+
+  return batches.map((b: any) => {
+    const pending = (b.payments || []).filter((p: any) => !['PAID', 'ENDORSED'].includes(p.status));
+    // Prefer exported_at; legacy batches fall back to reviewed_at, then created_at.
+    const anchor = b.exported_at || b.reviewed_at || b.created_at;
+    return {
+      ...b,
+      days_stuck: anchor ? Math.floor((Date.now() - new Date(anchor).getTime()) / 86400000) : days,
+      pending_payments: pending.length,
+    };
+  });
 }
 
 export async function cancelPaymentBatch(

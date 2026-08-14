@@ -160,6 +160,7 @@ export const aliasApi = {
 
 export const paymentBatchApi = {
   getAll: () => api.get('/api/payment-batches'),
+  getStuckBatches: (days?: number) => api.get('/api/payment-batches/stuck', { params: days ? { days } : {} }),
   getById: (batchId: string) => api.get(`/api/payment-batches/${batchId}`),
   create: (paymentIds: string[]) => api.post('/api/payment-batches', { paymentIds }),
   submit: (batchId: string) => api.post(`/api/payment-batches/${batchId}/submit`),

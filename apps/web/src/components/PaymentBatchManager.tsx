@@ -155,6 +155,8 @@ export default function PaymentBatchManager() {
   const { showToast } = useToast();
   const [activeTab, setActiveTab] = useState<'scheduled' | 'batches'>('scheduled');
   const [batches, setBatches] = useState<PaymentBatch[]>([]);
+  const [stuckBatches, setStuckBatches] = useState<(PaymentBatch & { days_stuck?: number; pending_payments?: number })[]>([]);
+  const [stuckLoading, setStuckLoading] = useState(false);
   const [scheduledPayments, setScheduledPayments] = useState<ScheduledPayment[]>([]);
   const [selectedBatch, setSelectedBatch] = useState<PaymentBatch | null>(null);
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -214,6 +216,20 @@ export default function PaymentBatchManager() {
   const isPurchasing = user?.role === 'PURCHASING_COORDINATOR';
   const isBatchable = (p: ScheduledPayment) => p.status === 'SCHEDULED' || p.status === 'APPROVED_FOR_PAYMENT';
 
+  const loadStuckBatches = useCallback(async () => {
+    setStuckLoading(true);
+    try {
+      const response = await paymentBatchApi.getStuckBatches();
+      const data = response.data || [];
+      setStuckBatches(data.map((b: any) => ({ ...mapBatchPayload(b), days_stuck: b.days_stuck ?? 0, pending_payments: b.pending_payments ?? 0 })));
+    } catch (error) {
+      console.error('Failed to load stuck batches:', error);
+      setStuckBatches([]);
+    } finally {
+      setStuckLoading(false);
+    }
+  }, []);
+
   const loadBatches = useCallback(async () => {
     try {
       const response = await paymentBatchApi.getAll();
@@ -223,7 +239,8 @@ export default function PaymentBatchManager() {
       console.error('Failed to load payment batches:', error);
       setBatches([]);
     }
-  }, []);
+    loadStuckBatches();
+  }, [loadStuckBatches]);
 
   const loadScheduledPayments = useCallback(async () => {
     try {
@@ -947,7 +964,12 @@ export default function PaymentBatchManager() {
           >
             <Package className="h-4 w-4" strokeWidth={1.75} />
             Batches
-            {batches.length > 0 && (
+            {stuckBatches.length > 0 && (
+              <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: 'var(--accent-red)', color: 'white' }}>
+                {stuckBatches.length}
+              </span>
+            )}
+            {batches.length > 0 && stuckBatches.length === 0 && (
               <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: activeTab === 'batches' ? 'rgba(255,255,255,0.2)' : 'var(--bg-elevated)' }}>
                 {batches.length}
               </span>
@@ -1488,6 +1510,45 @@ export default function PaymentBatchManager() {
                 Export Reconciliation
               </button>
             </div>
+
+            {/* Stuck-batch alert — EXPORTED_TO_BANK batches whose payments haven't been endorsed or confirmed PAID */}
+            {stuckBatches.length > 0 && (
+              <div className="mb-4 p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-red) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 25%, transparent)' }}>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-sm font-semibold flex items-center gap-1.5" style={{ color: 'var(--accent-red)' }}>
+                    <AlertCircle className="h-4 w-4" strokeWidth={1.75} />
+                    {stuckBatches.length} batch{stuckBatches.length === 1 ? '' : 'es'} stuck at EXPORTED_TO_BANK
+                  </p>
+                  {stuckLoading && <Loader2 className="h-3.5 w-3.5 animate-spin" style={{ color: 'var(--text-muted)' }} />}
+                </div>
+                <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>
+                  Payments not endorsed (bill stub) or confirmed PAID past the alert window. Open a batch to endorse the stubs and match the payment confirmation.
+                </p>
+                <div className="space-y-2">
+                  {stuckBatches.map((sb) => (
+                    <div key={sb.id} className="flex items-center justify-between p-3 rounded-lg" style={{ background: 'color-mix(in srgb, var(--accent-red) 4%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 15%, transparent)' }}>
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{sb.batch_number}</div>
+                        <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                          {sb.pending_payments ?? 0} payment{(sb.pending_payments ?? 0) === 1 ? '' : 's'} pending · {sb.days_stuck ?? 0} day{(sb.days_stuck ?? 0) === 1 ? '' : 's'} stuck · {sb.payment_count} payment{(sb.payment_count || 0) === 1 ? '' : 's'} · ${sb.total_amount.toLocaleString()}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => { setSelectedBatch(sb); setSelectedReturnPaymentIds(new Set()); }}
+                        className="shrink-0 flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+                        style={{ background: 'var(--accent-red)', color: 'white' }}
+                        onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.9'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
+                      >
+                        <Play className="h-3 w-3 mr-1.5" strokeWidth={2} />
+                        Open & Complete
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {batches.length === 0 ? (
               <div className="text-center py-12">
                 <Package className="h-12 w-12 mx-auto mb-3" style={{ color: 'var(--text-muted)', opacity: 0.5 }} />

@@ -1,12 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock the prisma client before importing the service.
-const { paymentFindMany, auditLogFindMany, paymentUpdateMany, auditLogCreate, paymentBatchFindUnique, paymentUpdate, paymentBatchUpdate, billStubUpsert, invoiceUpdate, paymentCount, paymentFindUnique, notificationCreate } = vi.hoisted(() => ({
+const { paymentFindMany, auditLogFindMany, paymentUpdateMany, auditLogCreate, paymentBatchFindUnique, paymentBatchFindMany, paymentUpdate, paymentBatchUpdate, billStubUpsert, invoiceUpdate, paymentCount, paymentFindUnique, notificationCreate } = vi.hoisted(() => ({
   paymentFindMany: vi.fn(),
   auditLogFindMany: vi.fn(),
   paymentUpdateMany: vi.fn(),
   auditLogCreate: vi.fn(),
   paymentBatchFindUnique: vi.fn(),
+  paymentBatchFindMany: vi.fn(),
   paymentUpdate: vi.fn(),
   paymentBatchUpdate: vi.fn(),
   billStubUpsert: vi.fn(),
@@ -19,7 +20,7 @@ const { paymentFindMany, auditLogFindMany, paymentUpdateMany, auditLogCreate, pa
 vi.mock('../config/database', () => ({
   default: {
     payment: { findMany: paymentFindMany, updateMany: paymentUpdateMany, update: paymentUpdate, count: paymentCount, findUnique: paymentFindUnique },
-    paymentBatch: { findUnique: paymentBatchFindUnique, update: paymentBatchUpdate },
+    paymentBatch: { findUnique: paymentBatchFindUnique, findMany: paymentBatchFindMany, update: paymentBatchUpdate },
     invoice: { update: invoiceUpdate },
     billStub: { upsert: billStubUpsert },
     auditLog: { findMany: auditLogFindMany, create: auditLogCreate },
@@ -35,7 +36,7 @@ vi.mock('./inAppNotificationService', () => ({
   inAppNotificationService: { create: notificationCreate, notifyStageTransition: vi.fn() },
 }));
 
-import { getScheduledPaymentsForBatch, bulkApprovePaymentsForPayment, applyBankCharge, removeBankCharge, endorseBillStub, matchPaymentConfirmation, approveHeldPayment, markPaymentForPayment, returnInvoicesFromBatch } from './paymentBatchService';
+import { getScheduledPaymentsForBatch, bulkApprovePaymentsForPayment, applyBankCharge, removeBankCharge, endorseBillStub, matchPaymentConfirmation, approveHeldPayment, markPaymentForPayment, returnInvoicesFromBatch, getStuckBatches, markPaymentBatchExported } from './paymentBatchService';
 
 /** Midnight n days ago (avoids DST / time-of-day flakiness in aging math). */
 function daysAgo(n: number): Date {
@@ -85,6 +86,8 @@ function makeBatch(overrides: Record<string, any> = {}) {
     id: overrides.id ?? 'batch-1',
     batch_number: overrides.batch_number ?? 'PB202608110001',
     status: overrides.status ?? 'DRAFT',
+    exported_at: overrides.exported_at ?? null,
+    created_at: overrides.created_at ?? new Date(),
     payments: overrides.payments ?? [makePayment({ id: 'pay-1', invoice_id: 'inv-1' })],
   };
 }
@@ -95,6 +98,7 @@ beforeEach(() => {
   paymentUpdateMany.mockReset();
   auditLogCreate.mockReset();
   paymentBatchFindUnique.mockReset();
+  paymentBatchFindMany.mockReset();
   paymentUpdate.mockReset();
   paymentBatchUpdate.mockReset();
   billStubUpsert.mockReset();
@@ -891,5 +895,104 @@ describe('returnInvoicesFromBatch', () => {
       .rejects.toThrow('Only draft, pending-review, or returned batches');
     expect(paymentUpdateMany).not.toHaveBeenCalled();
     expect(paymentBatchUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe('markPaymentBatchExported', () => {
+  it('marks the batch EXPORTED_TO_BANK and records exported_at', async () => {
+    paymentBatchFindUnique.mockResolvedValue(makeBatch({ id: 'batch-1', status: 'REVIEWED' }));
+    paymentBatchUpdate.mockResolvedValue({ id: 'batch-1', status: 'EXPORTED_TO_BANK' });
+
+    await markPaymentBatchExported('batch-1', 'sup-1');
+
+    const updateCall = paymentBatchUpdate.mock.calls[0][0];
+    expect(updateCall.where).toEqual({ id: 'batch-1' });
+    expect(updateCall.data.status).toBe('EXPORTED_TO_BANK');
+    expect(updateCall.data.exported_at).toBeInstanceOf(Date);
+    expect(auditLogCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ action: 'PAYMENT_BATCH_EXPORTED', performed_by: 'sup-1' }),
+    }));
+  });
+
+  it('rejects exporting a batch that is not REVIEWED', async () => {
+    paymentBatchFindUnique.mockResolvedValue(makeBatch({ id: 'batch-1', status: 'DRAFT' }));
+
+    await expect(markPaymentBatchExported('batch-1', 'sup-1')).rejects.toThrow('Only a reviewed batch can be exported');
+    expect(paymentBatchUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe('getStuckBatches', () => {
+  const daysAgoDate = (n: number) => new Date(Date.now() - n * 86400000);
+
+  it('finds EXPORTED_TO_BANK batches with un-endorsed/unpaid payments older than the window', async () => {
+    paymentBatchFindMany.mockResolvedValue([
+      makeBatch({
+        id: 'batch-stuck',
+        batch_number: 'PB202608010001',
+        status: 'EXPORTED_TO_BANK',
+        exported_at: daysAgoDate(5),
+        payments: [
+          makePayment({ id: 'pay-1', invoice_id: 'inv-1', status: 'SCHEDULED', amount: 100 }),
+        ],
+      }),
+      makeBatch({
+        id: 'batch-ok',
+        batch_number: 'PB202608020001',
+        status: 'EXPORTED_TO_BANK',
+        exported_at: daysAgoDate(1),
+        payments: [
+          makePayment({ id: 'pay-2', invoice_id: 'inv-2', status: 'PAID', amount: 50 }),
+        ],
+      }),
+    ]);
+    delete process.env.STUCK_BATCH_ALERT_DAYS;
+
+    const result = await getStuckBatches();
+
+    // Default window is 3 days: the 5-day-old batch with a SCHEDULED payment is stuck
+    const options = paymentBatchFindMany.mock.calls[0][0];
+    expect(options.where.status).toBe('EXPORTED_TO_BANK');
+    expect(options.where.OR).toEqual([{ exported_at: { lte: expect.any(Date) } }, { exported_at: null }]);
+    expect(options.where.payments.some.status.notIn).toEqual(['PAID', 'ENDORSED']);
+    expect(result).toHaveLength(2); // service returns the DB rows (client filters the batch list)
+    expect(result[0].days_stuck).toBeGreaterThanOrEqual(5);
+    expect(result[0].pending_payments).toBe(1);
+  });
+
+  it('flags legacy EXPORTED_TO_BANK batches with a null exported_at (pre-feature)', async () => {
+    paymentBatchFindMany.mockResolvedValue([
+      makeBatch({
+        id: 'batch-legacy',
+        batch_number: 'PB202607010001',
+        status: 'EXPORTED_TO_BANK',
+        exported_at: null,
+        created_at: daysAgoDate(20),
+        payments: [makePayment({ id: 'pay-1', invoice_id: 'inv-1', status: 'SCHEDULED' })],
+      }),
+    ]);
+    delete process.env.STUCK_BATCH_ALERT_DAYS;
+
+    const result = await getStuckBatches();
+    expect(result).toHaveLength(1);
+    // Falls back to created_at when exported_at is null
+    expect(result[0].days_stuck).toBeGreaterThanOrEqual(19);
+  });
+
+  it('honors the days override and the STUCK_BATCH_ALERT_DAYS env default', async () => {
+    paymentBatchFindMany.mockResolvedValue([]);
+    process.env.STUCK_BATCH_ALERT_DAYS = '7';
+
+    await getStuckBatches();
+    const defaultCall = paymentBatchFindMany.mock.calls[0][0];
+    const defaultCutoff = new Date(defaultCall.where.OR[0].exported_at.lte).getTime();
+    expect(defaultCutoff).toBeLessThanOrEqual(Date.now() - 7 * 86400000);
+
+    paymentBatchFindMany.mockClear();
+    await getStuckBatches('1');
+    const overrideCall = paymentBatchFindMany.mock.calls[0][0];
+    const overrideCutoff = new Date(overrideCall.where.OR[0].exported_at.lte).getTime();
+    expect(overrideCutoff).toBeGreaterThanOrEqual(Date.now() - 1 * 86400000);
+    expect(overrideCutoff).toBeLessThan(Date.now() - 1 * 86400000 + 60000);
   });
 });

@@ -28,6 +28,7 @@ import {
   endorseBillStub,
   matchPaymentConfirmation,
   approveHeldPayment,
+  getStuckBatches,
 } from '../services/paymentBatchService';
 import { exportPaymentReconciliation } from '../services/reconciliationExportService';
 import { exportBatchPerVendor } from '../services/perVendorExportService';
@@ -100,6 +101,16 @@ export const returnInvoicesFromBatchController = async (req: AuthRequest, res: R
 
 export const exportPaymentBatchController = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try { res.json(await markPaymentBatchExported(req.params.batchId, req.user!.id)); } catch (error) { next(error); }
+};
+
+export const getStuckBatchesController = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { days } = req.query as { days?: string };
+    const stuck = await getStuckBatches(days);
+    res.json(stuck);
+  } catch (error) {
+    next(error);
+  }
 };
 
 export const getPaymentBatchesController = async (

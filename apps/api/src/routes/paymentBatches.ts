@@ -11,6 +11,7 @@ router.use(authenticate);
 
 router.get('/scheduled-payments', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), paymentBatchController.getScheduledPaymentsForBatchController);
 router.get('/reconciliation', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), paymentBatchController.exportReconciliationController);
+router.get('/stuck', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), paymentBatchController.getStuckBatchesController);
 router.get('/', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), paymentBatchController.getPaymentBatchesController);
 router.get('/proofs/:fileName', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), (req, res) => {
   const uploadRoot = process.env.PAYMENT_PROOF_DIR || path.join(process.cwd(), 'data', 'payment-proofs');

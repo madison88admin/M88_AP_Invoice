@@ -2113,64 +2113,122 @@ export default function PaymentBatchManager() {
         )}
 
         {stubTarget && (
-          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-backdrop">
-            <div className="p-6 max-w-lg w-full mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
-              <h3 className="text-lg font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Endorse Bill Stub</h3>
-              <p className="text-sm mb-4" style={{ color: 'var(--text-muted)' }}>
-                {stubTarget.invoice.invoice_number} · {stubTarget.invoice.vendor.name} — endorsing tags the payment <span style={{ color: 'var(--accent-amber)', fontWeight: 600 }}>ENDORSED</span> (in payment process, <strong>NOT paid</strong>). PAID comes only when the payment confirmation matches by reference.
-              </p>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
-                <div>
-                  <label style={filterLabel}>Stub Date</label>
-                  <input type="date" value={stubForm.stubDate} onChange={(e) => setStubForm({ ...stubForm, stubDate: e.target.value })} style={filterInput} />
+          <div className="fixed inset-0 flex items-center justify-center z-50 animate-backdrop" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
+            <div className="max-w-lg w-full mx-2 sm:mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+              <div className="p-6">
+                {/* Header with close */}
+                <div className="flex items-start justify-between gap-3 mb-4">
+                  <div className="min-w-0">
+                    <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Endorse Bill Stub</h3>
+                    <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--text-muted)' }}>
+                      {stubTarget.invoice.invoice_number} · {stubTarget.invoice.vendor.name}
+                    </p>
+                  </div>
+                  <button onClick={() => setStubTarget(null)} className="p-1 rounded-lg transition-colors shrink-0" style={{ color: 'var(--text-secondary)' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
                 </div>
-                <div>
-                  <label style={filterLabel}>Type</label>
-                  <select value={stubForm.type} onChange={(e) => setStubForm({ ...stubForm, type: e.target.value })} style={filterInput}>
-                    <option>Bank Transfer</option>
-                    <option>Wire</option>
-                    <option>Cheque</option>
-                    <option>Other</option>
-                  </select>
+
+                {/* Endorsement note */}
+                <p className="text-xs mb-5 p-3 rounded-xl leading-relaxed" style={{ background: 'color-mix(in srgb, var(--accent-amber) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 18%, transparent)', color: 'var(--text-secondary)' }}>
+                  Endorsing tags the payment <span style={{ color: 'var(--accent-amber)', fontWeight: 600 }}>ENDORSED</span> (in payment process, <strong>NOT paid</strong>). PAID comes only when the payment confirmation matches by reference.
+                </p>
+
+                {/* Stub date + type */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                  <div>
+                    <label style={filterLabel}>Stub Date</label>
+                    <input type="date" value={stubForm.stubDate} onChange={(e) => setStubForm({ ...stubForm, stubDate: e.target.value })} style={filterInput} />
+                  </div>
+                  <div>
+                    <label style={filterLabel}>Type</label>
+                    <select value={stubForm.type} onChange={(e) => setStubForm({ ...stubForm, type: e.target.value })} style={filterInput}>
+                      <option>Bank Transfer</option>
+                      <option>Wire</option>
+                      <option>Cheque</option>
+                      <option>Other</option>
+                    </select>
+                  </div>
                 </div>
-                <div>
+
+                {/* Reference — full width, it drives the confirmation match */}
+                <div className="mb-4">
                   <label style={filterLabel}>Reference</label>
-                  <input value={stubForm.reference} onChange={(e) => setStubForm({ ...stubForm, reference: e.target.value })} placeholder="Bank ref / stub ref" style={filterInput} />
+                  <input value={stubForm.reference} onChange={(e) => setStubForm({ ...stubForm, reference: e.target.value })} placeholder="Bank ref / stub ref — used to match the payment confirmation" style={filterInput} />
                 </div>
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-                <div>
-                  <label style={filterLabel}>Original Amount</label>
-                  <input type="number" min="0" step="0.01" value={stubForm.originalAmount} onChange={(e) => setStubForm({ ...stubForm, originalAmount: e.target.value })} style={filterInput} />
+
+                {/* Amounts — 2x2 so each field has room */}
+                <div className="grid grid-cols-2 gap-4 mb-1.5">
+                  <div>
+                    <label style={filterLabel}>Original Amount</label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{stubTarget.currency || 'USD'}</span>
+                      <input type="number" min="0" step="0.01" inputMode="decimal" value={stubForm.originalAmount} onChange={(e) => setStubForm({ ...stubForm, originalAmount: e.target.value })} className="pl-12" style={filterInput} />
+                    </div>
+                  </div>
+                  <div>
+                    <label style={filterLabel}>Payment</label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{stubTarget.currency || 'USD'}</span>
+                      <input type="number" min="0" step="0.01" inputMode="decimal" value={stubForm.paidAmount} onChange={(e) => setStubForm({ ...stubForm, paidAmount: e.target.value })} className="pl-12" style={filterInput} />
+                    </div>
+                  </div>
+                  <div>
+                    <label style={filterLabel}>Discount</label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{stubTarget.currency || 'USD'}</span>
+                      <input type="number" min="0" step="0.01" inputMode="decimal" value={stubForm.discount} onChange={(e) => setStubForm({ ...stubForm, discount: e.target.value })} className="pl-12" style={filterInput} />
+                    </div>
+                  </div>
+                  <div>
+                    <label style={filterLabel}>Balance</label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{stubTarget.currency || 'USD'}</span>
+                      <input type="number" min="0" step="0.01" inputMode="decimal" value={stubForm.balance} onChange={(e) => setStubForm({ ...stubForm, balance: e.target.value })} className="pl-12" style={filterInput} />
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <label style={filterLabel}>Discount</label>
-                  <input type="number" min="0" step="0.01" value={stubForm.discount} onChange={(e) => setStubForm({ ...stubForm, discount: e.target.value })} style={filterInput} />
+                <p className="text-[11px] mb-4" style={{ color: 'var(--text-muted)' }}>Balance = Original − Discount · Payment is the amount paid on this stub</p>
+
+                {/* File — styled dropzone with chosen file name */}
+                <div className="mb-5">
+                  <label style={filterLabel}>Bill stub file (optional)</label>
+                  <label
+                    className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl cursor-pointer transition-colors"
+                    style={{ background: 'var(--input-bg)', border: '1px dashed var(--border-color)' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent-amber)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border-color)'; }}
+                  >
+                    <span className="flex items-center gap-2 text-sm truncate" style={{ color: stubFile ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                      <Paperclip className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+                      {stubFile ? stubFile.name : 'Choose file (PDF, PNG, JPG)'}
+                    </span>
+                    <input type="file" className="hidden" accept=".pdf,.png,.jpg,.jpeg" onChange={(e) => setStubFile(e.target.files?.[0] || null)} />
+                    {stubFile && (
+                      <span className="shrink-0 text-[11px] font-medium px-2 py-0.5 rounded-full" style={{ background: 'color-mix(in srgb, var(--accent-lime) 15%, transparent)', color: 'var(--accent-lime)' }}>
+                        Attached
+                      </span>
+                    )}
+                  </label>
                 </div>
-                <div>
-                  <label style={filterLabel}>Balance</label>
-                  <input type="number" min="0" step="0.01" value={stubForm.balance} onChange={(e) => setStubForm({ ...stubForm, balance: e.target.value })} style={filterInput} />
+
+                {/* Actions */}
+                <div className="flex justify-end space-x-3">
+                  <button onClick={() => setStubTarget(null)} className="px-4 py-2 transition-colors text-sm" style={{ color: 'var(--text-secondary)' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
+                  >Cancel</button>
+                  <button onClick={handleEndorse} disabled={stubSaving} className="flex items-center px-4 py-2 rounded-xl transition-colors disabled:opacity-50 text-sm font-semibold" style={{ background: 'var(--accent-amber)', color: 'var(--bg-base)' }}
+                    onMouseEnter={(e) => { if (!stubSaving) e.currentTarget.style.opacity = '0.9'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
+                  >
+                    {stubSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                    {stubSaving ? 'Endorsing...' : 'Endorse Bill Stub'}
+                  </button>
                 </div>
-                <div>
-                  <label style={filterLabel}>Payment</label>
-                  <input type="number" min="0" step="0.01" value={stubForm.paidAmount} onChange={(e) => setStubForm({ ...stubForm, paidAmount: e.target.value })} style={filterInput} />
-                </div>
-              </div>
-              <div className="mb-4">
-                <label style={filterLabel}>Bill stub file (optional)</label>
-                <input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={(e) => setStubFile(e.target.files?.[0] || null)} className="w-full px-3 py-2 rounded-xl text-sm" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }} />
-              </div>
-              <div className="flex justify-end space-x-3">
-                <button onClick={() => setStubTarget(null)} className="px-4 py-2 transition-colors text-sm" style={{ color: 'var(--text-secondary)' }}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
-                >Cancel</button>
-                <button onClick={handleEndorse} disabled={stubSaving} className="px-4 py-2 rounded-xl transition-colors disabled:opacity-50 text-sm font-semibold" style={{ background: 'var(--accent-amber)', color: 'var(--bg-base)' }}
-                  onMouseEnter={(e) => { if (!stubSaving) e.currentTarget.style.opacity = '0.9'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
-                >
-                  {stubSaving ? 'Endorsing...' : 'Endorse Bill Stub'}
-                </button>
               </div>
             </div>
           </div>

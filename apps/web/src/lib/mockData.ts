@@ -200,6 +200,7 @@ export interface MockVendor {
   bir_tin?: string;
   eori_number?: string;
   gstin_number?: string;
+  is_active?: boolean;
   brand_code?: string;
   brand_name?: string;
   brand_tier?: BrandTier;

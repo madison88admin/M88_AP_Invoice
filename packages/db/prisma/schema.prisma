@@ -665,6 +665,23 @@ model Notification {
   @@map("APInvoice_Notification")
 }
 
+// Coordinator-editable vendor/brand name aliases. When the real-time NextGen
+// check compares names, an alias maps a known formatting variant (e.g.
+// "J-LONG LTD.") to its canonical name ("J-Long Ltd") so formatting
+// differences stop showing as informational mismatches.
+model EntityAlias {
+  id          String   @id @default(uuid())
+  entity_type String   // VENDOR | BRAND
+  canonical   String   // canonical spelling, e.g. "J-Long Ltd"
+  alias       String   // known variant, e.g. "J-LONG LTD."
+  created_by  String?
+  created_at  DateTime @default(now())
+
+  @@unique([entity_type, alias])
+  @@index([entity_type, canonical])
+  @@map("APInvoice_EntityAlias")
+}
+
 model User {
   id            String   @id @default(uuid())
   name          String

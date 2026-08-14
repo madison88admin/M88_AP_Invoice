@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { InvoiceStatus, InvoiceCategory, InvoiceType, calcWorkingHoursElapsed } from '@ap-invoice/shared';
-import { invoiceApi, notificationApi, vendorApi, exceptionApi } from '../lib/api';
+import { invoiceApi, notificationApi, vendorApi, exceptionApi, aliasApi } from '../lib/api';
 import InvoiceTable from './InvoiceTable';
 import UploadInvoiceModal from './UploadInvoiceModal';
 import BottleneckView from './BottleneckView';
@@ -144,6 +144,12 @@ export default function Dashboard() {
   const [editFormData, setEditFormData] = useState<any>({});
   const [savingEdit, setSavingEdit] = useState(false);
   const [posting, setPosting] = useState(false);
+  const [showAliasModal, setShowAliasModal] = useState(false);
+  const [aliases, setAliases] = useState<any[]>([]);
+  const [aliasEntityType, setAliasEntityType] = useState<'VENDOR' | 'BRAND'>('VENDOR');
+  const [aliasForm, setAliasForm] = useState({ canonical: '', alias: '' });
+  const [aliasSaving, setAliasSaving] = useState(false);
+  const [aliasError, setAliasError] = useState('');
   const [filters, setFilters] = useState({
     status: undefined as InvoiceStatus | undefined,
     category: undefined as InvoiceCategory | undefined,
@@ -1095,6 +1101,21 @@ export default function Dashboard() {
       try {
         const res = await invoiceApi.checkNextGenSync(selectedInvoice.id);
         const data = res.data;
+        // Mirror the API's persisted po_validation into the selected invoice so
+        // the Validation tab shows the informational differences (brand/season/
+        // order-type/vendor/qty) from stored data — surviving the session.
+        if (data?.changes) {
+          setSelectedInvoice(prev => prev ? {
+            ...prev,
+            po_validation: {
+              ...(prev.po_validation || {}),
+              changes: data.changes,
+              has_changes: data.hasChanges,
+              critical_changes: data.hasCriticalChanges,
+              last_checked: new Date().toISOString(),
+            },
+          } : prev);
+        }
         if (data?.nextGenUnavailable) {
           setNextgenResults(prev => ({ ...prev, [selectedInvoice.id]: { status: 'unavailable' } }));
         } else if (data?.firstCheck) {
@@ -1154,6 +1175,61 @@ export default function Dashboard() {
       showToast(msg, 'error');
     } finally {
       setPosting(false);
+    }
+  };
+
+  const loadAliases = async (entityType?: 'VENDOR' | 'BRAND') => {
+    try {
+      const res = await aliasApi.list(entityType || aliasEntityType);
+      setAliases(res.data);
+    } catch (e: any) {
+      console.error('Failed to load aliases:', e);
+      showToast('Failed to load aliases', 'error');
+    }
+  };
+
+  const openAliasModal = () => {
+    setShowAliasModal(true);
+    setAliasError('');
+    setAliasForm({ canonical: '', alias: '' });
+    loadAliases(aliasEntityType);
+  };
+
+  const switchAliasTab = (t: 'VENDOR' | 'BRAND') => {
+    setAliasEntityType(t);
+    setAliasError('');
+    setAliasForm({ canonical: '', alias: '' });
+    loadAliases(t);
+  };
+
+  const handleAddAlias = async () => {
+    const canonical = aliasForm.canonical.trim();
+    const alias = aliasForm.alias.trim();
+    if (!canonical || !alias) {
+      setAliasError('Both fields are required');
+      return;
+    }
+    setAliasSaving(true);
+    setAliasError('');
+    try {
+      await aliasApi.create(aliasEntityType, canonical, alias);
+      setAliasForm({ canonical: '', alias: '' });
+      await loadAliases(aliasEntityType);
+      showToast('Alias added — it will apply to NextGen comparisons immediately', 'success');
+    } catch (e: any) {
+      setAliasError(e?.response?.data?.error?.message || e?.response?.data?.message || 'Failed to add alias');
+    } finally {
+      setAliasSaving(false);
+    }
+  };
+
+  const handleDeleteAlias = async (id: string) => {
+    try {
+      await aliasApi.remove(id);
+      await loadAliases(aliasEntityType);
+      showToast('Alias removed', 'success');
+    } catch (e: any) {
+      showToast('Failed to remove alias', 'error');
     }
   };
 
@@ -3087,6 +3163,18 @@ ${dataRows}
                 </button>
               )}
 
+              {/* NextGen Alias Management Button */}
+              {user && ['PURCHASING_COORDINATOR', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role) && (
+                <button
+                  onClick={openAliasModal}
+                  className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
+                  style={{ background: 'var(--bg-card-hover)', color: 'var(--accent-blue)', border: '1px solid color-mix(in srgb, var(--accent-blue) 25%, transparent)' }}
+                >
+                  <Settings className="h-4 w-4 mr-2" strokeWidth={1.75} />
+                  Manage NextGen Aliases
+                </button>
+              )}
+
               {/* Validation Button */}
               {(selectedInvoice.status === (InvoiceStatus.RECEIVED as any) ||
                 selectedInvoice.status === (InvoiceStatus.VALIDATION_PENDING as any) ||
@@ -3450,6 +3538,27 @@ ${dataRows}
                 );
               })()}
 
+              {/* NextGen informational differences — persisted in po_validation so they survive the session */}
+              {(() => {
+                const stored = selectedInvoice.po_validation;
+                const changes = Array.isArray(stored?.changes) ? stored.changes : [];
+                const info = changes.filter((c: any) => !['amount', 'vendor_name', 'po_number', 'invoice_amount_vs_nextgen'].includes(c.field));
+                if (info.length === 0) return null;
+                return (
+                  <div className="mt-4 p-4 rounded-lg" style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}>
+                    <p className="text-xs font-semibold mb-2 flex items-center gap-1.5" style={{ color: 'var(--accent-amber)' }}>
+                      <Info className="h-3.5 w-3.5" strokeWidth={1.75} />
+                      NextGen informational differences
+                    </p>
+                    {info.map((c: any, i: number) => (
+                      <p key={i} className="text-xs mt-1" style={{ color: 'var(--accent-amber)' }}>
+                        {c.field === 'invoice_quantity_vs_nextgen' ? `Info: invoice qty ${c.old} vs NextGen ${c.new}` : `Info: ${c.field} differs (${c.old} vs ${c.new})`}
+                      </p>
+                    ))}
+                  </div>
+                );
+              })()}
+
               {!validationResult && (
                 <div className="text-center py-8">
                   <Shield className="h-8 w-8 mx-auto mb-2 opacity-30" style={{ color: 'var(--text-muted)' }} />
@@ -3466,6 +3575,105 @@ ${dataRows}
               <AuditLogViewer invoiceId={selectedInvoice.id} />
             </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* NextGen Alias Management Modal */}
+      {showAliasModal && (
+        <div className="fixed inset-0 flex items-center justify-center z-50 animate-backdrop" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
+          <div className="max-w-lg w-full mx-2 sm:mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  NextGen Aliases
+                </h3>
+                <button
+                  onClick={() => setShowAliasModal(false)}
+                  className="p-1 rounded-lg transition-colors"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
+                Map known spelling/formatting differences so they stop showing as informational mismatches in NextGen comparisons (e.g. J-LONG LTD. = J-Long Ltd). Applied immediately.
+              </p>
+
+              {/* Entity type tabs */}
+              <div className="flex gap-2 mb-4">
+                {(['VENDOR', 'BRAND'] as const).map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => switchAliasTab(t)}
+                    className="flex-1 px-3 py-1.5 rounded-xl text-sm font-medium transition-colors"
+                    style={aliasEntityType === t ? { background: 'var(--accent-blue)', color: 'var(--text-inverse)' } : { background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}
+                  >
+                    {t === 'VENDOR' ? 'Vendors' : 'Brands'}
+                  </button>
+                ))}
+              </div>
+
+              {/* Add form */}
+              <div className="p-3 rounded-xl mb-4" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
+                <p className="text-xs font-medium mb-2" style={{ color: 'var(--text-secondary)' }}>Add alias</p>
+                <div className="flex gap-2">
+                  <input
+                    value={aliasForm.alias}
+                    onChange={(e) => setAliasForm(prev => ({ ...prev, alias: e.target.value }))}
+                    placeholder={aliasEntityType === 'VENDOR' ? 'Alias (e.g. J-LONG LTD.)' : 'Alias (e.g. ROSSIGNOL)'}
+                    className="flex-1 px-3 py-2 rounded-xl focus:outline-none text-sm"
+                    style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                  />
+                  <input
+                    value={aliasForm.canonical}
+                    onChange={(e) => setAliasForm(prev => ({ ...prev, canonical: e.target.value }))}
+                    placeholder="Canonical (e.g. J-Long Ltd)"
+                    className="flex-1 px-3 py-2 rounded-xl focus:outline-none text-sm"
+                    style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                  />
+                  <button
+                    onClick={handleAddAlias}
+                    disabled={aliasSaving}
+                    className="px-4 py-2 rounded-xl text-sm font-medium transition-colors whitespace-nowrap"
+                    style={aliasSaving ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--accent-blue)', color: 'var(--text-inverse)' }}
+                  >
+                    {aliasSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Add'}
+                  </button>
+                </div>
+                {aliasError && <p className="text-xs mt-2" style={{ color: 'var(--accent-red)' }}>{aliasError}</p>}
+              </div>
+
+              {/* Alias list */}
+              <div className="max-h-64 overflow-y-auto rounded-xl" style={{ border: '1px solid var(--border-color)' }}>
+                {aliases.length === 0 ? (
+                  <p className="text-sm p-4 text-center" style={{ color: 'var(--text-muted)' }}>
+                    No {aliasEntityType.toLowerCase()} aliases yet
+                  </p>
+                ) : aliases.map((a: any) => (
+                  <div key={a.id} className="flex items-center justify-between px-3 py-2 border-b last:border-b-0 text-sm" style={{ borderColor: 'var(--border-color)' }}>
+                    <div className="min-w-0">
+                      <p className="truncate" style={{ color: 'var(--text-primary)' }}>
+                        <span style={{ color: 'var(--text-muted)' }}>{a.alias}</span>
+                        <span className="mx-2" style={{ color: 'var(--text-muted)' }}>→</span>
+                        <span style={{ color: 'var(--accent-lime)' }}>{a.canonical}</span>
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => handleDeleteAlias(a.id)}
+                      className="p-1.5 rounded-lg transition-colors shrink-0"
+                      style={{ color: 'var(--text-muted)' }}
+                      onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-red)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       )}

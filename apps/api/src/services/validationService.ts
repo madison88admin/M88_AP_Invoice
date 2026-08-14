@@ -7,6 +7,7 @@ import { nextGenService, getNextGenMetrics } from './nextGenService';
 import { checkDuplicateInvoice as checkDuplicateDetailed } from './duplicateDetectionService';
 import { parseMPOReference } from '../utils/mpoReference';
 import { matchMPOLines } from '../utils/mpoLineMatching';
+import { getAliasMap, namesEquivalent } from './aliasService';
 
 export interface ValidationResult {
   passed: boolean;
@@ -1572,11 +1573,14 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
     }
   }
 
-  // Vendor — normalized exact match (informational, not critical)
+  // Vendor — normalized exact match (informational, not critical). Known
+  // formatting variants are resolved through the coordinator-editable alias
+  // table (e.g. "J-LONG LTD." = "J-Long Ltd") before flagging a difference.
+  const vendorAliasMap = await getAliasMap('VENDOR');
   if (invoice.vendor?.name && currentNextGen.vendor_name) {
     const invVendor = invoice.vendor.name.toLowerCase().trim();
     const ngVendor = currentNextGen.vendor_name.toLowerCase().trim();
-    if (invVendor !== ngVendor) {
+    if (!namesEquivalent(invVendor, ngVendor, vendorAliasMap)) {
       changes.push({ field: 'invoice_vendor_vs_nextgen', old: invoice.vendor.name, new: currentNextGen.vendor_name });
     }
   }
@@ -1597,7 +1601,8 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
 
   const invBrand = norm(invoice.brand);
   const ngBrand = norm(currentNextGen.brand);
-  if (invBrand && ngBrand && invBrand !== ngBrand) {
+  const brandAliasMap = await getAliasMap('BRAND');
+  if (invBrand && ngBrand && invBrand !== ngBrand && !namesEquivalent(invBrand, ngBrand, brandAliasMap)) {
     changes.push({ field: 'brand', old: invoice.brand, new: currentNextGen.brand });
   }
 
@@ -1633,7 +1638,10 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
     });
   }
 
-  // Always update po_validation with current NextGen data and changes flag
+  // Always update po_validation with current NextGen data and changes flag.
+  // The full changes array (field/old/new) is persisted too so informational
+  // differences (brand/season/order-type/vendor/qty) survive the session and
+  // render in the invoice's Validation tab, not just the live banner.
   const currentPoValidation = typeof invoice.po_validation === 'string' ? JSON.parse(invoice.po_validation) : (invoice.po_validation || {});
   await prisma.invoice.update({
     where: { id: invoiceId },
@@ -1644,6 +1652,7 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
         last_checked: new Date().toISOString(),
         has_changes: hasChanges,
         critical_changes: hasCriticalChanges,
+        changes,
       }),
     },
   });

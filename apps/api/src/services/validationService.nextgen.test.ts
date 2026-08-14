@@ -5,12 +5,14 @@ const {
   invoiceFindUnique,
   invoiceUpdate,
   exceptionCreate,
+  aliasFindMany,
   getFullPOByMPO,
   getNextGenMetricsMock,
 } = vi.hoisted(() => ({
   invoiceFindUnique: vi.fn(),
   invoiceUpdate: vi.fn(),
   exceptionCreate: vi.fn(),
+  aliasFindMany: vi.fn(),
   getFullPOByMPO: vi.fn(),
   getNextGenMetricsMock: vi.fn(),
 }));
@@ -19,6 +21,7 @@ vi.mock('../config/database', () => ({
   default: {
     invoice: { findUnique: invoiceFindUnique, update: invoiceUpdate },
     exception: { create: exceptionCreate },
+    entityAlias: { findMany: aliasFindMany },
   },
 }));
 
@@ -45,6 +48,7 @@ const INVOICE = {
 beforeEach(() => {
   vi.clearAllMocks();
   invoiceFindUnique.mockResolvedValue(INVOICE);
+  aliasFindMany.mockResolvedValue([]); // no aliases configured by default
   getNextGenMetricsMock.mockReturnValue({
     cooldown_active: false,
     consecutive_failures: 0,
@@ -193,6 +197,17 @@ describe('checkNextGenChanges — NextGen availability', () => {
     expect(result.changes).toContainEqual(expect.objectContaining({ field: 'order_type' }));
     // Informational only — never critical, never creates an exception
     expect(result.hasCriticalChanges).toBe(false);
+    // The full changes array is persisted into po_validation so the Validation
+    // tab can show these differences from stored data (survives the session)
+    const updateArg = invoiceUpdate.mock.calls[0][0];
+    const poValidation = JSON.parse(updateArg.data.po_validation);
+    expect(poValidation.changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ field: 'brand' }),
+        expect.objectContaining({ field: 'season' }),
+        expect.objectContaining({ field: 'order_type' }),
+      ])
+    );
   });
 
   it('skips brand/season/order-type comparison when either side is blank or a placeholder', async () => {

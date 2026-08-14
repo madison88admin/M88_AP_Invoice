@@ -92,11 +92,17 @@ export interface MockInvoice {
     batch_id?: string;
   }[];
   po_validation?: {
-    po_found: boolean;
+    po_found?: boolean;
     is_match?: boolean;
     mode?: 'AST_ISOLATED' | 'LIVE' | string;
     skipped?: boolean;
     message?: string;
+    // Persisted real-time NextGen check output (field/old/new differences) so
+    // informational mismatches survive the session in the Validation tab.
+    changes?: Array<{ field: string; old?: any; new?: any }>;
+    has_changes?: boolean;
+    critical_changes?: boolean;
+    last_checked?: string;
     comparison?: {
       vendor_match?: boolean;
       amount_match?: boolean;

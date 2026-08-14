@@ -152,6 +152,12 @@ export const exceptionApi = {
   waive: (exceptionId: string, waiverReason: string) => api.post(`/api/exceptions/${exceptionId}/waive`, { waiverReason }),
 };
 
+export const aliasApi = {
+  list: (entityType?: string) => api.get('/api/aliases', { params: entityType ? { entity_type: entityType } : {} }),
+  create: (entity_type: string, canonical: string, alias: string) => api.post('/api/aliases', { entity_type, canonical, alias }),
+  remove: (id: string) => api.delete(`/api/aliases/${id}`),
+};
+
 export const paymentBatchApi = {
   getAll: () => api.get('/api/payment-batches'),
   getById: (batchId: string) => api.get(`/api/payment-batches/${batchId}`),

@@ -2,7 +2,6 @@ import { Router } from 'express';
 import jwt from 'jsonwebtoken';
 import { UserRole } from '@ap-invoice/shared';
 import { AppError } from '../middleware/errorHandler';
-import { validateNextGenCredentials } from '../services/nextGenAuthService';
 import { logAudit } from '../services/auditLogService';
 import prisma from '../config/database';
 import crypto from 'crypto';
@@ -66,81 +65,12 @@ function buildAuthResponse(user: any, id: string) {
 }
 
 /**
- * Extract a NextGen username from an email address.
- * e.g. wyssa.martinez@madison88.com -> Wyssa, joy.yco@madison88.com -> Joy
- */
-function extractUsernameFromEmail(email: string): string {
-  const localPart = email.trim().split('@')[0];
-  const firstName = localPart.split('.')[0];
-  return firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase();
-}
-
-/**
- * Map NextGen usernames to AP Invoice roles.
- * Configure via NEXTGEN_USER_ROLES env variable as JSON, e.g.:
- * {"Glecie":"PLANNING_MANAGER","Joy":"PURCHASING_COORDINATOR"}
- * Falls back to IT_ADMIN if no mapping is found for a user.
- */
-function getRoleForUsername(username: string): UserRole {
-  const envMap = process.env.NEXTGEN_USER_ROLES;
-  let roleMap: Record<string, string> = {};
-  if (envMap) {
-    try {
-      roleMap = JSON.parse(envMap);
-    } catch {
-      // ignore invalid JSON and fall back to default map
-    }
-  }
-
-  const defaultMap: Record<string, string> = {
-    'Glecie': 'PLANNING_MANAGER',
-    'Edwin': 'PLANNING_MANAGER',
-    'Maryan': 'MLO_ACCOUNT_HOLDER',
-    'Aldrin': 'ACCOUNTING_SUPERVISOR',
-    'Lindsey': 'SR_MANAGER_GLOBAL_PRODUCTION',
-    'Chris': 'CFO',
-    'Polly': 'MS_POLLY',
-    'Paul': 'IT_ADMIN',
-    'Jc': 'SUPERADMIN',
-    'Meann': 'PURCHASING_MANAGER',
-    'Maricar': 'PURCHASING_MANAGER',
-    'Maricon': 'PURCHASING_COORDINATOR',
-    'Pamela': 'PURCHASING_COORDINATOR',
-    'Sarah': 'PURCHASING_COORDINATOR',
-    'April': 'PURCHASING_COORDINATOR',
-    'Jasmine': 'PURCHASING_COORDINATOR',
-    'Earl': 'PURCHASING_COORDINATOR',
-    'Mjsantiago': 'PURCHASING_COORDINATOR',
-    'Mj': 'PURCHASING_COORDINATOR',
-    'Joy': 'PURCHASING_COORDINATOR',
-    'Wyssa': 'ACCOUNTING_ASSOCIATE',
-  };
-
-  const normalized = username.trim();
-  const lower = normalized.toLowerCase();
-  const envKey = Object.keys(roleMap).find(k => k.toLowerCase() === lower);
-  const defaultKey = Object.keys(defaultMap).find(k => k.toLowerCase() === lower);
-  const role = (envKey && roleMap[envKey]) || (defaultKey && defaultMap[defaultKey]) || 'IT_ADMIN';
-  return (role as UserRole) || UserRole.IT_ADMIN;
-}
-
-/**
- * Determine brand scope for planning managers based on the default MLO holder mapping.
- * Returns undefined for non-planning-manager roles.
- */
-function getBrandScopeForUsername(username: string): 'TOP_10' | 'OTHER' | undefined {
-  const defaultMap: Record<string, 'TOP_10' | 'OTHER' | undefined> = {
-    'Edwin': 'TOP_10',
-    'Glecie': 'OTHER',
-  };
-  return defaultMap[username.trim()] || undefined;
-}
-
-/**
  * POST /api/auth/login
- * Authenticate against NextGen using ASP.NET Forms credentials.
+ * Authenticate locally — demo users (ENABLE_DEMO_LOGIN) and users managed
+ * in the system's User Management (APInvoice_User table).
  * On success, returns a short-lived API JWT signed with JWT_SECRET.
- * The user's role is determined by NEXTGEN_USER_ROLES or the default map.
+ * NOTE: Login intentionally does NOT validate against NextGen in real time;
+ * all accounts are local so the flow is fast and never depends on NextGen uptime.
  */
 router.post('/login', async (req, res, next) => {
   try {
@@ -192,45 +122,8 @@ router.post('/login', async (req, res, next) => {
       return res.json(buildAuthResponse(userObj, dbUser.id));
     }
 
-    // 3. Fall back to NextGen authentication
-    const nextGenUsername = email ? extractUsernameFromEmail(email) : identifier;
-    const valid = await validateNextGenCredentials(nextGenUsername, password);
-    if (!valid) {
-      throw new AppError('Invalid credentials', 401);
-    }
-
-    const role = getRoleForUsername(nextGenUsername);
-    const brandScope = role === 'PLANNING_MANAGER' ? getBrandScopeForUsername(nextGenUsername) : undefined;
-    const userEmail = email || `${nextGenUsername.toLowerCase()}@madison88.com`;
-    const token = jwt.sign(
-      {
-        id: nextGenUsername,
-        email: userEmail,
-        name: nextGenUsername,
-        role,
-        brand_scope: brandScope,
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: '8h' }
-    );
-
-    await logAudit({
-      performed_by: nextGenUsername,
-      action: 'USER_LOGIN',
-      note: `User ${nextGenUsername} (${userEmail}) logged in via NextGen as ${role}`,
-    });
-
-    res.json({
-      token,
-      user: {
-        id: nextGenUsername,
-        email: userEmail,
-        name: nextGenUsername,
-        role,
-        title: role.replace(/_/g, ' '),
-        brand_scope: brandScope,
-      },
-    });
+    // No NextGen fallback — all accounts are local (demo users or User Management).
+    throw new AppError('Invalid credentials', 401);
   } catch (error) {
     next(error);
   }

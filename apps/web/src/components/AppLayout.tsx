@@ -63,7 +63,6 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
       items: [
         { icon: Package, label: 'Payment Batches', path: '/payment-batches', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'batches', badgeColor: 'lime' },
         { icon: FileSearch, label: 'Accounting Review', path: '/accounting-review', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'review', badgeColor: 'blue' },
-        { icon: Building2, label: 'Vendors', path: '/vendors', roles: ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'] },
         { icon: Landmark, label: 'Bank Details', path: '/bank-details', roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'] },
       ],
     },
@@ -79,6 +78,7 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
       label: 'Admin',
       items: [
         { icon: ClipboardList, label: 'Audit Logs', path: '/audit-logs', roles: ['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'ACCOUNTING_ASSOCIATE'] },
+        { icon: Building2, label: 'Vendors', path: '/vendors', roles: ['IT_ADMIN'] },
         { icon: Users, label: 'User Management', path: '/users', roles: ['IT_ADMIN', 'SUPERADMIN'] },
         { icon: Settings, label: 'System Configuration', path: '/settings', roles: ['IT_ADMIN', 'SUPERADMIN'] },
       ],

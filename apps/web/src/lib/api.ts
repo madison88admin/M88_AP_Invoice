@@ -18,6 +18,27 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Session-expiry handling: a 401 on anything except the login endpoints means
+// the stored token expired. Clear it once and bounce to /login with a notice
+// instead of letting every request spam 401s with a stale token.
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error?.response?.status === 401 && typeof window !== 'undefined') {
+      const url = error?.config?.url || '';
+      const isLoginCall = url.includes('/api/auth/login') || url.includes('/api/auth/demo-login');
+      if (!isLoginCall) {
+        const wasLoggedIn = !!localStorage.getItem('auth_token');
+        localStorage.removeItem('auth_token');
+        if (wasLoggedIn && window.location.pathname !== '/login') {
+          window.location.href = '/login?expired=1';
+        }
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
 export const invoiceApi = {
   getAll: (filters?: any) => api.get('/api/invoices', { params: filters }),
   getById: (id: string) => api.get(`/api/invoices/${id}`),

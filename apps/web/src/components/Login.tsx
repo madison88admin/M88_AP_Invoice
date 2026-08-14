@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { LayoutDashboard, Lock, Mail, Loader2, ArrowRight, Shield, Zap, FileCheck, Building2, Eye, EyeOff } from 'lucide-react';
+import { LayoutDashboard, Lock, Mail, Loader2, ArrowRight, Shield, Zap, FileCheck, Building2, Eye, EyeOff, Clock } from 'lucide-react';
 
 const QUICK_LOGINS = [
   { label: 'Maryan', role: 'MLO Account Holder', email: 'maryan.untiveros@madison88.com', password: 'madison88' },
@@ -23,6 +23,7 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [sessionExpired] = useState(() => new URLSearchParams(window.location.search).get('expired') === '1');
   const { login, demoLogin } = useAuth();
   const navigate = useNavigate();
 
@@ -195,6 +196,14 @@ export default function Login() {
                   </button>
                 </div>
               </div>
+
+              {/* Session expired notice */}
+              {sessionExpired && !error && (
+                <div className="rounded-xl p-3 animate-fade-in-up flex items-center gap-2" style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 25%, transparent)' }}>
+                  <Clock className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--accent-amber)' }} />
+                  <p className="text-sm" style={{ color: 'var(--accent-amber)' }}>Your session expired — please log in again to continue.</p>
+                </div>
+              )}
 
               {/* Error */}
               {error && (

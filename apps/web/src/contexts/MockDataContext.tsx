@@ -332,6 +332,16 @@ export const MockDataProvider = ({ children }: MockDataProviderProps) => {
         eventSource.onerror = () => {
           eventSource?.close();
           eventSource = null;
+          // Expired session: the axios 401 interceptor already cleared the token.
+          // Stop the reconnect loop and send the user back to login instead of
+          // hammering the server with a stale token every 5 seconds.
+          if (!localStorage.getItem('auth_token')) {
+            if (reconnectTimer) clearTimeout(reconnectTimer);
+            if (window.location.pathname !== '/login') {
+              window.location.href = '/login?expired=1';
+            }
+            return;
+          }
           reconnectTimer = setTimeout(connectSSE, 5000);
         };
       } catch {

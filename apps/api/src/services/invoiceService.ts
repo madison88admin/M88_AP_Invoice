@@ -7,6 +7,8 @@ import { matchVendor } from './vendorMatchingService';
 import { fieldDecisionEngine } from './fieldDecisionEngine';
 import { inAppNotificationService } from './inAppNotificationService';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import { parseMPOReference } from '../utils/mpoReference';
 
 function safeDate(value: any): Date | null {
@@ -1065,7 +1067,10 @@ export const getInvoiceTimeline = async (invoiceId: string) => {
 };
 
 export const deleteInvoice = async (id: string, userId: string, userRole: string, userName: string) => {
-  const existing = await prisma.invoice.findUnique({ where: { id } });
+  const existing = await prisma.invoice.findUnique({
+    where: { id },
+    include: { payments: { select: { id: true, batch_id: true } } },
+  });
   if (!existing) {
     throw new AppError('Invoice not found', 404);
   }
@@ -1075,17 +1080,73 @@ export const deleteInvoice = async (id: string, userId: string, userRole: string
     throw new AppError(`Cannot delete invoice in ${existing.status} status`, 400);
   }
 
-  await prisma.invoice.delete({ where: { id } });
+  // Never delete an invoice whose payment already sits inside a live batch —
+  // removing it would silently corrupt the batch total / payment count.
+  const batchIds = [...new Set(existing.payments.map((p) => p.batch_id).filter(Boolean))] as string[];
+  if (batchIds.length > 0) {
+    const liveBatch = await prisma.paymentBatch.findFirst({
+      where: { id: { in: batchIds }, status: { not: 'CANCELLED' } },
+      select: { id: true, batch_number: true },
+    });
+    if (liveBatch) {
+      throw new AppError(`Cannot delete invoice: it is inside batch ${liveBatch.batch_number}. Remove it from the batch first.`, 400);
+    }
+  }
 
+  // Audit BEFORE deleting. The invoice's audit logs cascade away with it, so
+  // write the entry with invoice_id = null and the number embedded in the note
+  // to keep a traceable record of the deletion.
   await logAudit({
-    invoice_id: id,
     performed_by: userName,
     action: 'INVOICE_DELETED',
-    note: `Invoice ${existing.invoice_number} deleted by ${userName} (${userRole})`,
+    note: `Invoice ${existing.invoice_number} (${id}) deleted by ${userName} (${userRole})`,
+  });
+
+  await prisma.invoice.delete({ where: { id } });
+
+  // Best-effort cleanup of the actual PDF — never blocks the deletion.
+  deleteInvoicePdf(existing.pdf_path || existing.raw_file_url || null).catch((err) => {
+    console.warn(`[DeleteInvoice] PDF cleanup failed for ${existing.invoice_number}:`, err instanceof Error ? err.message : err);
   });
 
   return { id, deleted: true, invoice_number: existing.invoice_number };
 };
+
+/**
+ * Best-effort removal of an invoice PDF from Supabase Storage and local disk.
+ * Failures are logged, never thrown — the invoice record is already deleted.
+ */
+async function deleteInvoicePdf(storagePath: string | null) {
+  if (!storagePath) return;
+
+  const SUPABASE_URL = process.env.SUPABASE_URL || 'http://localhost:8000';
+  const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+  const BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'AP_Invoice_Storage';
+
+  // Supabase Storage object (keyed by path like invoices/2026/08/1234_file.pdf)
+  if (SUPABASE_SERVICE_KEY) {
+    try {
+      const url = `${SUPABASE_URL}/storage/v1/object/${BUCKET}/${storagePath}`;
+      const response = await fetch(url, { method: 'DELETE', headers: { 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` } });
+      if (response.ok) {
+        console.log(`[DeleteInvoice] Removed Supabase object: ${storagePath}`);
+      }
+    } catch (error) {
+      console.warn(`[DeleteInvoice] Supabase cleanup skipped for ${storagePath}:`, error instanceof Error ? error.message : error);
+    }
+  }
+
+  // Local disk copy — only unlink when the path actually resolves to a file.
+  try {
+    const localPath = path.isAbsolute(storagePath) ? storagePath : path.resolve(process.cwd(), storagePath);
+    if (fs.existsSync(localPath) && fs.statSync(localPath).isFile()) {
+      fs.unlinkSync(localPath);
+      console.log(`[DeleteInvoice] Removed local file: ${localPath}`);
+    }
+  } catch (error) {
+    console.warn(`[DeleteInvoice] Local cleanup skipped for ${storagePath}:`, error instanceof Error ? error.message : error);
+  }
+}
 
 export const requestBankDetailsChange = async (
   invoiceId: string,

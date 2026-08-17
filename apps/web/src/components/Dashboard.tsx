@@ -3267,22 +3267,6 @@ ${dataRows}
                       Return to Previous Approver
                     </button>
                   )}
-                  {['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN', 'ADMIN'].includes(user?.role || '') && (
-                    <button
-                      onClick={() => setShowDeleteModal(true)}
-                      className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
-                      style={{
-                        background: 'color-mix(in srgb, var(--accent-red) 8%, transparent)',
-                        color: 'var(--accent-red)',
-                        border: '1px solid color-mix(in srgb, var(--accent-red) 15%, transparent)',
-                      }}
-                      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'color-mix(in srgb, var(--accent-red) 15%, transparent)'; }}
-                      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'color-mix(in srgb, var(--accent-red) 8%, transparent)'; }}
-                    >
-                      <Trash2 className="h-4 w-4 mr-2" strokeWidth={1.75} />
-                      Delete Invoice
-                    </button>
-                  )}
                 </div>
               )}
 
@@ -3373,6 +3357,32 @@ ${dataRows}
                   {sendingConfirmation ? <Loader2 className="h-4 w-4 mr-2 animate-spin" strokeWidth={1.75} /> : <Send className="h-4 w-4 mr-2" strokeWidth={1.75} />}
                   {sendingConfirmation ? 'Sending...' : 'Send Payment Confirmation'}
                 </button>
+              )}
+
+              {/* Delete Invoice — Purchasing Coordinator/Manager/IT can remove early-stage invoices (never once paid/posted or inside a live batch) */}
+              {user && ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN', 'SUPERADMIN', 'ADMIN'].includes(user.role) && (
+                <>
+                  <div style={{ borderTop: '1px solid var(--border-subtle)' }} className="pt-3">
+                    <button
+                      onClick={() => setShowDeleteModal(true)}
+                      className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
+                      style={{
+                        background: 'color-mix(in srgb, var(--accent-red) 8%, transparent)',
+                        color: 'var(--accent-red)',
+                        border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)',
+                      }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'color-mix(in srgb, var(--accent-red) 18%, transparent)'; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'color-mix(in srgb, var(--accent-red) 8%, transparent)'; }}
+                      title="Only invoices that are not yet paid, posted to QB, or inside a live batch can be deleted"
+                    >
+                      <Trash2 className="h-4 w-4 mr-2" strokeWidth={1.75} />
+                      Delete Invoice
+                    </button>
+                    <p className="text-[11px] text-center mt-1.5" style={{ color: 'var(--text-muted)' }}>
+                      Only early-stage invoices (not posted / paid / inside a live batch) can be deleted
+                    </p>
+                  </div>
+                </>
               )}
 
               {/* No actions available */}

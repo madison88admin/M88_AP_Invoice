@@ -10,7 +10,6 @@ import { Skeleton } from './ui/Skeleton';
 import {
   orderedSignatures,
   getPendingApprovalsForUser,
-  getApprovedByUser,
 } from '../lib/approvalQueue';
 
 export default function ApprovalInbox() {
@@ -46,11 +45,7 @@ export default function ApprovalInbox() {
     return coordinator?.signatory_name || 'Not yet approved';
   };
 
-  // Invoices the current user has already approved (their own signature is signed).
-  // Shown to the Purchasing Manager as a "My Approved Invoices" bar below the queue.
-  const approvedByMe = user && ['PURCHASING_MANAGER'].includes(user.role)
-    ? getApprovedByUser(invoices, user)
-    : [];
+
 
   // Pagination logic
   const totalPages = Math.ceil(pendingApprovals.length / itemsPerPage);
@@ -460,86 +455,6 @@ export default function ApprovalInbox() {
               </div>
             )}
           </div>
-
-      {/* My Approved Invoices — Purchasing Manager can review what they already approved */}
-      {user?.role === 'PURCHASING_MANAGER' && (
-        <div className="mt-6 rounded-2xl overflow-hidden" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
-          <div className="px-4 md:px-6 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
-            <div className="flex items-center gap-2">
-              <CheckCircle className="h-4 w-4" style={{ color: 'var(--accent-lime)' }} strokeWidth={2} />
-              <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
-                My Approved Invoices
-              </h2>
-            </div>
-            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{approvedByMe.length} approved</span>
-          </div>
-          {approvedByMe.length === 0 ? (
-            <div className="px-6 py-8 text-center">
-              <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>You haven't approved any invoices yet.</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-4 md:p-5">
-              {approvedByMe.slice(0, 10).map(({ invoice, signedAt }) => (
-                <div
-                  key={invoice.id}
-                  onClick={() => setSelectedInvoice(invoice)}
-                  className="rounded-xl p-4 cursor-pointer transition-colors"
-                  style={{
-                    background: 'var(--bg-elevated)',
-                    border: selectedInvoice?.id === invoice.id ? '1px solid color-mix(in srgb, var(--accent-lime) 50%, transparent)' : '1px solid var(--border-color)',
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--bg-elevated)'; }}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                        {invoice.invoice_number}
-                      </p>
-                      <p className="text-xs truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                        {invoice.vendor_name}
-                      </p>
-                    </div>
-                    <div className="text-right flex-shrink-0">
-                      <p className="text-sm font-semibold tabular-nums" style={{ color: 'var(--text-primary)' }}>
-                        {invoice.currency} {Number(invoice.total_amount).toFixed(2)}
-                      </p>
-                      <p className="text-[11px] mt-0.5 flex items-center justify-end gap-1" style={{ color: 'var(--accent-lime)' }}>
-                        <CheckCircle className="h-3 w-3" strokeWidth={2} />
-                        Approved {new Date(signedAt).toLocaleDateString()}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-2.5 flex items-center justify-between gap-2">
-                    <span
-                      className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium"
-                      style={{ background: 'color-mix(in srgb, var(--accent-blue) 12%, transparent)', color: 'var(--accent-blue)' }}
-                    >
-                      {String(invoice.status || '').replace(/_/g, ' ')}
-                    </span>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); void openInvoicePdf(invoice); }}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors"
-                      title="View actual invoice PDF"
-                      style={{ background: 'var(--bg-card)', color: 'var(--accent-blue)', border: '1px solid var(--border-color)' }}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-blue) 10%, transparent)'; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--bg-card)'; }}
-                    >
-                      <FileText className="h-3.5 w-3.5" strokeWidth={1.75} />
-                      PDF
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-          {approvedByMe.length > 10 && (
-            <div className="px-4 md:px-6 py-3 text-center text-xs" style={{ borderTop: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
-              Showing latest 10 of {approvedByMe.length} approved invoices — click a card to open its details.
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Reject Modal */}
       {showRejectModal && (

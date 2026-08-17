@@ -1103,6 +1103,16 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
       };
     }
 
+    // Auto-fill the invoice's material from the MPO line list when the invoice
+    // has an MPO but no material (code or name). Never breaks the validation.
+    if (!invoice.material_code && !invoice.material_name && Array.isArray(po.line_items)) {
+      try {
+        await autoFillMaterialFromNextGen(invoice, po.line_items);
+      } catch (fillErr: any) {
+        logger.warn(`[Validation] material auto-fill failed for ${poRef}: ${fillErr?.message || 'unknown error'}`);
+      }
+    }
+
     // Compare the most specific target available. A material invoice must not
     // be compared against the total of every line under the MPO.
     const differences: string[] = [];
@@ -1459,6 +1469,155 @@ export async function checkBatchThreshold(invoiceId: string): Promise<{ held: bo
  * Check for NextGen changes on an invoice
  * Compares stored NextGen data with current NextGen data and flags if changed
  */
+export interface AutoFillMaterialResult {
+  filled: boolean;
+  reason?: 'no_mpo' | 'already_has_material' | 'no_lines' | 'no_match' | 'ambiguous' | 'line_has_no_material' | 'nextgen_unavailable';
+  line_reference?: string;
+  material_code?: string | null;
+  material_name?: string | null;
+  material_id?: number;
+  material_url?: string;
+  quantity?: number;
+  total_amount?: number;
+}
+
+/**
+ * Auto-fill the invoice's material from the NextGen MPO line list.
+ *
+ * Fires only when the invoice has an MPO but NO material (code or name), so a
+ * vendor/OCR miss is repaired from the source of truth. Resolution order:
+ *   1. MPO line reference (MPO015995-8 → line 8) or material hint on the invoice
+ *   2. Single-line MPO → that line
+ *   3. Quantity match (invoice qty == line qty)
+ *   4. Unit-price match (invoice total / qty == line unit price)
+ *   5. Line-total match (invoice total == line total amount)
+ * When more than one line still matches the invoice is NOT filled (ambiguous) so
+ * a wrong material is never written. The matched line's material_id/url and the
+ * line reference are persisted in po_validation.auto_filled_material, and the
+ * resolved line reference becomes mpo_order_sequence so later validations
+ * resolve the exact line.
+ */
+export async function autoFillMaterialFromNextGen(
+  invoice: any,
+  poLines?: any[]
+): Promise<AutoFillMaterialResult> {
+  if (!invoice?.mpo_number) return { filled: false, reason: 'no_mpo' };
+  if (invoice.material_code || invoice.material_name) return { filled: false, reason: 'already_has_material' };
+
+  let lines = poLines;
+  if (!lines || !lines.length) {
+    try {
+      const po: any = await Promise.race([
+        nextGenService.getFullPOByMPO(invoice.mpo_number, {
+          vendor_name: invoice.vendor?.name,
+          amount: Number(invoice.total_amount || 0),
+        }),
+        new Promise<null>((_, reject) =>
+          setTimeout(() => reject(new Error('NEXTGEN_TIMEOUT_10s')), 10000)
+        ),
+      ]);
+      lines = po?.line_items;
+    } catch {
+      return { filled: false, reason: 'nextgen_unavailable' };
+    }
+  }
+  if (!lines || !lines.length) return { filled: false, reason: 'no_lines' };
+
+  const parsed = parseMPOReference(invoice.mpo_number);
+  const orderSequence = String(invoice.mpo_order_sequence || parsed.orderSequence || '').trim() || undefined;
+  const materialCode = String(invoice.material_code || parsed.materialCode || '').trim() || undefined;
+  const materialName = String(invoice.material_name || '').trim() || undefined;
+
+  const qty = Number(invoice.qty_shipped || 0);
+  const amount = Number(invoice.total_amount || 0);
+
+  // 1) Exact line reference / material-hint resolution
+  let candidates: any[] = lines;
+  if (orderSequence || materialCode || materialName) {
+    const resolution = matchMPOLines(lines, { orderSequence, materialCode, materialName });
+    if (resolution.lines.length > 0) {
+      candidates = resolution.lines;
+      if (!resolution.error && candidates.length === 1) {
+        return await persistMaterialFill(invoice, candidates[0], parsed.baseMpo);
+      }
+      // AMBIGUOUS_MATERIAL — narrow with qty/price/amount below.
+    }
+  }
+
+  // 2) Single-line MPO → that line
+  if (lines.length === 1) {
+    return await persistMaterialFill(invoice, lines[0], parsed.baseMpo);
+  }
+
+  // 3) Quantity match
+  if (qty > 0) {
+    const byQty = candidates.filter(l => Number(l.quantity || 0) === qty);
+    if (byQty.length === 1) return await persistMaterialFill(invoice, byQty[0], parsed.baseMpo);
+    if (byQty.length > 1) candidates = byQty;
+  }
+
+  // 4) Unit-price match (invoice total / qty ≈ line unit price)
+  if (qty > 0 && amount > 0) {
+    const impliedPrice = amount / qty;
+    const byPrice = candidates.filter(l => {
+      const p = Number(l.unit_price || 0);
+      return p > 0 && Math.abs(p - impliedPrice) < 0.001;
+    });
+    if (byPrice.length === 1) return await persistMaterialFill(invoice, byPrice[0], parsed.baseMpo);
+    if (byPrice.length > 1) candidates = byPrice;
+  }
+
+  // 5) Line-total match
+  if (amount > 0) {
+    const byAmount = candidates.filter(l => Math.abs(Number(l.total_amount || 0) - amount) < 0.01);
+    if (byAmount.length === 1) return await persistMaterialFill(invoice, byAmount[0], parsed.baseMpo);
+    if (byAmount.length > 1) candidates = byAmount;
+  }
+
+  if (candidates.length === 0) return { filled: false, reason: 'no_match' };
+  return { filled: false, reason: 'ambiguous' };
+}
+
+async function persistMaterialFill(invoice: any, line: any, baseMpo?: string): Promise<AutoFillMaterialResult> {
+  const itemCode = String(line.item_code || line.material_code || '').trim();
+  const lineMaterialName = String(line.material_name || line.description || '').trim();
+  if (!itemCode && !lineMaterialName) return { filled: false, reason: 'line_has_no_material' };
+
+  const data: Record<string, any> = {};
+  if (itemCode) data.material_code = itemCode;
+  if (lineMaterialName) data.material_name = lineMaterialName;
+  const lineRef = String(line.line_reference || line.line_number || '').trim();
+  if (lineRef && !invoice.mpo_order_sequence) data.mpo_order_sequence = lineRef;
+  if (baseMpo && !invoice.mpo_base_number) data.mpo_base_number = baseMpo;
+
+  const current = typeof invoice.po_validation === 'string'
+    ? JSON.parse(invoice.po_validation)
+    : (invoice.po_validation || {});
+  current.auto_filled_material = {
+    line_reference: lineRef || null,
+    material_id: line.material_id ?? null,
+    material_url: line.material_url || null,
+    quantity: line.quantity ?? null,
+    unit_price: line.unit_price ?? null,
+    total_amount: line.total_amount ?? null,
+    filled_at: new Date().toISOString(),
+  };
+  data.po_validation = JSON.stringify(current);
+
+  await prisma.invoice.update({ where: { id: invoice.id }, data });
+
+  return {
+    filled: true,
+    line_reference: lineRef || undefined,
+    material_code: itemCode || null,
+    material_name: lineMaterialName || null,
+    material_id: line.material_id,
+    material_url: line.material_url,
+    quantity: line.quantity,
+    total_amount: line.total_amount,
+  };
+}
+
 export async function checkNextGenChanges(invoiceId: string): Promise<{
   hasChanges: boolean;
   hasCriticalChanges: boolean;
@@ -1519,6 +1678,16 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
       nextGenUnavailable: systemDown,
       firstCheck: false,
     };
+  }
+
+  // Auto-fill the invoice's material from the MPO when it has none. The line
+  // data is already in hand, so no extra NextGen call. Never breaks the check.
+  if (!invoice.material_code && !invoice.material_name && Array.isArray(currentNextGen.line_items)) {
+    try {
+      await autoFillMaterialFromNextGen(invoice, currentNextGen.line_items);
+    } catch (fillErr: any) {
+      logger.warn(`[checkNextGenChanges] material auto-fill failed for ${invoice.mpo_number}: ${fillErr?.message || 'unknown error'}`);
+    }
   }
 
   const storedNextGen = invoice.po_validation ? (typeof invoice.po_validation === 'string' ? JSON.parse(invoice.po_validation) : invoice.po_validation)?.nextgen_data : null;

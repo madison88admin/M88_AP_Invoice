@@ -1305,27 +1305,9 @@ export const confirmOCR = async (
         });
     }
 
-    // Create signature records if detected
-    if (signatures && signatures.length > 0) {
-      const db = await import('../config/database');
-      if (!db.isDbEnabled()) {
-        console.warn('[DEBUG] Prisma unavailable, skipping signature records');
-      } else {
-        const prisma = db.default;
-        for (const sig of signatures) {
-          await prisma.signature.create({
-            data: {
-              invoice_id: invoice.id,
-              signatory_name: sig.signatory_name || sig.signer_name,
-              signed_at: sig.signed_at ? new Date(sig.signed_at) : null,
-              signatory_role: (sig.signatory_role || sig.role || 'COORDINATOR') as any,
-              signature_type: (sig.signature_type || SignatureType.DIGITAL) as any,
-              ocr_detected: sig.ocr_detected ?? false,
-            },
-          });
-        }
-      }
-    }
+    // OCR-detected PDF signatures are disregarded — they do NOT count as workflow approvals.
+    // Only manual sign-offs by actual system users in the approval workflow are recorded.
+    // PDF signatures are kept only in ocr_raw_data for reference/audit trail.
 
     res.status(201).json(invoice);
   } catch (error) {

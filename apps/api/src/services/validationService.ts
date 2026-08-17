@@ -786,19 +786,12 @@ function validateSignatures(amount: number, signatures: any[]): ValidationResult
     };
   }
 
-  // If OCR-detected pre-existing signatures are present, don't block —
-  // the digital approval workflow will collect any remaining required signatures.
-  const hasOcrSignatures = signatures.some((sig: any) => sig.ocr_detected);
-  if (hasOcrSignatures) {
-    const signedSignatures = signatures?.filter((sig: any) => sig.signed_at) || [];
-    return {
-      passed: true,
-      message: `OCR detected ${signedSignatures.length} pre-existing digital signature(s). Remaining signatures will be collected during approval.`,
-    };
-  }
+  // OCR-detected pre-existing signatures from the PDF are disregarded.
+  // They do NOT count as workflow approvals — only manual system sign-offs count.
+  // Proceed to check actual workflow signatures below.
 
-  // Count signed signatures
-  const signedSignatures = signatures?.filter((sig: any) => sig.signed_at) || [];
+  // Count signed workflow signatures (exclude OCR-detected PDF signatures)
+  const signedSignatures = signatures?.filter((sig: any) => sig.signed_at && !sig.ocr_detected) || [];
   const signedRoles = signedSignatures.map((sig: any) => sig.signatory_role as string);
 
   const tier = determineApprovalTier(amount);

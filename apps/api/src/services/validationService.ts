@@ -702,18 +702,26 @@ async function validateBankDetails(invoice: any): Promise<ValidationResult> {
     };
   }
 
-  // Compare account numbers (normalize by removing spaces and dashes)
-  const normalizeAccount = (account: string) => account.replace(/[\s-]/g, '');
+  // Compare account numbers (normalize by removing spaces, dashes, and leading zeros)
+  const normalizeAccount = (account: string) => account.replace(/[\s-]/g, '').replace(/^0+/, '');
   const ocrAccountNormalized = normalizeAccount(invoiceBank.account_number || '');
   const vendorAccountNormalized = normalizeAccount(vendorAccount || '');
 
   if (vendorAccount && ocrAccountNormalized && vendorAccountNormalized !== ocrAccountNormalized) {
-    return {
-      passed: false,
-      reason: ExceptionReason.BANK_DETAIL_MISMATCH,
-      message: 'Account number does not match vendor records',
-      detail: `OCR Account: "${invoiceBank.account_number}" vs Vendor Account: "${vendorAccount}"`,
-    };
+    // Check if one account is a subset of the other (e.g. OCR extracted partial account number)
+    const shorter = ocrAccountNormalized.length <= vendorAccountNormalized.length ? ocrAccountNormalized : vendorAccountNormalized;
+    const longer = ocrAccountNormalized.length <= vendorAccountNormalized.length ? vendorAccountNormalized : ocrAccountNormalized;
+    if (longer.includes(shorter)) {
+      // Partial match — OCR likely extracted a subset of the full account number
+      // This is acceptable, not a real mismatch
+    } else {
+      return {
+        passed: false,
+        reason: ExceptionReason.BANK_DETAIL_MISMATCH,
+        message: 'Account number does not match vendor records',
+        detail: `OCR Account: "${invoiceBank.account_number}" vs Vendor Account: "${vendorAccount}"`,
+      };
+    }
   }
 
   // Compare bank name (fuzzy match — OCR may abbreviate)
@@ -1243,12 +1251,24 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
       differences.push(`Quantity: invoice ${comparisonQty} vs PO ${poQty}`);
     }
 
-    // Vendor name check (only if MPO matches)
+    // Vendor name check (only if MPO matches) — fuzzy match to allow subsidiaries
     if (invoice.vendor?.name && po.vendor_name) {
       const invoiceVendor = invoice.vendor.name.toLowerCase().trim();
       const poVendor = po.vendor_name.toLowerCase().trim();
-      if (invoiceVendor !== poVendor) {
-        differences.push(`Vendor: invoice "${invoice.vendor.name}" vs PO "${po.vendor_name}"`);
+      // Fuzzy match: check if one name contains the other, or if they share a common root word
+      const isFuzzyMatch = (a: string, b: string) => {
+        if (a === b) return true;
+        if (a.includes(b) || b.includes(a)) return true;
+        // Extract root words (remove common suffixes/prefixes like "the", "ltd", "hk", "group", etc.)
+        const stopWords = new Set(['the', 'ltd', 'limited', 'inc', 'corp', 'group', 'co', 'hk', 'pvt', 'llc', 'sa', 'ag', 'gmbh']);
+        const wordsA = a.split(/[\s,.&()-]+/).filter(w => w.length > 2 && !stopWords.has(w));
+        const wordsB = b.split(/[\s,.&()-]+/).filter(w => w.length > 2 && !stopWords.has(w));
+        // If they share at least one significant root word, consider it a match
+        const shared = wordsA.filter(w => wordsB.some(wb => wb.includes(w) || w.includes(wb)));
+        return shared.length > 0;
+      };
+      if (!isFuzzyMatch(invoiceVendor, poVendor)) {
+        differences.push(`Vendor name: invoice "${invoice.vendor.name}" vs PO "${po.vendor_name}"`);
       }
     }
 

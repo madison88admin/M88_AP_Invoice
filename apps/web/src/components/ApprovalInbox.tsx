@@ -7,35 +7,11 @@ import { CheckCircle, XCircle, Clock, ArrowLeft, Loader2, ExternalLink, FileText
 import { MockInvoice } from '../lib/mockData';
 import { invoiceApi } from '../lib/api';
 import { Skeleton } from './ui/Skeleton';
-import { isWithinRoleThreshold } from '../lib/roleAccess';
-
-const mapUserRoleToSignatoryRoles = (role: string): string[] => {
-  const mapping: Record<string, string[]> = {
-    'PURCHASING_COORDINATOR': ['COORDINATOR'],
-    'PURCHASING_MANAGER': ['PURCHASING_MANAGER'],
-    'PLANNING_MANAGER': ['MLO_PLANNING_MANAGER'],
-    'MLO_PLANNING_MANAGER': ['MLO_PLANNING_MANAGER'],
-    'MLO_ACCOUNT_HOLDER': ['MLO_ACCOUNT_HOLDER', 'MLO_PLANNING_MANAGER'],
-    'SR_MANAGER_GLOBAL_PRODUCTION': ['SR_MANAGER_GLOBAL_PRODUCTION'],
-    'MS_POLLY': ['MS_POLLY'],
-    'ACCOUNTING_ASSOCIATE': ['ACCOUNTING_REVIEWER'],
-    'ACCOUNTING_SUPERVISOR': ['ACCOUNTING_REVIEWER'],
-    'PRESIDENT': ['ACCOUNTING_REVIEWER'],
-    'SUPERADMIN': [],
-  };
-  return mapping[role] || [];
-};
-
-const APPROVAL_ROLE_ORDER = [
-  'COORDINATOR', 'PURCHASING_MANAGER', 'MLO_ACCOUNT_HOLDER',
-  'MLO_PLANNING_MANAGER', 'SR_MANAGER_GLOBAL_PRODUCTION', 'MS_POLLY',
-  'ACCOUNTING_REVIEWER',
-];
-
-const orderedSignatures = (invoice: MockInvoice) => (invoice.signatures || [])
-  .filter(signature => !signature.ocr_detected &&
-    (!signature.invalidated_at || signature.approval_status === 'RECONFIRMATION_REQUIRED'))
-  .sort((a, b) => APPROVAL_ROLE_ORDER.indexOf(a.signatory_role) - APPROVAL_ROLE_ORDER.indexOf(b.signatory_role));
+import {
+  orderedSignatures,
+  getPendingApprovalsForUser,
+  getApprovedByUser,
+} from '../lib/approvalQueue';
 
 export default function ApprovalInbox() {
   const { invoices, approveInvoice, rejectInvoice } = useMockData();
@@ -60,28 +36,8 @@ export default function ApprovalInbox() {
   }, [invoices]);
 
   // Filter invoices to show only pending approvals for the current user's role
-  const pendingApprovals = invoices.filter(invoice => {
-    if (orderedSignatures(invoice).length === 0) return false;
-    // Exclude invoices not in an active approval workflow
-    const status = String(invoice.status || '');
-    if (!status.startsWith('PENDING_') || status === 'PENDING_ACCOUNTING') return false;
-    // Exclude invoices below the user's tier threshold
-    if (user && !isWithinRoleThreshold(user.role, Number(invoice.total_amount))) return false;
-    // Find the first unsigned signature (sequential enforcement — signatures are in route order)
-    const firstPending = orderedSignatures(invoice).find(s => !s.signed_at);
-    if (!firstPending) return false;
-    if (
-      firstPending.approval_status === 'RECONFIRMATION_REQUIRED' &&
-      firstPending.signatory_name &&
-      firstPending.signatory_name.trim().toLowerCase() !== user?.name?.trim().toLowerCase()
-    ) return false;
-    const userSignatoryRoles = user ? mapUserRoleToSignatoryRoles(user.role) : [];
-    return userSignatoryRoles.length > 0 ? userSignatoryRoles.includes(firstPending.signatory_role) : false;
-  }).sort((a, b) => {
-    const receivedA = new Date(a.invoice_received_date || a.created_at || a.invoice_date || 0).getTime();
-    const receivedB = new Date(b.invoice_received_date || b.created_at || b.invoice_date || 0).getTime();
-    return receivedA - receivedB || String(a.id).localeCompare(String(b.id));
-  });
+  // (shared with the sidebar badge so the counts always agree)
+  const pendingApprovals = getPendingApprovalsForUser(invoices, user);
 
   const getCoordinatorName = (invoice: MockInvoice) => {
     const coordinator = orderedSignatures(invoice).find(sig =>
@@ -93,18 +49,7 @@ export default function ApprovalInbox() {
   // Invoices the current user has already approved (their own signature is signed).
   // Shown to the Purchasing Manager as a "My Approved Invoices" bar below the queue.
   const approvedByMe = user && ['PURCHASING_MANAGER'].includes(user.role)
-    ? invoices
-        .map(invoice => {
-          const mySig = (invoice.signatures || []).find(sig =>
-            sig.signatory_role === 'PURCHASING_MANAGER' &&
-            !!sig.signed_at &&
-            !!sig.signatory_name &&
-            sig.signatory_name.trim().toLowerCase() === (user.name || '').trim().toLowerCase()
-          );
-          return mySig ? { invoice, signedAt: mySig.signed_at as string } : null;
-        })
-        .filter((entry): entry is { invoice: MockInvoice; signedAt: string } => entry !== null)
-        .sort((a, b) => new Date(b.signedAt).getTime() - new Date(a.signedAt).getTime())
+    ? getApprovedByUser(invoices, user)
     : [];
 
   // Pagination logic

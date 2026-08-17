@@ -2,6 +2,7 @@ import { useState, ReactNode } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useMockData } from '../contexts/MockDataContext';
+import { getPendingApprovalsForUser } from '../lib/approvalQueue';
 import { ThemeToggle } from './ThemeToggle';
 import NotificationBell from './NotificationBell';
 import SidebarItem from './ui/SidebarItem';
@@ -91,7 +92,8 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
     dashboard: invoices.filter(i => ['RECEIVED', 'VALIDATION_PENDING', 'EXCEPTION_FLAGGED'].includes(i.status)).length,
     repository: invoices.length,
     workbench: invoices.filter(i => ['VALIDATION_PENDING', 'EXCEPTION_FLAGGED'].includes(i.status)).length,
-    approvals: invoices.filter(i => ['PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_MLO_ACCOUNT_HOLDER', 'PENDING_MLO_PLANNING_MANAGER', 'PENDING_SR_MANAGER', 'PENDING_POLLY'].includes(i.status)).length,
+    // Per-user pending queue — must match the Approval Inbox page count.
+    approvals: getPendingApprovalsForUser(invoices, user).length,
     exceptions: invoices.filter(i => i.exceptions.some(e => e.status === 'OPEN' || e.status === 'PENDING')).length,
     onhold: invoices.filter(i => i.status === 'ON_HOLD').length,
     batches: paymentBatches.filter(b => b.status === 'DRAFT').length,

@@ -83,7 +83,7 @@ export class OpenRouterOCRService {
     }
 
     this.apiKey = apiKey;
-    this.model = process.env.OPENROUTER_MODEL || 'qwen/qwen-2.5-vl-72b-instruct:free';
+    this.model = process.env.OPENROUTER_MODEL || 'nvidia/nemotron-nano-12b-v2-vl:free';
     this.timeoutMs = (Number(process.env.OPENROUTER_TIMEOUT) || 90) * 1000;
     this.maxImagePages = Number(process.env.OPENROUTER_MAX_IMAGE_PAGES) || 5;
     this.isConfigured = true;

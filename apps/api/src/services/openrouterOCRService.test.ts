@@ -65,7 +65,7 @@ describe('OpenRouterOCRService', () => {
     expect(url).toBe('https://openrouter.ai/api/v1/chat/completions');
     expect(init.headers.Authorization).toBe('Bearer sk-test');
     const body = JSON.parse(init.body);
-    expect(body.model).toBe('qwen/qwen-2.5-vl-72b-instruct:free');
+    expect(body.model).toBe('nvidia/nemotron-nano-12b-v2-vl:free');
     expect(body.messages[1].content).toContain('PCI-26031836');
   });
 

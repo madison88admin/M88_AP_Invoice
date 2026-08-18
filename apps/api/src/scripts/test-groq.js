@@ -5,7 +5,7 @@ async function main() {
   const g = new Groq({ apiKey: process.env.GROQ_API_KEY });
   try {
     const r = await g.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
+      model: process.env.GROQ_MODEL || 'groq/compound-mini',
       messages: [{ role: 'user', content: 'Say hi' }],
       max_tokens: 5,
     });

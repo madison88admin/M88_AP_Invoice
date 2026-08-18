@@ -65,7 +65,7 @@ export interface ExtractedInvoiceData {
   confidence?: number;
 }
 
-const EXTRACTION_PROMPT = `
+export const EXTRACTION_PROMPT = `
 You are an invoice data extractor for Madison 88, a fashion brand management company.
 
 Extract the following fields from this invoice text. Return ONLY valid JSON, no markdown, no explanation.

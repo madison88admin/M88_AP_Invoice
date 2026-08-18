@@ -211,7 +211,9 @@ Invoice text to extract from:
 export class GroqOCRService {
   private static instance: GroqOCRService;
   private client: Groq | null = null;
-  private model: string = 'llama-3.3-70b-versatile';
+  // llama-3.3-70b-versatile was retired by Groq (404 on every call) — compound-mini
+  // is the current flagship that returns clean JSON and fits on-demand tiers.
+  private model: string = 'groq/compound-mini';
   private isConfigured: boolean = false;
 
   private constructor() {
@@ -223,7 +225,7 @@ export class GroqOCRService {
 
     try {
       this.client = new Groq({ apiKey });
-      this.model = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+      this.model = process.env.GROQ_MODEL || 'groq/compound-mini';
       this.isConfigured = true;
       logger.info('Groq OCR service initialized');
     } catch (error) {

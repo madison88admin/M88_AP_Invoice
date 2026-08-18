@@ -1,11 +1,10 @@
 import PDFParser from 'pdf2json';
-import { execSync } from 'child_process';
-import fs from 'fs';
-import os from 'os';
-import path from 'path';
 import { InvoiceType, InvoiceCategory, PaymentTerms, BillToEntity, OrderType, SignatoryRole, SignatureType } from '@ap-invoice/shared';
 import { parsePOReference, matchSignerToRole, TOP_10_BRANDS, isTop10Brand } from '@ap-invoice/shared';
 import { logger } from '../utils/logger';
+import { convertPDFToImages } from '../utils/pdfToImages';
+import { mergeEngineResults, EngineResult } from './engineConsensus';
+import { doclingService } from './doclingService';
 import { extractTextWithOpenDataLoader } from './openDataLoaderService';
 import { rapidOCRService } from './rapidOCRService';
 import { upstageOCRService } from './upstageOCRService';
@@ -630,137 +629,125 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
 }
 
 /**
- * Convert PDF to PNG image using pdftoppm (poppler-utils).
- * Returns base64-encoded image string, or null if conversion fails.
- */
-function convertPDFToImage(fileBuffer: Buffer): string | null {
-  const tmpDir = os.tmpdir();
-  const tmpPdf = path.join(tmpDir, `invoice_${Date.now()}.pdf`);
-  const tmpImgPrefix = path.join(tmpDir, `invoice_${Date.now()}`);
-
-  try {
-    fs.writeFileSync(tmpPdf, fileBuffer);
-    logger.info(`[OCR] Converting PDF to image using pdftoppm...`);
-
-    // Convert first page to PNG at 300 DPI with grayscale for better OCR contrast
-    execSync(`pdftoppm -png -gray -r 300 -f 1 -l 1 "${tmpPdf}" "${tmpImgPrefix}"`, {
-      timeout: 30000,
-      stdio: 'pipe',
-    });
-
-    // Find the generated image file
-    const imgFile = `${tmpImgPrefix}-1.png`;
-    if (!fs.existsSync(imgFile)) {
-      // Try alternative naming
-      const files = fs.readdirSync(tmpDir).filter(f => f.startsWith(path.basename(tmpImgPrefix)));
-      if (files.length === 0) {
-        logger.error('[OCR] PDF-to-image conversion produced no output files');
-        return null;
-      }
-      const imgPath = path.join(tmpDir, files[0]);
-      const imgBuffer = fs.readFileSync(imgPath);
-      const base64 = imgBuffer.toString('base64');
-      fs.unlinkSync(imgPath);
-      return base64;
-    }
-
-    const imgBuffer = fs.readFileSync(imgFile);
-    const base64 = imgBuffer.toString('base64');
-    fs.unlinkSync(imgFile);
-    logger.info(`[OCR] PDF-to-image conversion succeeded (${(base64.length / 1024).toFixed(0)}KB base64)`);
-    return base64;
-  } catch (error) {
-    logger.error('[OCR] PDF-to-image conversion failed:', error);
-    return null;
-  } finally {
-    try { fs.unlinkSync(tmpPdf); } catch {}
-  }
-}
-
-/**
- * Convert ALL pages of a PDF to PNG images using pdftoppm (poppler-utils).
- * Returns array of base64-encoded image strings, or empty array if conversion fails.
- * Uses 300 DPI for better OCR accuracy.
- */
-function convertPDFToImages(fileBuffer: Buffer): string[] {
-  const tmpDir = os.tmpdir();
-  const tmpPdf = path.join(tmpDir, `invoice_${Date.now()}.pdf`);
-  const tmpImgPrefix = path.join(tmpDir, `invoice_${Date.now()}`);
-
-  try {
-    fs.writeFileSync(tmpPdf, fileBuffer);
-    logger.info(`[OCR] Converting PDF to images (all pages) using pdftoppm...`);
-
-    // Convert ALL pages to PNG at 300 DPI with grayscale for better OCR contrast
-    execSync(`pdftoppm -png -gray -r 300 "${tmpPdf}" "${tmpImgPrefix}"`, {
-      timeout: 60000,
-      stdio: 'pipe',
-    });
-
-    // Find all generated image files (sorted by page number)
-    const prefix = path.basename(tmpImgPrefix);
-    const files = fs.readdirSync(tmpDir)
-      .filter(f => f.startsWith(prefix) && f.endsWith('.png'))
-      .sort();
-
-    if (files.length === 0) {
-      logger.error('[OCR] PDF-to-images conversion produced no output files');
-      return [];
-    }
-
-    const images: string[] = [];
-    for (const file of files) {
-      const imgPath = path.join(tmpDir, file);
-      const imgBuffer = fs.readFileSync(imgPath);
-      images.push(imgBuffer.toString('base64'));
-      fs.unlinkSync(imgPath);
-    }
-
-    logger.info(`[OCR] PDF-to-images conversion succeeded — ${images.length} pages, total ${(images.reduce((s, i) => s + i.length, 0) / 1024).toFixed(0)}KB base64`);
-    return images;
-  } catch (error) {
-    logger.error('[OCR] PDF-to-images conversion failed:', error);
-    return [];
-  } finally {
-    try { fs.unlinkSync(tmpPdf); } catch {}
-  }
-}
-
-/**
- * Try AI fallback OCR engines in order: Groq (fast, accurate, truncated for token limits) → Upstage (single-step PDF extraction, 300 PPM) → Ollama (slow, local, no rate limits) → Gemini Vision → Mistral
- * Groq is 1st priority because:
- *   - 1.9s per invoice (vs Ollama 73-88s on CPU)
- *   - Best accuracy in benchmarks (perfect field extraction)
- *   - Text truncated to 8000 chars to stay within 12K TPM free tier
- * Upstage is 2nd priority because:
- *   - Single-step: directly extracts fields from PDF (no separate OCR needed)
- *   - 10-12s per invoice, 300 PPM rate limit (generous vs Groq 12K TPM)
- *   - Good field accuracy with structured schema extraction
- * Ollama is 3rd priority (unlimited, local) for when Groq/Upstage rate limits hit.
- * Gemini Vision is 4th (sends PDF directly, best for scanned PDFs).
- * Returns the first successful result with engine name, or null if all fail.
+ * Try AI fallback OCR engines with per-field consensus voting.
+ *
+ * First, the strongest engines run IN PARALLEL and their results are merged by
+ * per-field majority voting (engineConsensus.ts):
+ *   - Groq (Llama 3.3 70B — fast ~2s, accurate, text mode)
+ *   - OpenRouter (free-tier vision LLM, e.g. qwen2.5-vl-72b — reads page images,
+ *     so it also works on scanned PDFs where text extraction yields nothing)
+ *   - Regex over the extracted text (deterministic third opinion)
+ *
+ * The consensus wait is bounded by OPENROUTER_CONSENSUS_WAIT_MS so stragglers
+ * never block the pipeline — engines that don't finish just don't vote.
+ *
+ * If consensus produces nothing usable, the sequential safety net runs:
+ * Upstage (single-step PDF extraction) → Ollama (local, unlimited) → Gemini Vision → Mistral.
+ * Returns the merged result with engine name, or null if all engines fail.
  */
 async function tryAIFallbacks(
   fileBuffer: Buffer,
   rawText: string,
   vendorName?: string
 ): Promise<{ engine: string; vendor_name?: string; invoice_number?: string; invoice_date?: string; due_date?: string; total_amount?: number; subtotal?: number; currency?: string; po_number?: string; mpo_number?: string; brand?: string; brand_code?: string; season?: string; payment_terms?: string; ship_to?: string; sold_to?: string; qty_shipped?: number; document_type?: string; bank_name?: string; swift_code?: string; account_number?: string; bank_info?: { swift_code?: string; account_number?: string }; line_items?: any[]; signatures?: { signatory_name: string; signatory_role?: string; signed_date?: string }[]; bank_charges?: number; tt_charge?: number; freight_charges?: number; courier_charges?: number; handling_fee?: number; finance_surcharge?: number; tax_amount?: number; discount_amount?: number; setup_charge?: number; sample_charge?: number; min_order_charge?: number; additional_charges?: number } | null> {
-  // 1st priority: Groq (Llama 3.3 70B — fast 1.9s, best accuracy, text truncated to 8000 chars for 12K TPM limit)
-  if (rawText && rawText.length > 50) {
+  // ─── CONSENSUS PATH: strongest engines in parallel + per-field majority vote ───
+  const consensusResults: EngineResult[] = [];
+  const consensusWaitMs = Number(process.env.OPENROUTER_CONSENSUS_WAIT_MS) || 45000;
+
+  const withTimeout = async (label: string, task: () => Promise<void>): Promise<void> => {
     try {
+      await Promise.race([
+        task(),
+        new Promise<void>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${consensusWaitMs}ms`)), consensusWaitMs)),
+      ]);
+    } catch (e) {
+      logger.warn(`[OCR] Consensus engine ${label} skipped:`, e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const tasks: Promise<void>[] = [];
+
+  // Engine 1: Groq (fast text extraction)
+  if (rawText && rawText.length > 50) {
+    tasks.push(withTimeout('groq', async () => {
       const groqOCR = (await import('./groqOCRService')).groqOCRService;
       if (groqOCR.isAvailable()) {
-        logger.info('[OCR] Trying Groq (Llama 3.3) — 1st priority (fast, accurate)...');
+        logger.info('[OCR] Consensus engine: Groq (text)...');
         const groqResult = await groqOCR.extractFromText(rawText, { vendorName } as any);
         if (groqResult && (groqResult.vendor_name || groqResult.invoice_number)) {
-          logger.info('[OCR] Groq (Llama 3.3) extraction succeeded');
-          return { engine: 'groq', ...groqResult };
+          consensusResults.push({ engine: 'groq', data: groqResult as any });
         }
       }
-    } catch (e) {
-      logger.error('[OCR] Groq fallback failed:', e);
+    }));
+  }
+
+  // Engine 2: OpenRouter free vision (reads page images — works on scans too)
+  const openrouterConfigured = (await import('./openrouterOCRService')).openrouterOCRService.isAvailable();
+  if (openrouterConfigured) {
+    const imagePages = convertPDFToImages(fileBuffer);
+    tasks.push(withTimeout('openrouter', async () => {
+      const openrouterOCR = (await import('./openrouterOCRService')).openrouterOCRService;
+      let openrouterResult: any = null;
+      if (imagePages.length > 0) {
+        logger.info(`[OCR] Consensus engine: OpenRouter vision (${imagePages.length} page images)...`);
+        openrouterResult = await openrouterOCR.extractFromImages(imagePages, { vendorName } as any);
+      }
+      if (!openrouterResult && rawText && rawText.length > 50) {
+        logger.info('[OCR] Consensus engine: OpenRouter text...');
+        openrouterResult = await openrouterOCR.extractFromText(rawText, { vendorName } as any);
+      }
+      if (openrouterResult && (openrouterResult.vendor_name || openrouterResult.invoice_number)) {
+        consensusResults.push({ engine: 'openrouter', data: openrouterResult });
+      }
+    }));
+  }
+
+  // Engine 3: deterministic regex over the extracted text
+  if (rawText && rawText.length > 50) {
+    tasks.push(withTimeout('regex', async () => {
+      const regexResult = await extractInvoiceFieldsFromText(rawText, fileBuffer);
+      if (regexResult && (regexResult.vendor_name || regexResult.invoice_number)) {
+        consensusResults.push({
+          engine: 'regex',
+          data: {
+            vendor_name: regexResult.vendor_name,
+            invoice_number: regexResult.invoice_number,
+            invoice_date: regexResult.invoice_date,
+            due_date: regexResult.due_date,
+            total_amount: regexResult.amount,
+            currency: regexResult.currency,
+            po_number: regexResult.po_reference,
+            mpo_number: regexResult.mpo_number,
+            brand_code: regexResult.brand_code,
+            payment_terms: regexResult.payment_terms,
+            document_type: regexResult.invoice_type,
+            swift_code: regexResult.bank_swift,
+            account_number: regexResult.bank_account,
+            incoterm: regexResult.incoterm,
+            exchange_rate: regexResult.exchange_rate,
+          },
+        });
+      }
+    }));
+  }
+
+  await Promise.all(tasks);
+
+  if (consensusResults.length > 0) {
+    const merged = mergeEngineResults(consensusResults);
+    const hasCore = merged.data.invoice_number || merged.data.vendor_name || merged.data.total_amount;
+    if (hasCore) {
+      logger.info(`[OCR] Consensus result: base_engine=${merged.base_engine}, engines=[${merged.engines_used.join(', ')}], vendor="${merged.data.vendor_name}", invoice#="${merged.data.invoice_number}", amount=${merged.data.total_amount}`);
+      return {
+        engine: 'consensus',
+        ...merged.data,
+        consensus_engines: merged.engines_used,
+        consensus_details: merged.per_field,
+      } as any;
     }
   }
+
+  logger.warn('[OCR] Consensus produced no usable result — falling back to sequential engines');
 
   // 2nd priority: Upstage Info Extraction (single-step PDF → fields, 300 PPM, ~10-12s)
   // Directly extracts structured fields from PDF — no separate OCR step needed
@@ -1017,6 +1004,182 @@ function calculateRealConfidence(
   return confidence;
 }
 
+// ─── DOCLING FALLBACK (problem invoices) ───────────────────────────────────
+/**
+ * A "problem invoice" is one where the primary pipeline missed a critical field
+ * (invoice number, vendor, or amount). Those are exactly the invoices that end up
+ * with placeholder numbers (SFTP-<ts>) or fail validation. For those, we run
+ * Docling (clean label:value Markdown, ~80s, local CPU) and re-extract from it.
+ */
+export function shouldRunDoclingFallback(extracted: any): boolean {
+  if (!extracted) return true;
+  const hasInvoiceNumber = !!(extracted.invoice_number && String(extracted.invoice_number).trim());
+  const hasVendor = !!(extracted.vendor_name && String(extracted.vendor_name).trim());
+  const hasAmount = isValidAmount(Number(extracted.amount));
+  return !hasInvoiceNumber || !hasVendor || !hasAmount;
+}
+
+function countCriticalFields(extracted: any): number {
+  let count = 0;
+  if (extracted?.invoice_number && String(extracted.invoice_number).trim()) count++;
+  if (extracted?.vendor_name && String(extracted.vendor_name).trim()) count++;
+  if (isValidAmount(Number(extracted?.amount))) count++;
+  return count;
+}
+
+/** Map the internal `extracted` shape onto the canonical engine-consensus keys. */
+function mapExtractedToEngineShape(extracted: any): Record<string, any> {
+  return {
+    vendor_name: extracted.vendor_name,
+    invoice_number: extracted.invoice_number,
+    invoice_date: extracted.invoice_date,
+    due_date: extracted.due_date,
+    total_amount: extracted.amount,
+    currency: extracted.currency,
+    po_number: extracted.po_reference,
+    mpo_number: extracted.mpo_number,
+    brand: extracted.brand,
+    brand_code: extracted.brand_code,
+    season: extracted.season,
+    payment_terms: extracted.payment_terms,
+    document_type: extracted.invoice_type,
+    swift_code: extracted.bank_swift,
+    account_number: extracted.bank_account,
+    beneficiary_name: extracted.beneficiary_name,
+    bank_name: extracted.bank_name,
+    qty_shipped: extracted.qty_shipped,
+    ship_to: extracted.ship_to,
+    sold_to: extracted.sold_to,
+    line_items: extracted.line_items,
+    signatures: extracted.signatures,
+    subtotal: extracted.subtotal,
+    bank_charges: extracted.bank_charges,
+    tt_charge: extracted.tt_charge,
+    freight_charges: extracted.freight_charges,
+    courier_charges: extracted.courier_charges,
+    handling_fee: extracted.handling_fee,
+    finance_surcharge: extracted.finance_surcharge,
+    tax_amount: extracted.tax_amount,
+    discount_amount: extracted.discount_amount,
+    setup_charge: extracted.setup_charge,
+    sample_charge: extracted.sample_charge,
+    min_order_charge: extracted.min_order_charge,
+    additional_charges: extracted.additional_charges,
+    incoterm: extracted.incoterm,
+    exchange_rate: extracted.exchange_rate,
+    is_handwritten: extracted.is_handwritten,
+    is_statement: extracted.is_statement,
+  };
+}
+
+/** Map merged consensus data back onto the internal `extracted` shape. */
+function mapEngineShapeToExtracted(mergedData: any, primary: any): any {
+  const d = mergedData || {};
+  const out: any = {
+    vendor_name: d.vendor_name || primary.vendor_name || '',
+    invoice_number: d.invoice_number || primary.invoice_number || '',
+    invoice_date: d.invoice_date ? new Date(d.invoice_date).toISOString().split('T')[0] : (primary.invoice_date || ''),
+    due_date: d.due_date ? new Date(d.due_date).toISOString().split('T')[0] : (primary.due_date || ''),
+    amount: d.total_amount || primary.amount || 0,
+    grand_total: 0,
+    currency: d.currency || primary.currency || 'USD',
+    po_reference: d.po_number || primary.po_reference || '',
+    mpo_number: d.mpo_number || primary.mpo_number || '',
+    brand_code: d.brand_code || primary.brand_code || '',
+    payment_terms: d.payment_terms || primary.payment_terms || '',
+    bank_swift: d.swift_code || primary.bank_swift || '',
+    bank_account: d.account_number || primary.bank_account || '',
+    beneficiary_name: d.beneficiary_name || primary.beneficiary_name || '',
+    invoice_type: d.document_type ? mapDocumentType(d.document_type) : (primary.invoice_type || 'INVOICE'),
+    tax_id: '',
+    company_reg: '',
+    incoterm: d.incoterm || primary.incoterm,
+    exchange_rate: d.exchange_rate ?? primary.exchange_rate,
+    is_handwritten: d.is_handwritten ?? primary.is_handwritten,
+    is_statement: d.is_statement ?? primary.is_statement,
+  };
+  // Carry extended fields (whichever side provided them).
+  for (const key of ['qty_shipped', 'bank_name', 'ship_to', 'sold_to', 'brand', 'season', 'line_items', 'signatures', 'subtotal', 'bank_charges', 'tt_charge', 'freight_charges', 'courier_charges', 'handling_fee', 'finance_surcharge', 'tax_amount', 'discount_amount', 'setup_charge', 'sample_charge', 'min_order_charge', 'additional_charges']) {
+    if (d[key] !== undefined) out[key] = d[key];
+    else if (primary[key] !== undefined) out[key] = primary[key];
+  }
+  return out;
+}
+
+/**
+ * Run Docling on the PDF, re-extract from its clean Markdown with the available
+ * engines (Groq / OpenRouter / regex), and merge with the primary result via
+ * per-field majority voting. Returns the improved extraction if it fills a
+ * critical field gap, otherwise the original.
+ */
+async function tryDoclingFallback(fileBuffer: Buffer, extracted: any): Promise<{ improved: boolean; extracted: any }> {
+  if (!doclingService.isAvailable()) {
+    return { improved: false, extracted };
+  }
+
+  let markdown: string;
+  try {
+    logger.info('[OCR] Docling fallback: extracting clean Markdown (this takes ~80s)...');
+    markdown = await doclingService.extractMarkdown(fileBuffer);
+  } catch (e) {
+    logger.warn(`[OCR] Docling fallback skipped: ${e instanceof Error ? e.message : String(e)}`);
+    return { improved: false, extracted };
+  }
+
+  try {
+    const results: EngineResult[] = [{ engine: 'primary', data: mapExtractedToEngineShape(extracted) }];
+
+    if (markdown && markdown.length > 50) {
+      // LLM engines on the clean label:value markdown
+      const groqOCR = (await import('./groqOCRService')).groqOCRService;
+      if (groqOCR.isAvailable()) {
+        const r = await groqOCR.extractFromText(markdown, { vendorName: extracted.vendor_name } as any);
+        if (r && (r.vendor_name || r.invoice_number)) results.push({ engine: 'docling-groq', data: r as any });
+      }
+      const openrouterOCR = (await import('./openrouterOCRService')).openrouterOCRService;
+      if (openrouterOCR.isAvailable()) {
+        const r = await openrouterOCR.extractFromText(markdown, { vendorName: extracted.vendor_name } as any);
+        if (r && (r.vendor_name || r.invoice_number)) results.push({ engine: 'docling-openrouter', data: r as any });
+      }
+      // Deterministic regex third opinion on the clean markdown
+      try {
+        const regexResult = await extractInvoiceFieldsFromText(markdown, fileBuffer);
+        if (regexResult && (regexResult.vendor_name || regexResult.invoice_number || regexResult.amount)) {
+          results.push({
+            engine: 'docling-regex',
+            data: {
+              vendor_name: regexResult.vendor_name,
+              invoice_number: regexResult.invoice_number,
+              invoice_date: regexResult.invoice_date,
+              due_date: regexResult.due_date,
+              total_amount: regexResult.amount,
+              currency: regexResult.currency,
+              po_number: regexResult.po_reference,
+              mpo_number: regexResult.mpo_number,
+              payment_terms: regexResult.payment_terms,
+              document_type: regexResult.invoice_type,
+            },
+          });
+        }
+      } catch (regexErr) {
+        logger.warn('[OCR] Docling regex opinion failed:', regexErr);
+      }
+    }
+
+    const merged = mergeEngineResults(results);
+    const fallbackExtracted = mapEngineShapeToExtracted(merged.data, extracted);
+    const improved = countCriticalFields(fallbackExtracted) > countCriticalFields(extracted);
+
+    if (improved) {
+      logger.info(`[OCR] Docling fallback improved extraction — invoice#: "${fallbackExtracted.invoice_number}", vendor: "${fallbackExtracted.vendor_name}", amount: ${fallbackExtracted.amount} (engines: ${merged.engines_used.join(', ')})`);
+    }
+    return { improved, extracted: fallbackExtracted };
+  } catch (e) {
+    logger.warn(`[OCR] Docling fallback merge failed: ${e instanceof Error ? e.message : String(e)}`);
+    return { improved: false, extracted };
+  }
+}
+
 export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
   let extracted: any;
   let usedGeminiVision = false;
@@ -1199,6 +1362,21 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
         logger.error('[OCR] All extraction methods failed');
         throw pdfError;
       }
+    }
+  }
+
+  // ─── DOCLING FALLBACK: problem invoices (missing critical fields) ───
+  // Docling produces clean label:value Markdown that the LLM/regex engines can
+  // parse reliably — the recovery path for the SFTP-<ts> placeholder class of bugs.
+  if (doclingService.isAvailable() && shouldRunDoclingFallback(extracted)) {
+    const fallback = await tryDoclingFallback(fileBuffer, extracted);
+    if (fallback.improved) {
+      extracted = fallback.extracted;
+      ocrEngine = 'docling-fallback';
+      usedAIFallback = true;
+      logger.info(`[OCR] Docling fallback result adopted — invoice#: "${extracted.invoice_number}", vendor: "${extracted.vendor_name}", amount: ${extracted.amount}`);
+    } else {
+      logger.info('[OCR] Docling fallback did not improve extraction — keeping primary result');
     }
   }
 

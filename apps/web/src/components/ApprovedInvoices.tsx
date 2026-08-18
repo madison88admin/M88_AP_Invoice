@@ -4,6 +4,7 @@ import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { CheckCircle, Search, FileText, Loader2, ExternalLink, Clock, CalendarCheck } from 'lucide-react';
+import { InvoiceStatus } from '@ap-invoice/shared';
 import { MockInvoice } from '../lib/mockData';
 import { getApprovedByUser, orderedSignatures } from '../lib/approvalQueue';
 import { invoiceApi } from '../lib/api';
@@ -14,19 +15,54 @@ const APPROVAL_ROLE_ORDER = [
   'ACCOUNTING_REVIEWER',
 ];
 
+// Statuses the workflow reaches AT or AFTER the Purchasing Manager signs.
+// The "Approved Invoices" folder only shows these — pre-approval stages
+// (RECEIVED → PENDING_MANAGER) never appear here.
+const PM_FORWARD_STATUSES: string[] = [
+  InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER,
+  InvoiceStatus.PENDING_MLO_PLANNING_MANAGER,
+  InvoiceStatus.PENDING_SR_MANAGER,
+  InvoiceStatus.PENDING_POLLY,
+  InvoiceStatus.PENDING_ACCOUNTING,
+  InvoiceStatus.APPROVED,
+  InvoiceStatus.POSTED_TO_QB,
+  InvoiceStatus.PAYMENT_SCHEDULED,
+  InvoiceStatus.PAYMENT_CONFIRMATION_SENT,
+  InvoiceStatus.PAID,
+  InvoiceStatus.ON_HOLD,
+  InvoiceStatus.REJECTED,
+];
+
+const LOWER_THAN_PM_STATUSES = new Set<string>([
+  InvoiceStatus.RECEIVED,
+  InvoiceStatus.OCR_PROCESSING,
+  InvoiceStatus.VALIDATION_PENDING,
+  InvoiceStatus.EXCEPTION_FLAGGED,
+  InvoiceStatus.PENDING_COORDINATOR,
+  InvoiceStatus.PENDING_MANAGER,
+]);
+
+const formatStatusLabel = (status: string) =>
+  status.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+
 export default function ApprovedInvoices() {
   const { invoices } = useMockData();
   const { user } = useAuth();
   const { showToast } = useToast();
 
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
   const [selectedInvoice, setSelectedInvoice] = useState<MockInvoice | null>(null);
   const [openingDocument, setOpeningDocument] = useState(false);
 
-  // Only the user's own approvals — the "My Approved Invoices" folder.
-  const approved = getApprovedByUser(invoices, user);
+  // Only the user's own approvals — the "My Approved Invoices" folder — and
+  // only invoices whose current status is at/after the PM approval stage.
+  const approved = getApprovedByUser(invoices, user).filter(
+    ({ invoice }) => !LOWER_THAN_PM_STATUSES.has(String(invoice.status || ''))
+  );
 
   const filtered = approved.filter(({ invoice }) => {
+    if (statusFilter && String(invoice.status || '') !== statusFilter) return false;
     const q = search.trim().toLowerCase();
     if (!q) return true;
     return (
@@ -90,6 +126,18 @@ export default function ApprovedInvoices() {
           </div>
         </div>
         <div className="flex items-center gap-3">
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            title="Filter by current status (stages at/after Purchasing Manager approval)"
+            className="rounded-xl text-sm focus:outline-none px-3 py-2"
+            style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
+          >
+            <option value="">All statuses</option>
+            {PM_FORWARD_STATUSES.map((s) => (
+              <option key={s} value={s}>{formatStatusLabel(s)}</option>
+            ))}
+          </select>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4" style={{ color: 'var(--text-subtle)' }} strokeWidth={1.75} />
             <input
@@ -111,7 +159,7 @@ export default function ApprovedInvoices() {
             <CheckCircle className="h-8 w-8" style={{ color: 'var(--text-subtle)' }} strokeWidth={1.75} />
           </div>
           <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-            {approved.length === 0 ? "You haven't approved any invoices yet." : 'No approved invoices match your search.'}
+            {approved.length === 0 ? "You haven't approved any invoices yet." : 'No approved invoices match your filters.'}
           </p>
         </div>
       ) : (

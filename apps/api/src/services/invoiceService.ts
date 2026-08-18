@@ -1053,6 +1053,25 @@ export const getInvoiceTimeline = async (invoiceId: string) => {
     });
   }
 
+  // Resolve raw user UUIDs to display names so the timeline never shows
+  // 69310c7f-… style IDs. Only replaces IDs that exist in the user table;
+  // system actors ("system") and unknown IDs are left untouched.
+  const uuidActors = [...new Set(events
+    .map((event) => event.actor)
+    .filter((actor): actor is string => Boolean(actor && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(actor))))];
+  if (uuidActors.length > 0) {
+    const users = await prisma.user.findMany({
+      where: { id: { in: uuidActors } },
+      select: { id: true, name: true },
+    });
+    const namesById = new Map(users.map((user) => [user.id, user.name]));
+    for (const event of events) {
+      if (event.actor && namesById.has(event.actor)) {
+        event.actor = namesById.get(event.actor) as string;
+      }
+    }
+  }
+
   return {
     invoice: {
       id: invoice.id,

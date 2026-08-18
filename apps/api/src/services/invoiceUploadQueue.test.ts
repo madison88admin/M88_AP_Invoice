@@ -100,7 +100,7 @@ describe('invoiceUploadQueue', () => {
     queue.enqueue({ jobId, fileName: 'f.pdf', mimeType: 'application/pdf' }, Buffer.from('X'));
 
     await vi.waitFor(() => expect(calls).toBe(1));
-    expect(store.getJob(jobId)?.status).toBe('failed');
+    expect(store.getJob(jobId)?.status).toBe('retrying');
     // Payload retained for a future restart retry.
     expect(fs.existsSync(payloadPaths(dir, jobId).meta)).toBe(true);
     expect(fs.existsSync(payloadPaths(dir, jobId).bin)).toBe(true);
@@ -132,7 +132,7 @@ describe('invoiceUploadQueue', () => {
     queue.start(async (item) => { seen.push(item.jobId); return { ok: true }; });
 
     expect(seen).toHaveLength(0);
-    expect(store.getJob(jobId)?.status).toBe('failed');
+    expect(store.getJob(jobId)?.status).toBe('dead_letter');
     expect(store.getJob(jobId)?.error).toContain('will not be retried');
     expect(fs.existsSync(payloadPaths(dir, jobId).meta)).toBe(false);
     expect(fs.existsSync(payloadPaths(dir, jobId).bin)).toBe(false);
@@ -150,7 +150,7 @@ describe('invoiceUploadQueue', () => {
     queue.start(async (item) => { seen.push(item.jobId); return { ok: true }; });
 
     expect(seen).toHaveLength(0);
-    expect(store.getJob(jobId)?.status).toBe('failed');
+    expect(store.getJob(jobId)?.status).toBe('dead_letter');
     expect(fs.existsSync(payloadPaths(dir, jobId).meta)).toBe(false);
   });
 

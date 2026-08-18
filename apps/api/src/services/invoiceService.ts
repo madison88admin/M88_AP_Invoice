@@ -10,6 +10,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { parseMPOReference } from '../utils/mpoReference';
+import { Prisma } from '@prisma/client';
 
 function safeDate(value: any): Date | null {
   if (!value || value === '') return null;
@@ -726,14 +727,14 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     'vendor_id', 'vendor_name_raw', 'invoice_number', 'invoice_type', 'invoice_date', 'total_amount',
     'currency', 'mpo_number', 'mpo_base_number', 'mpo_order_sequence', 'material_code',
     'material_name', 'qty_shipped', 'beneficiary_name', 'bank_name', 'swift_code', 'account_number',
-    'payment_terms', 'customer_po_number'
+    'payment_terms', 'customer_po_number', 'subtotal', 'tax_amount', 'discount_amount',
+    'bank_charges', 'freight_charges', 'additional_charges', 'courier_charges', 'handling_fee',
+    'tt_charge', 'setup_charge', 'sample_charge', 'min_order_charge', 'finance_surcharge',
+    'due_date', 'incoterm', 'bill_to_entity', 'category', 'invoice_lines'
   ]);
-  const materialChange = Object.keys(data).some((key) =>
+  const materialChange = Object.keys(data).some((key) => materialFields.has(key) &&
     String((existing as any)[key] ?? '') !== String(data[key] ?? '')
   );
-  if (materialChange && !String(invoiceData.edit_reason || '').trim()) {
-    throw new AppError('A reason is required for material or financial invoice changes', 400);
-  }
   const approvalStarted = String(existing.status).startsWith('PENDING_') ||
     existing.status === 'APPROVED' ||
     existing.status === 'ON_HOLD' ||
@@ -756,6 +757,7 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     data: {
       ...data,
       revision: nextRevision,
+      ...(materialChange ? { po_validation: Prisma.DbNull } : {}),
       ...(materialChange && approvalStarted ? {
         status: 'VALIDATION_PENDING' as any,
         current_approver_role: null,
@@ -1259,18 +1261,32 @@ export const approveBankChangeRequest = async (requestId: string, userId: string
   });
   if (!req) throw new AppError('Bank change request not found', 404);
   if (req.status !== 'PENDING') throw new AppError(`Request already ${req.status}`, 400);
+  if (req.requested_by_id && req.requested_by_id === userId) {
+    throw new AppError('Bank change requester cannot approve their own request', 403);
+  }
 
-  // Update the invoice with the new bank detail
-  await prisma.invoice.update({
-    where: { id: req.invoice_id },
-    data: { [req.field]: req.requested_value },
+  const existingPayment = await prisma.payment.findFirst({
+    where: { invoice_id: req.invoice_id, status: { notIn: ['CANCELLED', 'VOIDED'] } },
+    select: { id: true, status: true },
   });
+  if (existingPayment) {
+    throw new AppError(`Cancel or complete the existing payment (${existingPayment.status}) before changing approved bank details`, 409);
+  }
 
-  // Mark request as approved
-  await prisma.bankChangeRequest.update({
-    where: { id: requestId },
-    data: { status: 'APPROVED', reviewed_by: userName, reviewed_at: new Date() },
-  });
+  await prisma.$transaction([
+    prisma.invoice.update({
+      where: { id: req.invoice_id },
+      data: { [req.field]: req.requested_value },
+    }),
+    prisma.vendor.update({
+      where: { id: req.invoice.vendor_id },
+      data: { [req.field]: req.requested_value, bank_verified_at: new Date() },
+    }),
+    prisma.bankChangeRequest.update({
+      where: { id: requestId },
+      data: { status: 'APPROVED', reviewed_by: userName, reviewed_at: new Date() },
+    }),
+  ]);
 
   await logAudit({
     invoice_id: req.invoice_id,
@@ -1288,6 +1304,9 @@ export const rejectBankChangeRequest = async (requestId: string, userId: string,
   });
   if (!req) throw new AppError('Bank change request not found', 404);
   if (req.status !== 'PENDING') throw new AppError(`Request already ${req.status}`, 400);
+  if (req.requested_by_id && req.requested_by_id === userId) {
+    throw new AppError('Bank change requester cannot review their own request', 403);
+  }
 
   await prisma.bankChangeRequest.update({
     where: { id: requestId },

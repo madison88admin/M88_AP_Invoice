@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock the prisma client before importing the service.
-const { invoiceFindUnique, paymentCreate, stageTimestampFindFirst, stageTimestampCreate, invoiceUpdate, auditLogCreate, notificationCreate, notificationNotifyStageTransition } = vi.hoisted(() => ({
+const { invoiceFindUnique, paymentFindFirst, paymentCreate, stageTimestampFindFirst, stageTimestampCreate, invoiceUpdate, auditLogCreate, notificationCreate, notificationNotifyStageTransition } = vi.hoisted(() => ({
   invoiceFindUnique: vi.fn(),
+  paymentFindFirst: vi.fn(),
   paymentCreate: vi.fn(),
   stageTimestampFindFirst: vi.fn(),
   stageTimestampCreate: vi.fn(),
@@ -15,7 +16,7 @@ const { invoiceFindUnique, paymentCreate, stageTimestampFindFirst, stageTimestam
 vi.mock('../config/database', () => ({
   default: {
     invoice: { findUnique: invoiceFindUnique, update: invoiceUpdate },
-    payment: { create: paymentCreate },
+    payment: { findFirst: paymentFindFirst, create: paymentCreate },
     stageTimestamp: { findFirst: stageTimestampFindFirst, create: stageTimestampCreate },
     auditLog: { create: auditLogCreate },
   },
@@ -44,13 +45,18 @@ function makeInvoice(overrides: Record<string, any> = {}) {
     due_date: overrides.due_date ?? new Date('2026-08-15'),
     status: 'POSTED_TO_QB',
     vendor_id: overrides.vendor_id ?? 'vendor-1',
-    vendor: overrides.vendor ?? { name: 'Test Vendor' },
+    revision: overrides.revision ?? 1,
+    vendor: overrides.vendor ?? {
+      name: 'Test Vendor', beneficiary_name: 'Test Vendor', bank_name: 'Test Bank',
+      bank_address: 'Test Address', swift_code: 'TESTUS00', account_number: '123456', bank_verified_at: new Date('2026-08-01'),
+    },
   };
 }
 
 beforeEach(() => {
   invoiceFindUnique.mockReset();
   paymentCreate.mockReset();
+  paymentFindFirst.mockReset();
   stageTimestampFindFirst.mockReset();
   stageTimestampCreate.mockReset();
   invoiceUpdate.mockReset();
@@ -60,10 +66,11 @@ beforeEach(() => {
 
   stageTimestampFindFirst.mockResolvedValue(null);
   paymentCreate.mockResolvedValue({ id: 'pay-1', status: 'SCHEDULED' });
+  paymentFindFirst.mockResolvedValue(null);
 });
 
 describe('schedulePayment — sub-$100 hold (item 8)', () => {
-  it('holds payments under the threshold as HELD_BELOW_100 and notifies Purchasing', async () => {
+  it('holds payments under the threshold as HELD_BELOW_100 and notifies Accounting Supervisor', async () => {
     invoiceFindUnique.mockResolvedValue(makeInvoice({ total_amount: 59.67 }));
     paymentCreate.mockResolvedValue({ id: 'pay-held', status: 'HELD_BELOW_100' });
 
@@ -77,9 +84,9 @@ describe('schedulePayment — sub-$100 hold (item 8)', () => {
     }));
     expect(payment.status).toBe('HELD_BELOW_100');
 
-    // Purchasing Coordinator is notified of the hold with release guidance.
+    // Accounting Supervisor owns payment holds and release approval.
     const holdNotification = notificationCreate.mock.calls[0][0];
-    expect(holdNotification.target_role).toBe('PURCHASING_COORDINATOR');
+    expect(holdNotification.target_role).toBe('ACCOUNTING_SUPERVISOR');
     expect(holdNotification.type).toBe('warning');
     expect(holdNotification.category).toBe('payment');
     expect(holdNotification.title).toContain('held');
@@ -140,11 +147,19 @@ describe('postInvoice — the sub-$100 hold lives at scheduling, not posting', (
       order_type: 'BULK',
       qb_memo: null,
       vendor_id: 'vendor-1',
-      vendor: { id: 'vendor-1', name: 'Low Vendor', supplier_location: 'HK' },
+      vendor: {
+        id: 'vendor-1', name: 'Low Vendor', beneficiary_name: 'Low Vendor', supplier_location: 'HK',
+        bank_name: 'Test Bank', bank_address: 'Test Address', swift_code: 'TESTHK00',
+        account_number: '123456', bank_verified_at: new Date('2026-08-01'),
+      },
       // All approvals complete — posting must not require more sign-offs.
-      signatures: [{ signed_at: new Date() }, { signed_at: new Date() }],
+      signatures: [
+        { signed_at: new Date(), ocr_detected: false, invalidated_at: null, invoice_revision: 1, approval_status: 'APPROVED' },
+        { signed_at: new Date(), ocr_detected: false, invalidated_at: null, invoice_revision: 1, approval_status: 'APPROVED' },
+      ],
       exceptions: [],
       invoice_lines: [],
+      revision: 1,
       status: 'PENDING_ACCOUNTING',
       ...overrides,
     };
@@ -174,5 +189,36 @@ describe('postInvoice — the sub-$100 hold lives at scheduling, not posting', (
     }));
     // No vendor-cumulative auto-hold audit entry.
     expect(auditLogCreate.mock.calls.some((c: any) => c[0]?.data?.action === 'ACCOUNTING_AUTO_HOLD')).toBe(false);
+  });
+
+  it('posts a legacy invoice that only has OCR-detected signatures (no workflow signatures)', async () => {
+    const ocrOnly = makePostableInvoice({
+      signatures: [
+        { signed_at: new Date(), ocr_detected: true, invalidated_at: null, invoice_revision: 1, approval_status: 'APPROVED' },
+        { signed_at: new Date(), ocr_detected: true, invalidated_at: null, invoice_revision: 1, approval_status: 'APPROVED' },
+      ],
+    });
+    invoiceFindUnique
+      .mockResolvedValueOnce(ocrOnly)
+      .mockResolvedValueOnce(ocrOnly);
+    invoiceUpdate.mockResolvedValue({});
+    auditLogCreate.mockResolvedValue({});
+    stageTimestampCreate.mockResolvedValue({});
+    paymentCreate.mockResolvedValue({ id: 'pay-1', status: 'SCHEDULED' });
+
+    const result = (await postInvoice('inv-post', 'assoc-1')) as { success: boolean };
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a legacy OCR-only invoice whose OCR signatures are not all signed', async () => {
+    const ocrOnly = makePostableInvoice({
+      signatures: [
+        { signed_at: new Date(), ocr_detected: true, invalidated_at: null, invoice_revision: 1, approval_status: 'APPROVED' },
+        { signed_at: null, ocr_detected: true, invalidated_at: null, invoice_revision: 1, approval_status: 'APPROVED' },
+      ],
+    });
+    invoiceFindUnique.mockResolvedValueOnce(ocrOnly);
+
+    await expect(postInvoice('inv-post', 'assoc-1')).rejects.toThrow('All approvals must be completed before posting');
   });
 });

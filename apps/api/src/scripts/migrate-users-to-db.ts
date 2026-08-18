@@ -5,33 +5,7 @@
 import prisma from '../config/database';
 import fs from 'fs';
 import path from 'path';
-import crypto from 'crypto';
-
-function hashPassword(password: string): string {
-  return crypto.createHash('sha256').update(password).digest('hex');
-}
-
-// Default users to seed if users.json doesn't exist or is empty
-const DEFAULT_USERS = [
-  { name: 'Maryan', email: 'maryan.untiveros@madison88.com', role: 'MLO_ACCOUNT_HOLDER', password: 'madison88' },
-  { name: 'Edwin', email: 'edwin.garcia@madison88.com', role: 'PLANNING_MANAGER', password: 'madison88' },
-  { name: 'Glecie', email: 'glecie.yumena@madison88.com', role: 'PLANNING_MANAGER', password: 'madison88' },
-  { name: 'Lindsey', email: 'lindsey.castro@madison88.com', role: 'SR_MANAGER_GLOBAL_PRODUCTION', password: 'madison88' },
-  { name: 'Polly', email: 'polly.madison@madison88.com', role: 'MS_POLLY', password: 'madison88' },
-  { name: 'JC', email: 'jc@madison88.com', role: 'SUPERADMIN', password: 'Ar5yG3#4' },
-  { name: 'Meann', email: 'meann@madison88.com', role: 'PURCHASING_MANAGER', password: 'madison88' },
-  { name: 'Maricar', email: 'maricar@madison88.com', role: 'PURCHASING_MANAGER', password: 'madison88' },
-  { name: 'Maricon', email: 'maricon@madison88.com', role: 'PURCHASING_COORDINATOR', password: 'madison88' },
-  { name: 'Pamela', email: 'pamela@madison88.com', role: 'PURCHASING_COORDINATOR', password: 'madison88' },
-  { name: 'Sarah', email: 'sarah@madison88.com', role: 'PURCHASING_COORDINATOR', password: 'madison88' },
-  { name: 'April', email: 'april@madison88.com', role: 'PURCHASING_COORDINATOR', password: 'madison88' },
-  { name: 'Jasmine', email: 'jasmine@madison88.com', role: 'PURCHASING_COORDINATOR', password: 'madison88' },
-  { name: 'Earl', email: 'earl@madison88.com', role: 'PURCHASING_COORDINATOR', password: 'madison88' },
-  { name: 'MJ Santiago', email: 'mjsantiago@madison88.com', role: 'PURCHASING_COORDINATOR', password: 'madison88' },
-  { name: 'Joy', email: 'joy@madison88.com', role: 'PURCHASING_COORDINATOR', password: 'madison88' },
-  { name: 'Wyssa', email: 'wyssa@madison88.com', role: 'ACCOUNTING_ASSOCIATE', password: 'madison88' },
-  { name: 'Aldrin', email: 'Aldrin@madison88.com', role: 'ACCOUNTING_SUPERVISOR', password: 'madison88' },
-];
+import { hashPassword } from '../services/passwordService';
 
 async function main() {
   console.log('Migrating users to database...');
@@ -45,24 +19,25 @@ async function main() {
       jsonUsers = JSON.parse(fs.readFileSync(usersFile, 'utf-8'));
       console.log(`Found ${jsonUsers.length} users in users.json`);
     } catch {
-      console.log('Failed to parse users.json, using defaults');
+      throw new Error('Failed to parse data/users.json');
     }
   }
 
-  // If no JSON users, use defaults
-  const usersToMigrate = jsonUsers.length > 0
-    ? jsonUsers.map((u: any) => ({
-        name: u.name,
-        email: u.email,
-        role: u.role,
-        password_hash: u.passwordHash || hashPassword(u.password || 'madison88'),
-      }))
-    : DEFAULT_USERS.map(u => ({
-        name: u.name,
-        email: u.email,
-        role: u.role,
-        password_hash: hashPassword(u.password),
-      }));
+  if (jsonUsers.length === 0) {
+    throw new Error('No users supplied. Create a protected data/users.json file; no default credentials are seeded.');
+  }
+
+  const usersToMigrate = jsonUsers.map((u: any) => {
+    if (!u.name || !u.email || !u.role || (!u.password && !u.passwordHash)) {
+      throw new Error(`Invalid user migration record for ${u.email || 'unknown user'}`);
+    }
+    return {
+      name: u.name,
+      email: u.email,
+      role: u.role,
+      password_hash: u.passwordHash || hashPassword(u.password),
+    };
+  });
 
   let created = 0;
   let skipped = 0;

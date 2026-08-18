@@ -1,0 +1,14 @@
+[
+  { "id": "UAT-001", "scenario": "exact_single_mpo", "expected": "MATCHED", "invoice": { "invoice_number": "UAT-EXACT-001", "currency": "USD", "total_amount": 100, "mpo": "MPO-UAT-001" } },
+  { "id": "UAT-002", "scenario": "two_mpo_one_invoice", "expected": "MATCHED_WITH_TWO_SUBTOTALS", "invoice": { "invoice_number": "UAT-MULTI-001", "currency": "USD", "total_amount": 175, "mpos": ["MPO-UAT-001", "MPO-UAT-002"] } },
+  { "id": "UAT-003", "scenario": "partial_receipt", "expected": "MATCHED", "invoice": { "invoice_number": "UAT-PARTIAL-001", "ordered": 100, "received": 60, "previously_invoiced": 20, "current": 40 } },
+  { "id": "UAT-004", "scenario": "over_remaining_quantity", "expected": "MISMATCH", "invoice": { "invoice_number": "UAT-OVERQTY-001", "received": 60, "previously_invoiced": 20, "current": 41 } },
+  { "id": "UAT-005", "scenario": "same_bank_different_vendors", "expected": "CRITICAL_ALERT", "vendors": [{ "name": "UAT Vendor A", "account": "MASKED-0001" }, { "name": "UAT Vendor B", "account": "MASKED-0001" }] },
+  { "id": "UAT-006", "scenario": "nextgen_timeout", "expected": "UNAVAILABLE_AND_BLOCKED" },
+  { "id": "UAT-007", "scenario": "edit_after_approval", "expected": "REVISION_INCREMENT_AND_SIGNATURE_INVALIDATION" },
+  { "id": "UAT-008", "scenario": "returned_to_coordinator", "expected": "RETURN_EDIT_REVALIDATE_RESUBMIT" },
+  { "id": "UAT-009", "scenario": "duplicate_active_payment", "expected": "CRITICAL_AND_BLOCKED" },
+  { "id": "UAT-010", "scenario": "restart_during_ocr", "expected": "RETRYING_THEN_COMPLETED_OR_DEAD_LETTER" },
+  { "id": "UAT-011", "scenario": "fx_currency_mismatch", "expected": "MISMATCH" },
+  { "id": "UAT-012", "scenario": "paid_not_posted", "expected": "CRITICAL_RECONCILIATION_FINDING" }
+]

@@ -231,7 +231,7 @@ describe('checkNextGenChanges — NextGen availability', () => {
     expect(result.changes.filter(c => ['brand', 'season', 'order_type'].includes(c.field))).toHaveLength(0);
   });
 
-  it('tolerates small amount variance (5%) on the first check', async () => {
+  it('reports a small amount variance on the first check under strict Finance defaults', async () => {
     getFullPOByMPO.mockResolvedValue({
       amount: 100,
       vendor_name: 'Vendor A',
@@ -240,14 +240,14 @@ describe('checkNextGenChanges — NextGen availability', () => {
     });
     invoiceFindUnique.mockResolvedValue({
       ...INVOICE,
-      total_amount: '104.99', // 4.99% variance — within tolerance
+      total_amount: '104.99',
     });
 
     const result = await checkNextGenChanges('inv-1');
 
     expect(result.firstCheck).toBe(true);
-    expect(result.hasChanges).toBe(false);
-    expect(result.changes.filter(c => c.field === 'invoice_amount_vs_nextgen')).toHaveLength(0);
+    expect(result.hasChanges).toBe(true);
+    expect(result.changes.filter(c => c.field === 'invoice_amount_vs_nextgen')).toHaveLength(1);
   });
 
   it('returns firstCheck=false when a baseline snapshot already exists', async () => {

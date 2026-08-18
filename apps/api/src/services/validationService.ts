@@ -8,24 +8,113 @@ import { checkDuplicateInvoice as checkDuplicateDetailed } from './duplicateDete
 import { parseMPOReference } from '../utils/mpoReference';
 import { matchMPOLines } from '../utils/mpoLineMatching';
 import { getAliasMap, namesEquivalent } from './aliasService';
+import { validateFinanceArithmetic, financeIssueIsBlocking } from './financeControlService';
+import { getFinancePolicy, isNonPOCategory } from './financePolicyService';
+import { retainValidationSnapshot } from './validationSnapshotService';
+
+export type ValidationState = 'MATCHED' | 'WITHIN_TOLERANCE' | 'MISMATCH' | 'INCOMPLETE' | 'UNAVAILABLE' | 'NOT_APPLICABLE';
 
 export interface ValidationResult {
   passed: boolean;
+  state?: ValidationState;
   reason?: ExceptionReason;
-  code?: 'NEXTGEN_UNAVAILABLE';
+  code?: 'NEXTGEN_UNAVAILABLE' | 'VALIDATION_UNAVAILABLE' | 'NOT_APPLICABLE';
   message: string;
   detail?: string;
+  /** True for warning-only results that must not block the workflow (Finance advisory mode). */
+  advisory?: boolean;
 }
 
 export interface InvoiceValidationResult {
   invoice_id: string;
   passed: boolean;
+  state: ValidationState;
   results: ValidationResult[];
   exceptions: Array<{
     reason: ExceptionReason;
     detail?: string;
   }>;
   allExceptionsHandled?: boolean;
+}
+
+export function canonicalValidationState(result: ValidationResult): ValidationState {
+  if (result.state) return result.state;
+  if (result.code === 'NOT_APPLICABLE') return 'NOT_APPLICABLE';
+  if (result.code === 'NEXTGEN_UNAVAILABLE' || result.code === 'VALIDATION_UNAVAILABLE') return 'UNAVAILABLE';
+  if (!result.passed && /missing|requires|incomplete|not assigned/i.test(`${result.message} ${result.detail || ''}`)) return 'INCOMPLETE';
+  if (!result.passed) return 'MISMATCH';
+  if (/tolerance|warning/i.test(`${result.message} ${result.detail || ''}`)) return 'WITHIN_TOLERANCE';
+  return 'MATCHED';
+}
+
+function canonicalize(results: ValidationResult[]): ValidationResult[] {
+  return results.map(result => ({ ...result, state: canonicalValidationState(result) }));
+}
+
+/**
+ * Splits new exceptions into hard-blocking and advisory-only groups.
+ * A reason blocks only when a failed (non-advisory) result or a non-waivable
+ * infrastructure failure carries it. Passed results with a reason — Finance
+ * advisory-mode warnings AND pre-existing warning-only rules (e.g. vendor
+ * threshold) — stay visible as exceptions but never hold the invoice.
+ */
+export function splitBlockingExceptions(
+  newExceptions: Array<{ reason: ExceptionReason; detail?: string }>,
+  results: ValidationResult[],
+  nonWaivableReasons: Set<string>
+): { blocking: Array<{ reason: ExceptionReason; detail?: string }>; advisoryOnly: Array<{ reason: ExceptionReason; detail?: string }> } {
+  const blockingReasons = new Set(
+    results
+      .filter(result => !result.passed)
+      .map(result => result.reason as string)
+      .filter(Boolean)
+  );
+  const blocking = newExceptions.filter(
+    exception => nonWaivableReasons.has(exception.reason as string)
+      || blockingReasons.has(exception.reason as string)
+  );
+  const advisoryOnly = newExceptions.filter(exception => !blocking.includes(exception));
+  return { blocking, advisoryOnly };
+}
+
+function overallValidationState(results: ValidationResult[]): ValidationState {
+  const states = canonicalize(results).map(result => result.state!);
+  if (states.includes('UNAVAILABLE')) return 'UNAVAILABLE';
+  if (states.includes('INCOMPLETE')) return 'INCOMPLETE';
+  if (states.includes('MISMATCH')) return 'MISMATCH';
+  if (states.includes('WITHIN_TOLERANCE')) return 'WITHIN_TOLERANCE';
+  if (states.length && states.every(state => state === 'NOT_APPLICABLE')) return 'NOT_APPLICABLE';
+  return 'MATCHED';
+}
+
+/**
+ * RULE 18 — deterministic invoice arithmetic and receipt-balance checks.
+ * In Finance advisory mode (default), only invoice-internal arithmetic errors block;
+ * reference-data gaps (missing lines, unpopulated NextGen quantities, MPO-line control)
+ * warn through a visible advisory result without blocking the workflow.
+ */
+function buildFinanceValidationResult(invoice: any): ValidationResult {
+  const issues = validateFinanceArithmetic(invoice);
+  if (issues.length === 0) {
+    return { passed: true, message: 'Invoice line quantities and amounts reconcile' };
+  }
+  const policy = getFinancePolicy();
+  const blocking = issues.filter(issue => financeIssueIsBlocking(issue, policy.enforcementMode));
+  if (blocking.length === 0) {
+    return {
+      passed: true,
+      advisory: true,
+      reason: ExceptionReason.AMOUNT_MISMATCH,
+      message: 'Finance reconciliation advisory — does not block',
+      detail: issues.map(issue => issue.detail).join(' | '),
+    };
+  }
+  return {
+    passed: false,
+    reason: ExceptionReason.AMOUNT_MISMATCH,
+    message: 'Invoice quantity or amount reconciliation failed',
+    detail: blocking.map(issue => issue.detail).join(' | '),
+  };
 }
 
 // Late submission thresholds
@@ -61,6 +150,7 @@ export async function validateInvoiceWithData(
     { fn: async () => checkMissingBankInfo(invoice), reason: ExceptionReason.MISSING_BANK_INFO },
     { fn: () => validateInvoiceTemplate(invoice.invoice_type as InvoiceType, invoice.invoice_template_type), reason: ExceptionReason.HANDWRITTEN_DOCUMENT },
     { fn: async () => validatePOAgainstNextGen(invoice), reason: ExceptionReason.AMOUNT_MISMATCH },
+    { fn: () => buildFinanceValidationResult(invoice), reason: ExceptionReason.AMOUNT_MISMATCH },
     { fn: async () => validateVendorThreshold(invoice), reason: ExceptionReason.VENDOR_THRESHOLD_EXCEEDED },
   ];
 
@@ -79,7 +169,8 @@ export async function validateInvoiceWithData(
   return {
     invoice_id: invoice.id || 'mock',
     passed,
-    results,
+    state: overallValidationState(results),
+    results: canonicalize(results),
     exceptions,
   };
 }
@@ -267,7 +358,16 @@ export async function validateInvoice(
     exceptions.push({ reason: poResult.reason || ExceptionReason.PO_NOT_FOUND, detail: poResult.detail || '' });
   }
 
-  // RULE 18 — Vendor threshold exceeded (WARNING ONLY — does not block)
+  // RULE 18 — deterministic invoice arithmetic and receipt-balance checks.
+  const financeResult = buildFinanceValidationResult(invoice);
+  results.push(financeResult);
+  if (!financeResult.passed) {
+    exceptions.push({ reason: ExceptionReason.AMOUNT_MISMATCH, detail: financeResult.detail || '' });
+  } else if (financeResult.reason) {
+    exceptions.push({ reason: financeResult.reason, detail: financeResult.detail || '' });
+  }
+
+  // RULE 19 — Vendor threshold exceeded (WARNING ONLY — does not block)
   const vendorThresholdResult = await validateVendorThreshold(invoice);
   results.push(vendorThresholdResult);
   if (!vendorThresholdResult.passed) {
@@ -301,9 +401,20 @@ export async function validateInvoice(
     reason: exception.reason,
     detail: exception.details.join(' | '),
   }));
-  const newExceptions = consolidatedExceptions.filter(
-    exception => !waivedReasons.has(exception.reason as string)
+  // Infrastructure/source-of-truth failures are never waivable. A user may
+  // resolve a business discrepancy, but cannot attest that a check ran when it
+  // did not run.
+  const nonWaivableReasons = new Set(
+    results
+      .filter(result => result.code === 'NEXTGEN_UNAVAILABLE' || result.code === 'VALIDATION_UNAVAILABLE')
+      .map(result => result.reason as string)
+      .filter(Boolean)
   );
+  const newExceptions = consolidatedExceptions.filter(
+    exception => nonWaivableReasons.has(exception.reason as string)
+      || !waivedReasons.has(exception.reason as string)
+  );
+  const { blocking: blockingNewExceptions } = splitBlockingExceptions(newExceptions, results, nonWaivableReasons);
 
   if (newExceptions.length > 0) {
     for (const exc of newExceptions) {
@@ -316,11 +427,27 @@ export async function validateInvoice(
       });
     }
 
-    // Update invoice status to EXCEPTION_FLAGGED
-    await prisma.invoice.update({
-      where: { id: invoiceId },
-      data: { status: InvoiceStatus.EXCEPTION_FLAGGED as any },
-    });
+    if (blockingNewExceptions.length > 0) {
+      // Update invoice status to EXCEPTION_FLAGGED
+      await prisma.invoice.update({
+        where: { id: invoiceId },
+        data: { status: InvoiceStatus.EXCEPTION_FLAGGED as any },
+      });
+    } else {
+      // Advisory-only (Finance advisory mode): exceptions are visible for reporting
+      // but do not block — the invoice advances exactly like the all-handled branch.
+      await prisma.invoice.update({
+        where: { id: invoiceId },
+        data: { status: InvoiceStatus.VALIDATION_PENDING as any },
+      });
+      if (!options?.skipAutoAdvance) {
+        try {
+          await createApprovalRequest(invoiceId, 'system', { fromExceptionResolution: true });
+        } catch (error) {
+          logger.error('Failed to create approval request after advisory exceptions:', error);
+        }
+      }
+    }
   } else if (consolidatedExceptions.length > 0 && newExceptions.length === 0) {
     // All currently failing reasons were explicitly waived.
     await prisma.invoice.update({
@@ -339,45 +466,62 @@ export async function validateInvoice(
       }
     }
   } else {
-    // Batch threshold check: hold invoices below $100 cumulative per vendor
-    const batchCheck = await checkBatchThreshold(invoiceId);
+    // Purchasing never places invoices ON_HOLD. Threshold holds belong to the
+    // Accounting/payment stage; clean validation proceeds to approval.
+    await prisma.invoice.update({
+      where: { id: invoiceId },
+      data: { status: InvoiceStatus.VALIDATION_PENDING as any },
+    });
 
-    if (batchCheck.held) {
-      // Invoice is held — status already updated to ON_HOLD by checkBatchThreshold
-      exceptions.push({
-        reason: ExceptionReason.BATCH_THRESHOLD_NOT_MET,
-        detail: `Vendor cumulative amount $${batchCheck.cumulative.toFixed(2)} is below $100 batch threshold. Invoice held until threshold is reached.`,
-      });
-      results.push({
-        passed: false,
-        reason: ExceptionReason.BATCH_THRESHOLD_NOT_MET,
-        message: 'Batch threshold not met',
-        detail: `Vendor cumulative amount $${batchCheck.cumulative.toFixed(2)} is below $100 batch threshold.`,
-      });
-    } else {
-      // Update invoice status to VALIDATION_PENDING
-      await prisma.invoice.update({
-        where: { id: invoiceId },
-        data: { status: InvoiceStatus.VALIDATION_PENDING as any },
-      });
-
-      // Auto-create approval request when validation passes — unless the
-      // caller asked us to hold for an explicit coordinator approval (resolve flow).
-      if (!options?.skipAutoAdvance) {
-        try {
-          await createApprovalRequest(invoiceId, 'system', { fromExceptionResolution: true });
-        } catch (error) {
-          // Log error but don't fail validation if approval request fails
-          logger.error('Failed to create approval request:', error);
-        }
+    if (!options?.skipAutoAdvance) {
+      try {
+        await createApprovalRequest(invoiceId, 'system', { fromExceptionResolution: true });
+      } catch (error) {
+        logger.error('Failed to create approval request:', error);
       }
+    }
+  }
+
+  const finalState = overallValidationState(results);
+  try {
+    const stored = await prisma.invoice.findUnique({ where: { id: invoiceId }, select: { po_validation: true } });
+    const response = stored?.po_validation as any;
+    await retainValidationSnapshot({
+      invoiceId,
+      invoiceRevision: invoice.revision,
+      state: finalState,
+      rules: canonicalize(results),
+      request: {
+        invoice_id: invoiceId,
+        revision: invoice.revision,
+        vendor_id: invoice.vendor_id,
+        mpo_number: invoice.mpo_number,
+        lines: invoice.invoice_lines.map((line: any) => ({
+          line_number: line.line_number,
+          mpo_base_number: line.mpo_base_number,
+          mpo_order_sequence: line.mpo_order_sequence,
+          material_code: line.material_code,
+          quantity: line.quantity,
+          unit_price: line.unit_price,
+          line_amount: line.line_amount,
+        })),
+      },
+      response,
+      vendorIdInvoice: invoice.vendor_id,
+      vendorIdSource: response?.nextgen_data?.vendor_id || response?.vendor_id || null,
+    });
+  } catch (snapshotError) {
+    logger.error('Validation evidence snapshot could not be retained:', snapshotError);
+    if (process.env.REQUIRE_VALIDATION_SNAPSHOT === 'true') {
+      throw new AppError('Validation completed but evidence retention failed; invoice was not advanced.', 503);
     }
   }
 
   return {
     invoice_id: invoiceId,
     passed,
-    results,
+    state: finalState,
+    results: canonicalize(results),
     exceptions,
     allExceptionsHandled: consolidatedExceptions.length > 0 && newExceptions.length === 0,
   };
@@ -839,7 +983,13 @@ function validateSignatures(amount: number, signatures: any[]): ValidationResult
 // RULE 11 — Duplicate detection (delegates to duplicateDetectionService)
 async function checkDuplicateInvoice(invoice: any): Promise<ValidationResult> {
   if (!isDbEnabled()) {
-    return { passed: true, message: 'Duplicate check skipped — DB unavailable' };
+    return {
+      passed: false,
+      reason: ExceptionReason.DUPLICATE_INVOICE,
+      code: 'VALIDATION_UNAVAILABLE',
+      message: 'Duplicate validation unavailable',
+      detail: 'The duplicate check could not run because the database is unavailable. Retry validation before approval.',
+    };
   }
 
   try {
@@ -885,7 +1035,13 @@ async function checkDuplicateInvoice(invoice: any): Promise<ValidationResult> {
     };
   } catch (error) {
     logger.error('Duplicate check failed:', error);
-    return { passed: true, message: 'Duplicate check skipped — error occurred' };
+    return {
+      passed: false,
+      reason: ExceptionReason.DUPLICATE_INVOICE,
+      code: 'VALIDATION_UNAVAILABLE',
+      message: 'Duplicate validation unavailable',
+      detail: 'The duplicate check failed. Retry validation before approval.',
+    };
   }
 }
 
@@ -1025,17 +1181,43 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
   if (invoice.invoice_type === 'STATEMENT') {
     return {
       passed: true,
+      code: 'NOT_APPLICABLE',
       message: 'Statement type — amount variance check skipped. Manual reconciliation required for monthly statement totals.',
     };
   }
 
   const poRef = invoice.mpo_number;
 
-  // No MPO reference on invoice — skip (validation uses MPO only, not PO)
+  // No MPO reference on invoice.
   if (!poRef) {
+    // Non-PO categories (samples, freight, testing, professional fees, …) never
+    // require an MPO — they take the separate non-PO Finance approval path.
+    if (isNonPOCategory(invoice.category)) {
+      return {
+        passed: true,
+        code: 'NOT_APPLICABLE',
+        message: 'Non-PO category — MPO/NextGen validation not applicable',
+        detail: `Category ${invoice.category} does not require an MPO. Manual Finance review applies before payment.`,
+      };
+    }
+    // Advisory mode (default): pre-existing production invoices without an MPO
+    // (legacy TRIMS/YARN records) proceed with a visible warning instead of a hard
+    // block. Finance can flip FINANCE_ENFORCEMENT_MODE=strict to restore the gate.
+    if (getFinancePolicy().enforcementMode === 'advisory') {
+      return {
+        passed: true,
+        advisory: true,
+        code: 'NOT_APPLICABLE',
+        reason: ExceptionReason.MISSING_PO_REFERENCE,
+        message: 'MPO reference missing — NextGen validation deferred (advisory)',
+        detail: 'No MPO on file. Finance review is required before payment; validation does not block the workflow.',
+      };
+    }
     return {
-      passed: true,
-      message: 'No MPO reference — skipping NextGen check',
+      passed: false,
+      reason: ExceptionReason.MISSING_PO_REFERENCE,
+      message: 'MPO reference is required for NextGen validation',
+      detail: 'Enter the invoice MPO before requesting approval.',
     };
   }
 
@@ -1061,11 +1243,13 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
         ),
       ]);
     } catch (timeoutErr: any) {
-      // NextGen timed out or returned 500 — skip MPO validation gracefully
-      logger.warn(`[Validation] NextGen timeout/error for MPO ${baseMpo}: ${timeoutErr.message} — skipping MPO check`);
+      logger.warn(`[Validation] NextGen timeout/error for MPO ${baseMpo}: ${timeoutErr.message} — blocking until retry`);
       return {
-        passed: true,
-        message: `NextGen unavailable (timeout) — MPO ${poRef} check deferred. Re-validate when NextGen is available.`,
+        passed: false,
+        reason: ExceptionReason.PO_NOT_FOUND,
+        code: 'NEXTGEN_UNAVAILABLE',
+        message: `NextGen unavailable — MPO ${poRef} was not verified`,
+        detail: 'Retry validation when NextGen is available. This invoice cannot proceed while the check is unavailable.',
       };
     }
 
@@ -1113,9 +1297,99 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
       }
     }
 
+    // Resolve and persist every DB invoice line independently. This is the
+    // authoritative multi-MPO path: a header match can never satisfy another
+    // MPO line, and cumulative balances are derived from prior AP invoices.
+    const lineControlDifferences: string[] = [];
+    const dbInvoiceLines = Array.isArray((invoice as any).invoice_lines) ? (invoice as any).invoice_lines : [];
+    const poByBaseMpo = new Map<string, any>([[String(baseMpo).trim().toUpperCase(), po]]);
+    for (const invLine of dbInvoiceLines) {
+      const lineNumber = Number(invLine.line_number || 0);
+      const lineBaseMpo = String(invLine.mpo_base_number || baseMpo || '').trim();
+      const lineSequence = invLine.mpo_order_sequence || undefined;
+      const lineMaterial = invLine.material_code || undefined;
+      if (!lineBaseMpo || !lineSequence || !lineMaterial) {
+        lineControlDifferences.push(`Line ${lineNumber}: Base MPO, order sequence, and material are required.`);
+        continue;
+      }
+      const cacheKey = lineBaseMpo.toUpperCase();
+      let linePo = poByBaseMpo.get(cacheKey);
+      if (!linePo) {
+        linePo = await nextGenService.fetchPOByMPO(lineBaseMpo, {
+          vendor_name: invoice.vendor?.name,
+          material_code: lineMaterial,
+        });
+        if (linePo) poByBaseMpo.set(cacheKey, linePo);
+      }
+      if (!linePo || linePo.line_items_available === false) {
+        lineControlDifferences.push(`Line ${lineNumber}: NextGen MPO ${lineBaseMpo} is unavailable.`);
+        continue;
+      }
+      const lineResolution = matchMPOLines(linePo.line_items || [], {
+        orderSequence: lineSequence,
+        materialCode: lineMaterial,
+        materialName: invLine.material_name,
+      });
+      if (lineResolution.error || lineResolution.lines.length !== 1) {
+        lineControlDifferences.push(`Line ${lineNumber}: exact NextGen match was not found for ${lineBaseMpo}/${lineSequence}/${lineMaterial}.`);
+        continue;
+      }
+      const matched = lineResolution.lines[0];
+      const prior = await prisma.invoiceLine.aggregate({
+        where: {
+          id: { not: invLine.id },
+          mpo_base_number: lineBaseMpo,
+          mpo_order_sequence: String(lineSequence),
+          material_code: String(lineMaterial),
+          invoice: { status: { notIn: [InvoiceStatus.REJECTED] as any } },
+        },
+        _sum: { quantity: true, line_amount: true },
+      });
+      const priorQuantity = Number(prior._sum.quantity || 0);
+      const priorAmount = Number(prior._sum.line_amount || 0);
+      // Only treat NextGen receipt data as known when it actually provided a value.
+      // Writing 0 for a missing field would fabricate an over-received/over-remaining
+      // mismatch on every unverified line (NextGen write-back is not yet wired).
+      const receivedSource = matched.received_quantity ?? matched.quantity;
+      const receivedKnown = receivedSource !== null && receivedSource !== undefined
+        && Number.isFinite(Number(receivedSource));
+      const acceptedQuantity = receivedKnown ? Number(receivedSource) : null;
+      const poLineAmount = Number(matched.total_amount || 0);
+      const remainingQuantity = receivedKnown ? Math.max(0, (acceptedQuantity as number) - priorQuantity) : null;
+      const remainingAmount = receivedKnown ? Math.max(0, poLineAmount - priorAmount) : null;
+      const quantity = Number(invLine.quantity || 0);
+      const lineAmount = Number(invLine.line_amount || 0);
+      const policy = getFinancePolicy();
+      const priceMatches = Math.abs(Number(invLine.unit_price || 0) - Number(matched.unit_price || 0)) <= policy.lineRoundingTolerance;
+      const balanceMatches = !receivedKnown
+        || (quantity <= (remainingQuantity as number) && lineAmount <= (remainingAmount as number) + policy.lineRoundingTolerance);
+      const matchStatus = priceMatches && balanceMatches ? 'MATCHED' : 'MISMATCH';
+      await prisma.invoiceLine.update({
+        where: { id: invLine.id },
+        data: {
+          matched_nextgen_line_id: String(matched.line_id || matched.line_reference || ''),
+          match_level: lineResolution.matchLevel,
+          match_status: matchStatus,
+          match_confidence: 1,
+          unit_of_measure: invLine.unit_of_measure || matched.purchase_uom || null,
+          nextgen_unit_of_measure: matched.purchase_uom || null,
+          nextgen_unit_price: Number(matched.unit_price || 0),
+          received_quantity: receivedKnown ? Number(receivedSource) : null,
+          accepted_quantity: acceptedQuantity,
+          previously_invoiced_quantity: priorQuantity,
+          remaining_receivable_quantity: remainingQuantity,
+          previously_invoiced_amount: priorAmount,
+          remaining_invoiceable_amount: remainingAmount,
+        },
+      });
+      if (matchStatus !== 'MATCHED') {
+        lineControlDifferences.push(`Line ${lineNumber}: quantity, price, or amount exceeds the exact NextGen remaining balance.`);
+      }
+    }
+
     // Compare the most specific target available. A material invoice must not
     // be compared against the total of every line under the MPO.
-    const differences: string[] = [];
+    const differences: string[] = [...lineControlDifferences];
     const requestedMaterialCode = String(materialCode || '').trim().toUpperCase();
     const requestedMaterialName = String(materialName || '').trim().toUpperCase();
     let targetLines = po.line_items || [];
@@ -1205,7 +1479,7 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
       }
     }
 
-    // Amount check (>5% variance = fail)
+    // Amount check using the Finance-owned tolerance policy.
     // Subtract all charges from invoice total to get the net goods amount for PO comparison
     const poAmount = matchLevel !== 'MPO_HEADER'
       ? targetLines.reduce((sum: number, li: any) => sum + Number(li.total_amount || 0), 0)
@@ -1237,14 +1511,16 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
     if (poAmount > 0) {
       // Compare net invoice amount (minus charges) against PO amount
       const variance = Math.abs(comparisonAmount - poAmount) / poAmount;
-      if (variance > 0.05) {
+      const financePolicy = getFinancePolicy();
+      const absoluteDifference = Math.abs(comparisonAmount - poAmount);
+      if (absoluteDifference > financePolicy.invoiceRoundingTolerance && variance > financePolicy.poAmountTolerancePercent) {
         const chargeDetail = totalCharges > 0 && comparisonAmount === netInvoiceAmount
           ? ` (invoice $${invoiceTotal.toFixed(2)} minus charges $${totalCharges.toFixed(2)} = net $${netInvoiceAmount.toFixed(2)})`
           : (comparisonAmount !== netInvoiceAmount
             ? ` (matched invoice lines $${comparisonAmount.toFixed(2)} vs matched PO lines $${poAmount.toFixed(2)})`
             : '');
         differences.push(
-          `Amount: invoice $${invoiceTotal.toFixed(2)} vs PO $${poAmount.toFixed(2)} (${(variance * 100).toFixed(1)}% variance)${chargeDetail}`
+          `Amount: invoice $${invoiceTotal.toFixed(2)} vs PO $${poAmount.toFixed(2)} (${(variance * 100).toFixed(1)}% variance; allowed ${(financePolicy.poAmountTolerancePercent * 100).toFixed(2)}%)${chargeDetail}`
         );
       }
     }
@@ -1261,23 +1537,12 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
       differences.push(`Quantity: invoice ${comparisonQty} vs PO ${poQty}`);
     }
 
-    // Vendor name check (only if MPO matches) — fuzzy match to allow subsidiaries
+    // Vendor identity check (only if MPO matches). Similar words are not proof
+    // of identity; only an exact normalized name or an Accounting-managed alias
+    // can establish equivalence.
     if (invoice.vendor?.name && po.vendor_name) {
-      const invoiceVendor = invoice.vendor.name.toLowerCase().trim();
-      const poVendor = po.vendor_name.toLowerCase().trim();
-      // Fuzzy match: check if one name contains the other, or if they share a common root word
-      const isFuzzyMatch = (a: string, b: string) => {
-        if (a === b) return true;
-        if (a.includes(b) || b.includes(a)) return true;
-        // Extract root words (remove common suffixes/prefixes like "the", "ltd", "hk", "group", etc.)
-        const stopWords = new Set(['the', 'ltd', 'limited', 'inc', 'corp', 'group', 'co', 'hk', 'pvt', 'llc', 'sa', 'ag', 'gmbh']);
-        const wordsA = a.split(/[\s,.&()-]+/).filter(w => w.length > 2 && !stopWords.has(w));
-        const wordsB = b.split(/[\s,.&()-]+/).filter(w => w.length > 2 && !stopWords.has(w));
-        // If they share at least one significant root word, consider it a match
-        const shared = wordsA.filter(w => wordsB.some(wb => wb.includes(w) || w.includes(wb)));
-        return shared.length > 0;
-      };
-      if (!isFuzzyMatch(invoiceVendor, poVendor)) {
+      const vendorAliases = await getAliasMap('VENDOR');
+      if (!namesEquivalent(invoice.vendor.name, po.vendor_name, vendorAliases)) {
         differences.push(`Vendor name: invoice "${invoice.vendor.name}" vs PO "${po.vendor_name}"`);
       }
     }
@@ -1296,11 +1561,14 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
       message: `${matchLevel === 'MATERIAL_LINE' ? `Material ${requestedMaterialCode || requestedMaterialName}` : `MPO ${poRef}`} verified in NextGen — amount, quantity, and vendor match`,
     };
   } catch (error) {
-    // NextGen unavailable — log warning but don't block validation
+    // A PO-backed finance invoice must fail closed when its source of truth is unavailable.
     logger.warn(`NextGen MPO check failed for ${poRef}: ${error instanceof Error ? error.message : 'unknown error'}`);
     return {
-      passed: true,
-      message: `NextGen unavailable — MPO ${poRef} check deferred to pre-post stage`,
+      passed: false,
+      reason: ExceptionReason.PO_NOT_FOUND,
+      code: 'NEXTGEN_UNAVAILABLE',
+      message: `NextGen unavailable — MPO ${poRef} was not verified`,
+      detail: 'Retry validation when NextGen is available. This invoice cannot proceed while the check is unavailable.',
     };
   }
 }
@@ -1736,7 +2004,7 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
     }
   }
 
-  // Amount — net of charges, >5% variance = mismatch
+  // Amount — net of charges, using the Finance-owned tolerance policy.
   const poAmount = matchLevel !== 'MPO_HEADER'
     ? targetLines.reduce((sum: number, li: any) => sum + Number(li.total_amount || 0), 0)
     : Number(currentNextGen.amount || 0);
@@ -1750,7 +2018,9 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
 
   if (poAmount > 0 && netInvoiceAmount > 0) {
     const variance = Math.abs(netInvoiceAmount - poAmount) / poAmount;
-    if (variance > 0.05) {
+    const policy = getFinancePolicy();
+    if (Math.abs(netInvoiceAmount - poAmount) > policy.invoiceRoundingTolerance
+      && variance > policy.poAmountTolerancePercent) {
       changes.push({ field: 'invoice_amount_vs_nextgen', old: invoiceTotal, new: poAmount });
     }
   }

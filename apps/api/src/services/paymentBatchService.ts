@@ -403,7 +403,7 @@ export async function markPaymentForPayment(paymentId: string, userId: string) {
 }
 
 /**
- * Purchasing Coordinator approves the release of a sub-$100 HELD payment → it
+ * Accounting Supervisor approves the release of a sub-$100 HELD payment → it
  * becomes SCHEDULED and batchable (may proceed for payment or consolidation).
  * The Associate is notified.
  */
@@ -442,7 +442,7 @@ export async function approveHeldPayment(paymentId: string, userId: string) {
     target_role: UserRole.ACCOUNTING_ASSOCIATE,
   });
 
-  logger.info(`[PaymentBatch] Purchasing approved release of held payment ${paymentId}`);
+  logger.info(`[PaymentBatch] Accounting Supervisor approved release of held payment ${paymentId}`);
   return updated;
 }
 
@@ -708,7 +708,6 @@ export async function endorseBillStub(
   if (![PaymentBatchStatus.REVIEWED, PaymentBatchStatus.EXPORTED_TO_BANK].includes(batch.status as any)) {
     throw new AppError('A bill stub can only be endorsed after the batch is reviewed and exported to the bank', 400);
   }
-
   const target = batch.payments.find((p: any) => p.id === paymentId);
   if (!target) throw new AppError('Payment is not part of this batch', 400);
   if (!['SCHEDULED', 'APPROVED_FOR_PAYMENT'].includes(target.status)) {
@@ -937,10 +936,11 @@ export async function generatePaymentFile(batchId: string) {
       currency: payment.currency,
       bank_charge: payment.bank_charge_amount ? Number(payment.bank_charge_amount) : null,
       payment_date: payment.payment_date.toISOString().split('T')[0],
-      bank_name: payment.invoice.vendor.bank_name,
-      bank_address: payment.invoice.vendor.bank_address,
-      swift_code: payment.invoice.vendor.swift_code,
-      account_number: payment.invoice.vendor.account_number,
+      beneficiary_name: payment.beneficiary_name_snapshot,
+      bank_name: payment.bank_name_snapshot,
+      bank_address: payment.bank_address_snapshot,
+      swift_code: payment.swift_code_snapshot,
+      account_number: payment.account_number_snapshot,
     })),
   };
 
@@ -1130,6 +1130,12 @@ export async function processPaymentBatch(
   if (![PaymentBatchStatus.REVIEWED, PaymentBatchStatus.EXPORTED_TO_BANK].includes(batch.status as any)) {
     throw new AppError('Batch must be reviewed by Accounting Supervisor before processing', 400);
   }
+  if (batch.created_by === userId || batch.submitted_by === userId) {
+    throw new AppError('Payment batch preparer cannot execute the same batch', 403);
+  }
+  if (batch.reviewed_by === userId) {
+    throw new AppError('Payment batch reviewer cannot execute the same batch', 403);
+  }
 
   await prisma.paymentBatch.update({ where: { id: batchId }, data: { status: PaymentBatchStatus.PROCESSING as any } });
 
@@ -1198,6 +1204,9 @@ export async function reviewPaymentBatch(batchId: string, userId: string, note?:
   if (!batch) throw new AppError('Payment batch not found', 404);
   if (batch.status !== PaymentBatchStatus.PENDING_SUPERVISOR_REVIEW) {
     throw new AppError('Batch is not pending supervisor review', 400);
+  }
+  if (batch.created_by === userId || batch.submitted_by === userId) {
+    throw new AppError('Payment batch preparer cannot review their own batch', 403);
   }
   return prisma.paymentBatch.update({
     where: { id: batchId },

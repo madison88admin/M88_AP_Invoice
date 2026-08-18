@@ -183,6 +183,8 @@ model Invoice {
   payment_confirmations PaymentConfirmation[]
   invoice_lines         InvoiceLine[]
   workflow_actions      InvoiceWorkflowAction[]
+  validation_snapshots  ValidationSnapshot[]
+  async_jobs            AsyncJob[]
   
   @@index([vendor_id])
   @@index([status])
@@ -201,6 +203,11 @@ model Signature {
   invoice_id    String
   invoice       Invoice       @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
   signatory_name String
+  // System user who signed this workflow signature. Set at approve time and
+  // retained when the signature is re-opened by a return/reject, so "Returned
+  // to Me" can match by user ID instead of by name. Null for OCR-detected and
+  // legacy pre-2026-08 signatures.
+  signatory_user_id String?
   signatory_role SignatoryRole
   signed_at     DateTime?
   signature_type SignatureType
@@ -213,6 +220,7 @@ model Signature {
   
   @@index([invoice_id])
   @@index([signatory_role])
+  @@index([signatory_user_id])
   @@map("APInvoice_Signature")
 }
 
@@ -226,6 +234,8 @@ model InvoiceLine {
   mpo_order_sequence  String?
   material_code       String?
   material_name       String?
+  unit_of_measure     String?
+  nextgen_unit_of_measure String?
   quantity            Decimal?
   selling_quantity    Decimal?
   unit_price          Decimal?
@@ -238,6 +248,9 @@ model InvoiceLine {
   accepted_quantity   Decimal?
   previously_invoiced_quantity Decimal?
   remaining_receivable_quantity Decimal?
+  previously_invoiced_amount Decimal?
+  remaining_invoiceable_amount Decimal?
+  nextgen_unit_price Decimal?
   size                String?
   extraction_confidence Decimal?
   field_confidence    Json?
@@ -290,11 +303,64 @@ model AuditLog {
   action      String
   performed_by String?
   note        String?
+  actor_name  String?
+  actor_role  String?
+  metadata    Json?
+  correlation_id String?
   created_at  DateTime @default(now())
 
   @@index([invoice_id])
   @@index([created_at])
   @@map("APInvoice_AuditLog")
+}
+
+model ValidationSnapshot {
+  id                String   @id @default(uuid())
+  invoice_id        String
+  invoice           Invoice  @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
+  invoice_revision  Int
+  validation_state  String
+  source_system     String   @default("NEXTGEN")
+  source_version    String?
+  request_fingerprint String
+  response_fingerprint String?
+  request_payload   Json?
+  response_payload  Json?
+  rule_results      Json
+  vendor_id_invoice String?
+  vendor_id_source  String?
+  retrieved_at      DateTime @default(now())
+  created_by        String?
+  superseded_at     DateTime?
+
+  @@index([invoice_id, retrieved_at])
+  @@index([request_fingerprint])
+  @@map("APInvoice_ValidationSnapshot")
+}
+
+model AsyncJob {
+  id              String   @id @default(uuid())
+  invoice_id      String?
+  invoice         Invoice? @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
+  job_type        String
+  status          String   @default("QUEUED")
+  payload         Json?
+  result          Json?
+  error           String?
+  attempts        Int      @default(0)
+  max_attempts    Int      @default(5)
+  available_at    DateTime @default(now())
+  claimed_at      DateTime?
+  claimed_by      String?
+  completed_at    DateTime?
+  idempotency_key String?  @unique
+  created_by      String?
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  @@index([status, available_at])
+  @@index([invoice_id, job_type])
+  @@map("APInvoice_AsyncJob")
 }
 
 model BankChangeRequest {
@@ -338,6 +404,17 @@ model Payment {
   reference     String?
   bank_used     String?
   remarks       String?
+  // Immutable payment-authorisation snapshot. Exports must read these fields,
+  // never the mutable Vendor Master record.
+  beneficiary_name_snapshot String?
+  bank_name_snapshot String?
+  bank_address_snapshot String?
+  swift_code_snapshot String?
+  account_number_snapshot String?
+  bank_snapshot_hash String?
+  bank_snapshot_at DateTime?
+  vendor_bank_verified_at_snapshot DateTime?
+  invoice_revision_snapshot Int?
   // Bank charge applied at batch time (NOT at OCR). At most ONE payment per
   // batch carries a charge (one per vendor per batch, duplicates blocked).
   bank_charge_amount Decimal? @db.Decimal(15, 2)
@@ -352,6 +429,7 @@ model Payment {
   updated_at    DateTime      @updatedAt
   
   @@index([invoice_id])
+  @@index([invoice_id, status])
   @@index([status])
   @@index([selected_for_batch])
   @@map("APInvoice_Payment")
@@ -664,6 +742,54 @@ model Notification {
   @@index([created_at])
   @@index([invoice_id])
   @@map("APInvoice_Notification")
+}
+
+model FinanceControlRun {
+  id           String   @id @default(uuid())
+  run_type     String
+  status       String   @default("RUNNING")
+  started_at   DateTime @default(now())
+  completed_at DateTime?
+  summary      Json?
+  error        String?
+  initiated_by String?
+  findings     FinanceControlFinding[]
+
+  @@index([run_type, started_at])
+  @@index([status])
+  @@map("APInvoice_FinanceControlRun")
+}
+
+model FinanceControlFinding {
+  id          String   @id @default(uuid())
+  run_id      String
+  run         FinanceControlRun @relation(fields: [run_id], references: [id], onDelete: Cascade)
+  invoice_id  String?
+  payment_id  String?
+  code        String
+  severity    String
+  detail      String
+  fingerprint String
+  status      String   @default("OPEN")
+  assigned_to String?
+  acknowledged_by String?
+  acknowledged_at DateTime?
+  resolved_by String?
+  resolved_at DateTime?
+  resolution_note String?
+  reopened_by String?
+  reopened_at DateTime?
+  escalated_to String?
+  escalated_at DateTime?
+  occurrence_count Int @default(1)
+  first_seen_at DateTime @default(now())
+  last_seen_at DateTime @default(now())
+  created_at  DateTime @default(now())
+
+  @@unique([run_id, fingerprint])
+  @@index([invoice_id])
+  @@index([code, status])
+  @@map("APInvoice_FinanceControlFinding")
 }
 
 // Coordinator-editable vendor/brand name aliases. When the real-time NextGen

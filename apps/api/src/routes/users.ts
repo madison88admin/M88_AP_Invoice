@@ -5,16 +5,13 @@ import { AppError } from '../middleware/errorHandler';
 import { logAudit } from '../services/auditLogService';
 import prisma from '../config/database';
 import crypto from 'crypto';
+import { hashPassword } from '../services/passwordService';
 
 const router = Router() as Router;
 
 // All routes require authentication + SUPERADMIN or IT_ADMIN
 router.use(authenticate);
 router.use(authorize(UserRole.SUPERADMIN, UserRole.IT_ADMIN));
-
-function hashPassword(password: string): string {
-  return crypto.createHash('sha256').update(password).digest('hex');
-}
 
 // Sanitize user for API response (never expose password hash)
 function sanitizeUser(u: any) {

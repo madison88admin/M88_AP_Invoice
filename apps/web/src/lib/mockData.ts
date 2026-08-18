@@ -135,6 +135,7 @@ export interface MockSignature {
   id: string;
   signatory_role: SignatoryRole;
   signatory_name: string;
+  signatory_user_id?: string;
   signed_at?: string;
   signature_type: 'DIGITAL' | 'MANUAL';
   approval_status?: string;

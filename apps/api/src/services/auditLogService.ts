@@ -6,6 +6,9 @@ export interface AuditLogEntry {
   action: string;
   note?: string;
   metadata?: Record<string, any>;
+  actor_name?: string;
+  actor_role?: string;
+  correlation_id?: string;
 }
 
 export async function resolveAuditActorNames<T extends { performed_by: string | null }>(logs: T[]) {
@@ -29,12 +32,23 @@ export async function resolveAuditActorNames<T extends { performed_by: string | 
 
 export async function logAudit(entry: AuditLogEntry) {
   try {
+    let actorName = entry.actor_name;
+    let actorRole = entry.actor_role;
+    if ((!actorName || !actorRole) && entry.performed_by && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(entry.performed_by)) {
+      const actor = await prisma.user.findUnique({ where: { id: entry.performed_by }, select: { name: true, role: true } });
+      actorName ||= actor?.name;
+      actorRole ||= actor?.role;
+    }
     await prisma.auditLog.create({
       data: {
         invoice_id: entry.invoice_id || null,
         performed_by: entry.performed_by || null,
         action: entry.action,
         note: entry.note || null,
+        actor_name: actorName || null,
+        actor_role: actorRole || null,
+        metadata: entry.metadata,
+        correlation_id: entry.correlation_id || null,
       },
     });
   } catch (error) {

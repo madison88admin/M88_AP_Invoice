@@ -37,7 +37,26 @@ vi.mock('./inAppNotificationService', () => ({
   inAppNotificationService: { create: notificationCreate, notifyStageTransition: vi.fn() },
 }));
 
-import { getScheduledPaymentsForBatch, bulkApprovePaymentsForPayment, applyBankCharge, removeBankCharge, endorseBillStub, matchPaymentConfirmation, approveHeldPayment, markPaymentForPayment, returnInvoicesFromBatch, getStuckBatches, markPaymentBatchExported, createPaymentBatch, createGroupedPaymentBatches } from './paymentBatchService';
+import { getScheduledPaymentsForBatch, bulkApprovePaymentsForPayment, applyBankCharge, removeBankCharge, endorseBillStub, matchPaymentConfirmation, approveHeldPayment, markPaymentForPayment, returnInvoicesFromBatch, getStuckBatches, markPaymentBatchExported, createPaymentBatch, createGroupedPaymentBatches, reviewPaymentBatch, processPaymentBatch } from './paymentBatchService';
+
+describe('payment batch segregation of duties', () => {
+  it('prevents the preparer from reviewing their own batch', async () => {
+    paymentBatchFindUnique.mockResolvedValue({
+      id: 'batch-1', status: 'PENDING_SUPERVISOR_REVIEW', created_by: 'same-user', submitted_by: 'same-user',
+    });
+    await expect(reviewPaymentBatch('batch-1', 'same-user')).rejects.toThrow('cannot review their own batch');
+    expect(paymentBatchUpdate).not.toHaveBeenCalled();
+  });
+
+  it('prevents the preparer or reviewer from executing the batch', async () => {
+    paymentBatchFindUnique.mockResolvedValue({
+      id: 'batch-1', batch_number: 'PB1', status: 'REVIEWED', created_by: 'preparer',
+      submitted_by: 'preparer', reviewed_by: 'reviewer', payments: [],
+    });
+    await expect(processPaymentBatch('batch-1', 'preparer')).rejects.toThrow('preparer cannot execute');
+    await expect(processPaymentBatch('batch-1', 'reviewer')).rejects.toThrow('reviewer cannot execute');
+  });
+});
 
 /** Midnight n days ago (avoids DST / time-of-day flakiness in aging math). */
 function daysAgo(n: number): Date {

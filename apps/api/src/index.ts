@@ -39,6 +39,7 @@ import testRoutes from './routes/test';
 import workbenchRoutes from './routes/workbench';
 import qbRoutes from './routes/qb';
 import eventRoutes from './routes/events';
+import financeControlRoutes from './routes/financeControls';
 import { errorHandler } from './middleware/errorHandler';
 import { logger } from './utils/logger';
 import { connectDatabase, disconnectDatabase, isDbConnected } from './config/database';
@@ -50,6 +51,8 @@ import { checkAndSendSLAReminders } from './services/slaReminderService';
 import { startSharePointWatcher, stopSharePointWatcher } from './services/sharePointWatcherService';
 import { startFileWatcher, stopFileWatcher } from './services/fileWatcherService';
 import { invoiceUploadQueue } from './services/invoiceUploadQueue';
+import { runAnomalyScan, runFourWayReconciliation } from './services/financeControlRunService';
+import { startDurableJobWorker, stopDurableJobWorker } from './services/durableJobWorker';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -122,6 +125,7 @@ app.use('/api/reprocess', reprocessRoutes);
 app.use('/api/soa-reconciliation', soaReconciliationRoutes);
 app.use('/api/qb', qbRoutes);
 app.use('/api/events', eventRoutes);
+app.use('/api/finance-controls', financeControlRoutes);
 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_TEST_ROUTES === 'true') {
   app.use('/api/test', testRoutes);
 }
@@ -196,7 +200,7 @@ const startServer = async () => {
     } else if (!groqAvailable) {
       logger.warn('⚠️  GROQ_API_KEY is set but Groq service failed to initialize. Check API key and model name.');
     } else {
-      logger.info(`✅ Groq OCR enabled (model: ${process.env.GROQ_MODEL || 'llama-3.3-70b-versatile'})`);
+      logger.info(`✅ Groq OCR enabled (model: ${process.env.GROQ_MODEL || 'groq/compound-mini'})`);
     }
 
     if (!ollamaConfigured) {
@@ -226,15 +230,17 @@ const startServer = async () => {
     });
 
     server.setTimeout(600000); // 10 minutes
+    const sideEffectsEnabled = process.env.DISABLE_SIDE_EFFECTS !== 'true';
+    await startDurableJobWorker();
 
     // Start SharePoint folder watcher (polls IncomingInvoices every 30s)
     const watcherIntervalSec = parseInt(process.env.SHAREPOINT_WATCHER_INTERVAL_SEC || '30', 10);
-    startSharePointWatcher(watcherIntervalSec).catch((err) => {
+    if (sideEffectsEnabled) startSharePointWatcher(watcherIntervalSec).catch((err) => {
       logger.error('Failed to start SharePoint watcher:', err);
     });
 
     // Pre-load Ollama model into memory so first OCR request doesn't timeout
-    if (ollamaOCRService.isAvailable()) {
+    if (sideEffectsEnabled && ollamaOCRService.isAvailable()) {
       logger.info('Pre-loading Ollama model into memory...');
       try {
         const ollamaModel = process.env.OLLAMA_MODEL || 'qwen3:4b';
@@ -256,7 +262,7 @@ const startServer = async () => {
 
     // Start local file watcher (polls /incoming-invoices for SFTP drops)
     const fileWatcherIntervalSec = parseInt(process.env.FILE_WATCHER_INTERVAL_SEC || '30', 10);
-    startFileWatcher(fileWatcherIntervalSec).catch((err) => {
+    if (sideEffectsEnabled) startFileWatcher(fileWatcherIntervalSec).catch((err) => {
       logger.error('Failed to start file watcher:', err);
     });
 
@@ -275,7 +281,7 @@ const startServer = async () => {
 
     // MPO cache sync — refresh every 1 hour to keep NextGen PO data fresh
     const MPO_CACHE_SYNC_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
-    const mpoCacheSyncInterval = setInterval(async () => {
+    const mpoCacheSyncInterval = sideEffectsEnabled ? setInterval(async () => {
       try {
         logger.info('MPO cache: periodic sync started...');
         // Warm swap — do NOT clear the live cache first. The preload fetches a
@@ -286,12 +292,12 @@ const startServer = async () => {
       } catch (err) {
         logger.error('MPO cache: periodic sync failed:', err instanceof Error ? err.message : String(err));
       }
-    }, MPO_CACHE_SYNC_INTERVAL_MS);
-    mpoCacheSyncInterval.unref();
+    }, MPO_CACHE_SYNC_INTERVAL_MS) : undefined;
+    mpoCacheSyncInterval?.unref();
 
     // SLA reminder scheduler — runs every hour
     const SLA_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
-    const slaInterval = setInterval(async () => {
+    const slaInterval = sideEffectsEnabled ? setInterval(async () => {
       try {
         const result = await checkAndSendSLAReminders();
         if (result.sent > 0 || result.escalated > 0) {
@@ -300,24 +306,41 @@ const startServer = async () => {
       } catch (err) {
         logger.error('SLA reminder scheduler error:', err);
       }
-    }, SLA_CHECK_INTERVAL_MS);
+    }, SLA_CHECK_INTERVAL_MS) : undefined;
+
+    // Nightly deterministic Finance controls. Disabled only by explicit config;
+    // each run is persisted for dashboard history and auditability.
+    const financeControlInterval = setInterval(async () => {
+      try {
+        await runAnomalyScan('nightly-scheduler');
+        await runFourWayReconciliation('nightly-scheduler');
+        logger.info('Nightly Finance anomaly scan and four-way reconciliation completed');
+      } catch (err) {
+        logger.error('Nightly Finance controls failed:', err);
+      }
+    }, Number(process.env.FINANCE_RECONCILIATION_INTERVAL_MS || 24 * 60 * 60 * 1000));
+    financeControlInterval.unref();
 
     // Run once on startup after 30 seconds
-    setTimeout(async () => {
+    const initialSlaTimer = sideEffectsEnabled ? setTimeout(async () => {
       try {
         const result = await checkAndSendSLAReminders();
         logger.info(`Initial SLA check: ${result.sent} reminders, ${result.escalated} escalations`);
       } catch (err) {
         logger.error('Initial SLA check error:', err);
       }
-    }, 30000);
+    }, 30000) : undefined;
 
     // Graceful shutdown
     const shutdown = async () => {
       logger.info('Shutting down server...');
       stopSharePointWatcher();
       stopFileWatcher();
-      clearInterval(slaInterval);
+      if (slaInterval) clearInterval(slaInterval);
+      if (mpoCacheSyncInterval) clearInterval(mpoCacheSyncInterval);
+      if (initialSlaTimer) clearTimeout(initialSlaTimer);
+      clearInterval(financeControlInterval);
+      stopDurableJobWorker();
       server.close();
       await disconnectDatabase();
       process.exit(0);

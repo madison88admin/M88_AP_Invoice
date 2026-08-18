@@ -124,6 +124,28 @@ function deriveBaseMpo(value?: string | null): string {
   return match?.[0] || '';
 }
 
+/**
+ * True when a signature represents a return/reject re-open assigned to the
+ * current user. Matches by signatory_user_id (preferred); legacy records
+ * without a user ID fall back to name matching.
+ */
+function isReturnedSignatureForUser(
+  sig: any,
+  currentStage: string | undefined,
+  user: { id?: string; name?: string } | null
+): boolean {
+  if (!sig || sig.ocr_detected || sig.signed_at || sig.approval_status !== 'RECONFIRMATION_REQUIRED') return false;
+  if (currentStage && sig.signatory_role !== currentStage) return false;
+  if (sig.signatory_user_id) {
+    return Boolean(user?.id && sig.signatory_user_id === user.id);
+  }
+  return Boolean(
+    sig.signatory_name &&
+    user?.name &&
+    sig.signatory_name.trim().toLowerCase() === user.name.trim().toLowerCase()
+  );
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -331,16 +353,9 @@ export default function Dashboard() {
     if (quickFilter === 'returned') {
       const sigs = (inv as any).signatures || [];
       const returnedOwner = sigs.find((s: any) =>
-        !s.ocr_detected &&
-        !s.signed_at &&
-        s.approval_status === 'RECONFIRMATION_REQUIRED' &&
-        (!inv.current_stage || s.signatory_role === inv.current_stage)
+        isReturnedSignatureForUser(s, (inv as any).current_stage, user)
       );
-      return Boolean(
-        returnedOwner?.signatory_name &&
-        user?.name &&
-        returnedOwner.signatory_name.trim().toLowerCase() === user.name.trim().toLowerCase()
-      );
+      return Boolean(returnedOwner);
     }
     if (quickFilter === 'urgent') {
       const timestamps = (inv as any).stage_timestamps || [];
@@ -361,13 +376,9 @@ export default function Dashboard() {
 
   const returnedToMeCount = filteredInvoices.filter(inv => {
     const returnedOwner = ((inv as any).signatures || []).find((s: any) =>
-      !s.ocr_detected &&
-      !s.signed_at &&
-      s.approval_status === 'RECONFIRMATION_REQUIRED' &&
-      (!inv.current_stage || s.signatory_role === inv.current_stage)
+      isReturnedSignatureForUser(s, (inv as any).current_stage, user)
     );
-    return Boolean(returnedOwner?.signatory_name && user?.name &&
-      returnedOwner.signatory_name.trim().toLowerCase() === user.name.trim().toLowerCase());
+    return Boolean(returnedOwner);
   }).length;
 
   // Count how many filters are currently active (for the "Clear" affordance)

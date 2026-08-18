@@ -20,6 +20,7 @@ import { sendApprovalRequestNotification } from './notificationService';
 import { inAppNotificationService } from './inAppNotificationService';
 import { eventBroadcaster } from './eventBroadcaster';
 import { logger } from '../utils/logger';
+import { getApprovalReadiness } from './approvalReadinessService';
 
 interface ApprovalRouteStep {
   role: SignatoryRole;
@@ -151,31 +152,6 @@ async function isAutoApprovalEligible(invoice: any): Promise<{ eligible: boolean
  */
 const approvalRequestInFlight = new Map<string, Promise<any>>();
 
-const APPROVAL_REQUIRED_FIELDS: { field: string; label: string }[] = [
-  { field: 'vendor_id', label: 'Vendor' },
-  { field: 'invoice_number', label: 'Invoice Number' },
-  { field: 'invoice_date', label: 'Invoice Date' },
-  { field: 'due_date', label: 'Due Date' },
-  { field: 'total_amount', label: 'Amount' },
-  { field: 'currency', label: 'Currency' },
-  { field: 'brand', label: 'Brand' },
-  { field: 'season', label: 'Season' },
-  { field: 'customer_po_number', label: 'PO Number' },
-  { field: 'mpo_base_number', label: 'Base MPO' },
-];
-
-function getMissingApprovalFields(invoice: any) {
-  return APPROVAL_REQUIRED_FIELDS.filter(({ field }) => {
-    const value = invoice[field];
-    if (field === 'total_amount') {
-      const amount = Number(value);
-      return !Number.isFinite(amount) || amount <= 0;
-    }
-    if (value instanceof Date) return Number.isNaN(value.getTime());
-    return value === null || value === undefined || String(value).trim() === '';
-  });
-}
-
 export async function createApprovalRequest(
   invoiceId: string,
   userId: string,
@@ -197,7 +173,7 @@ async function createApprovalRequestInternal(
 ) {
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
-    include: { vendor: true, signatures: true },
+    include: { vendor: true, signatures: true, invoice_lines: true },
   });
 
   if (!invoice) {
@@ -205,10 +181,10 @@ async function createApprovalRequestInternal(
   }
 
   // Validate required fields before allowing approval request
-  const missingFields = getMissingApprovalFields(invoice);
-  if (missingFields.length > 0) {
+  const readiness = getApprovalReadiness(invoice);
+  if (!readiness.ready) {
     throw new AppError(
-      `Cannot request approval — missing required fields: ${missingFields.map(f => f.label).join(', ')}. Please fill these in before requesting approval.`,
+      `Cannot request approval — missing required fields: ${readiness.missing.map(f => f.lineNumber ? `Line ${f.lineNumber} ${f.label}` : f.label).join(', ')}. Please fill these in before requesting approval.`,
       400
     );
   }
@@ -585,6 +561,7 @@ export async function approveInvoice(
     include: { 
       signatures: true,
       vendor: true,
+      invoice_lines: true,
     },
   });
 
@@ -593,10 +570,10 @@ export async function approveInvoice(
   }
 
   // Validate required fields before allowing approval
-  const missingFields = getMissingApprovalFields(invoice);
-  if (missingFields.length > 0) {
+  const readiness = getApprovalReadiness(invoice);
+  if (!readiness.ready) {
     throw new AppError(
-      `Cannot approve — missing required fields: ${missingFields.map(f => f.label).join(', ')}. Please fill these in before approving.`,
+      `Cannot approve — missing required fields: ${readiness.missing.map(f => f.lineNumber ? `Line ${f.lineNumber} ${f.label}` : f.label).join(', ')}. Please fill these in before approving.`,
       400
     );
   }
@@ -644,11 +621,14 @@ export async function approveInvoice(
 
   const signedRole = pendingSignature.signatory_role;
 
-  // Update the signature with full attribution
+  // Update the signature with full attribution. signatory_user_id is what
+  // makes "Returned to Me" match by user ID — it survives return/reject
+  // re-open cycles because the re-open only clears signed_at.
   await prisma.signature.update({
     where: { id: pendingSignature.id },
     data: {
       signatory_name: signerName,
+      signatory_user_id: userId,
       signed_at: new Date(),
       signature_type: 'DIGITAL',
       approval_status: 'APPROVED',
@@ -804,6 +784,55 @@ export async function approveInvoice(
 }
 
 /**
+ * Find the best coordinator user to assign a freshly-created fallback
+ * signature to (used when an invoice has no prior signed approver). Prefers
+ * the coordinator who last acted on the invoice, then any active coordinator.
+ * Returns null if no coordinator user exists — the signature is then created
+ * without a user and "Returned to Me" falls back to name matching.
+ */
+async function findFallbackCoordinator(invoiceId: string): Promise<{ id: string; name: string } | null> {
+  try {
+    const lastAction = await prisma.invoiceWorkflowAction.findFirst({
+      where: { invoice_id: invoiceId, performed_by_role: 'PURCHASING_COORDINATOR' },
+      orderBy: { created_at: 'desc' },
+    });
+    if (lastAction?.performed_by) {
+      const actor = await prisma.user.findUnique({ where: { id: lastAction.performed_by } });
+      if (actor?.active) return { id: actor.id, name: actor.name };
+    }
+    const coord = await prisma.user.findFirst({
+      where: { role: 'PURCHASING_COORDINATOR', active: true },
+      orderBy: { created_at: 'asc' },
+    });
+    if (coord) return { id: coord.id, name: coord.name };
+  } catch (error) {
+    logger.error(`Failed to resolve fallback coordinator for ${invoiceId}:`, error);
+  }
+  return null;
+}
+
+/**
+ * Create a fresh COORDINATOR workflow signature so a returned invoice with no
+ * prior approval chain is actionable. Assigns the original coordinator user
+ * when one can be resolved so the invoice lands in their "Returned to Me".
+ */
+async function createFallbackCoordinatorSignature(invoiceId: string, revision: number) {
+  const coordinator = await findFallbackCoordinator(invoiceId);
+  return prisma.signature.create({
+    data: {
+      invoice_id: invoiceId,
+      signatory_role: SignatoryRole.COORDINATOR as any,
+      signatory_name: coordinator?.name || '',
+      signatory_user_id: coordinator?.id || null,
+      signature_type: 'DIGITAL' as any,
+      signed_at: null,
+      invoice_revision: revision,
+      approval_status: 'PENDING',
+    },
+  });
+}
+
+/**
  * Reject an invoice
  */
 export async function rejectInvoice(
@@ -918,17 +947,7 @@ export async function rejectInvoice(
     // invoice straight into PENDING_ACCOUNTING). Returning to the coordinator
     // without a signature strands the invoice — the coordinator could never
     // approve it. Create the coordinator signature so the return is actionable.
-    await prisma.signature.create({
-      data: {
-        invoice_id: invoiceId,
-        signatory_role: SignatoryRole.COORDINATOR as any,
-        signatory_name: '',
-        signature_type: 'DIGITAL' as any,
-        signed_at: null,
-        invoice_revision: invoice.revision,
-        approval_status: 'PENDING',
-      },
-    });
+    await createFallbackCoordinatorSignature(invoiceId, invoice.revision);
   }
 
   // Exit current stage timestamp FIRST — before creating a new one
@@ -1039,17 +1058,7 @@ async function rejectFromAccounting(
     // Without this, the returned invoice would strand at PENDING_COORDINATOR
     // because no coordinator signature exists to approve. Create one so the
     // coordinator can actually act on the returned invoice.
-    await prisma.signature.create({
-      data: {
-        invoice_id: invoiceId,
-        signatory_role: SignatoryRole.COORDINATOR as any,
-        signatory_name: '',
-        signature_type: 'DIGITAL' as any,
-        signed_at: null,
-        invoice_revision: invoice.revision,
-        approval_status: 'PENDING',
-      },
-    });
+    await createFallbackCoordinatorSignature(invoiceId, invoice.revision);
   }
 
   // Exit current PENDING_ACCOUNTING stage

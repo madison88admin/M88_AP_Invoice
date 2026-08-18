@@ -72,6 +72,7 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
       label: 'Analytics',
       items: [
         { icon: BarChart3, label: 'Reports', path: '/reports', roles: ['PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'ACCOUNTING_ASSOCIATE', 'CC_REPORTS'] },
+        { icon: AlertTriangle, label: 'Finance Controls', path: '/finance-controls', roles: ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'CFO', 'IT_ADMIN'] },
         { icon: Gauge, label: 'SLA Analytics', path: '/sla-analytics', roles: ['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'ACCOUNTING_ASSOCIATE', 'CC_REPORTS'] },
         { icon: Activity, label: 'Extraction Analytics', path: '/extraction-analytics', roles: ['PURCHASING_COORDINATOR', 'IT_ADMIN', 'ACCOUNTING_SUPERVISOR', 'CC_REPORTS'] },
       ],

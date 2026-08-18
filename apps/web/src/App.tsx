@@ -21,6 +21,7 @@ import UserManagement from './components/UserManagement';
 import SettingsPage from './components/SettingsPage';
 import InvoiceRepository from './components/InvoiceRepository';
 import BankDetailsMasterlist from './components/BankDetailsMasterlist';
+import FinanceControlsDashboard from './components/FinanceControlsDashboard';
 
 import ProtectedRoute from './components/ProtectedRoute';
 import NotFound from './components/NotFound';
@@ -159,6 +160,13 @@ function App() {
                   <ProtectedRoute>
                     <AppLayout title="Bank Details Masterlist" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-blue), var(--accent-purple))' }}><Landmark className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
                       <BankDetailsMasterlist />
+                    </AppLayout>
+                  </ProtectedRoute>
+                } />
+                <Route path="/finance-controls" element={
+                  <ProtectedRoute>
+                    <AppLayout title="Finance Controls" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-blue), var(--accent-purple))' }}><AlertTriangle className="h-5 w-5 text-white" /></div>}>
+                      <FinanceControlsDashboard />
                     </AppLayout>
                   </ProtectedRoute>
                 } />

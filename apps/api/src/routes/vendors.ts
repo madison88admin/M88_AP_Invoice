@@ -6,6 +6,7 @@ import { UserRole } from '@ap-invoice/shared';
 import { inAppNotificationService } from '../services/inAppNotificationService';
 import { AppError } from '../middleware/errorHandler';
 import crypto from 'crypto';
+import { maskBankAccount } from '../utils/sensitiveData';
 
 const router: Router = Router();
 
@@ -55,9 +56,9 @@ router.get('/bank-details/masterlist', authenticate, async (req: Request, res: R
       bank_address: v.bank_address,
       swift_code: v.swift_code,
       swift_code_alt: v.swift_code_alt,
-      account_number: v.account_number,
-      account_number_alt: v.account_number_alt,
-      iban: v.iban,
+      account_number: maskBankAccount(v.account_number),
+      account_number_alt: v.account_number_alt.map(maskBankAccount),
+      iban: maskBankAccount(v.iban),
       sort_code: v.sort_code,
       aba_routing_number: v.aba_routing_number,
       intermediary_bank_name: v.intermediary_bank_name,
@@ -78,7 +79,7 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     const vendors = await prisma.vendor.findMany({
       orderBy: { name: 'asc' },
     });
-    res.json(vendors);
+    res.json(vendors.map(v => ({ ...v, account_number: maskBankAccount(v.account_number), account_number_alt: v.account_number_alt.map(maskBankAccount), iban: maskBankAccount(v.iban) })));
   } catch (error) {
     next(error);
   }
@@ -92,7 +93,7 @@ router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
     if (!vendor) {
       return res.status(404).json({ error: 'Vendor not found' });
     }
-    res.json(vendor);
+    res.json({ ...vendor, account_number: maskBankAccount(vendor.account_number), account_number_alt: vendor.account_number_alt.map(maskBankAccount), iban: maskBankAccount(vendor.iban) });
   } catch (error) {
     next(error);
   }

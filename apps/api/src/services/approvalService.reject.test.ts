@@ -11,6 +11,9 @@ const {
   invoiceUpdate,
   auditLogCreate,
   workflowActionCreate,
+  workflowActionFindFirst,
+  userFindUnique,
+  userFindFirst,
   notifyStageTransition,
   notificationCreate,
 } = vi.hoisted(() => ({
@@ -23,6 +26,9 @@ const {
   invoiceUpdate: vi.fn(),
   auditLogCreate: vi.fn(),
   workflowActionCreate: vi.fn(),
+  workflowActionFindFirst: vi.fn(),
+  userFindUnique: vi.fn(),
+  userFindFirst: vi.fn(),
   notifyStageTransition: vi.fn(),
   notificationCreate: vi.fn(),
 }));
@@ -33,7 +39,8 @@ vi.mock('../config/database', () => ({
     signature: { update: signatureUpdate, create: signatureCreate },
     stageTimestamp: { findFirst: stageTimestampFindFirst, update: stageTimestampUpdate, create: stageTimestampCreate },
     auditLog: { create: auditLogCreate },
-    invoiceWorkflowAction: { create: workflowActionCreate },
+    invoiceWorkflowAction: { create: workflowActionCreate, findFirst: workflowActionFindFirst },
+    user: { findUnique: userFindUnique, findFirst: userFindFirst },
   },
 }));
 
@@ -95,6 +102,9 @@ beforeEach(() => {
   invoiceUpdate.mockReset();
   auditLogCreate.mockReset();
   workflowActionCreate.mockReset().mockResolvedValue({});
+  workflowActionFindFirst.mockReset().mockResolvedValue(null);
+  userFindUnique.mockReset().mockResolvedValue(null);
+  userFindFirst.mockReset().mockResolvedValue(null);
   notifyStageTransition.mockReset();
   notificationCreate.mockReset();
 
@@ -157,5 +167,27 @@ describe('rejectInvoice from PENDING_ACCOUNTING (rejectFromAccounting)', () => {
     const invUpdateCall = invoiceUpdate.mock.calls.find(([args]: any) => args.where.id === 'inv-1')!;
     expect(invUpdateCall[0].data.status).toBe(InvoiceStatus.PENDING_COORDINATOR);
     expect(invUpdateCall[0].data.current_approver_role).toBe(SignatoryRole.COORDINATOR);
+  });
+
+  it('assigns the fallback coordinator signature to the coordinator user so it lands in Returned to Me', async () => {
+    const invoice = makeSignedInvoice();
+    invoice.signatures = []; // no signed approver at all
+    invoiceFindUnique.mockResolvedValue(invoice);
+
+    // The coordinator who last acted on the invoice is preferred for assignment.
+    workflowActionFindFirst.mockResolvedValue({
+      performed_by: 'coord-user-1',
+      performed_by_role: 'PURCHASING_COORDINATOR',
+      created_at: new Date('2026-08-12'),
+    });
+    userFindUnique.mockResolvedValue({ id: 'coord-user-1', name: 'Sarah Jane Cariquitan', active: true });
+
+    await rejectInvoice('inv-1', 'qa-assoc', 'ACCOUNTING_ASSOCIATE', 'QA e2e: no prior approver');
+
+    const createCall = signatureCreate.mock.calls.find(([args]: any) => args.data.invoice_id === 'inv-1')!;
+    expect(createCall).toBeDefined();
+    expect(createCall[0].data.signatory_role).toBe(SignatoryRole.COORDINATOR);
+    expect(createCall[0].data.signatory_user_id).toBe('coord-user-1');
+    expect(createCall[0].data.signatory_name).toBe('Sarah Jane Cariquitan');
   });
 });

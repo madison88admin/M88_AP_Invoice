@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { completeJob, failJob, markJobProcessing } from './jobStore';
+import { completeJob, deadLetterJob, markJobProcessing, markJobRetrying } from './jobStore';
 
 export interface QueuedInvoiceUpload {
   jobId: string;
@@ -110,13 +110,14 @@ class InvoiceUploadQueue {
       this.removePayload(jobId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      failJob(jobId, message);
       meta.lastError = message;
       this.writeMeta(meta);
       if ((meta.attempts || 0) >= MAX_RETRIES) {
         // Retry budget exhausted — drop the payload so the next boot doesn't
         // re-queue a file that can never succeed.
         this.failPermanently(jobId, `${message} — failed ${meta.attempts} attempt(s) across restarts; will not retry. Please upload the file again.`);
+      } else {
+        markJobRetrying(jobId, message, meta.attempts || 0);
       }
     }
   }
@@ -133,7 +134,9 @@ class InvoiceUploadQueue {
   private bufferPath(id: string) { return path.join(QUEUE_DIR, `${id}.bin`); }
 
   private failPermanently(id: string, message: string): void {
-    failJob(id, message);
+    let attempts: number | undefined;
+    try { attempts = this.readMeta(id).attempts; } catch { /* corrupt metadata */ }
+    deadLetterJob(id, message, attempts);
     this.removePayload(id);
   }
 

@@ -5,6 +5,8 @@ import { nextGenService } from './nextGenService';
 import { inAppNotificationService } from './inAppNotificationService';
 import { sendPaymentConfirmationToSupplier } from './notificationService';
 import { logger } from '../utils/logger';
+import crypto from 'crypto';
+import { getFinancePolicy } from './financePolicyService';
 
 // QuickBooks Online API configuration
 const QB_CLIENT_ID = process.env.QB_CLIENT_ID || '';
@@ -58,10 +60,8 @@ export function deriveQBMemo(invoice: any): string {
   return invoice.qb_memo || memoParts.join('_');
 }
 
-const VARIANCE_WARN_PCT = 0.02;  // 2%
-const VARIANCE_BLOCK_PCT = 0.05; // 5%
-
 async function prePostCheck(invoice: any): Promise<PrePostResult> {
+  const financePolicy = getFinancePolicy();
   const flags: PrePostFlag[] = [];
 
   // 1. GL account — deterministic lookup
@@ -109,7 +109,7 @@ async function prePostCheck(invoice: any): Promise<PrePostResult> {
       if (!po) {
         flags.push({
           type: 'PO_NOT_FOUND',
-          severity: 'warn',
+          severity: 'block',
           detail: `PO ${poRef} referenced but not found in NextGen.`,
         });
       } else {
@@ -117,13 +117,14 @@ async function prePostCheck(invoice: any): Promise<PrePostResult> {
         const invoiceAmount = Number(invoice.total_amount);
         if (poAmount > 0) {
           const variance = Math.abs(invoiceAmount - poAmount) / poAmount;
-          if (variance > VARIANCE_BLOCK_PCT) {
+          const absoluteDifference = Math.abs(invoiceAmount - poAmount);
+          if (absoluteDifference > financePolicy.invoiceRoundingTolerance && variance > financePolicy.poAmountTolerancePercent) {
             flags.push({
               type: 'AMOUNT_VARIANCE',
               severity: 'block',
-              detail: `Invoice $${invoiceAmount.toFixed(2)} vs PO $${poAmount.toFixed(2)} — ${(variance * 100).toFixed(1)}% variance exceeds ${VARIANCE_BLOCK_PCT * 100}% threshold.`,
+              detail: `Invoice $${invoiceAmount.toFixed(2)} vs PO $${poAmount.toFixed(2)} — ${(variance * 100).toFixed(1)}% variance exceeds ${(financePolicy.poAmountTolerancePercent * 100).toFixed(2)}% Finance tolerance.`,
             });
-          } else if (variance > VARIANCE_WARN_PCT) {
+          } else if (absoluteDifference > financePolicy.invoiceRoundingTolerance && variance > financePolicy.postingWarningPercent) {
             flags.push({
               type: 'AMOUNT_VARIANCE',
               severity: 'warn',
@@ -133,10 +134,11 @@ async function prePostCheck(invoice: any): Promise<PrePostResult> {
         }
       }
     } catch (error) {
-      // NextGen unavailable or timed out — warn but don't block
+      // Fail closed: Accounting must not post a PO-backed invoice whose source
+      // of truth could not be verified at posting time.
       flags.push({
         type: 'PO_NOT_FOUND',
-        severity: 'warn',
+        severity: 'block',
         detail: `NextGen lookup failed for PO ${poRef}: ${error instanceof Error ? error.message : 'unknown error'}`,
       });
     }
@@ -163,12 +165,25 @@ export async function postInvoice(invoiceId: string, userId: string, bypassVaria
     throw new AppError('Invoice not found', 404);
   }
 
-  if (invoice.status !== InvoiceStatus.APPROVED as any && invoice.status !== InvoiceStatus.PENDING_ACCOUNTING as any && invoice.status !== InvoiceStatus.ON_HOLD as any) {
+  if (invoice.status !== InvoiceStatus.APPROVED as any && invoice.status !== InvoiceStatus.PENDING_ACCOUNTING as any) {
     throw new AppError('Invoice must be approved before posting', 400);
   }
 
-  // Check if all signatures are signed
-  const allSigned = invoice.signatures.every((sig: any) => sig.signed_at !== null);
+  // Check if all signatures are signed.
+  // Invoices approved before the workflow-signature era may only carry OCR-detected
+  // signature records (no workflow signatures at all). Those legacy invoices fall back
+  // to the OCR signature set so they are not permanently stuck; invoices with workflow
+  // signatures always require the workflow set to be complete and current.
+  const workflowSignatures = invoice.signatures.filter((sig: any) => !sig.ocr_detected);
+  const requiredSignatures = workflowSignatures.length > 0
+    ? workflowSignatures
+    : invoice.signatures.filter((sig: any) => sig.ocr_detected);
+  const allSigned = requiredSignatures.length > 0 && requiredSignatures.every((sig: any) =>
+    sig.signed_at !== null &&
+    !sig.invalidated_at &&
+    sig.invoice_revision === invoice.revision &&
+    sig.approval_status === 'APPROVED'
+  );
   if (!allSigned) {
     throw new AppError('All approvals must be completed before posting', 400);
   }
@@ -465,6 +480,35 @@ export async function schedulePayment(
     throw new AppError('Invoice must be posted before scheduling payment', 400);
   }
 
+  const existingPayment = await prisma.payment.findFirst({
+    where: {
+      invoice_id: invoiceId,
+      status: { notIn: ['CANCELLED', 'VOIDED'] },
+    },
+    select: { id: true, status: true },
+  });
+  if (existingPayment) {
+    throw new AppError(`Invoice already has an active or completed payment (${existingPayment.status})`, 409);
+  }
+
+  const beneficiary = invoice.vendor?.beneficiary_name || invoice.vendor?.name;
+  const bankName = invoice.vendor?.bank_name;
+  const accountNumber = invoice.vendor?.account_number;
+  const swiftCode = invoice.vendor?.swift_code;
+  if (!beneficiary || !bankName || !accountNumber || !swiftCode) {
+    throw new AppError('Verified Vendor Master bank details are required before payment scheduling', 400);
+  }
+  const snapshotAt = new Date();
+  const bankSnapshotHash = crypto.createHash('sha256').update(JSON.stringify({
+    vendor_id: invoice.vendor_id,
+    beneficiary,
+    bank_name: bankName,
+    bank_address: invoice.vendor?.bank_address || '',
+    swift_code: swiftCode,
+    account_number: accountNumber,
+    invoice_revision: invoice.revision,
+  })).digest('hex');
+
   // Payment date auto-derives from the invoice's due date — SCHEDULED is the
   // "possible payment date", not a manually typed commitment. Falls back to
   // today only when the invoice has no due date.
@@ -486,7 +530,7 @@ export async function schedulePayment(
 
   // Sub-$100 invoices are HELD: they appear in the batch schedule only when
   // they fall within the Associate's cut-off (due on or before the cut-off),
-  // and only proceed after the Purchasing Coordinator approves (item 8).
+  // and only proceed after Accounting Supervisor release.
   const heldBelow100 = Number(invoice.total_amount) < BATCH_THRESHOLD_CONFIG.AMOUNT;
 
   // Create payment record
@@ -499,6 +543,15 @@ export async function schedulePayment(
       payment_date_source: paymentDateSource,
       status: heldBelow100 ? 'HELD_BELOW_100' : 'SCHEDULED',
       vendor_id: invoice.vendor_id || undefined,
+      beneficiary_name_snapshot: beneficiary,
+      bank_name_snapshot: bankName,
+      bank_address_snapshot: invoice.vendor?.bank_address || null,
+      swift_code_snapshot: swiftCode,
+      account_number_snapshot: accountNumber,
+      bank_snapshot_hash: bankSnapshotHash,
+      bank_snapshot_at: snapshotAt,
+      vendor_bank_verified_at_snapshot: invoice.vendor?.bank_verified_at || null,
+      invoice_revision_snapshot: invoice.revision,
     },
   });
 
@@ -508,10 +561,10 @@ export async function schedulePayment(
       invoice_number: invoice.invoice_number,
       vendor_name: invoice.vendor?.name || 'Unknown',
       title: `Invoice ${invoice.invoice_number} held (below $${BATCH_THRESHOLD_CONFIG.AMOUNT})`,
-      message: `Payment of ${invoice.currency} ${Number(invoice.total_amount).toFixed(2)} is under the $${BATCH_THRESHOLD_CONFIG.AMOUNT} threshold — held (HELD_BELOW_100) until it falls within the batch cut-off. Approve release for it to proceed for payment or consolidation.`,
+      message: `Payment of ${invoice.currency} ${Number(invoice.total_amount).toFixed(2)} is under the $${BATCH_THRESHOLD_CONFIG.AMOUNT} threshold — held (HELD_BELOW_100) until it falls within the batch cut-off. Accounting Supervisor approval is required for release.`,
       type: 'warning',
       category: 'payment',
-      target_role: UserRole.PURCHASING_COORDINATOR,
+      target_role: UserRole.ACCOUNTING_SUPERVISOR,
     });
   }
 
@@ -553,7 +606,7 @@ export async function schedulePayment(
       invoice_id: invoiceId,
       action: 'PAYMENT_SCHEDULED',
       performed_by: userId,
-      note: `Payment of ${invoice.currency} ${Number(invoice.total_amount).toFixed(2)} scheduled for ${resolvedPaymentDate.toISOString().split('T')[0]}${heldBelow100 ? ` — HELD_BELOW_100 (under $${BATCH_THRESHOLD_CONFIG.AMOUNT}); Purchasing notified for release approval` : ''}`,
+      note: `Payment of ${invoice.currency} ${Number(invoice.total_amount).toFixed(2)} scheduled for ${resolvedPaymentDate.toISOString().split('T')[0]}${heldBelow100 ? ` — HELD_BELOW_100 (under $${BATCH_THRESHOLD_CONFIG.AMOUNT}); Accounting Supervisor notified for release approval` : ''}`,
     },
   });
 

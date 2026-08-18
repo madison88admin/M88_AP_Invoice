@@ -2,7 +2,7 @@ import { Response, NextFunction, Request } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import { validateInvoice, checkNextGenChanges } from '../services/validationService';
 import { logAudit } from '../services/auditLogService';
-import { createJob, completeJob, failJob, getJob, cleanupOldJobs } from '../services/jobStore';
+import { enqueueJob, getDurableJob } from '../services/databaseJobService';
 
 // Format failing validation rules into a readable audit note so the trail shows
 // exactly what failed and what changed (amounts, variance, vendor, etc.).
@@ -50,31 +50,8 @@ export const validateInvoiceAsyncController = async (
   try {
     const { id } = req.params;
     const userId = req.user!.id;
-    const jobId = createJob('validate');
-
-    setImmediate(async () => {
-      try {
-        const result = await validateInvoice(id);
-        await logAudit({
-          invoice_id: id,
-          performed_by: userId,
-          action: 'INVOICE_VALIDATED',
-          note: buildValidationAuditNote(result),
-        });
-        completeJob(jobId, result);
-      } catch (error: any) {
-        await logAudit({
-          invoice_id: id,
-          performed_by: userId,
-          action: 'INVOICE_VALIDATION_FAILED',
-          note: `Validation failed: ${error.message || error}`,
-        });
-        failJob(jobId, error.message || String(error));
-      }
-      cleanupOldJobs();
-    });
-
-    res.status(202).json({ jobId, status: 'processing', message: 'Validation started' });
+    const job = await enqueueJob({ jobType: 'VALIDATE_INVOICE', invoiceId: id, createdBy: userId, idempotencyKey: `validate:${id}:${req.body?.revision || 'current'}` });
+    res.status(202).json({ jobId: job.id, status: job.status.toLowerCase(), message: 'Validation queued durably' });
   } catch (error) {
     next(error);
   }
@@ -108,25 +85,8 @@ export const checkNextGenAsyncController = async (
   try {
     const { id } = req.params;
     const userId = req.user!.id;
-    const jobId = createJob('check-nextgen');
-
-    setImmediate(async () => {
-      try {
-        const result = await checkNextGenChanges(id);
-        await logAudit({
-          invoice_id: id,
-          performed_by: userId,
-          action: 'NEXTGEN_CHECK',
-          note: `NextGen change check completed. Has changes: ${result.hasChanges}. Changes: ${result.changes.length}`,
-        });
-        completeJob(jobId, result);
-      } catch (error: any) {
-        failJob(jobId, error.message || String(error));
-      }
-      cleanupOldJobs();
-    });
-
-    res.status(202).json({ jobId, status: 'processing', message: 'NextGen check started' });
+    const job = await enqueueJob({ jobType: 'CHECK_NEXTGEN', invoiceId: id, createdBy: userId, idempotencyKey: `nextgen:${id}:${req.body?.revision || 'current'}` });
+    res.status(202).json({ jobId: job.id, status: job.status.toLowerCase(), message: 'NextGen check queued durably' });
   } catch (error) {
     next(error);
   }
@@ -138,16 +98,17 @@ export const getJobStatusController = async (
   next: NextFunction
 ) => {
   try {
-    const job = getJob(req.params.jobId);
+    const job = await getDurableJob(req.params.jobId);
     if (!job) {
       res.status(404).json({ error: { message: 'Job not found', status: 404 } });
       return;
     }
     res.json({
       jobId: job.id,
-      status: job.status,
-      result: job.status === 'completed' ? job.result : undefined,
-      error: job.status === 'failed' ? job.error : undefined,
+      status: job.status.toLowerCase(),
+      attempts: job.attempts,
+      result: job.status === 'COMPLETED' ? job.result : undefined,
+      error: ['FAILED', 'DEAD_LETTER'].includes(job.status) ? job.error : undefined,
     });
   } catch (error) {
     next(error);

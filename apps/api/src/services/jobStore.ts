@@ -5,11 +5,13 @@ import path from 'path';
 export interface AsyncJob {
   id: string;
   type: string;
-  status: 'queued' | 'processing' | 'completed' | 'failed';
+  status: 'queued' | 'processing' | 'retrying' | 'completed' | 'failed' | 'dead_letter';
   result?: any;
   error?: string;
   createdAt: number;
   updatedAt: number;
+  attempts?: number;
+  nextRetryAt?: number;
 }
 
 const JOB_RETENTION_MS = Number(process.env.ASYNC_JOB_RETENTION_MS || 24 * 60 * 60 * 1000);
@@ -62,6 +64,29 @@ export function markJobProcessing(id: string): void {
   if (!job) return;
   job.status = 'processing';
   job.error = undefined;
+  job.updatedAt = Date.now();
+  persistJobs();
+}
+
+export function markJobRetrying(id: string, error: string, attempts: number, nextRetryAt?: number): void {
+  const job = jobs.get(id);
+  if (!job) return;
+  job.status = 'retrying';
+  job.error = error;
+  job.attempts = attempts;
+  job.nextRetryAt = nextRetryAt;
+  job.updatedAt = Date.now();
+  persistJobs();
+}
+
+export function deadLetterJob(id: string, error: string, attempts?: number): void {
+  const job = jobs.get(id);
+  if (!job) return;
+  job.status = 'dead_letter';
+  job.error = error;
+  job.attempts = attempts;
+  job.result = undefined;
+  job.nextRetryAt = undefined;
   job.updatedAt = Date.now();
   persistJobs();
 }

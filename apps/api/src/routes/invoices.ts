@@ -72,8 +72,8 @@ router.post('/:id/request-bank-change', authenticate, upload.single('attachment'
 router.post('/:id/upload-pdf', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), upload.single('file'), uploadController.uploadInvoicePdf);
 router.get('/:id/bank-change-requests', authenticate, invoiceController.getBankChangeRequestsForInvoice);
 router.get('/bank-change-requests/:requestId/attachment', authenticate, invoiceController.downloadBankChangeAttachment);
-router.post('/bank-change-requests/:requestId/approve', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), invoiceController.approveBankChangeRequest);
-router.post('/bank-change-requests/:requestId/reject', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), invoiceController.rejectBankChangeRequest);
+router.post('/bank-change-requests/:requestId/approve', authorize(UserRole.ACCOUNTING_SUPERVISOR), invoiceController.approveBankChangeRequest);
+router.post('/bank-change-requests/:requestId/reject', authorize(UserRole.ACCOUNTING_SUPERVISOR), invoiceController.rejectBankChangeRequest);
 router.delete('/:id', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.PURCHASING_MANAGER, UserRole.IT_ADMIN), invoiceController.deleteInvoice);
 
 export default router;

@@ -3,10 +3,19 @@ import { authenticate, authorize, AuthRequest } from '../middleware/auth';
 import { getVendorSuggestions } from '../services/vendorMatchingService';
 import prisma from '../config/database';
 import { UserRole } from '@ap-invoice/shared';
-import { inAppNotificationService } from '../services/inAppNotificationService';
 import { AppError } from '../middleware/errorHandler';
 import crypto from 'crypto';
 import { maskBankAccount } from '../utils/sensitiveData';
+import {
+  findDuplicateVendors,
+  findBankAccountReuse,
+  alertBankAccountReuse,
+  requestVendorBankUpdate,
+  listVendorBankChangeRequests,
+  approveVendorBankChange,
+  rejectVendorBankChange,
+  normalizeVendorName,
+} from '../services/vendorControlService';
 
 const router: Router = Router();
 
@@ -24,6 +33,34 @@ router.get('/suggestions', async (req: Request, res: Response, next: NextFunctio
       limit ? parseInt(limit as string) : 5
     );
     res.json(suggestions);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ─── Vendor bank change request queue (Phase 11: requester != approver) ─────
+// Must be registered before /:id to avoid route collisions.
+router.get('/bank-change-requests', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    res.json(await listVendorBankChangeRequests(req.query.status as string | undefined));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/bank-change-requests/:id/approve', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const result = await approveVendorBankChange(req.params.id, req.user!.id, req.user!.name || 'Unknown');
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/bank-change-requests/:id/reject', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const result = await rejectVendorBankChange(req.params.id, req.user!.id, req.user!.name || 'Unknown', req.body?.reason);
+    res.json(result);
   } catch (error) {
     next(error);
   }
@@ -99,8 +136,22 @@ router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
   }
 });
 
-router.post('/', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), async (req: Request, res: Response, next: NextFunction) => {
+router.post('/', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    // Phase 11: duplicate vendor check — block when an active vendor already
+    // has the same normalized name (case/space-insensitive).
+    if (req.body.name) {
+      const dupes = await findDuplicateVendors(req.body.name);
+      if (dupes.length > 0) {
+        return res.status(409).json({
+          error: {
+            message: `Duplicate vendor detected: "${dupes[0].name}" already exists (ID ${dupes[0].id}). Use the existing vendor or refine the name instead.`,
+            status: 409,
+          },
+        });
+      }
+    }
+
     const vendor = await prisma.vendor.create({
       data: {
         ...req.body,
@@ -113,6 +164,16 @@ router.post('/', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_A
         updated_at: new Date(),
       },
     });
+
+    // Phase 11: critical bank-reuse alert when the new vendor uses an account
+    // already assigned to another active vendor.
+    if (req.body.account_number) {
+      const reuse = await findBankAccountReuse(vendor.id, req.body.account_number);
+      if (reuse.length > 0) {
+        await alertBankAccountReuse(vendor.name, req.body.account_number, reuse, req.user?.id);
+      }
+    }
+
     res.status(201).json(vendor);
   } catch (error) {
     next(error);
@@ -124,30 +185,47 @@ router.patch('/:id', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTI
     const userRole = req.user?.role;
     const updateData = { ...req.body };
 
+    const currentVendor = await prisma.vendor.findUnique({ where: { id: req.params.id } });
+    if (!currentVendor) {
+      throw new AppError('Vendor not found', 404);
+    }
+
+    // Phase 11: duplicate vendor check on rename
+    if (updateData.name && normalizeVendorName(updateData.name) !== normalizeVendorName(currentVendor.name)) {
+      const dupes = await findDuplicateVendors(updateData.name, req.params.id);
+      if (dupes.length > 0) {
+        return res.status(409).json({
+          error: {
+            message: `Duplicate vendor detected: "${dupes[0].name}" already exists (ID ${dupes[0].id}). Use the existing vendor or refine the name instead.`,
+            status: 409,
+          },
+        });
+      }
+    }
+
+    // Phase 11: critical bank-reuse alert when account fields change to an
+    // account already assigned to another active vendor.
+    const attemptedBankFields = BANK_FIELDS.filter(f => f in updateData);
+    const changedBankFields = attemptedBankFields.filter(f => JSON.stringify((currentVendor as any)[f]) !== JSON.stringify(updateData[f]));
+    if (changedBankFields.includes('account_number') && updateData.account_number) {
+      const reuse = await findBankAccountReuse(req.params.id, updateData.account_number);
+      if (reuse.length > 0) {
+        await alertBankAccountReuse(currentVendor.name, updateData.account_number, reuse, req.user?.id);
+      }
+    }
+
     // If user is not accounting/IT, strip bank fields from the update
     if (userRole && !ACCOUNTING_ROLES.includes(userRole)) {
-      const attemptedBankFields = BANK_FIELDS.filter(f => f in updateData);
-      if (attemptedBankFields.length > 0) {
-        // Check if any bank field actually changed from current values
-        const currentVendor = await prisma.vendor.findUnique({ where: { id: req.params.id } });
-        if (currentVendor) {
-          const hasBankChanges = attemptedBankFields.some(f => {
-            const current = (currentVendor as any)[f];
-            const newVal = updateData[f];
-            return JSON.stringify(current) !== JSON.stringify(newVal);
-          });
-          if (hasBankChanges) {
-            return res.status(403).json({ 
-              error: { 
-                message: 'You cannot modify bank information. Please submit a bank update request to the Accounting team.',
-                status: 403 
-              } 
-            });
-          }
-        }
-        // Remove bank fields from update (no changes detected, but prevent setting them)
-        BANK_FIELDS.forEach(f => delete updateData[f]);
+      if (changedBankFields.length > 0) {
+        return res.status(403).json({ 
+          error: { 
+            message: 'You cannot modify bank information. Please submit a bank update request to the Accounting team.',
+            status: 403 
+          } 
+        });
       }
+      // Remove bank fields from update (no changes detected, but prevent setting them)
+      BANK_FIELDS.forEach(f => delete updateData[f]);
     }
 
     const vendor = await prisma.vendor.update({
@@ -163,7 +241,8 @@ router.patch('/:id', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTI
   }
 });
 
-// Request bank info update — any authenticated user can request
+// Request bank info update — any authenticated user can request. Persisted as a
+// VendorBankChangeRequest so requester != approver is enforceable server-side.
 router.post('/:id/request-bank-update', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const vendor = await prisma.vendor.findUnique({ where: { id: req.params.id } });
@@ -176,40 +255,36 @@ router.post('/:id/request-bank-update', authenticate, async (req: AuthRequest, r
       throw new AppError('A reason for the bank update request is required', 400);
     }
 
-    const requesterName = req.user?.name || 'Unknown';
-    const requesterRole = req.user?.role || 'Unknown';
+    const candidates = [
+      { field: 'bank_name', value: bank_name },
+      { field: 'swift_code', value: swift_code },
+      { field: 'account_number', value: account_number },
+    ].filter(c => c.value !== undefined && String(c.value) !== String((vendor as any)[c.field] ?? ''));
 
-    // Build summary of requested changes
-    const changes: string[] = [];
-    if (bank_name !== undefined && bank_name !== vendor.bank_name) changes.push(`Bank Name: "${vendor.bank_name || 'N/A'}" → "${bank_name || 'N/A'}"`);
-    if (swift_code !== undefined && swift_code !== vendor.swift_code) changes.push(`SWIFT Code: "${vendor.swift_code || 'N/A'}" → "${swift_code || 'N/A'}"`);
-    if (account_number !== undefined && account_number !== vendor.account_number) changes.push(`Account Number: "${vendor.account_number || 'N/A'}" → "${account_number || 'N/A'}"`);
-
-    if (changes.length === 0) {
+    if (candidates.length === 0) {
       throw new AppError('No bank information changes detected in the request', 400);
     }
 
-    // Create notification for accounting team
-    await inAppNotificationService.create({
-      vendor_name: vendor.name,
-      title: 'Bank Info Update Request',
-      message: `${requesterName} (${requesterRole}) requested a bank info update for vendor "${vendor.name}".\nReason: ${reason.trim()}\nRequested changes:\n${changes.join('\n')}`,
-      type: 'warning',
-      category: 'stage',
-      target_role: UserRole.ACCOUNTING_SUPERVISOR,
-    });
+    const requesterName = req.user?.name || 'Unknown';
+    const requesterRole = req.user?.role || 'Unknown';
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new AppError('Authenticated user ID missing', 401);
+    }
 
-    // Also notify ACCOUNTING_ASSOCIATE
-    await inAppNotificationService.create({
-      vendor_name: vendor.name,
-      title: 'Bank Info Update Request',
-      message: `${requesterName} (${requesterRole}) requested a bank info update for vendor "${vendor.name}".\nReason: ${reason.trim()}\nRequested changes:\n${changes.join('\n')}`,
-      type: 'warning',
-      category: 'stage',
-      target_role: UserRole.ACCOUNTING_ASSOCIATE,
-    });
+    const requests: any[] = [];
+    for (const c of candidates) {
+      const result = await requestVendorBankUpdate(
+        vendor.id,
+        { field: c.field, requested_value: c.value, reason },
+        userId,
+        requesterName,
+        requesterRole
+      );
+      requests.push(result.request);
+    }
 
-    res.json({ message: 'Bank update request sent to the Accounting team' });
+    res.json({ message: 'Bank update request(s) submitted — Accounting has been notified.', requests });
   } catch (error) {
     next(error);
   }
@@ -225,6 +300,24 @@ router.patch('/:id/bank-details', authorize(UserRole.ACCOUNTING_SUPERVISOR, User
     const vendor = await prisma.vendor.findUnique({ where: { id: vendorId } });
     if (!vendor) {
       throw new AppError('Vendor not found', 404);
+    }
+
+    // Phase 11: requester != approver — the user applying a bank change cannot
+    // be the requester of an open request for the same vendor.
+    const pendingOwnRequest = await prisma.vendorBankChangeRequest.findFirst({
+      where: { vendor_id: vendorId, status: 'PENDING', requested_by_id: req.user!.id },
+    });
+    if (pendingOwnRequest) {
+      throw new AppError('You cannot apply a bank change you requested. Ask another Accounting user to review and apply it.', 403);
+    }
+
+    // Phase 11: critical bank-reuse alert when the account number changes to
+    // one already assigned to another active vendor.
+    if (account_number !== undefined && account_number !== vendor.account_number && account_number) {
+      const reuse = await findBankAccountReuse(vendorId, account_number);
+      if (reuse.length > 0) {
+        await alertBankAccountReuse(vendor.name, account_number, reuse, req.user?.id);
+      }
     }
 
     // Build update data for vendor
@@ -255,6 +348,26 @@ router.patch('/:id/bank-details', authorize(UserRole.ACCOUNTING_SUPERVISOR, User
         data: { ...invoiceUpdate, updated_at: new Date() },
       });
       updatedInvoices = result.count;
+    }
+
+    // Phase 11: auto-approve pending requests from OTHER users whose requested
+    // value matches the applied field (the requester != approver rule already
+    // blocked self-application above).
+    const appliedFields: Record<string, any> = {};
+    if (bank_name !== undefined) appliedFields.bank_name = bank_name;
+    if (swift_code !== undefined) appliedFields.swift_code = swift_code;
+    if (account_number !== undefined) appliedFields.account_number = account_number;
+    const pendingRequests = await prisma.vendorBankChangeRequest.findMany({
+      where: { vendor_id: vendorId, status: 'PENDING' },
+    });
+    for (const pending of pendingRequests) {
+      if (pending.requested_by_id === req.user!.id) continue; // defensive: never self-approve
+      if (pending.field in appliedFields && String(appliedFields[pending.field]) === String(pending.requested_value)) {
+        await prisma.vendorBankChangeRequest.update({
+          where: { id: pending.id },
+          data: { status: 'APPROVED', reviewed_by: req.user!.name || 'Unknown', reviewed_at: new Date() },
+        });
+      }
     }
 
     // Create audit log

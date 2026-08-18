@@ -44,6 +44,7 @@ model Vendor {
   created_at              DateTime @default(now())
   updated_at              DateTime @updatedAt
   invoices                Invoice[]
+  bank_change_requests    VendorBankChangeRequest[]
   
   @@index([name])
   @@index([is_active])
@@ -384,6 +385,30 @@ model BankChangeRequest {
   @@index([invoice_id])
   @@index([status])
   @@map("APInvoice_BankChangeRequest")
+}
+
+// Persisted vendor-master bank change requests so the requester can never
+// approve their own change (requester != approver). Created via
+// POST /api/vendors/:id/request-bank-update; approved implicitly when
+// Accounting applies the change through /api/vendors/:id/bank-details.
+model VendorBankChangeRequest {
+  id              String   @id @default(uuid())
+  vendor_id       String
+  vendor          Vendor   @relation(fields: [vendor_id], references: [id], onDelete: Cascade)
+  field           String
+  current_value   String?
+  requested_value String
+  reason          String
+  requested_by    String
+  requested_by_id String?
+  status          String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  reviewed_by     String?
+  reviewed_at     DateTime?
+  created_at      DateTime @default(now())
+
+  @@index([vendor_id])
+  @@index([status])
+  @@map("APInvoice_VendorBankChangeRequest")
 }
 
 model Payment {

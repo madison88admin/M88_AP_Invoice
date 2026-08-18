@@ -94,6 +94,7 @@ export default function InvoiceUpload() {
   const [selectedVendor, setSelectedVendor] = useState<string>('');
   const [accountingPreapproved, setAccountingPreapproved] = useState(false);
   const [notes, setNotes] = useState('');
+  const [storagePath, setStoragePath] = useState<string | undefined>(undefined);
 
   const handleFileSelect = useCallback((selectedFile: File) => {
     setFile(selectedFile);
@@ -129,6 +130,10 @@ export default function InvoiceUpload() {
       const extraction = response.data.extraction || response.data.ocr_result;
       setOcrResult(extraction);
       setOriginalOcrResult(extraction ? JSON.parse(JSON.stringify(extraction)) : null);
+      // The authoritative PDF lives in Supabase storage; the upload response carries
+      // its key at the top level (not inside extraction). Keep it so confirmOCR can
+      // link pdf_path / raw_file_url — otherwise the invoice record has no PDF.
+      setStoragePath(response.data.storage_path);
       setVendorMatch(response.data.vendor_match);
       setRequiresManualVendor(response.data.requires_manual_vendor_assignment);
       setCorrectionSaved(false);
@@ -234,6 +239,7 @@ export default function InvoiceUpload() {
         source_document_type: ocrResult.source_document_type,
         structured_source_format: ocrResult.structured_source_format,
         document_layout_fingerprint: ocrResult.document_layout_fingerprint,
+        storage_path: storagePath,
         accounting_preapproved: accountingUpload && accountingPreapproved,
         approval_evidence_confirmed: accountingUpload && accountingPreapproved,
       });

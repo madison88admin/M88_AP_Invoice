@@ -6,6 +6,7 @@ import { analyzeInvoice } from './ocrService';
 import { matchVendor, matchOrCreateVendor } from './vendorMatchingService';
 import { validateInvoice } from './validationService';
 import { checkEmailDuplicate, generateFileHash } from './emailDuplicateService';
+import { checkDuplicateInvoice } from './duplicateDetectionService';
 import { uploadToStorage } from './supabaseStorageService';
 import {
   InvoiceStatus,
@@ -142,6 +143,47 @@ function recoverStuckFilesPeriodic(): void {
 }
 
 /**
+ * Best-effort recovery of an invoice number from an SFTP filename.
+ * SFTP filenames frequently embed the real invoice number, e.g.
+ *   "1786950726377__PT_PAXAR_INV_PCI-26031718..pdf" → PCI-26031718
+ *   "Bo Hing_Inv_1609160_HT&DRT.pdf"                  → INV-1609160
+ * Returns null when no credible pattern is found.
+ */
+function extractInvoiceNumberFromFilename(fileName: string): string | null {
+  const base = path.basename(fileName).replace(/\.pdf$/i, '');
+
+  // Label-prefixed numbers first (most specific, least ambiguous):
+  //   PCI-26031718, INV-1609160, INVOICE_123456, I/V.123456, NO-123456
+  // Note: underscores are word characters, so we anchor with an explicit
+  // non-letter/non-digit boundary instead of \b ("INV_PCI-..." would otherwise fail).
+  const labeledPatterns = [
+    /(?:^|[^A-Za-z0-9])(PCI[-_. ]?\d{4,10})(?![0-9])/i,
+    /(?:^|[^A-Za-z0-9])((?:INV|INVOICE|IV|I\/V)[-_. ]?\d{3,12})(?![0-9])/i,
+    /(?:^|[^A-Za-z0-9])(NO[-_. ]?\d{4,10})(?![0-9])/i,
+  ];
+  const normalize = (value: string): string =>
+    value.replace(/[_. ]+/g, '-').replace(/-+/g, '-').trim().toUpperCase();
+
+  for (const pattern of labeledPatterns) {
+    const match = base.match(pattern);
+    if (!match) continue;
+    const raw = normalize(match[1]);
+    if (/\d/.test(raw)) return raw;
+  }
+
+  // Generic vendor-prefixed pattern: PAX-445-2026, GF-2026-001234
+  const generic = base.match(/(?:^|[^A-Za-z0-9])([A-Z]{2,4}[-_. ]\d{4,10}(?:[-_. ]\d{2,8})?)(?![0-9])/i);
+  if (generic) {
+    const raw = normalize(generic[1]);
+    // Never treat SFTP/FTPS watcher names, PO numbers, or MPO references as invoice numbers
+    if (/^(SFTP|FTPS|FTP|PO|MPO|SO|DO)/i.test(raw)) return null;
+    if (/\d/.test(raw)) return raw;
+  }
+
+  return null;
+}
+
+/**
  * Process a single PDF file:
  * 1. Move to Processing
  * 2. Multi-invoice detection (split if needed)
@@ -263,6 +305,19 @@ async function processSingleInvoiceBuffer(
     return;
   }
 
+  // Step 3c: Recover the invoice number from the original filename when OCR missed it.
+  // SFTP filenames frequently embed the real invoice number
+  // (e.g. "1786950726377__PT_PAXAR_INV_PCI-26031718..pdf" → PCI-26031718).
+  // Doing this before duplicate detection lets the number-based checks catch
+  // re-ingested PDFs and avoids creating placeholder numbers like SFTP-<timestamp>.
+  if (!ocrResult.invoice_number) {
+    const filenameNumber = extractInvoiceNumberFromFilename(fileName);
+    if (filenameNumber) {
+      logger.info(`[File Watcher] Recovered invoice number "${filenameNumber}" from filename "${fileName}" (OCR returned none)`);
+      ocrResult.invoice_number = filenameNumber;
+    }
+  }
+
   // Step 4: Duplicate detection
   const fileHash = generateFileHash(fileBuffer);
   const dupResult = await checkEmailDuplicate(fileBuffer, undefined, {
@@ -322,8 +377,40 @@ async function processSingleInvoiceBuffer(
   const effectiveVendorId = vendorId || UNKNOWN_VENDOR_ID;
   const isVendorUnknown = !vendorId;
 
+  // Step 5b: Fuzzy duplicate check — same vendor + amount + invoice date (±3 days).
+  // Catches re-ingested PDFs that slip past the number-based duplicate checks above
+  // because the invoice number could not be extracted (OCR missed it AND the
+  // filename has none). Only run for KNOWN vendors — matching against the UNKNOWN
+  // vendor bucket would produce false positives.
+  if (!ocrResult.invoice_number && !isVendorUnknown && ocrResult.total_amount > 0 && ocrResult.invoice_date) {
+    try {
+      const fuzzyDup = await checkDuplicateInvoice(
+        '', // no number available — rely on fuzzy vendor/amount/date matching
+        effectiveVendorId,
+        ocrResult.total_amount,
+        new Date(ocrResult.invoice_date)
+      );
+      if (fuzzyDup.is_duplicate && fuzzyDup.existing_invoice_id) {
+        const reason = fuzzyDup.fuzzy_match_details?.match_reason || fuzzyDup.duplicate_type || 'fuzzy match';
+        logger.warn(`[File Watcher] Duplicate (${fuzzyDup.duplicate_type}) for ${fileName}${partLabel} → existing ${fuzzyDup.existing_invoice_number}: ${reason}`);
+        if (splitIndex === undefined) safeMove(processingPath, DUPLICATES_DIR);
+        await createAuditLog(fuzzyDup.existing_invoice_id, 'WATCHER_DUPLICATE', `Duplicate detected for ${fileName}: ${reason}`);
+        return;
+      }
+    } catch (fuzzyErr) {
+      logger.warn(`[File Watcher] Fuzzy duplicate check failed for ${fileName}${partLabel}:`, fuzzyErr);
+    }
+  }
+
   // Fix: ensure invoice_number is not empty (unique constraint in DB)
   const effectiveInvoiceNumber = ocrResult.invoice_number || `SFTP-${Date.now()}`;
+  if (!ocrResult.invoice_number) {
+    logger.warn(
+      `[File Watcher] No invoice number found for ${fileName}${partLabel} — using placeholder "${effectiveInvoiceNumber}". ` +
+      `The real invoice number may be visible in the PDF; correct it before posting.`
+    );
+    await createAuditLog(null, 'WATCHER_FALLBACK_INVOICE_NUMBER', `No invoice number extracted for ${fileName}; placeholder ${effectiveInvoiceNumber} used.`);
+  }
 
   // Step 6: Build invoice data
   const tier = determineApprovalTier(ocrResult.total_amount || 0);

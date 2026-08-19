@@ -64,9 +64,19 @@ export default function FinanceControlsDashboard() {
   const [codeFilter, setCodeFilter] = useState('');
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
   const [acting, setActing] = useState('');
+  const [error, setError] = useState('');
 
   const load = useCallback(async () => setRuns((await api.get('/api/finance-controls/runs')).data), []);
   useEffect(() => { void load(); }, [load]);
+
+  const hasRunning = runs.some((r) => r.status === 'RUNNING');
+
+  // Scans execute in the background, so follow their progress until they finish.
+  useEffect(() => {
+    if (!hasRunning) return;
+    const timer = setInterval(() => { void load(); }, 5000);
+    return () => clearInterval(timer);
+  }, [hasRunning, load]);
 
   // Keep the selected run valid — after a fresh scan/reconcile, jump to the newest run.
   useEffect(() => {
@@ -75,7 +85,17 @@ export default function FinanceControlsDashboard() {
     }
   }, [runs, selectedRunId]);
 
-  const execute = async (path: string) => { setBusy(path); try { await api.post(path); await load(); } finally { setBusy(''); } };
+  const execute = async (path: string) => {
+    setBusy(path);
+    try {
+      await api.post(path);
+      await load();
+    } catch (err: any) {
+      setError(err?.response?.data?.error?.message || err?.message || 'Failed to start run');
+    } finally {
+      setBusy('');
+    }
+  };
 
   const act = async (id: string, action: string) => {
     let note: string | undefined;
@@ -149,7 +169,7 @@ export default function FinanceControlsDashboard() {
           <button
             className="px-4 py-2 rounded-lg text-white text-sm font-medium flex items-center gap-2 disabled:opacity-50"
             style={{ background: 'var(--accent-amber)' }}
-            disabled={!!busy}
+            disabled={!!busy || hasRunning}
             onClick={() => execute('/api/finance-controls/anomaly-scan')}
           >
             {busy === '/api/finance-controls/anomaly-scan' ? <Loader2 className="h-4 w-4 animate-spin" /> : <AlertTriangle className="h-4 w-4" />}
@@ -158,15 +178,25 @@ export default function FinanceControlsDashboard() {
           <button
             className="px-4 py-2 rounded-lg text-white text-sm font-medium flex items-center gap-2 disabled:opacity-50"
             style={{ background: 'var(--accent-blue)' }}
-            disabled={!!busy}
+            disabled={!!busy || hasRunning}
             onClick={() => execute('/api/finance-controls/reconcile')}
           >
             {busy === '/api/finance-controls/reconcile' ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             Run four-way reconciliation
           </button>
-          <button className="px-4 py-2 rounded-lg border text-sm" style={{ background: 'var(--bg-card)', color: 'var(--text-primary)' }} onClick={() => void load()}>
-            Refresh
+          <button
+            className="px-4 py-2 rounded-lg border text-sm"
+            style={{ background: 'var(--bg-card)', color: 'var(--text-primary)' }}
+            title="Reloads previous run history. It does not start a new scan."
+            onClick={() => void load()}
+          >
+            Reload run history
           </button>
+          {hasRunning && (
+            <span className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-muted)' }}>
+              <Loader2 className="h-4 w-4 animate-spin" /> Scan running in background…
+            </span>
+          )}
         </div>
         <select
           value={selectedRunId}
@@ -182,6 +212,12 @@ export default function FinanceControlsDashboard() {
           ))}
         </select>
       </div>
+
+      {error && (
+        <div className="px-4 py-3 rounded-xl text-sm" style={{ background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', color: 'var(--accent-red)' }}>
+          {error}
+        </div>
+      )}
 
       {/* Summary stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">

@@ -31,9 +31,43 @@ import {
   TOP_10_BRANDS,
 } from '@ap-invoice/shared';
 import prisma from '../config/database';
+import { eventBroadcaster } from './eventBroadcaster';
 
 let watcherInterval: NodeJS.Timeout | null = null;
 let isProcessing = false;
+
+// Hard ceiling for a single file so a hung Graph/OCR call can't pin
+// `isProcessing` and silently stop every later poll.
+const FILE_PROCESSING_TIMEOUT_MS = Number(process.env.SHAREPOINT_WATCHER_FILE_TIMEOUT_MS || 10 * 60 * 1000);
+
+const status = {
+  running: false,
+  configured: false,
+  intervalSeconds: 0,
+  processing: false,
+  currentFile: null as string | null,
+  lastPollStartedAt: null as string | null,
+  lastPollFinishedAt: null as string | null,
+  lastFileProcessedAt: null as string | null,
+  lastError: null as string | null,
+  queueDepth: 0,
+  processedCount: 0,
+  timedOutCount: 0,
+};
+
+export function getSharePointWatcherStatus() {
+  return { ...status };
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (err) => { clearTimeout(timer); reject(err); }
+    );
+  });
+}
 
 /**
  * Process a single file from IncomingInvoices:
@@ -262,6 +296,15 @@ async function processIncomingFile(file: { id: string; name: string; size: numbe
       },
     });
 
+    // Push the intake to connected clients so it appears without waiting for
+    // the next dashboard poll.
+    eventBroadcaster.broadcast({
+      type: 'INVOICE_CREATED',
+      invoiceId: invoice.id,
+      data: { invoice_number: invoice.invoice_number, status: invoice.status, source: 'sharepoint_watcher' },
+      timestamp: Date.now(),
+    });
+
     // Create exception if vendor not matched
     if (!vendorId) {
       await prisma.exception.create({
@@ -320,9 +363,12 @@ async function processIncomingFile(file: { id: string; name: string; size: numbe
 async function pollIncomingFolder(): Promise<void> {
   if (isProcessing) return;
   isProcessing = true;
+  status.processing = true;
+  status.lastPollStartedAt = new Date().toISOString();
 
   try {
     const files = await listFilesInFolder(FOLDER_INCOMING);
+    status.queueDepth = files.filter((f) => f.name.toLowerCase().endsWith('.pdf')).length;
 
     if (files.length === 0) return;
 
@@ -335,16 +381,27 @@ async function pollIncomingFolder(): Promise<void> {
         logger.info(`[SharePoint Watcher] Skipping non-PDF: ${file.name}`);
         continue;
       }
+      status.currentFile = file.name;
       try {
-        await processIncomingFile(file);
+        await withTimeout(processIncomingFile(file), FILE_PROCESSING_TIMEOUT_MS, `Processing ${file.name}`);
+        status.processedCount++;
+        status.lastFileProcessedAt = new Date().toISOString();
       } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.includes('timed out after')) status.timedOutCount++;
+        status.lastError = `${file.name}: ${message}`;
         logger.error(`[SharePoint Watcher] Unhandled error for ${file.name}:`, err);
+      } finally {
+        status.currentFile = null;
       }
     }
   } catch (err) {
+    status.lastError = err instanceof Error ? err.message : String(err);
     logger.error('[SharePoint Watcher] Poll cycle error:', err);
   } finally {
     isProcessing = false;
+    status.processing = false;
+    status.lastPollFinishedAt = new Date().toISOString();
   }
 }
 
@@ -395,6 +452,10 @@ export async function startSharePointWatcher(intervalSeconds: number = 30): Prom
     return;
   }
 
+  status.configured = true;
+  status.running = true;
+  status.intervalSeconds = intervalSeconds;
+
   logger.info(`[SharePoint Watcher] Starting with ${intervalSeconds}s poll interval`);
 
   // Ensure all folders exist
@@ -420,6 +481,7 @@ export async function startSharePointWatcher(intervalSeconds: number = 30): Prom
  * Stop the SharePoint folder watcher.
  */
 export function stopSharePointWatcher(): void {
+  status.running = false;
   if (watcherInterval) {
     clearInterval(watcherInterval);
     watcherInterval = null;

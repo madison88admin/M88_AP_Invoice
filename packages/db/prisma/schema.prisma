@@ -196,6 +196,8 @@ model Invoice {
   @@index([invoice_hash])
   @@index([invoice_number, vendor_id, invoice_type])
   @@index([mpo_base_number, mpo_order_sequence, material_code])
+  @@index([created_at])
+  @@index([status, created_at])
   @@map("APInvoice_Invoice")
 }
 

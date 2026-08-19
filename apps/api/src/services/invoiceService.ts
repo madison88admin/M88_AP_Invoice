@@ -331,6 +331,114 @@ const applyVendorDisplayFallbacks = (invoice: any) => {
   };
 };
 
+// Field projection for the invoice list endpoint. Deliberately excludes the
+// large per-invoice JSON columns (ocr_raw_data, bank_match_details) and the
+// invoice_lines relation: no list view renders them, and they dominate the
+// response size. Fetch a single invoice for the full record.
+const INVOICE_LIST_SELECT = {
+  id: true,
+  invoice_number: true,
+  revision: true,
+  invoice_date: true,
+  invoice_received_date: true,
+  due_date: true,
+  subtotal: true,
+  tax_amount: true,
+  discount_amount: true,
+  bank_charges: true,
+  freight_charges: true,
+  additional_charges: true,
+  courier_charges: true,
+  handling_fee: true,
+  tt_charge: true,
+  setup_charge: true,
+  sample_charge: true,
+  min_order_charge: true,
+  finance_surcharge: true,
+  total_amount: true,
+  currency: true,
+  invoice_currency_original: true,
+  exchange_rate_to_usd: true,
+  vendor_id: true,
+  vendor_name_raw: true,
+  ship_to: true,
+  sold_to: true,
+  customer_po_number: true,
+  mpo_number: true,
+  mpo_base_number: true,
+  mpo_order_sequence: true,
+  material_code: true,
+  material_name: true,
+  brand_code: true,
+  brand: true,
+  brand_tier: true,
+  season: true,
+  order_type: true,
+  qty_shipped: true,
+  incoterm: true,
+  hs_code: true,
+  grand_total: true,
+  invoice_type: true,
+  invoice_template_type: true,
+  category: true,
+  parent_invoice_id: true,
+  date_range_start: true,
+  date_range_end: true,
+  status: true,
+  approval_tier: true,
+  current_approver_role: true,
+  priority_flag: true,
+  priority_pay_date: true,
+  is_urgent: true,
+  is_duplicate: true,
+  ocr_confidence_score: true,
+  is_handwritten: true,
+  source_document_type: true,
+  structured_source_format: true,
+  document_layout_fingerprint: true,
+  po_validation: true,
+  exception_reasons: true,
+  beneficiary_name: true,
+  bank_name: true,
+  swift_code: true,
+  account_number: true,
+  invoice_hash: true,
+  bank_match_status: true,
+  qb_memo: true,
+  qb_account_class: true,
+  qb_posted_at: true,
+  sharepoint_folder_url: true,
+  sharepoint_filed_at: true,
+  bill_to_entity: true,
+  payment_terms: true,
+  payment_penalty_rate: true,
+  confirmation_sent_at: true,
+  source: true,
+  raw_file_url: true,
+  pdf_path: true,
+  created_at: true,
+  updated_at: true,
+  vendor: {
+    select: {
+      id: true,
+      name: true,
+      beneficiary_name: true,
+      bank_name: true,
+      account_number: true,
+      swift_code: true,
+      invoice_template_type: true,
+      contact_email: true,
+      is_active: true,
+    },
+  },
+  signatures: true,
+  exceptions: true,
+  stage_timestamps: true,
+  payments: true,
+  follow_up_tasks: true,
+  payment_confirmations: true,
+} satisfies Prisma.InvoiceSelect;
+
 const ALL_STAGES = [
   'RECEIVED', 'VALIDATION_PENDING', 'EXCEPTION_FLAGGED',
   'PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_MLO_ACCOUNT_HOLDER',
@@ -451,24 +559,27 @@ export const getInvoices = async (filters: any, userRole?: string) => {
     }
   }
 
-  const invoices = await prisma.invoice.findMany({
-    where,
-    include: {
-      vendor: true,
-      signatures: true,
-      exceptions: true,
-      stage_timestamps: true,
-      invoice_lines: true,
-      payments: true,
-      follow_up_tasks: true,
-      payment_confirmations: true,
-    },
-    orderBy: {
-      created_at: 'desc',
-    },
-  });
+  const limit = Number.isFinite(Number(filters.limit)) && Number(filters.limit) > 0
+    ? Math.min(Number(filters.limit), 500)
+    : undefined;
+  const page = Number.isFinite(Number(filters.page)) && Number(filters.page) > 0
+    ? Number(filters.page)
+    : 1;
 
-  return invoices.map(applyVendorDisplayFallbacks);
+  const [invoices, total] = await Promise.all([
+    prisma.invoice.findMany({
+      where,
+      select: INVOICE_LIST_SELECT,
+      orderBy: {
+        created_at: 'desc',
+      },
+      ...(limit ? { take: limit, skip: (page - 1) * limit } : {}),
+    }),
+    limit ? prisma.invoice.count({ where }) : Promise.resolve(undefined),
+  ]);
+
+  const rows = invoices.map(applyVendorDisplayFallbacks);
+  return limit ? Object.assign(rows, { totalCount: total }) : rows;
 };
 
 export const getInvoiceById = async (id: string) => {

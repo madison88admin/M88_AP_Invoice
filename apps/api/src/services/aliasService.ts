@@ -57,7 +57,22 @@ export function namesEquivalent(
   if (normA === normB) return true;
   const resolvedA = resolveName(normA, aliasMap);
   const resolvedB = resolveName(normB, aliasMap);
-  return normalizeName(resolvedA) === normalizeName(resolvedB);
+  if (normalizeName(resolvedA) === normalizeName(resolvedB)) return true;
+
+  // Fuzzy match: check if one name contains the other, or if they share
+  // a common root word (ignoring corporate suffixes/stop words).
+  // e.g. "Avery Dennison RIS Vietnam CO., Limited" ~ "Avery Dennison - Vietnam"
+  const stopWords = new Set([
+    'the', 'ltd', 'limited', 'inc', 'corp', 'corporation', 'group', 'co',
+    'company', 'hk', 'pvt', 'llc', 'sa', 'ag', 'gmbh', 'ris', 'trading',
+    'h', 'k', 'hong', 'kong', 'international', 'industries', 'industrial',
+    'enterprises', 'holdings', 'solutions', 'services', 'global',
+  ]);
+  const wordsA = normA.split(/[\s,.&()\-]+/).filter(w => w.length > 2 && !stopWords.has(w));
+  const wordsB = normB.split(/[\s,.&()\-]+/).filter(w => w.length > 2 && !stopWords.has(w));
+  // If they share at least one significant root word (3+ chars), consider equivalent
+  const shared = wordsA.filter(w => wordsB.some(wb => wb.includes(w) || w.includes(wb)));
+  return shared.length > 0;
 }
 
 export async function listAliases(entityType?: string) {

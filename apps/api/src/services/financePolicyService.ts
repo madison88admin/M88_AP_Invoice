@@ -51,8 +51,8 @@ function parseNonPoCategories(): string[] {
 export function getFinancePolicy(): FinancePolicy {
   return {
     lineRoundingTolerance: boundedNumber('FINANCE_LINE_ROUNDING_TOLERANCE', 0.01, 0, 1),
-    invoiceRoundingTolerance: boundedNumber('FINANCE_INVOICE_ROUNDING_TOLERANCE', 0.02, 0, 1),
-    poAmountTolerancePercent: boundedNumber('FINANCE_PO_AMOUNT_TOLERANCE_PCT', 0, 0, 0.1),
+    invoiceRoundingTolerance: boundedNumber('FINANCE_INVOICE_ROUNDING_TOLERANCE', 1.00, 0, 10),
+    poAmountTolerancePercent: boundedNumber('FINANCE_PO_AMOUNT_TOLERANCE_PCT', 0.01, 0, 0.1),
     postingWarningPercent: boundedNumber('FINANCE_POSTING_WARNING_PCT', 0, 0, 0.1),
     enforcementMode: boundedMode('FINANCE_ENFORCEMENT_MODE', 'advisory'),
     nonPoCategories: parseNonPoCategories(),

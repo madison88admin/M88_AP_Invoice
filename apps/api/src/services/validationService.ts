@@ -12,6 +12,23 @@ import { validateFinanceArithmetic, financeIssueIsBlocking } from './financeCont
 import { getFinancePolicy, isNonPOCategory } from './financePolicyService';
 import { retainValidationSnapshot } from './validationSnapshotService';
 
+// Levenshtein distance for fuzzy string comparison (e.g. SWIFT code OCR typos)
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (a[i - 1] === b[j - 1]) dp[i][j] = dp[i - 1][j - 1];
+      else dp[i][j] = 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
 export type ValidationState = 'MATCHED' | 'WITHIN_TOLERANCE' | 'MISMATCH' | 'INCOMPLETE' | 'UNAVAILABLE' | 'NOT_APPLICABLE';
 
 export interface ValidationResult {
@@ -836,14 +853,19 @@ async function validateBankDetails(invoice: any): Promise<ValidationResult> {
   const ocrSwiftNormalized = normalizeSwift(invoiceBank.swift_code || '');
   const vendorSwiftNormalized = normalizeSwift(vendorSwift || '');
 
-  // Compare SWIFT codes
+  // Compare SWIFT codes — allow 1-character OCR typo tolerance
   if (vendorSwift && ocrSwiftNormalized && vendorSwiftNormalized !== ocrSwiftNormalized) {
-    return {
-      passed: false,
-      reason: ExceptionReason.BANK_DETAIL_MISMATCH,
-      message: 'SWIFT code does not match vendor records',
-      detail: `OCR SWIFT: "${invoiceBank.swift_code}" vs Vendor SWIFT: "${vendorSwift}"`,
-    };
+    // Check Levenshtein distance for 1-char OCR typo (e.g. CITIVVXHCM vs CITIVNVXHCM)
+    const swiftDist = levenshtein(ocrSwiftNormalized, vendorSwiftNormalized);
+    if (swiftDist > 1) {
+      return {
+        passed: false,
+        reason: ExceptionReason.BANK_DETAIL_MISMATCH,
+        message: 'SWIFT code does not match vendor records',
+        detail: `OCR SWIFT: "${invoiceBank.swift_code}" vs Vendor SWIFT: "${vendorSwift}"`,
+      };
+    }
+    // 1-char difference — likely OCR typo, accept as match
   }
 
   // Compare account numbers (normalize by removing spaces, dashes, and leading zeros)
@@ -929,21 +951,20 @@ function validateSignatures(amount: number, signatures: any[]): ValidationResult
     };
   }
 
-  // Digital workflow: signatures are created during approval. If no signatures
-  // exist yet, skip validation so the invoice can proceed to approval request.
-  if (!signatures || signatures.length === 0) {
+  // Filter out OCR-detected PDF signatures — they don't count as workflow approvals
+  const workflowSignatures = signatures?.filter((sig: any) => !sig.ocr_detected) || [];
+
+  // Digital workflow: if no workflow signatures exist yet (all OCR or none),
+  // skip validation so the invoice can proceed to approval request.
+  if (workflowSignatures.length === 0) {
     return {
       passed: true,
       message: 'Digital workflow - signatures will be collected during approval',
     };
   }
 
-  // OCR-detected pre-existing signatures from the PDF are disregarded.
-  // They do NOT count as workflow approvals — only manual system sign-offs count.
-  // Proceed to check actual workflow signatures below.
-
-  // Count signed workflow signatures (exclude OCR-detected PDF signatures)
-  const signedSignatures = signatures?.filter((sig: any) => sig.signed_at && !sig.ocr_detected) || [];
+  // Count signed workflow signatures
+  const signedSignatures = workflowSignatures.filter((sig: any) => sig.signed_at) || [];
   const signedRoles = signedSignatures.map((sig: any) => sig.signatory_role as string);
 
   const tier = determineApprovalTier(amount);
@@ -1056,7 +1077,21 @@ function checkLateSubmission(invoice: any): ValidationResult {
 
   const invoiceDate = new Date(invoice.invoice_date);
   const receivedDate = new Date(invoice.invoice_received_date);
-  
+
+  // Guard against invalid/parsed dates (e.g. null or epoch 0 = 1970-01-01)
+  if (isNaN(invoiceDate.getTime()) || invoiceDate.getFullYear() < 2000) {
+    return {
+      passed: true,
+      message: 'Invoice date invalid or missing — late submission check skipped',
+    };
+  }
+  if (isNaN(receivedDate.getTime()) || receivedDate.getFullYear() < 2000) {
+    return {
+      passed: true,
+      message: 'Received date invalid or missing — late submission check skipped',
+    };
+  }
+
   const daysDiff = Math.floor((receivedDate.getTime() - invoiceDate.getTime()) / (1000 * 60 * 60 * 24));
 
   // Check if invoice is old (more than 90 days)

@@ -1343,8 +1343,12 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
       const lineBaseMpo = String(invLine.mpo_base_number || baseMpo || '').trim();
       const lineSequence = invLine.mpo_order_sequence || undefined;
       const lineMaterial = invLine.material_code || undefined;
-      if (!lineBaseMpo || !lineSequence || !lineMaterial) {
-        lineControlDifferences.push(`Line ${lineNumber}: Base MPO, order sequence, and material are required.`);
+      const lineMaterialName = invLine.material_name || undefined;
+      // Require Base MPO (can fallback to header) and at least one material identifier.
+      // order_sequence and material_code are often not on the invoice — try matching
+      // by material_name alone before flagging as a difference.
+      if (!lineBaseMpo || (!lineMaterial && !lineMaterialName)) {
+        lineControlDifferences.push(`Line ${lineNumber}: Base MPO and material (code or name) are required.`);
         continue;
       }
       const cacheKey = lineBaseMpo.toUpperCase();
@@ -1363,10 +1367,14 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
       const lineResolution = matchMPOLines(linePo.line_items || [], {
         orderSequence: lineSequence,
         materialCode: lineMaterial,
-        materialName: invLine.material_name,
+        materialName: invLine.material_name || lineMaterialName,
       });
-      if (lineResolution.error || lineResolution.lines.length !== 1) {
-        lineControlDifferences.push(`Line ${lineNumber}: exact NextGen match was not found for ${lineBaseMpo}/${lineSequence}/${lineMaterial}.`);
+      if (lineResolution.error || lineResolution.lines.length === 0) {
+        lineControlDifferences.push(`Line ${lineNumber}: NextGen match was not found for ${lineBaseMpo}/${lineSequence || '-'}/${lineMaterial || lineMaterialName || '-'}.`);
+        continue;
+      }
+      if (lineResolution.lines.length > 1) {
+        // Ambiguous match — don't block, just skip line-level reconciliation for this line
         continue;
       }
       const matched = lineResolution.lines[0];
@@ -1548,7 +1556,14 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
       const variance = Math.abs(comparisonAmount - poAmount) / poAmount;
       const financePolicy = getFinancePolicy();
       const absoluteDifference = Math.abs(comparisonAmount - poAmount);
-      if (absoluteDifference > financePolicy.invoiceRoundingTolerance && variance > financePolicy.poAmountTolerancePercent) {
+      // Also check gross (invoice total without subtracting charges) — if the
+      // gross amount is within tolerance, the charge subtraction was creating a
+      // false positive (e.g. invoice $416.89 vs PO $420 = 0.74% but net $356.89 = 15%)
+      const grossVariance = Math.abs(invoiceTotal - poAmount) / poAmount;
+      const grossAbsDiff = Math.abs(invoiceTotal - poAmount);
+      const grossWithinTolerance = grossAbsDiff <= financePolicy.invoiceRoundingTolerance
+        || grossVariance <= financePolicy.poAmountTolerancePercent;
+      if (!grossWithinTolerance && absoluteDifference > financePolicy.invoiceRoundingTolerance && variance > financePolicy.poAmountTolerancePercent) {
         const chargeDetail = totalCharges > 0 && comparisonAmount === netInvoiceAmount
           ? ` (invoice $${invoiceTotal.toFixed(2)} minus charges $${totalCharges.toFixed(2)} = net $${netInvoiceAmount.toFixed(2)})`
           : (comparisonAmount !== netInvoiceAmount
@@ -2054,7 +2069,13 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
   if (poAmount > 0 && netInvoiceAmount > 0) {
     const variance = Math.abs(netInvoiceAmount - poAmount) / poAmount;
     const policy = getFinancePolicy();
-    if (Math.abs(netInvoiceAmount - poAmount) > policy.invoiceRoundingTolerance
+    // Check gross amount too — if gross is within tolerance, charge subtraction
+    // was creating a false positive
+    const grossVariance = Math.abs(invoiceTotal - poAmount) / poAmount;
+    const grossWithinTolerance = Math.abs(invoiceTotal - poAmount) <= policy.invoiceRoundingTolerance
+      || grossVariance <= policy.poAmountTolerancePercent;
+    if (!grossWithinTolerance
+      && Math.abs(netInvoiceAmount - poAmount) > policy.invoiceRoundingTolerance
       && variance > policy.poAmountTolerancePercent) {
       changes.push({ field: 'invoice_amount_vs_nextgen', old: invoiceTotal, new: poAmount });
     }

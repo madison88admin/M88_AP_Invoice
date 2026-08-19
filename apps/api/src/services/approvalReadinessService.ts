@@ -45,7 +45,7 @@ export function getApprovalReadiness(invoice: any): ApprovalReadinessResult {
   for (const [index, line] of lines.entries()) {
     const lineNumber = Number(line.line_number || index + 1);
     const lineRequired: Array<[string, string]> = [
-      ['mpo_base_number', 'Base MPO'], ['material_code', 'Material'], ['quantity', 'Quantity'],
+      ['quantity', 'Quantity'],
       ['unit_price', 'Unit Price'], ['line_amount', 'Line Amount'],
     ];
     for (const [field, label] of lineRequired) {
@@ -53,6 +53,22 @@ export function getApprovalReadiness(invoice: any): ApprovalReadinessResult {
       const invalidNumber = ['quantity', 'unit_price', 'line_amount'].includes(field)
         && (!Number.isFinite(Number(value)) || Number(value) < 0 || (field === 'quantity' && Number(value) === 0));
       if (blank(value) || invalidNumber) missing.push({ field: `invoice_lines.${lineNumber}.${field}`, label, lineNumber });
+    }
+    // MPO base: if missing per line but invoice-level mpo_number exists, make it advisory
+    if (blank(line.mpo_base_number)) {
+      if (!blank(invoice.mpo_number) || !blank(invoice.mpo_base_number)) {
+        advisory.push({ field: `invoice_lines.${lineNumber}.mpo_base_number`, label: 'Base MPO', lineNumber });
+      } else {
+        missing.push({ field: `invoice_lines.${lineNumber}.mpo_base_number`, label: 'Base MPO', lineNumber });
+      }
+    }
+    // Material: require either material_code OR material_name (OCR often extracts
+    // only the descriptive name; the code can be auto-filled from NextGen MPO match)
+    if (blank(line.material_code) && blank(line.material_name)) {
+      missing.push({ field: `invoice_lines.${lineNumber}.material_code`, label: 'Material', lineNumber });
+    } else if (blank(line.material_code) && !blank(line.material_name)) {
+      // material_code missing but material_name present — advisory, not blocking
+      advisory.push({ field: `invoice_lines.${lineNumber}.material_code`, label: 'Material Code', lineNumber });
     }
   }
   return { ready: missing.length === 0, missing, advisory };

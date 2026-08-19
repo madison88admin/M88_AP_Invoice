@@ -3,6 +3,7 @@ dotenv.config(); // MUST be before all other imports
 
 import express from 'express';
 import cors from 'cors';
+import compression from 'compression';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import invoiceRoutes from './routes/invoices';
@@ -51,7 +52,7 @@ import { checkAndSendSLAReminders } from './services/slaReminderService';
 import { startSharePointWatcher, stopSharePointWatcher } from './services/sharePointWatcherService';
 import { startFileWatcher, stopFileWatcher } from './services/fileWatcherService';
 import { invoiceUploadQueue } from './services/invoiceUploadQueue';
-import { runAnomalyScan, runFourWayReconciliation } from './services/financeControlRunService';
+import { runAnomalyScan, runFourWayReconciliation, getLastFinanceControlRunAt } from './services/financeControlRunService';
 import { startDurableJobWorker, stopDurableJobWorker } from './services/durableJobWorker';
 
 const app = express();
@@ -81,6 +82,16 @@ app.use(helmet());
 app.use(cors({
   origin: process.env.CORS_ORIGIN || ['http://localhost:3000', 'http://localhost:3002', 'http://127.0.0.1:3000', 'http://127.0.0.1:3002'],
   credentials: true,
+  exposedHeaders: ['X-Total-Count'],
+}));
+
+// gzip JSON responses. Skipped for SSE, which must stream unbuffered.
+app.use(compression({
+  filter: (req, res) => {
+    if (req.path.startsWith('/api/events')) return false;
+    if (res.getHeader('Content-Type') === 'text/event-stream') return false;
+    return compression.filter(req, res);
+  },
 }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
@@ -310,16 +321,34 @@ const startServer = async () => {
 
     // Nightly deterministic Finance controls. Disabled only by explicit config;
     // each run is persisted for dashboard history and auditability.
-    const financeControlInterval = setInterval(async () => {
+    const financeControlIntervalMs = Number(process.env.FINANCE_RECONCILIATION_INTERVAL_MS || 24 * 60 * 60 * 1000);
+    const runFinanceControls = async (initiatedBy: string) => {
       try {
-        await runAnomalyScan('nightly-scheduler');
-        await runFourWayReconciliation('nightly-scheduler');
-        logger.info('Nightly Finance anomaly scan and four-way reconciliation completed');
+        await runAnomalyScan(initiatedBy);
+        await runFourWayReconciliation(initiatedBy);
+        logger.info(`Finance anomaly scan and four-way reconciliation completed (${initiatedBy})`);
       } catch (err) {
-        logger.error('Nightly Finance controls failed:', err);
+        logger.error('Finance controls run failed:', err);
       }
-    }, Number(process.env.FINANCE_RECONCILIATION_INTERVAL_MS || 24 * 60 * 60 * 1000));
+    };
+    const financeControlInterval = setInterval(() => runFinanceControls('nightly-scheduler'), financeControlIntervalMs);
     financeControlInterval.unref();
+
+    // The interval is process-local, so a restart used to push the next run a
+    // full period into the future — an API that restarts daily never ran it.
+    // Catch up at startup when the persisted last run is older than the period.
+    const financeCatchUpTimer = setTimeout(async () => {
+      try {
+        const lastRun = await getLastFinanceControlRunAt();
+        if (!lastRun || Date.now() - lastRun.getTime() >= financeControlIntervalMs) {
+          logger.info(`Finance controls: catching up (last run: ${lastRun ? lastRun.toISOString() : 'never'})`);
+          await runFinanceControls('startup-catchup');
+        }
+      } catch (err) {
+        logger.error('Finance controls catch-up check failed:', err);
+      }
+    }, 60_000);
+    financeCatchUpTimer.unref();
 
     // Run once on startup after 30 seconds
     const initialSlaTimer = sideEffectsEnabled ? setTimeout(async () => {
@@ -339,6 +368,7 @@ const startServer = async () => {
       if (slaInterval) clearInterval(slaInterval);
       if (mpoCacheSyncInterval) clearInterval(mpoCacheSyncInterval);
       if (initialSlaTimer) clearTimeout(initialSlaTimer);
+      clearTimeout(financeCatchUpTimer);
       clearInterval(financeControlInterval);
       stopDurableJobWorker();
       server.close();

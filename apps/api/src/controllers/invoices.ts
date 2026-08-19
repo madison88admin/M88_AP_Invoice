@@ -6,6 +6,7 @@ import { downloadInvoicePdf, verifyPdfMatchesInvoice } from '../services/reproce
 import { eventBroadcaster } from '../services/eventBroadcaster';
 import { storeInvoiceHashFromStorage } from '../services/duplicateDetectionService';
 import { InvoiceStatus, InvoiceType, InvoiceCategory } from '@ap-invoice/shared';
+import { logger } from '../utils/logger';
 
 export const createInvoice = async (
   req: AuthRequest,
@@ -72,9 +73,17 @@ export const getInvoices = async (
       type: req.query.type as InvoiceType | undefined,
       category: req.query.category as InvoiceCategory | undefined,
       search: req.query.search as string | undefined,
+      page: req.query.page as string | undefined,
+      limit: req.query.limit as string | undefined,
     };
-    
+
+    const started = Date.now();
     const invoices = await invoiceService.getInvoices(filters, req.user?.role);
+    const totalCount = (invoices as any).totalCount;
+    if (typeof totalCount === 'number') {
+      res.setHeader('X-Total-Count', String(totalCount));
+    }
+    logger.info(`[Invoices] list role=${req.user?.role} rows=${invoices.length} in ${Date.now() - started}ms`);
     res.json(invoices);
   } catch (error) {
     next(error);

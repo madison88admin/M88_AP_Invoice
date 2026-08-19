@@ -22,6 +22,7 @@ import {
 } from '@ap-invoice/shared';
 import prisma from '../config/database';
 import { inAppNotificationService } from './inAppNotificationService';
+import { eventBroadcaster } from './eventBroadcaster';
 import { detectMultiInvoice, splitPdfByPageRanges } from './multiInvoiceDetector';
 import { sanitizeInvoiceType, sanitizeCategory } from '../utils/enumSanitizer';
 import { parseMPOReference } from '../utils/mpoReference';
@@ -34,8 +35,50 @@ const MANUAL_REVIEW_DIR = process.env.WATCHER_MANUAL_REVIEW_DIR || '/incoming-in
 const FAILED_DIR = process.env.WATCHER_FAILED_DIR || '/incoming-invoices/failed';
 
 let watcherInterval: NodeJS.Timeout | null = null;
+let recoveryInterval: NodeJS.Timeout | null = null;
 let isProcessing = false;
 const processedFiles = new Set<string>();
+
+// Hard ceiling for a single file. OCR and the NextGen/storage calls behind it
+// have their own timeouts, but a hung call used to pin `isProcessing` forever
+// and silently stop every later poll.
+const FILE_PROCESSING_TIMEOUT_MS = Number(process.env.FILE_WATCHER_FILE_TIMEOUT_MS || 10 * 60 * 1000);
+
+const status = {
+  running: false,
+  intervalSeconds: 0,
+  processing: false,
+  currentFile: null as string | null,
+  lastPollStartedAt: null as string | null,
+  lastPollFinishedAt: null as string | null,
+  lastFileProcessedAt: null as string | null,
+  lastError: null as string | null,
+  queueDepth: 0,
+  processedCount: 0,
+  timedOutCount: 0,
+};
+
+export function getFileWatcherStatus() {
+  let queueDepth = status.queueDepth;
+  try {
+    if (fs.existsSync(INCOMING_DIR)) {
+      queueDepth = fs.readdirSync(INCOMING_DIR).filter((f) => f.toLowerCase().endsWith('.pdf')).length;
+    }
+  } catch {
+    // keep last known depth
+  }
+  return { ...status, incomingDir: INCOMING_DIR, queueDepth };
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (err) => { clearTimeout(timer); reject(err); }
+    );
+  });
+}
 
 /**
  * Ensure all watcher directories exist.
@@ -91,13 +134,16 @@ function recoverStuckFiles(): void {
 }
 
 /**
- * Periodic recovery: move files stuck in processing/ for more than 10 minutes
- * back to incoming/ so they get reprocessed. Runs on every poll cycle.
+ * Periodic recovery: move abandoned files in processing/ back to incoming/ so
+ * they get reprocessed. Runs on its own timer so a long poll cycle can't
+ * starve it, and never touches the file the watcher is working on.
  */
 function recoverStuckFilesPeriodic(): void {
   if (!fs.existsSync(PROCESSING_DIR)) return;
 
-  const STUCK_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+  // Must exceed the per-file ceiling, otherwise a legitimately slow file would
+  // be yanked out from under the processor.
+  const STUCK_THRESHOLD_MS = Math.max(10 * 60 * 1000, FILE_PROCESSING_TIMEOUT_MS + 60_000);
   const now = Date.now();
 
   let files: string[];
@@ -110,6 +156,7 @@ function recoverStuckFilesPeriodic(): void {
 
   let recovered = 0;
   for (const fileName of files) {
+    if (fileName === status.currentFile) continue;
     const processingPath = path.join(PROCESSING_DIR, fileName);
     try {
       const stat = fs.statSync(processingPath);
@@ -605,6 +652,15 @@ async function processSingleInvoiceBuffer(
       },
     });
 
+    // Push the intake to connected clients so it appears without waiting for
+    // the next dashboard poll.
+    eventBroadcaster.broadcast({
+      type: 'INVOICE_CREATED',
+      invoiceId: invoice.id,
+      data: { invoice_number: invoice.invoice_number, status: invoice.status, source: 'file_watcher' },
+      timestamp: Date.now(),
+    });
+
     // Create exception if vendor not matched AND not auto-created
     if (isVendorUnknown && !autoCreatedVendor) {
       await prisma.exception.create({
@@ -698,11 +754,10 @@ async function processSingleInvoiceBuffer(
 async function pollIncomingDirectory(): Promise<void> {
   if (isProcessing) return;
   isProcessing = true;
+  status.processing = true;
+  status.lastPollStartedAt = new Date().toISOString();
 
   try {
-    // Recover stuck files from processing/ (files older than 10 minutes)
-    recoverStuckFilesPeriodic();
-
     if (!fs.existsSync(INCOMING_DIR)) {
       return;
     }
@@ -729,11 +784,23 @@ async function pollIncomingDirectory(): Promise<void> {
 
       // Mark as processed to avoid reprocessing
       processedFiles.add(fileName);
+      status.currentFile = fileName;
 
       try {
-        await processFile(filePath, fileName);
+        await withTimeout(processFile(filePath, fileName), FILE_PROCESSING_TIMEOUT_MS, `Processing ${fileName}`);
+        status.processedCount++;
+        status.lastFileProcessedAt = new Date().toISOString();
       } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.includes('timed out after')) {
+          status.timedOutCount++;
+          // Let the file be picked up again by stuck-file recovery.
+          processedFiles.delete(fileName);
+        }
+        status.lastError = `${fileName}: ${message}`;
         logger.error(`[File Watcher] Unhandled error for ${fileName}:`, err);
+      } finally {
+        status.currentFile = null;
       }
     }
 
@@ -743,9 +810,12 @@ async function pollIncomingDirectory(): Promise<void> {
       for (const f of toRemove) processedFiles.delete(f);
     }
   } catch (err) {
+    status.lastError = err instanceof Error ? err.message : String(err);
     logger.error('[File Watcher] Poll cycle error:', err);
   } finally {
     isProcessing = false;
+    status.processing = false;
+    status.lastPollFinishedAt = new Date().toISOString();
   }
 }
 
@@ -853,6 +923,9 @@ export async function startFileWatcher(intervalSeconds: number = 30): Promise<vo
   // Recover any stuck files from processing/ before starting
   recoverStuckFiles();
 
+  status.running = true;
+  status.intervalSeconds = intervalSeconds;
+
   // Initial poll after 5 seconds
   setTimeout(async () => {
     await pollIncomingDirectory();
@@ -862,12 +935,36 @@ export async function startFileWatcher(intervalSeconds: number = 30): Promise<vo
   watcherInterval = setInterval(async () => {
     await pollIncomingDirectory();
   }, intervalSeconds * 1000);
+
+  // Stuck-file recovery on an independent timer: it used to run inside the
+  // poll cycle, so a wedged cycle also disabled the mechanism meant to rescue it.
+  recoveryInterval = setInterval(() => {
+    try {
+      recoverStuckFilesPeriodic();
+    } catch (err) {
+      logger.error('[File Watcher] Stuck-file recovery error:', err);
+    }
+  }, 60_000);
+}
+
+/**
+ * Run a poll cycle immediately (manual "scan now").
+ */
+export async function triggerFileWatcherScan(): Promise<{ started: boolean }> {
+  if (isProcessing) return { started: false };
+  await pollIncomingDirectory();
+  return { started: true };
 }
 
 /**
  * Stop the file watcher.
  */
 export function stopFileWatcher(): void {
+  status.running = false;
+  if (recoveryInterval) {
+    clearInterval(recoveryInterval);
+    recoveryInterval = null;
+  }
   if (watcherInterval) {
     clearInterval(watcherInterval);
     watcherInterval = null;

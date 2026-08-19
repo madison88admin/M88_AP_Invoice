@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import prisma from '../config/database';
+import { logger } from '../utils/logger';
 import { bankAccountFingerprint, maskBankAccount } from '../utils/sensitiveData';
 
 type Finding = { invoice_id?: string; payment_id?: string; code: string; severity: 'WARNING' | 'HIGH' | 'CRITICAL'; detail: string };
@@ -11,6 +12,80 @@ async function persistRun(runType: string, findings: Finding[], initiatedBy?: st
     summary: { total: findings.length, critical: findings.filter(f => f.severity === 'CRITICAL').length, high: findings.filter(f => f.severity === 'HIGH').length },
     findings: { create: findings.map(f => ({ ...f, fingerprint: fingerprint(f) })) },
   }, include: { findings: true } });
+}
+
+const summarize = (findings: Finding[]) => ({
+  total: findings.length,
+  critical: findings.filter(f => f.severity === 'CRITICAL').length,
+  high: findings.filter(f => f.severity === 'HIGH').length,
+});
+
+async function finalizeRun(runId: string, findings: Finding[]) {
+  return prisma.financeControlRun.update({
+    where: { id: runId },
+    data: {
+      status: 'COMPLETED',
+      completed_at: new Date(),
+      summary: summarize(findings),
+      findings: { create: findings.map(f => ({ ...f, fingerprint: fingerprint(f) })) },
+    },
+    include: { findings: true },
+  });
+}
+
+const SCAN_COLLECTORS: Record<string, () => Promise<Finding[]>> = {
+  ANOMALY: collectAnomalyFindings,
+  FOUR_WAY_RECONCILIATION: collectReconciliationFindings,
+};
+
+/**
+ * Start a control scan in the background and return the RUNNING row immediately.
+ * The scans walk every invoice, so running them inside the HTTP request left the
+ * browser waiting on a full-table pass (and timing out on large databases).
+ * Callers poll the run list for completion.
+ */
+export async function startFinanceControlRun(runType: string, initiatedBy?: string) {
+  const collect = SCAN_COLLECTORS[runType];
+  if (!collect) throw new Error(`Unknown finance control run type: ${runType}`);
+
+  // A run abandoned by a crashed process must not block manual runs forever.
+  const staleBefore = new Date(Date.now() - 30 * 60 * 1000);
+  const inFlight = await prisma.financeControlRun.findFirst({
+    where: { run_type: runType, status: 'RUNNING', started_at: { gte: staleBefore } },
+  });
+  if (inFlight) return { ...inFlight, findings: [], already_running: true };
+  await prisma.financeControlRun.updateMany({
+    where: { run_type: runType, status: 'RUNNING', started_at: { lt: staleBefore } },
+    data: { status: 'FAILED', completed_at: new Date(), error: 'Run abandoned (process restarted or timed out)' },
+  });
+
+  const placeholder = await prisma.financeControlRun.create({
+    data: { run_type: runType, status: 'RUNNING', initiated_by: initiatedBy },
+  });
+
+  void (async () => {
+    try {
+      await finalizeRun(placeholder.id, await collect());
+    } catch (error) {
+      logger.error(`[Finance Controls] ${runType} run failed:`, error);
+      await prisma.financeControlRun.update({
+        where: { id: placeholder.id },
+        data: { status: 'FAILED', completed_at: new Date(), error: error instanceof Error ? error.message : String(error) },
+      }).catch(() => undefined);
+    }
+  })();
+
+  return { ...placeholder, findings: [], already_running: false };
+}
+
+/** Timestamp of the most recent completed run, used for restart catch-up. */
+export async function getLastFinanceControlRunAt(): Promise<Date | null> {
+  const run = await prisma.financeControlRun.findFirst({
+    where: { status: 'COMPLETED' },
+    orderBy: { started_at: 'desc' },
+    select: { started_at: true },
+  });
+  return run?.started_at ?? null;
 }
 
 export async function updateFindingWorkflow(id: string, action: string, actorId: string, input: { assignedTo?: string; note?: string; escalateTo?: string }) {
@@ -44,6 +119,10 @@ export async function updateFindingWorkflow(id: string, action: string, actorId:
 
 /** Deterministic anomaly scan. Findings are alerts, never accusations or AI decisions. */
 export async function runAnomalyScan(initiatedBy?: string) {
+  return persistRun('ANOMALY', await collectAnomalyFindings(), initiatedBy);
+}
+
+async function collectAnomalyFindings(): Promise<Finding[]> {
   const [vendors, invoices] = await Promise.all([
     prisma.vendor.findMany({ where: { is_active: true } }),
     prisma.invoice.findMany({ include: { payments: true, signatures: true } }),
@@ -66,11 +145,15 @@ export async function runAnomalyScan(initiatedBy?: string) {
     if (activePayments.some((p: any) => p.paid_at) && !invoice.qb_posted_at) findings.push({ invoice_id: invoice.id, code: 'PAID_NOT_POSTED', severity: 'CRITICAL', detail: `Invoice ${invoice.invoice_number} is paid but has no posting timestamp.` });
     if (activePayments.some((p: any) => p.invoice_revision_snapshot != null && p.invoice_revision_snapshot !== invoice.revision)) findings.push({ invoice_id: invoice.id, code: 'CHANGED_AFTER_PAYMENT_PREP', severity: 'CRITICAL', detail: `Invoice ${invoice.invoice_number} revision changed after payment preparation.` });
   }
-  return persistRun('ANOMALY', findings, initiatedBy);
+  return findings;
 }
 
 /** Four-way AP ↔ NextGen snapshot ↔ QB posting ↔ payment confirmation reconciliation. */
 export async function runFourWayReconciliation(initiatedBy?: string) {
+  return persistRun('FOUR_WAY_RECONCILIATION', await collectReconciliationFindings(), initiatedBy);
+}
+
+async function collectReconciliationFindings(): Promise<Finding[]> {
   const invoices = await prisma.invoice.findMany({ include: { vendor: true, payments: true, payment_confirmations: true } });
   const findings: Finding[] = [];
   for (const invoice of invoices as any[]) {
@@ -83,7 +166,7 @@ export async function runFourWayReconciliation(initiatedBy?: string) {
       if (Number(payment.amount) !== Number(invoice.total_amount) || payment.currency !== invoice.currency) findings.push({ invoice_id: invoice.id, payment_id: payment.id, code: 'PAYMENT_INVOICE_MISMATCH', severity: 'CRITICAL', detail: `Invoice ${invoice.invoice_number} payment amount/currency does not match AP.` });
     }
   }
-  return persistRun('FOUR_WAY_RECONCILIATION', findings, initiatedBy);
+  return findings;
 }
 
 export async function listFinanceControlRuns(runType?: string) {

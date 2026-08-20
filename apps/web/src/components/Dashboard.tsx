@@ -3323,7 +3323,7 @@ ${dataRows}
               {/* Posting Actions */}
               {(selectedInvoice.status === InvoiceStatus.APPROVED || selectedInvoice.status === InvoiceStatus.PENDING_ACCOUNTING) && user && hasPermission(user.role, 'canPost') && (
                 <>
-                  {user.role === 'ACCOUNTING_SUPERVISOR' && (
+                  {(user.role === 'ACCOUNTING_SUPERVISOR' || user.role === 'ACCOUNTING_ASSOCIATE') && (
                     <label className="flex items-center gap-2 px-4 py-2 text-xs cursor-pointer" style={{ color: 'var(--text-muted)' }}>
                       <input
                         type="checkbox"
@@ -3331,7 +3331,7 @@ ${dataRows}
                         onChange={(e) => setBypassVarianceCheck(e.target.checked)}
                         className="w-4 h-4 rounded"
                       />
-                      Bypass variance check (override PO amount mismatch)
+                      Bypass all validation (override exceptions, variance, pre-post checks)
                     </label>
                   )}
                   <button

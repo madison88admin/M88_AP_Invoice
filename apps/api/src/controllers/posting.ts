@@ -25,15 +25,16 @@ export const postInvoiceController = async (
     const { id } = req.params;
     const { bypassVarianceCheck } = req.body || {};
     
-    // Only ACCOUNTING_SUPERVISOR can bypass variance check
-    const canBypass = req.user!.role === 'ACCOUNTING_SUPERVISOR' && bypassVarianceCheck === true;
+    // Both ACCOUNTING_ASSOCIATE and ACCOUNTING_SUPERVISOR can bypass all validation
+    // blocks (variance, exceptions, pre-post checks) to proceed with posting.
+    const canBypass = (req.user!.role === 'ACCOUNTING_SUPERVISOR' || req.user!.role === 'ACCOUNTING_ASSOCIATE') && bypassVarianceCheck === true;
     
     const result = await postInvoice(id, req.user!.id, canBypass);
     await logAudit({
       invoice_id: id,
       performed_by: req.user!.id,
       action: 'INVOICE_POSTED',
-      note: `Invoice posted to accounting by ${req.user!.role}${canBypass ? ' (variance check bypassed)' : ''}`,
+      note: `Invoice posted to accounting by ${req.user!.role}${canBypass ? ' (all validation bypassed — exceptions, variance, pre-post checks)' : ''}`,
     });
     res.json(result);
   } catch (error) {

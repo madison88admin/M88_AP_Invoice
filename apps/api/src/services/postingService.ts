@@ -169,6 +169,21 @@ export async function postInvoice(invoiceId: string, userId: string, bypassVaria
     throw new AppError('Invoice must be approved before posting', 400);
   }
 
+  // Bypass is only allowed for invoices uploaded by Accounting.
+  // Check the INVOICE_CREATED audit log to see if the uploader was an Accounting user.
+  let uploadedByAccounting = false;
+  if (bypassVarianceCheck) {
+    const createLog = await prisma.auditLog.findFirst({
+      where: { invoice_id: invoiceId, action: 'INVOICE_CREATED' },
+    });
+    uploadedByAccounting = createLog?.actor_role === 'ACCOUNTING_ASSOCIATE'
+      || createLog?.actor_role === 'ACCOUNTING_SUPERVISOR'
+      || (createLog?.note || '').includes('uploaded by Accounting');
+    if (!uploadedByAccounting) {
+      throw new AppError('Bypass is only available for invoices uploaded by Accounting', 403);
+    }
+  }
+
   // Check if all signatures are signed.
   // Invoices approved before the workflow-signature era may only carry OCR-detected
   // signature records (no workflow signatures at all). Those legacy invoices fall back
@@ -220,18 +235,40 @@ export async function postInvoice(invoiceId: string, userId: string, bypassVaria
     ));
   }
   
-  if (unresolvedExceptions.length > 0) {
+  if (unresolvedExceptions.length > 0 && !bypassVarianceCheck) {
     throw new AppError('Invoice has unresolved exceptions and cannot be posted', 400);
+  }
+
+  // When bypassing, auto-resolve all remaining PENDING exceptions and log
+  if (unresolvedExceptions.length > 0 && bypassVarianceCheck) {
+    await prisma.exception.updateMany({
+      where: {
+        id: { in: unresolvedExceptions.map((e: any) => e.id) },
+      },
+      data: {
+        status: 'RESOLVED' as any,
+        resolved_at: new Date(),
+        resolved_by: userId,
+        resolution_notes: 'Auto-resolved: Accounting bypassed all validation to proceed with posting.',
+      },
+    });
+    await prisma.auditLog.create({
+      data: {
+        invoice_id: invoiceId,
+        action: 'EXCEPTIONS_BYPASSED',
+        performed_by: userId,
+        note: `Bypassed ${unresolvedExceptions.length} unresolved exception(s): ${unresolvedExceptions.map((e: any) => e.reason).join(', ')}`,
+      },
+    });
   }
 
   // Pre-post sanity check (deterministic, no AI)
   const check = await prePostCheck(invoice);
 
-  // Filter out variance blocks if bypass is enabled
+  // When bypass is enabled, skip all pre-post blocking checks
   if (bypassVarianceCheck) {
-    check.flags = check.flags.filter(f => f.type !== 'AMOUNT_VARIANCE');
-    // Recalculate ready after filtering
-    check.ready = !check.flags.some((f) => f.severity === 'block');
+    check.flags = check.flags.filter(f => f.severity !== 'block');
+    check.ready = true;
   }
 
   if (!check.ready) {

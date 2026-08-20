@@ -1563,7 +1563,12 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
       const grossAbsDiff = Math.abs(invoiceTotal - poAmount);
       const grossWithinTolerance = grossAbsDiff <= financePolicy.invoiceRoundingTolerance
         || grossVariance <= financePolicy.poAmountTolerancePercent;
-      if (!grossWithinTolerance && absoluteDifference > financePolicy.invoiceRoundingTolerance && variance > financePolicy.poAmountTolerancePercent) {
+      // NextGen PO may include allowance added by the client (extra qty + amount on
+      // top of the actual order). When invoice amount ≤ PO amount, the variance is
+      // expected and not an over-billing risk. Only flag when invoice exceeds PO.
+      const isOverbilling = comparisonAmount > poAmount + financePolicy.invoiceRoundingTolerance
+        || invoiceTotal > poAmount + financePolicy.invoiceRoundingTolerance;
+      if (isOverbilling && !grossWithinTolerance && absoluteDifference > financePolicy.invoiceRoundingTolerance && variance > financePolicy.poAmountTolerancePercent) {
         const chargeDetail = totalCharges > 0 && comparisonAmount === netInvoiceAmount
           ? ` (invoice $${invoiceTotal.toFixed(2)} minus charges $${totalCharges.toFixed(2)} = net $${netInvoiceAmount.toFixed(2)})`
           : (comparisonAmount !== netInvoiceAmount
@@ -1583,8 +1588,11 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
     const comparisonQty = (matchLevel === 'MATERIAL_LINE' && matchedInvoiceLineQty > 0)
       ? matchedInvoiceLineQty
       : invoiceQty;
-    if (comparisonQty > 0 && poQty > 0 && comparisonQty !== poQty) {
-      differences.push(`Quantity: invoice ${comparisonQty} vs PO ${poQty}`);
+    // Allow invoice qty ≤ PO qty — NextGen PO may include allowance added by the
+    // client on top of the actual order, so PO qty can be higher than invoice qty.
+    // Only flag a mismatch when invoice qty exceeds PO qty (potential over-billing).
+    if (comparisonQty > 0 && poQty > 0 && comparisonQty > poQty) {
+      differences.push(`Quantity: invoice ${comparisonQty} exceeds PO ${poQty} (over-billing)`);
     }
 
     // Vendor identity check (only if MPO matches). Similar words are not proof

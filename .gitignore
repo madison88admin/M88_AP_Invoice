@@ -66,3 +66,7 @@ pscp.exe
 # Temp scripts
 fix-env.py
 merge_and_gguf.py
+benchmark/
+deploy_tmp/
+diagram-probe.js
+ssh-run-diagram-probe.js

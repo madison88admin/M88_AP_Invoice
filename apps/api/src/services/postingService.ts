@@ -176,9 +176,11 @@ export async function postInvoice(invoiceId: string, userId: string, bypassVaria
     const createLog = await prisma.auditLog.findFirst({
       where: { invoice_id: invoiceId, action: 'INVOICE_CREATED' },
     });
+    const noteLower = (createLog?.note || '').toLowerCase();
     uploadedByAccounting = createLog?.actor_role === 'ACCOUNTING_ASSOCIATE'
       || createLog?.actor_role === 'ACCOUNTING_SUPERVISOR'
-      || (createLog?.note || '').includes('uploaded by Accounting');
+      || noteLower.includes('uploaded by accounting')
+      || noteLower.includes('bulk upload') && noteLower.includes('accounting');
     if (!uploadedByAccounting) {
       throw new AppError('Bypass is only available for invoices uploaded by Accounting', 403);
     }
@@ -199,7 +201,7 @@ export async function postInvoice(invoiceId: string, userId: string, bypassVaria
     sig.invoice_revision === invoice.revision &&
     sig.approval_status === 'APPROVED'
   );
-  if (!allSigned) {
+  if (!allSigned && !bypassVarianceCheck) {
     throw new AppError('All approvals must be completed before posting', 400);
   }
 

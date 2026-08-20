@@ -1542,7 +1542,14 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
 
     const totalCharges = bankCharges + ttCharge + freightCharges + courierCharges + handlingFee
       + financeSurcharge + setupCharge + sampleCharge + minOrderCharge + additionalCharges;
-    const netInvoiceAmount = invoiceTotal - totalCharges + discountAmount;
+    // When charge fields are not populated, totalCharges will be 0 and netInvoiceAmount
+    // equals the gross total. Fall back to sum of invoice line amounts (goods subtotal)
+    // which is the correct comparison against PO amount.
+    const lineAmountSum = (Array.isArray((invoice as any).invoice_lines) ? (invoice as any).invoice_lines : [])
+      .reduce((sum: number, line: any) => sum + Number(line.line_amount || 0), 0);
+    const netInvoiceAmount = totalCharges > 0
+      ? (invoiceTotal - totalCharges + discountAmount)
+      : (lineAmountSum > 0 ? lineAmountSum : invoiceTotal);
 
     // When line-level matching found only SOME invoice lines matching PO lines,
     // compare the matched invoice line amounts against the matched PO line amounts
@@ -2074,7 +2081,13 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
     + Number((invoice as any).handling_fee || 0) + Number((invoice as any).finance_surcharge || 0)
     + Number((invoice as any).setup_charge || 0) + Number((invoice as any).sample_charge || 0)
     + Number((invoice as any).min_order_charge || 0) + Number(invoice.additional_charges || 0);
-  const netInvoiceAmount = invoiceTotal - totalCharges + Number(invoice.discount_amount || 0);
+  // When charge fields are not populated, fall back to sum of invoice line amounts
+  // (goods subtotal) as the correct comparison against PO amount.
+  const invoiceLines = await prisma.invoiceLine.findMany({ where: { invoice_id: invoiceId }, select: { line_amount: true } });
+  const lineAmountSum = invoiceLines.reduce((sum: number, l: any) => sum + Number(l.line_amount || 0), 0);
+  const netInvoiceAmount = totalCharges > 0
+    ? (invoiceTotal - totalCharges + Number(invoice.discount_amount || 0))
+    : (lineAmountSum > 0 ? lineAmountSum : invoiceTotal);
 
   if (poAmount > 0 && netInvoiceAmount > 0) {
     const variance = Math.abs(netInvoiceAmount - poAmount) / poAmount;

@@ -2157,16 +2157,29 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
   );
   const hasCriticalChanges = criticalChanges.length > 0;
 
-  // Only create exceptions for critical changes
+  // Only create exceptions for critical changes — but skip if an identical
+  // exception already exists (PENDING or RESOLVED) to avoid duplicates piling
+  // up every time the real-time check runs.
   if (hasCriticalChanges) {
-    await prisma.exception.create({
-      data: {
+    const detailText = `NextGen critical data changed: ${criticalChanges.map(c => `${c.field} from ${c.old} to ${c.new}`).join(', ')}`;
+    const existing = await prisma.exception.findFirst({
+      where: {
         invoice_id: invoiceId,
         reason: ExceptionReason.PO_NOT_FOUND as any,
-        detail: `NextGen critical data changed: ${criticalChanges.map(c => `${c.field} from ${c.old} to ${c.new}`).join(', ')}`,
-        status: 'PENDING' as any,
+        detail: detailText,
+        status: { in: ['PENDING', 'RESOLVED'] as any },
       },
     });
+    if (!existing) {
+      await prisma.exception.create({
+        data: {
+          invoice_id: invoiceId,
+          reason: ExceptionReason.PO_NOT_FOUND as any,
+          detail: detailText,
+          status: 'PENDING' as any,
+        },
+      });
+    }
   }
 
   // Always update po_validation with current NextGen data and changes flag.

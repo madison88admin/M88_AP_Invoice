@@ -1566,16 +1566,16 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
       // NextGen PO may include allowance added by the client (extra qty + amount on
       // top of the actual order). When invoice amount ≤ PO amount, the variance is
       // expected and not an over-billing risk. Only flag when invoice exceeds PO.
-      const isOverbilling = comparisonAmount > poAmount + financePolicy.invoiceRoundingTolerance
-        || invoiceTotal > poAmount + financePolicy.invoiceRoundingTolerance;
-      if (isOverbilling && !grossWithinTolerance && absoluteDifference > financePolicy.invoiceRoundingTolerance && variance > financePolicy.poAmountTolerancePercent) {
+      // Compare using net/subtotal amount (excluding charges) — not the gross total.
+      const isOverbilling = comparisonAmount > poAmount + financePolicy.invoiceRoundingTolerance;
+      if (isOverbilling && absoluteDifference > financePolicy.invoiceRoundingTolerance && variance > financePolicy.poAmountTolerancePercent) {
         const chargeDetail = totalCharges > 0 && comparisonAmount === netInvoiceAmount
-          ? ` (invoice $${invoiceTotal.toFixed(2)} minus charges $${totalCharges.toFixed(2)} = net $${netInvoiceAmount.toFixed(2)})`
+          ? ` (invoice subtotal $${netInvoiceAmount.toFixed(2)} = total $${invoiceTotal.toFixed(2)} minus charges $${totalCharges.toFixed(2)})`
           : (comparisonAmount !== netInvoiceAmount
             ? ` (matched invoice lines $${comparisonAmount.toFixed(2)} vs matched PO lines $${poAmount.toFixed(2)})`
             : '');
         differences.push(
-          `Amount: invoice $${invoiceTotal.toFixed(2)} vs PO $${poAmount.toFixed(2)} (${(variance * 100).toFixed(1)}% variance; allowed ${(financePolicy.poAmountTolerancePercent * 100).toFixed(2)}%)${chargeDetail}`
+          `Amount: invoice subtotal $${comparisonAmount.toFixed(2)} vs PO $${poAmount.toFixed(2)} (${(variance * 100).toFixed(1)}% variance; allowed ${(financePolicy.poAmountTolerancePercent * 100).toFixed(2)}%)${chargeDetail}`
         );
       }
     }
@@ -2079,19 +2079,13 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
   if (poAmount > 0 && netInvoiceAmount > 0) {
     const variance = Math.abs(netInvoiceAmount - poAmount) / poAmount;
     const policy = getFinancePolicy();
-    // Check gross amount too — if gross is within tolerance, charge subtraction
-    // was creating a false positive
-    const grossVariance = Math.abs(invoiceTotal - poAmount) / poAmount;
-    const grossWithinTolerance = Math.abs(invoiceTotal - poAmount) <= policy.invoiceRoundingTolerance
-      || grossVariance <= policy.poAmountTolerancePercent;
-    // Only flag when invoice amount exceeds PO amount (over-billing).
+    // Only flag when net invoice amount (excluding charges) exceeds PO amount.
     // NextGen PO may include allowance added by the client, making PO amount higher.
-    const isOverbilling = netInvoiceAmount > poAmount + policy.invoiceRoundingTolerance
-      || invoiceTotal > poAmount + policy.invoiceRoundingTolerance;
-    if (isOverbilling && !grossWithinTolerance
+    const isOverbilling = netInvoiceAmount > poAmount + policy.invoiceRoundingTolerance;
+    if (isOverbilling
       && Math.abs(netInvoiceAmount - poAmount) > policy.invoiceRoundingTolerance
       && variance > policy.poAmountTolerancePercent) {
-      changes.push({ field: 'invoice_amount_vs_nextgen', old: invoiceTotal, new: poAmount });
+      changes.push({ field: 'invoice_amount_vs_nextgen', old: netInvoiceAmount, new: poAmount });
     }
   }
 

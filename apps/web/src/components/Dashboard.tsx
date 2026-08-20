@@ -1129,6 +1129,8 @@ export default function Dashboard() {
         }
         if (data?.nextGenUnavailable) {
           setNextgenResults(prev => ({ ...prev, [selectedInvoice.id]: { status: 'unavailable' } }));
+        } else if (data?.poNotFound) {
+          setNextgenResults(prev => ({ ...prev, [selectedInvoice.id]: { status: 'po-not-found' } }));
         } else if (data?.firstCheck) {
           // First check: basic fields compared, but no drift baseline yet — never
           // claim a full "matches" until a real re-verification runs. Critical
@@ -2941,6 +2943,23 @@ ${dataRows}
                 if (ng.status === 'error') return (
                   <div className="p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}>
                     <span className="text-sm font-medium" style={{ color: 'var(--accent-amber)' }}>NextGen unavailable — real-time check skipped</span>
+                  </div>
+                );
+                if (ng.status === 'po-not-found') return (
+                  <div className="p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <AlertCircle className="h-4 w-4" style={{ color: 'var(--accent-amber)' }} strokeWidth={1.75} />
+                        <span className="text-sm font-medium" style={{ color: 'var(--accent-amber)' }}>MPO not found in NextGen — real-time check could not verify</span>
+                      </div>
+                      <button
+                        onClick={retryNextGenCheck}
+                        className="text-xs font-medium whitespace-nowrap"
+                        style={{ background: 'var(--accent-amber)', color: 'var(--text-inverse)', padding: '6px 12px', borderRadius: '8px', border: 'none', cursor: 'pointer' }}
+                      >
+                        Retry check
+                      </button>
+                    </div>
                   </div>
                 );
                 if (ng.status === 'matched') return (

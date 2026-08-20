@@ -1951,6 +1951,7 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
   criticalChanges: Array<{ field: string; old: any; new: any }>;
   currentData: any;
   nextGenUnavailable: boolean;
+  poNotFound?: boolean;
   /** True when there was no stored baseline yet — the check only saved the
    *  snapshot and did NOT compare invoice fields, so "matches" must not be shown. */
   firstCheck: boolean;
@@ -2002,6 +2003,7 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
       criticalChanges: [],
       currentData: null,
       nextGenUnavailable: systemDown,
+      poNotFound: !systemDown,
       firstCheck: false,
     };
   }
@@ -2082,7 +2084,11 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
     const grossVariance = Math.abs(invoiceTotal - poAmount) / poAmount;
     const grossWithinTolerance = Math.abs(invoiceTotal - poAmount) <= policy.invoiceRoundingTolerance
       || grossVariance <= policy.poAmountTolerancePercent;
-    if (!grossWithinTolerance
+    // Only flag when invoice amount exceeds PO amount (over-billing).
+    // NextGen PO may include allowance added by the client, making PO amount higher.
+    const isOverbilling = netInvoiceAmount > poAmount + policy.invoiceRoundingTolerance
+      || invoiceTotal > poAmount + policy.invoiceRoundingTolerance;
+    if (isOverbilling && !grossWithinTolerance
       && Math.abs(netInvoiceAmount - poAmount) > policy.invoiceRoundingTolerance
       && variance > policy.poAmountTolerancePercent) {
       changes.push({ field: 'invoice_amount_vs_nextgen', old: invoiceTotal, new: poAmount });
@@ -2104,7 +2110,9 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
   // Quantity — line-aware (informational, not critical)
   const invoiceQty = Number(invoice.qty_shipped || 0);
   const poQty = targetLines.reduce((sum: number, li: any) => sum + Number(li.quantity || 0), 0);
-  if (invoiceQty > 0 && poQty > 0 && invoiceQty !== poQty) {
+  // Allow invoice qty ≤ PO qty — NextGen PO may include allowance added by the
+  // client on top of the actual order. Only flag when invoice qty > PO qty.
+  if (invoiceQty > 0 && poQty > 0 && invoiceQty > poQty) {
     changes.push({ field: 'invoice_quantity_vs_nextgen', old: invoiceQty, new: poQty });
   }
 

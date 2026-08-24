@@ -1259,9 +1259,40 @@ export async function returnPaymentBatch(batchId: string, userId: string, reason
 }
 
 export async function markPaymentBatchExported(batchId: string, userId: string) {
-  const batch = await prisma.paymentBatch.findUnique({ where: { id: batchId } });
+  const batch = await prisma.paymentBatch.findUnique({ where: { id: batchId }, include: { payments: { include: { invoice: true } } } });
   if (!batch) throw new AppError('Payment batch not found', 404);
   if (batch.status !== PaymentBatchStatus.REVIEWED) throw new AppError('Only a reviewed batch can be exported', 400);
+  // Create one vendor-level stub per vendor on export. Existing payment-level
+  // stubs remain untouched for backward compatibility and reconciliation.
+  const groups = new Map<string, any[]>();
+  for (const payment of batch.payments as any[]) {
+    const vendorId = payment.vendor_id || payment.invoice?.vendor_id;
+    if (!vendorId) throw new AppError(`Payment ${payment.id} has no vendor and cannot be exported`, 400);
+    const key = `${vendorId}:${String(payment.currency || payment.invoice?.currency || 'USD').toUpperCase()}`;
+    groups.set(key, [...(groups.get(key) || []), payment]);
+  }
+  const vendorBillStub = (prisma as any).vendorBillStub;
+  if (vendorBillStub) {
+    for (const [, payments] of groups) {
+      const first = payments[0];
+      const total = payments.reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
+      const existing = await vendorBillStub.findFirst({ where: { batch_id: batchId, vendor_id: first.vendor_id || first.invoice.vendor_id } });
+      const stub = existing || await vendorBillStub.create({ data: {
+        batch_id: batchId,
+        vendor_id: first.vendor_id || first.invoice.vendor_id,
+        currency: String(first.currency || first.invoice?.currency || 'USD').toUpperCase(),
+        total_amount: total.toFixed(2),
+        status: 'EXPORTED',
+        payment_reference: `VB-${batch.batch_number}-${String(first.vendor_id || first.invoice.vendor_id).slice(0, 8)}`,
+        created_by: userId,
+      }});
+      if (existing) await vendorBillStub.update({ where: { id: stub.id }, data: { total_amount: total.toFixed(2), status: 'EXPORTED' } });
+      const lineModel = (prisma as any).vendorBillStubLine;
+      if (lineModel) for (const payment of payments) {
+        await lineModel.upsert({ where: { payment_id: payment.id }, create: { bill_stub_id: stub.id, payment_id: payment.id, invoice_id: payment.invoice_id, amount: payment.amount }, update: { bill_stub_id: stub.id, invoice_id: payment.invoice_id, amount: payment.amount } });
+      }
+    }
+  }
   await prisma.auditLog.create({ data: { action: 'PAYMENT_BATCH_EXPORTED', performed_by: userId, note: `Batch ${batch.batch_number} exported to bank` } });
   return prisma.paymentBatch.update({
     where: { id: batchId },

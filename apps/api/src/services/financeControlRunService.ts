@@ -79,12 +79,18 @@ export async function runAnomalyScan(initiatedBy?: string) {
 
 /** Four-way AP ↔ NextGen snapshot ↔ QB posting ↔ payment confirmation reconciliation. */
 export async function runFourWayReconciliation(initiatedBy?: string) {
-  const invoices = await prisma.invoice.findMany({ include: { vendor: true, payments: true, payment_confirmations: true } });
+  const invoices = await prisma.invoice.findMany({ include: { vendor: true, payments: true, payment_confirmations: true, signatures: true } });
   const findings: Finding[] = [];
   for (const invoice of invoices as any[]) {
     const po = invoice.po_validation as any;
     const active = invoice.payments.filter((p: any) => !['CANCELLED', 'VOIDED'].includes(p.status));
-    if (['APPROVED', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID'].includes(invoice.status) && !po) findings.push({ invoice_id: invoice.id, code: 'NEXTGEN_SNAPSHOT_MISSING', severity: 'HIGH', detail: `Invoice ${invoice.invoice_number} has no retained NextGen validation snapshot.` });
+    if (['APPROVED', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID'].includes(invoice.status) && !po) {
+      const approvers = (invoice.signatures || [])
+        .filter((signature: any) => signature.signed_at && signature.approval_status !== 'REJECTED')
+        .map((signature: any) => `${signature.signatory_name} (${String(signature.signatory_role).replace(/_/g, ' ')})`);
+      const approvalNote = approvers.length ? ` Approved by: ${approvers.join(', ')}.` : ' No signed approver is recorded.';
+      findings.push({ invoice_id: invoice.id, code: 'NEXTGEN_SNAPSHOT_MISSING', severity: 'HIGH', detail: `Invoice ${invoice.invoice_number} has no retained NextGen validation snapshot.${approvalNote}` });
+    }
     if (invoice.status === 'PAID' && !invoice.qb_posted_at) findings.push({ invoice_id: invoice.id, code: 'PAID_NOT_POSTED', severity: 'CRITICAL', detail: `Invoice ${invoice.invoice_number} is paid but not posted.` });
     if (invoice.status === 'PAID' && invoice.payment_confirmations.length === 0) findings.push({ invoice_id: invoice.id, code: 'PAYMENT_CONFIRMATION_MISSING', severity: 'HIGH', detail: `Invoice ${invoice.invoice_number} is paid without confirmation.` });
     for (const payment of active) {

@@ -1795,6 +1795,9 @@ export default function PaymentBatchManager() {
                   </thead>
                   <tbody>
                     {selectedBatch.payments.map((payment, idx) => {
+                      const groupedStub = selectedBatch.vendor_bill_stubs?.find((stub) => stub.lines.some((line) => line.payment_id === payment.id));
+                      const groupedFirstPaymentId = groupedStub?.lines[0]?.payment_id;
+                      const isGroupedStubActionRow = !groupedStub || groupedFirstPaymentId === payment.id;
                       const isReturnSelected = selectedReturnPaymentIds.has(payment.id);
                       const canReturn = ['DRAFT', 'RETURNED_FOR_CORRECTION', 'PENDING_SUPERVISOR_REVIEW'].includes(selectedBatch.status);
                       return (
@@ -1881,7 +1884,7 @@ export default function PaymentBatchManager() {
                         </td>
                         {['REVIEWED', 'EXPORTED_TO_BANK'].includes(selectedBatch.status) && (
                           <td className="px-6 py-4 whitespace-nowrap">
-                            {['SCHEDULED', 'APPROVED_FOR_PAYMENT'].includes(payment.status) && (
+                            {isGroupedStubActionRow && ['SCHEDULED', 'APPROVED_FOR_PAYMENT'].includes(payment.status) && (
                               <button
                                 onClick={() => openStubModal(payment)}
                                 disabled={processing}
@@ -1891,7 +1894,7 @@ export default function PaymentBatchManager() {
                                 Endorse Bill Stub
                               </button>
                             )}
-                            {payment.status === 'ENDORSED' && (
+                            {isGroupedStubActionRow && payment.status === 'ENDORSED' && (
                               <button
                                 onClick={() => openStubModal(payment)}
                                 disabled={processing}

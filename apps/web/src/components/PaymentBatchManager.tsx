@@ -95,6 +95,17 @@ interface PaymentBatch {
   return_reason?: string;
   review_note?: string;
   payments: Payment[];
+  vendor_bill_stubs?: VendorBillStub[];
+}
+
+interface VendorBillStub {
+  id: string;
+  vendor?: { name?: string };
+  currency: string;
+  total_amount: number;
+  payment_reference?: string | null;
+  status: string;
+  lines: Array<{ payment_id: string; invoice_id: string; amount: number }>;
 }
 
 /** Normalize a batch payload from the API into the component's PaymentBatch shape. */
@@ -111,6 +122,15 @@ function mapBatchPayload(b: any): PaymentBatch {
     cancellation_reason: b.cancellation_reason || undefined,
     return_reason: b.return_reason || undefined,
     review_note: b.review_note || undefined,
+    vendor_bill_stubs: (b.vendor_bill_stubs || []).map((s: any) => ({
+      id: s.id,
+      vendor: s.vendor,
+      currency: s.currency || 'USD',
+      total_amount: Number(s.total_amount || 0),
+      payment_reference: s.payment_reference || null,
+      status: s.status || 'DRAFT',
+      lines: (s.lines || []).map((l: any) => ({ payment_id: l.payment_id, invoice_id: l.invoice_id, amount: Number(l.amount || 0) })),
+    })),
     payments: (b.payments || []).map((p: any) => ({
       id: p.id,
       amount: Number(p.amount || 0),
@@ -1727,6 +1747,19 @@ export default function PaymentBatchManager() {
                 </div>
               )}
 
+              {(selectedBatch.vendor_bill_stubs?.length ?? 0) > 0 && (
+                <div className="mb-6">
+                  <h3 className="text-md font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Vendor Bill Stubs</h3>
+                  <div className="space-y-2">
+                    {selectedBatch.vendor_bill_stubs!.map((stub) => (
+                      <div key={stub.id} className="flex items-center justify-between p-3 rounded-xl" style={{ background: 'var(--surface-secondary)', border: '1px solid var(--border-subtle)' }}>
+                        <div><div className="font-semibold" style={{ color: 'var(--text-primary)' }}>{stub.vendor?.name || 'Vendor'}</div><div className="text-xs" style={{ color: 'var(--text-muted)' }}>{stub.lines.length} invoice line{stub.lines.length === 1 ? '' : 's'} · {stub.status} · {stub.payment_reference || 'No reference'}</div></div>
+                        <div className="font-semibold" style={{ color: 'var(--text-primary)' }}>{stub.currency} {stub.total_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               <h3 className="text-md font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Payments in Batch</h3>
               <div className="overflow-x-auto">
                 <table className="min-w-full">

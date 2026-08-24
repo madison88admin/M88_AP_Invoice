@@ -1092,6 +1092,7 @@ export async function createGroupedPaymentBatches(paymentIds: string[], userId: 
 export async function getPaymentBatches() {
   const batches = await prisma.paymentBatch.findMany({
     include: {
+      vendor_bill_stubs: { include: { vendor: true, lines: true } },
       payments: {
         include: {
           invoice: {
@@ -1115,6 +1116,7 @@ export async function getPaymentBatchById(batchId: string) {
   const batch = await prisma.paymentBatch.findUnique({
     where: { id: batchId },
     include: {
+      vendor_bill_stubs: { include: { vendor: true, lines: true } },
       payments: {
         include: {
           invoice: {

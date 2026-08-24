@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import prisma from '../config/database';
 import { bankAccountFingerprint, maskBankAccount } from '../utils/sensitiveData';
+import { AppError } from '../middleware/errorHandler';
 
 type Finding = { invoice_id?: string; payment_id?: string; code: string; severity: 'WARNING' | 'HIGH' | 'CRITICAL'; detail: string };
 const fingerprint = (finding: Finding) => crypto.createHash('sha256').update(JSON.stringify(finding)).digest('hex');
@@ -28,6 +29,13 @@ export async function updateFindingWorkflow(id: string, action: string, actorId:
       break;
     case 'RESOLVE':
       if (!input.note?.trim()) throw new Error('Resolution note is required');
+      if (finding.code === 'NEXTGEN_SNAPSHOT_MISSING') {
+        if (!finding.invoice_id) throw new AppError('This finding has no invoice reference and cannot be resolved.', 409);
+        const invoice = await prisma.invoice.findUnique({ where: { id: finding.invoice_id }, select: { po_validation: true } });
+        if (!invoice?.po_validation) {
+          throw new AppError('Run the NextGen validation and retain its snapshot before resolving this finding.', 409);
+        }
+      }
       Object.assign(data, { resolved_by: actorId, resolved_at: now, resolution_note: input.note.trim(), status: 'RESOLVED' });
       break;
     case 'REOPEN':

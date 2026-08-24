@@ -64,8 +64,6 @@ export default function FinanceControlsDashboard() {
   const [codeFilter, setCodeFilter] = useState('');
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
   const [acting, setActing] = useState('');
-  const [actionDialog, setActionDialog] = useState<{ finding: Finding; action: string; value: string } | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => setRuns((await api.get('/api/finance-controls/runs')).data), []);
   useEffect(() => { void load(); }, [load]);
@@ -77,34 +75,33 @@ export default function FinanceControlsDashboard() {
     }
   }, [runs, selectedRunId]);
 
-  const execute = async (path: string) => {
-    setBusy(path);
-    try { await api.post(path); await load(); }
-    catch (error: any) { setNotice(error?.response?.data?.error?.message || error?.message || 'Finance control action failed.'); }
-    finally { setBusy(''); }
-  };
+  const execute = async (path: string) => { setBusy(path); try { await api.post(path); await load(); } finally { setBusy(''); } };
 
-  const act = async (id: string, action: string, value = '') => {
-    const payload: Record<string, string> = { action };
-    if (action === 'RESOLVE') payload.note = value.trim();
-    if (action === 'ASSIGN') payload.assigned_to = value.trim();
-    if (action === 'ESCALATE') payload.escalate_to = value.trim();
-    if (['RESOLVE', 'ASSIGN', 'ESCALATE'].includes(action) && !value.trim()) return;
+  const act = async (id: string, action: string) => {
+    let note: string | undefined;
+    if (action === 'RESOLVE') {
+      note = window.prompt('Resolution note (required):', '') ?? undefined;
+      if (!note?.trim()) return;
+    } else if (action === 'ASSIGN') {
+      const target = window.prompt('Assign to (user name or email):', '') ?? '';
+      if (!target.trim()) return;
+      await api.patch(`/api/finance-controls/findings/${id}`, { action, assigned_to: target.trim() });
+      await load();
+      return;
+    } else if (action === 'ESCALATE') {
+      const target = window.prompt('Escalate to (role or user):', '') ?? '';
+      if (!target.trim()) return;
+      await api.patch(`/api/finance-controls/findings/${id}`, { action, escalate_to: target.trim() });
+      await load();
+      return;
+    }
     setActing(id);
     try {
-      await api.patch(`/api/finance-controls/findings/${id}`, payload);
+      await api.patch(`/api/finance-controls/findings/${id}`, { action, note });
       await load();
-    } catch (error: any) {
-      setNotice(error?.response?.data?.error?.message || error?.message || 'Finance control action failed.');
     } finally {
       setActing('');
-      setActionDialog(null);
     }
-  };
-
-  const requestAction = (finding: Finding, action: string) => {
-    if (action === 'ACKNOWLEDGE' || action === 'REOPEN') { void act(finding.id, action); return; }
-    setActionDialog({ finding, action, value: '' });
   };
 
   const selectedRun = runs.find((r) => r.id === selectedRunId) || runs[0];
@@ -275,7 +272,7 @@ export default function FinanceControlsDashboard() {
                   {activeActions(f).map((a) => (
                     <button
                       key={a.key}
-                      onClick={(e) => { e.stopPropagation(); requestAction(f, a.key); }}
+                      onClick={(e) => { e.stopPropagation(); void act(f.id, a.key); }}
                       disabled={acting === f.id}
                       className="text-xs underline"
                       style={{ color: 'var(--accent-blue)' }}
@@ -368,7 +365,7 @@ export default function FinanceControlsDashboard() {
               {activeActions(selectedFinding).map((a) => (
                 <button
                   key={a.key}
-                  onClick={() => requestAction(selectedFinding, a.key)}
+                  onClick={() => void act(selectedFinding.id, a.key)}
                   disabled={acting === selectedFinding.id}
                   className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold"
                   style={a.key === 'RESOLVE'
@@ -383,29 +380,6 @@ export default function FinanceControlsDashboard() {
                 </button>
               ))}
             </div>
-          </div>
-        </div>
-      )}
-
-      {actionDialog && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(3px)' }}>
-          <div className="w-full max-w-md rounded-2xl p-6" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.35)' }}>
-            <div className="flex items-start justify-between gap-4 mb-4">
-              <div><h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>{actionDialog.action === 'RESOLVE' ? 'Resolve finding' : actionDialog.action === 'ASSIGN' ? 'Assign finding' : 'Escalate finding'}</h3><p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{actionDialog.finding.code}</p></div>
-              <button onClick={() => setActionDialog(null)} className="p-1.5 rounded-lg" style={{ color: 'var(--text-secondary)' }}><X className="h-4 w-4" /></button>
-            </div>
-            <label className="block text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-muted)' }}>{actionDialog.action === 'RESOLVE' ? 'Resolution note' : actionDialog.action === 'ASSIGN' ? 'Assign to' : 'Escalate to'}</label>
-            <textarea autoFocus value={actionDialog.value} onChange={(e) => setActionDialog({ ...actionDialog, value: e.target.value })} rows={actionDialog.action === 'RESOLVE' ? 4 : 2} className="w-full rounded-xl p-3 text-sm focus:outline-none" placeholder={actionDialog.action === 'RESOLVE' ? 'Describe the verified corrective action…' : 'User, email, or role…'} style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }} />
-            <div className="flex justify-end gap-3 mt-5"><button onClick={() => setActionDialog(null)} className="px-4 py-2 rounded-xl text-sm" style={{ color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>Cancel</button><button onClick={() => void act(actionDialog.finding.id, actionDialog.action, actionDialog.value)} disabled={!actionDialog.value.trim() || acting === actionDialog.finding.id} className="px-4 py-2 rounded-xl text-sm font-semibold disabled:opacity-50" style={{ background: actionDialog.action === 'RESOLVE' ? 'var(--accent-lime)' : 'var(--accent-blue)', color: 'var(--text-inverse)' }}>{acting === actionDialog.finding.id ? 'Saving…' : 'Continue'}</button></div>
-          </div>
-        </div>
-      )}
-
-      {notice && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(3px)' }}>
-          <div className="w-full max-w-md rounded-2xl p-6" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.35)' }}>
-            <div className="flex items-start gap-3"><AlertTriangle className="h-5 w-5 flex-shrink-0" style={{ color: 'var(--accent-amber)' }} /><div><h3 className="font-semibold" style={{ color: 'var(--text-primary)' }}>Finance Controls</h3><p className="text-sm mt-2" style={{ color: 'var(--text-secondary)' }}>{notice}</p></div></div>
-            <div className="flex justify-end mt-5"><button onClick={() => setNotice(null)} className="px-4 py-2 rounded-xl text-sm font-semibold" style={{ background: 'var(--accent-blue)', color: 'var(--text-inverse)' }}>Close</button></div>
           </div>
         </div>
       )}

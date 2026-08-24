@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Clock, AlertTriangle, FileText, CheckCircle, Shield, LucideIcon } from 'lucide-react';
+import { Clock, AlertTriangle, CheckCircle, Shield, LucideIcon } from 'lucide-react';
 import { calcWorkingHoursElapsed } from '@ap-invoice/shared';
 import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -24,7 +24,6 @@ interface BottleneckItem {
 interface BottleneckData {
   waiting_on_me: BottleneckItem[];
   at_risk: BottleneckItem[];
-  awaiting_cisi: BottleneckItem[];
 }
 
 export default function BottleneckView() {
@@ -35,7 +34,6 @@ export default function BottleneckView() {
 
   const [waitingOnMePage, setWaitingOnMePage] = useState(1);
   const [atRiskPage, setAtRiskPage] = useState(1);
-  const [awaitingCISIPage, setAwaitingCISIPage] = useState(1);
   const itemsPerPage = 5;
 
   useEffect(() => {
@@ -97,18 +95,7 @@ export default function BottleneckView() {
       };
     });
 
-    const awaitingCISI = invoices.filter(inv =>
-      inv.invoice_type === 'PROFORMA' && inv.status === 'PAID' && inv.follow_up_tasks?.some(ft => ft.status === 'PENDING')
-    ).map(inv => ({
-      id: inv.id,
-      invoice_number: inv.invoice_number,
-      vendor_name: inv.vendor_name,
-      amount: inv.total_amount,
-      currency: inv.currency,
-      status: inv.status,
-    }));
-
-    setData({ waiting_on_me: waitingOnMe, at_risk: atRisk, awaiting_cisi: awaitingCISI });
+    setData({ waiting_on_me: waitingOnMe, at_risk: atRisk });
     setLoading(false);
   }, [invoices, getInvoicesByStage, user]);
 
@@ -149,11 +136,9 @@ export default function BottleneckView() {
 
   const paginatedWaitingOnMe = data?.waiting_on_me ? paginateItems(data.waiting_on_me, waitingOnMePage) : [];
   const paginatedAtRisk = data?.at_risk ? paginateItems(data.at_risk, atRiskPage) : [];
-  const paginatedAwaitingCISI = data?.awaiting_cisi ? paginateItems(data.awaiting_cisi, awaitingCISIPage) : [];
 
   const waitingOnMeTotalPages = data?.waiting_on_me ? getTotalPages(data.waiting_on_me) : 1;
   const atRiskTotalPages = data?.at_risk ? getTotalPages(data.at_risk) : 1;
-  const awaitingCISITotalPages = data?.awaiting_cisi ? getTotalPages(data.awaiting_cisi) : 1;
 
   if (loading) {
     return (

@@ -2,7 +2,6 @@ import express, { Router } from 'express';
 import prisma from '../config/database';
 import { InvoiceStatus, InvoiceType, UserRole, calcWorkingHoursElapsed } from '@ap-invoice/shared';
 import { authenticate } from '../middleware/auth';
-import { getPaidPIMissingCI } from '../services/piFollowUpService';
 import { getSLACountdown } from '../services/slaReminderService';
 import { getInvoiceSLAStart } from '../utils/slaTime';
 
@@ -175,7 +174,7 @@ router.get('/role', async (req: any, res) => {
 
 /**
  * GET /api/dashboard/bottleneck
- * Get bottleneck view data: "Waiting on me", "At risk", and "Awaiting CI/SI"
+ * Get bottleneck view data: "Waiting on me" and "At risk"
  */
 router.get('/bottleneck', async (req, res) => {
   try {
@@ -198,18 +197,9 @@ router.get('/bottleneck', async (req, res) => {
       console.error('Error fetching at risk invoices:', error);
     }
 
-    // Get Proforma Invoices awaiting CI/SI
-    let awaitingCISI: any[] = [];
-    try {
-      awaitingCISI = await getPaidPIMissingCI();
-    } catch (error) {
-      console.error('Error fetching awaiting CI/SI invoices:', error);
-    }
-
     res.json({
       waiting_on_me: waitingOnMe,
       at_risk: atRisk,
-      awaiting_cisi: awaitingCISI,
     });
   } catch (error) {
     console.error('Error fetching bottleneck view:', error);

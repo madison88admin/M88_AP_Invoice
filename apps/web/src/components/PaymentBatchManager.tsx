@@ -611,6 +611,25 @@ export default function PaymentBatchManager() {
     }
   };
 
+  const handleCreateAndSubmitBatch = async () => {
+    if (selectedPaymentIds.size === 0) return;
+    setProcessing(true);
+    try {
+      const response = await paymentBatchApi.create(Array.from(selectedPaymentIds));
+      const batch = response.data?.batches?.[0] || response.data?.batch;
+      if (batch?.id) await paymentBatchApi.submit(batch.id);
+      await Promise.all([loadBatches(), loadScheduledPayments()]);
+      setSelectedPaymentIds(new Set());
+      setActiveTab('batches');
+      setActionMessage({ type: 'success', text: 'Batch validated, grouped by vendor, and submitted for supervisor review.' });
+    } catch (error: any) {
+      const msg = error?.response?.data?.error?.message || 'Unable to create and submit payment batch';
+      setActionMessage({ type: 'error', text: msg });
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   const chargedPayment = selectedBatch?.payments.find(p => p.bank_charge_amount != null) ?? null;
 
   const openBankChargeModal = () => {
@@ -1309,7 +1328,7 @@ export default function PaymentBatchManager() {
                   </div>
                   {isAssociate && (
                     <button
-                      onClick={handleCreateBatch}
+                      onClick={handleCreateAndSubmitBatch}
                       disabled={processing}
                       className="flex items-center px-4 py-2 rounded-xl text-sm font-semibold transition-colors disabled:opacity-50"
                       style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}
@@ -1317,7 +1336,7 @@ export default function PaymentBatchManager() {
                       onMouseLeave={(e) => { if (!processing) e.currentTarget.style.background = 'var(--accent-lime)'; }}
                     >
                       {processing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Package className="h-4 w-4 mr-2" />}
-                      Create Batch
+                      Create & Submit Batch
                     </button>
                   )}
                   {isSupervisor && (

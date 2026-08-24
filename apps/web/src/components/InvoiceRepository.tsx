@@ -11,6 +11,14 @@ export default function InvoiceRepository() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
+  const [vendorId, setVendorId] = useState('');
+  const [category, setCategory] = useState('');
+  const [invoiceType, setInvoiceType] = useState('');
+  const [brand, setBrand] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [agingBucket, setAgingBucket] = useState('');
+  const [urgentDue, setUrgentDue] = useState(false);
   const [timeline, setTimeline] = useState<any | null>(null);
   const [timelineLoading, setTimelineLoading] = useState(false);
 
@@ -21,11 +29,31 @@ export default function InvoiceRepository() {
   }, []);
 
   const statuses = useMemo(() => Array.from(new Set(invoices.map((invoice) => invoice.status))).sort(), [invoices]);
+  const vendors = useMemo(() => Array.from(new Map<string, string>(invoices.map((i) => [String(i.vendor_id || i.vendor?.id || ''), String(i.vendor?.name || i.vendor_name_raw || '')] as [string, string]).filter(([id]) => id)).entries()), [invoices]);
+  const categories = useMemo(() => Array.from(new Set(invoices.map((i) => i.category).filter(Boolean))).sort(), [invoices]);
+  const invoiceTypes = useMemo(() => Array.from(new Set(invoices.map((i) => i.invoice_type).filter(Boolean))).sort(), [invoices]);
+  const brands = useMemo(() => Array.from(new Set(invoices.map((i) => i.brand || i.brand_code).filter(Boolean))).sort(), [invoices]);
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
     return invoices.filter((invoice) => {
       if (!status && !isInvoiceActionableForRole(invoice, user?.role || '')) return false;
       if (status && status !== '__ALL__' && invoice.status !== status) return false;
+      if (vendorId && String(invoice.vendor_id || invoice.vendor?.id) !== vendorId) return false;
+      if (category && invoice.category !== category) return false;
+      if (invoiceType && invoice.invoice_type !== invoiceType) return false;
+      if (brand && invoice.brand !== brand && invoice.brand_code !== brand) return false;
+      const invoiceDate = invoice.invoice_date ? new Date(invoice.invoice_date) : null;
+      if (dateFrom && (!invoiceDate || invoiceDate < new Date(`${dateFrom}T00:00:00`))) return false;
+      if (dateTo && (!invoiceDate || invoiceDate > new Date(`${dateTo}T23:59:59`))) return false;
+      if (agingBucket || urgentDue) {
+        const due = invoice.due_date ? new Date(invoice.due_date) : null;
+        const days = due ? Math.floor((Date.now() - due.getTime()) / 86400000) : null;
+        if (urgentDue && (!due || days! < -2 || days! > 0)) return false;
+        if (agingBucket === 'current' && (days == null || days > 0)) return false;
+        if (agingBucket === '1-30' && (days == null || days < 1 || days > 30)) return false;
+        if (agingBucket === '31-60' && (days == null || days < 31 || days > 60)) return false;
+        if (agingBucket === '60+' && (days == null || days < 61)) return false;
+      }
       if (!term) return true;
       return [
         invoice.invoice_number,
@@ -52,7 +80,7 @@ export default function InvoiceRepository() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-5">
-        <div className="grid md:grid-cols-[1fr_260px] gap-3 p-4 rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+      <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-3 p-4 rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
           <label className="flex items-center gap-2 px-3 rounded-xl" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)' }}>
             <Search className="h-4 w-4" style={{ color: 'var(--text-muted)' }} />
             <input value={search} onChange={(event) => setSearch(event.target.value)} className="w-full py-2 bg-transparent outline-none text-sm" placeholder="Invoice, vendor, MPO, material, batch" />
@@ -62,6 +90,14 @@ export default function InvoiceRepository() {
             <option value="__ALL__">All invoices / history</option>
             {statuses.map((item) => <option key={item} value={item}>{String(item).replace(/_/g, ' ')}</option>)}
           </select>
+          <select value={vendorId} onChange={(e) => setVendorId(e.target.value)} className="px-3 py-2 rounded-xl text-sm"><option value="">All vendors</option>{vendors.map(([id, name]) => <option key={String(id)} value={String(id)}>{String(name)}</option>)}</select>
+          <select value={category} onChange={(e) => setCategory(e.target.value)} className="px-3 py-2 rounded-xl text-sm"><option value="">All categories</option>{categories.map((v) => <option key={String(v)} value={String(v)}>{String(v).replace(/_/g, ' ')}</option>)}</select>
+          <select value={invoiceType} onChange={(e) => setInvoiceType(e.target.value)} className="px-3 py-2 rounded-xl text-sm"><option value="">All invoice types</option>{invoiceTypes.map((v) => <option key={String(v)} value={String(v)}>{String(v)}</option>)}</select>
+          <select value={brand} onChange={(e) => setBrand(e.target.value)} className="px-3 py-2 rounded-xl text-sm"><option value="">All brands</option>{brands.map((v) => <option key={String(v)} value={String(v)}>{String(v)}</option>)}</select>
+          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="px-3 py-2 rounded-xl text-sm" aria-label="Invoice date from" />
+          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="px-3 py-2 rounded-xl text-sm" aria-label="Invoice date to" />
+          <select value={agingBucket} onChange={(e) => setAgingBucket(e.target.value)} className="px-3 py-2 rounded-xl text-sm"><option value="">All aging</option><option value="current">Current</option><option value="1-30">1–30 days</option><option value="31-60">31–60 days</option><option value="60+">60+ days</option></select>
+          <label className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm"><input type="checkbox" checked={urgentDue} onChange={(e) => setUrgentDue(e.target.checked)} /> Urgent due</label>
         </div>
 
         <div className="overflow-x-auto rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>

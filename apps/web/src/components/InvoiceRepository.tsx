@@ -35,8 +35,12 @@ export default function InvoiceRepository() {
   const brands = useMemo(() => Array.from(new Set(invoices.map((i) => i.brand || i.brand_code).filter(Boolean))).sort(), [invoices]);
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
+    const hasDetailedFilter = Boolean(term || vendorId || category || invoiceType || brand || dateFrom || dateTo || agingBucket || urgentDue);
     return invoices.filter((invoice) => {
-      if (!status && !isInvoiceActionableForRole(invoice, user?.role || '')) return false;
+      // Keep the default view focused on active work. Once a user applies a
+      // detailed filter, search the full role-visible repository so historical
+      // invoices can actually be found by vendor, date, aging, etc.
+      if (!status && !hasDetailedFilter && !isInvoiceActionableForRole(invoice, user?.role || '')) return false;
       if (status && status !== '__ALL__' && invoice.status !== status) return false;
       if (vendorId && String(invoice.vendor_id || invoice.vendor?.id) !== vendorId) return false;
       if (category && invoice.category !== category) return false;

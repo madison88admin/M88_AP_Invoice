@@ -142,7 +142,7 @@ export default function BottleneckView() {
 
   if (loading) {
     return (
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
         {[1, 2, 3].map((i) => (
           <div key={i} className="rounded-xl p-4 animate-pulse" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)' }}>
             <div className="h-4 rounded w-1/3 mb-3" style={{ background: 'var(--bg-elevated)' }}></div>
@@ -158,7 +158,7 @@ export default function BottleneckView() {
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
       <BottleneckCard
         title="Waiting on me"
         icon={Clock}

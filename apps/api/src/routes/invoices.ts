@@ -52,7 +52,6 @@ router.post('/:id/return', authorize(UserRole.PURCHASING_MANAGER, UserRole.MLO_A
 router.post('/:id/post', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), postingController.postInvoiceController);
 router.post('/:id/release-hold', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), postingController.releaseFromHoldController);
 router.post('/:id/hold', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN, UserRole.SUPERADMIN), postingController.holdInvoiceController);
-router.post('/:id/confirm-hold', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN, UserRole.SUPERADMIN), postingController.confirmHeldInvoiceController);
 router.post('/:id/schedule-payment', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), postingController.schedulePaymentController);
 router.post('/:id/send-payment-confirmation', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), postingController.sendPaymentConfirmationController);
 router.post('/:id/check-nextgen', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), validationController.checkNextGenAsyncController);

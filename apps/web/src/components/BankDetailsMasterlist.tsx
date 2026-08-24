@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { vendorApi } from '../lib/api';
 import { Landmark, Search, Edit, Save, X, ArrowLeft, CheckCircle2, AlertCircle, Landmark as BankIcon } from 'lucide-react';
@@ -28,6 +29,7 @@ interface BankDetailsEntry {
 }
 
 export default function BankDetailsMasterlist() {
+  const { user } = useAuth();
   const { showToast } = useToast();
   const [loading, setLoading] = useState(true);
   const [bankDetails, setBankDetails] = useState<BankDetailsEntry[]>([]);
@@ -37,9 +39,7 @@ export default function BankDetailsMasterlist() {
   const [editData, setEditData] = useState<Partial<BankDetailsEntry>>({});
   const [saving, setSaving] = useState(false);
 
-  // Bank details are never edited inline. All changes must use the independently
-  // reviewed Vendor Management bank-change request workflow.
-  const canEditBank = false;
+  const canEditBank = user && ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role);
 
   useEffect(() => {
     loadBankDetails();

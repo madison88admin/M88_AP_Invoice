@@ -39,11 +39,7 @@ async function processOne() {
 }
 
 export async function startDurableJobWorker() {
-  try {
-    await recoverAbandonedJobs();
-  } catch (error) {
-    logger.warn('Durable job worker: could not recover abandoned jobs (DB may be unavailable) — continuing without recovery');
-  }
+  await recoverAbandonedJobs();
   timer = setInterval(() => void processOne(), Number(process.env.DURABLE_JOB_POLL_MS || 1000));
   timer.unref();
   logger.info(`Durable finance job worker started (${workerId})`);

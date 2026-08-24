@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Clock, Search, AlertTriangle, CheckCircle } from 'lucide-react';
+import { ArrowLeft, Archive, Clock, Search } from 'lucide-react';
 import { invoiceApi } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 import { isInvoiceActionableForRole } from '../lib/roleAccess';
@@ -14,17 +14,11 @@ export default function InvoiceRepository() {
   const [timeline, setTimeline] = useState<any | null>(null);
   const [timelineLoading, setTimelineLoading] = useState(false);
 
-  const loadInvoices = () => invoiceApi.getAll().then((response) => setInvoices(response.data || []));
-
   useEffect(() => {
-    loadInvoices()
+    invoiceApi.getAll()
+      .then((response) => setInvoices(response.data || []))
       .finally(() => setLoading(false));
   }, []);
-
-  const confirmHold = async (invoiceId: string) => {
-    await invoiceApi.confirmHold(invoiceId);
-    await loadInvoices();
-  };
 
   const statuses = useMemo(() => Array.from(new Set(invoices.map((invoice) => invoice.status))).sort(), [invoices]);
   const filtered = useMemo(() => {
@@ -74,7 +68,7 @@ export default function InvoiceRepository() {
           <table className="min-w-full text-sm">
             <thead style={{ background: 'var(--bg-elevated)', color: 'var(--text-muted)' }}>
               <tr>
-                {['Invoice', 'Document', 'Vendor', 'MPO / Material', 'Amount', 'Status / SLA', 'Payment', 'Timeline'].map((label) => (
+                {['Invoice', 'Document', 'Vendor', 'MPO / Material', 'Amount', 'Status', 'Payment', 'Timeline'].map((label) => (
                   <th key={label} className="px-4 py-3 text-left uppercase text-xs">{label}</th>
                 ))}
               </tr>
@@ -87,18 +81,7 @@ export default function InvoiceRepository() {
                   <td className="px-4 py-3">{invoice.vendor?.name || invoice.vendor_name_raw}</td>
                   <td className="px-4 py-3">{invoice.mpo_number || '-'}<div className="text-xs" style={{ color: 'var(--text-muted)' }}>{invoice.material_code || invoice.material_name || ''}</div></td>
                   <td className="px-4 py-3 font-semibold">{invoice.currency} {Number(invoice.total_amount || 0).toLocaleString()}</td>
-                  <td className="px-4 py-3">
-                    <span className="px-2 py-1 rounded-full text-xs" style={{ background: 'var(--bg-elevated)' }}>{String(invoice.status).replace(/_/g, ' ')}</span>
-                    {invoice.status === 'ON_HOLD' && invoice.hold_confirmation_due_at && (() => {
-                      const remaining = new Date(invoice.hold_confirmation_due_at).getTime() - Date.now();
-                      const overdue = remaining < 0 && !invoice.hold_confirmed_at;
-                      const hours = Math.max(0, Math.ceil(Math.abs(remaining) / 3600000));
-                      return <div className="mt-2 text-xs" style={{ color: overdue ? 'var(--accent-red)' : invoice.hold_confirmed_at ? 'var(--accent-green)' : 'var(--accent-amber)' }}>
-                        <div className="flex items-center gap-1">{invoice.hold_confirmed_at ? <CheckCircle className="h-3 w-3" /> : <AlertTriangle className="h-3 w-3" />}{invoice.hold_confirmed_at ? 'Hold confirmed' : overdue ? `Confirmation overdue by ${hours}h` : `${hours}h to confirm`}</div>
-                        {!invoice.hold_confirmed_at && ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'].includes(user?.role || '') && <button onClick={() => confirmHold(invoice.id)} className="underline mt-1">Confirm hold</button>}
-                      </div>;
-                    })()}
-                  </td>
+                  <td className="px-4 py-3"><span className="px-2 py-1 rounded-full text-xs" style={{ background: 'var(--bg-elevated)' }}>{String(invoice.status).replace(/_/g, ' ')}</span></td>
                   <td className="px-4 py-3">{invoice.payments?.[0]?.status || (invoice.status === 'PENDING_ACCOUNTING' ? 'APPROVED FOR PAYMENT' : '-')}</td>
                   <td className="px-4 py-3">
                     <button onClick={() => openTimeline(invoice.id)} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs" style={{ background: 'var(--bg-elevated)', color: 'var(--accent-purple)' }}>

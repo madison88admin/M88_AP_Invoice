@@ -18,7 +18,6 @@ import {
   returnPaymentBatch,
   returnInvoicesFromBatch,
   markPaymentBatchExported,
-  submitPaymentBatchForCfo,
   setPaymentRemarks,
   markPaymentForPayment,
   approvePaymentForPayment,
@@ -102,10 +101,6 @@ export const returnInvoicesFromBatchController = async (req: AuthRequest, res: R
 
 export const exportPaymentBatchController = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try { res.json(await markPaymentBatchExported(req.params.batchId, req.user!.id)); } catch (error) { next(error); }
-};
-
-export const submitPaymentBatchForCfoController = async (req: AuthRequest, res: Response, next: NextFunction) => {
-  try { res.json(await submitPaymentBatchForCfo(req.params.batchId, req.user!.id)); } catch (error) { next(error); }
 };
 
 export const getStuckBatchesController = async (req: AuthRequest, res: Response, next: NextFunction) => {

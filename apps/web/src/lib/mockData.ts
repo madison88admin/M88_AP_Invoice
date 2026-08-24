@@ -206,8 +206,6 @@ export interface MockVendor {
   brand_name?: string;
   brand_tier?: BrandTier;
   classification?: string;
-  governance_status?: 'PENDING' | 'APPROVED' | 'REJECTED';
-  governance_rejection_reason?: string;
 }
 
 export interface MockPaymentBatch {

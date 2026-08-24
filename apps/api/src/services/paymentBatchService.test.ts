@@ -50,35 +50,11 @@ describe('payment batch segregation of duties', () => {
 
   it('prevents the preparer or reviewer from executing the batch', async () => {
     paymentBatchFindUnique.mockResolvedValue({
-      id: 'batch-1', batch_number: 'PB1', status: 'PENDING_CFO_APPROVAL', created_by: 'preparer',
+      id: 'batch-1', batch_number: 'PB1', status: 'REVIEWED', created_by: 'preparer',
       submitted_by: 'preparer', reviewed_by: 'reviewer', payments: [],
     });
     await expect(processPaymentBatch('batch-1', 'preparer')).rejects.toThrow('preparer cannot execute');
     await expect(processPaymentBatch('batch-1', 'reviewer')).rejects.toThrow('reviewer cannot execute');
-  });
-
-  it('requires every bill stub before supervisor approval', async () => {
-    paymentBatchFindUnique.mockResolvedValue({
-      id: 'batch-1', status: 'PENDING_SUPERVISOR_REVIEW', created_by: 'preparer', submitted_by: 'preparer',
-      payments: [{ id: 'pay-1', bill_stub: null }],
-    });
-
-    await expect(reviewPaymentBatch('batch-1', 'supervisor')).rejects.toThrow('Every payment must have a bill stub');
-    expect(paymentBatchUpdate).not.toHaveBeenCalled();
-  });
-
-  it('moves a fully documented batch to APPROVED', async () => {
-    paymentBatchFindUnique.mockResolvedValue({
-      id: 'batch-1', status: 'PENDING_SUPERVISOR_REVIEW', created_by: 'preparer', submitted_by: 'preparer',
-      payments: [{ id: 'pay-1', bill_stub: { id: 'stub-1' } }],
-    });
-    paymentBatchUpdate.mockResolvedValue({ id: 'batch-1', status: 'APPROVED' });
-
-    await reviewPaymentBatch('batch-1', 'supervisor');
-    expect(paymentBatchUpdate).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: 'batch-1' },
-      data: expect.objectContaining({ status: 'APPROVED', reviewed_by: 'supervisor' }),
-    }));
   });
 });
 
@@ -627,7 +603,7 @@ describe('removeBankCharge', () => {
 describe('endorseBillStub', () => {
   it('endorses a bill stub, tags the payment ENDORSED, and audits it', async () => {
     paymentBatchFindUnique.mockResolvedValue(makeBatch({
-      status: 'DRAFT',
+      status: 'EXPORTED_TO_BANK',
       payments: [makePayment({ id: 'pay-1', invoice_id: 'inv-1', amount: 100, status: 'APPROVED_FOR_PAYMENT' })],
     }));
     billStubUpsert.mockResolvedValue({ id: 'stub-1', payment_id: 'pay-1' });
@@ -657,17 +633,17 @@ describe('endorseBillStub', () => {
     expect(result).toMatchObject({ payment_status: 'ENDORSED' });
   });
 
-  it('rejects bill-stub creation after supervisor approval', async () => {
-    paymentBatchFindUnique.mockResolvedValue(makeBatch({ status: 'APPROVED' }));
+  it('only allows endorsement for reviewed/exported batches', async () => {
+    paymentBatchFindUnique.mockResolvedValue(makeBatch({ status: 'DRAFT' }));
 
     await expect(endorseBillStub('batch-1', 'pay-1', { paidAmount: 100 }, 'assoc-1'))
-      .rejects.toThrow('before supervisor approval');
+      .rejects.toThrow('reviewed and exported to the bank');
     expect(billStubUpsert).not.toHaveBeenCalled();
   });
 
   it('rejects payments not in the batch or already paid', async () => {
     paymentBatchFindUnique.mockResolvedValue(makeBatch({
-      status: 'DRAFT',
+      status: 'REVIEWED',
       payments: [makePayment({ id: 'pay-1', invoice_id: 'inv-1', status: 'PAID' })],
     }));
 
@@ -682,7 +658,7 @@ describe('endorseBillStub', () => {
 describe('matchPaymentConfirmation', () => {
   function endorsedBatch(overrides: Record<string, any> = {}) {
     return makeBatch({
-      status: 'PENDING_CFO_APPROVAL',
+      status: 'EXPORTED_TO_BANK',
       payments: overrides.payments ?? [
         makePayment({ id: 'pay-1', invoice_id: 'inv-1', amount: 100, status: 'ENDORSED', bill_stub: { reference: 'REF-123' } }),
       ],
@@ -756,7 +732,7 @@ describe('matchPaymentConfirmation', () => {
     expect(result).toMatchObject({ matched: 1 });
   });
 
-  it('marks the batch PAID when every payment is paid during CFO approval', async () => {
+  it('marks the batch PROCESSED when every payment is PAID', async () => {
     paymentBatchFindUnique.mockResolvedValue(endorsedBatch());
     paymentCount.mockResolvedValue(0);
 
@@ -764,7 +740,7 @@ describe('matchPaymentConfirmation', () => {
 
     expect(paymentBatchUpdate).toHaveBeenCalledWith({
       where: { id: 'batch-1' },
-      data: expect.objectContaining({ status: 'PAID' }),
+      data: expect.objectContaining({ status: 'PROCESSED' }),
     });
     expect(result).toMatchObject({ batch_processed: true });
   });
@@ -968,25 +944,25 @@ describe('returnInvoicesFromBatch', () => {
 });
 
 describe('markPaymentBatchExported', () => {
-  it('marks an approved batch BANK_PROCESSED and records exported_at', async () => {
-    paymentBatchFindUnique.mockResolvedValue(makeBatch({ id: 'batch-1', status: 'APPROVED' }));
-    paymentBatchUpdate.mockResolvedValue({ id: 'batch-1', status: 'BANK_PROCESSED' });
+  it('marks the batch EXPORTED_TO_BANK and records exported_at', async () => {
+    paymentBatchFindUnique.mockResolvedValue(makeBatch({ id: 'batch-1', status: 'REVIEWED' }));
+    paymentBatchUpdate.mockResolvedValue({ id: 'batch-1', status: 'EXPORTED_TO_BANK' });
 
     await markPaymentBatchExported('batch-1', 'sup-1');
 
     const updateCall = paymentBatchUpdate.mock.calls[0][0];
     expect(updateCall.where).toEqual({ id: 'batch-1' });
-    expect(updateCall.data.status).toBe('BANK_PROCESSED');
+    expect(updateCall.data.status).toBe('EXPORTED_TO_BANK');
     expect(updateCall.data.exported_at).toBeInstanceOf(Date);
     expect(auditLogCreate).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ action: 'PAYMENT_BATCH_BANK_PROCESSED', performed_by: 'sup-1' }),
+      data: expect.objectContaining({ action: 'PAYMENT_BATCH_EXPORTED', performed_by: 'sup-1' }),
     }));
   });
 
-  it('rejects bank processing a batch that is not approved', async () => {
+  it('rejects exporting a batch that is not REVIEWED', async () => {
     paymentBatchFindUnique.mockResolvedValue(makeBatch({ id: 'batch-1', status: 'DRAFT' }));
 
-    await expect(markPaymentBatchExported('batch-1', 'sup-1')).rejects.toThrow('Only an approved batch can be marked bank processed');
+    await expect(markPaymentBatchExported('batch-1', 'sup-1')).rejects.toThrow('Only a reviewed batch can be exported');
     expect(paymentBatchUpdate).not.toHaveBeenCalled();
   });
 });
@@ -1021,7 +997,7 @@ describe('getStuckBatches', () => {
 
     // Default window is 3 days: the 5-day-old batch with a SCHEDULED payment is stuck
     const options = paymentBatchFindMany.mock.calls[0][0];
-    expect(options.where.status).toEqual({ in: ['BANK_PROCESSED', 'EXPORTED_TO_BANK'] });
+    expect(options.where.status).toBe('EXPORTED_TO_BANK');
     expect(options.where.OR).toEqual([{ exported_at: { lte: expect.any(Date) } }, { exported_at: null }]);
     expect(options.where.payments.some.status.notIn).toEqual(['PAID', 'ENDORSED']);
     expect(result).toHaveLength(2); // service returns the DB rows (client filters the batch list)

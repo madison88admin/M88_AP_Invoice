@@ -94,8 +94,6 @@ const apiVendorToMock = (vendor: any): MockVendor => ({
   beneficiary_name: vendor.beneficiary_name || undefined,
   classification: vendor.classification || undefined,
   is_active: vendor.is_active ?? true,
-  governance_status: vendor.governance_status || 'APPROVED',
-  governance_rejection_reason: vendor.governance_rejection_reason || undefined,
 });
 
 const apiInvoiceToMock = (invoice: any): MockInvoice => {

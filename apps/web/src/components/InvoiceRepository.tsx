@@ -10,7 +10,7 @@ export default function InvoiceRepository() {
   const [invoices, setInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [status, setStatus] = useState('');
+  const [status, setStatus] = useState('__ALL__');
   const [vendorId, setVendorId] = useState('');
   const [category, setCategory] = useState('');
   const [invoiceType, setInvoiceType] = useState('');
@@ -40,7 +40,7 @@ export default function InvoiceRepository() {
       // Keep the default view focused on active work. Once a user applies a
       // detailed filter, search the full role-visible repository so historical
       // invoices can actually be found by vendor, date, aging, etc.
-      if (!status && !hasDetailedFilter && !isInvoiceActionableForRole(invoice, user?.role || '')) return false;
+      if (status === '__ACTIVE__' && !hasDetailedFilter && !isInvoiceActionableForRole(invoice, user?.role || '')) return false;
       if (status && status !== '__ALL__' && invoice.status !== status) return false;
       if (vendorId && String(invoice.vendor_id || invoice.vendor?.id) !== vendorId) return false;
       if (category && invoice.category !== category) return false;
@@ -90,8 +90,8 @@ export default function InvoiceRepository() {
             <input value={search} onChange={(event) => setSearch(event.target.value)} className="w-full py-2 bg-transparent outline-none text-sm" placeholder="Invoice, vendor, MPO, material, batch" />
           </label>
           <select value={status} onChange={(event) => setStatus(event.target.value)} className="px-3 py-2 rounded-xl text-sm" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}>
-            <option value="">My active invoices</option>
             <option value="__ALL__">All invoices / history</option>
+            <option value="__ACTIVE__">My active invoices</option>
             {statuses.map((item) => <option key={item} value={item}>{String(item).replace(/_/g, ' ')}</option>)}
           </select>
           <select value={vendorId} onChange={(e) => setVendorId(e.target.value)} className="px-3 py-2 rounded-xl text-sm"><option value="">All vendors</option>{vendors.map(([id, name]) => <option key={String(id)} value={String(id)}>{String(name)}</option>)}</select>

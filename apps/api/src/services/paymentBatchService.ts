@@ -632,7 +632,7 @@ export async function applyBankCharge(
 export async function removeBankCharge(batchId: string, paymentId: string, userId: string) {
   const batch = await prisma.paymentBatch.findUnique({
     where: { id: batchId },
-    include: { payments: true },
+    include: { payments: true, vendor_bill_stubs: { include: { lines: true } } },
   });
   if (!batch) throw new AppError('Payment batch not found', 404);
   if (![PaymentBatchStatus.DRAFT, PaymentBatchStatus.RETURNED_FOR_CORRECTION].includes(batch.status as any)) {
@@ -649,6 +649,13 @@ export async function removeBankCharge(batchId: string, paymentId: string, userI
     where: { id: paymentId },
     data: { bank_charge_amount: null, bank_charge_note: null },
   });
+  const grouped = (batch as any).vendor_bill_stubs?.find((s: any) => s.lines.some((line: any) => line.payment_id === paymentId));
+  if (grouped) {
+    await prisma.payment.updateMany({
+      where: { id: { in: grouped.lines.map((line: any) => line.payment_id) }, status: { in: ['SCHEDULED', 'APPROVED_FOR_PAYMENT'] } },
+      data: { status: 'ENDORSED' },
+    });
+  }
 
   const total = recomputeBatchTotal(batch, paymentId, null);
   await prisma.paymentBatch.update({

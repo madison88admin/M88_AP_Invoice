@@ -669,15 +669,17 @@ export default function PaymentBatchManager() {
 
   const openStubModal = (payment: Payment) => {
     const stub = payment.bill_stub;
+    const groupedStub = selectedBatch?.vendor_bill_stubs?.find((candidate) => candidate.lines.some((line) => line.payment_id === payment.id));
+    const groupedTotal = groupedStub ? groupedStub.total_amount : Number(payment.amount);
     setStubTarget(payment);
     setStubForm({
       stubDate: stub?.stub_date ? new Date(stub.stub_date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
       type: stub?.type || 'Bank Transfer',
       reference: stub?.reference || '',
-      originalAmount: stub?.original_amount != null ? String(stub.original_amount) : String(payment.amount),
-      balance: stub?.balance != null ? String(stub.balance) : String(payment.amount),
+      originalAmount: stub?.original_amount != null ? String(stub.original_amount) : String(groupedTotal),
+      balance: stub?.balance != null ? String(stub.balance) : String(groupedTotal),
       discount: stub?.discount != null ? String(stub.discount) : '',
-      paidAmount: stub?.paid_amount != null ? String(stub.paid_amount) : String(payment.amount),
+      paidAmount: stub?.paid_amount != null ? String(stub.paid_amount) : String(groupedTotal),
     });
     setStubFile(null);
   };
@@ -2160,7 +2162,10 @@ export default function PaymentBatchManager() {
                   <div className="min-w-0">
                     <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Endorse Bill Stub</h3>
                     <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--text-muted)' }}>
-                      {stubTarget.invoice.invoice_number} · {stubTarget.invoice.vendor.name}
+                      {stubTarget.invoice.vendor.name}
+                      {selectedBatch?.vendor_bill_stubs?.find((stub) => stub.lines.some((line) => line.payment_id === stubTarget.id))
+                        ? ` · ${selectedBatch.vendor_bill_stubs.find((stub) => stub.lines.some((line) => line.payment_id === stubTarget.id))!.lines.length} invoices · combined vendor stub`
+                        : ` · ${stubTarget.invoice.invoice_number}`}
                     </p>
                   </div>
                   <button onClick={() => setStubTarget(null)} className="p-1 rounded-lg transition-colors shrink-0" style={{ color: 'var(--text-secondary)' }}

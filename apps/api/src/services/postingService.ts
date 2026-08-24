@@ -875,6 +875,16 @@ export async function holdInvoiceForBatchThreshold(invoiceId: string, userId: st
     throw new AppError(`Cannot hold invoice in ${invoice.status}. ON_HOLD is available only in PENDING_ACCOUNTING.`, 400);
   }
 
+  const threshold = 100;
+  const openForVendor = await prisma.invoice.findMany({
+    where: { vendor_id: invoice.vendor_id, status: { in: ['PENDING_ACCOUNTING', 'APPROVED', 'ON_HOLD'] as any } },
+    select: { id: true, total_amount: true },
+  });
+  const cumulative = openForVendor.reduce((sum, item) => sum + Number(item.total_amount || 0), 0);
+  if (cumulative >= threshold) {
+    throw new AppError(`Vendor cumulative amount is already ${cumulative.toFixed(2)}, at or above the ${threshold.toFixed(2)} threshold. Create a payment batch instead of placing this invoice on hold.`, 400);
+  }
+
   const previousStatus = invoice.status;
 
   // Update invoice status to ON_HOLD
@@ -884,7 +894,7 @@ export async function holdInvoiceForBatchThreshold(invoiceId: string, userId: st
   });
 
   // Create batch threshold exception
-  const holdReason = reason || `Manually held by Accounting — vendor cumulative amount below $100 batch threshold.`;
+  const holdReason = reason || `Vendor cumulative amount ${cumulative.toFixed(2)} is below ${threshold.toFixed(2)} batch threshold.`;
   await prisma.exception.create({
     data: {
       invoice_id: invoiceId,
@@ -923,6 +933,8 @@ export async function holdInvoiceForBatchThreshold(invoiceId: string, userId: st
     invoice_id: invoiceId,
     previous_status: previousStatus,
     vendor: invoice.vendor?.name,
+    cumulative_amount: Number(cumulative.toFixed(2)),
+    threshold_amount: threshold,
     amount: Number(invoice.total_amount),
   };
 }

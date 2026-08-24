@@ -4,6 +4,7 @@ import { PaymentBatchStatus, InvoiceStatus, UserRole } from '@ap-invoice/shared'
 import { PaymentExecutionInput, processPayment } from './postingService';
 import { inAppNotificationService } from './inAppNotificationService';
 import { logger } from '../utils/logger';
+import { getApprovalReadiness } from './approvalReadinessService';
 
 /**
  * Get the next Wednesday date from a given date
@@ -47,6 +48,7 @@ export async function getPaymentsForNextWednesday() {
       invoice: {
         include: {
           vendor: true,
+          invoice_lines: true,
         },
       },
     },
@@ -1001,6 +1003,28 @@ export async function createPaymentBatch(
 
   if (payments.length !== paymentIds.length) {
     throw new AppError('Some payments are not found, not selected for batch, or not in SCHEDULED/APPROVED_FOR_PAYMENT status', 400);
+  }
+
+  // A payment batch is a payment-authorisation boundary. Do not allow an
+  // incomplete invoice, an unresolved bank snapshot, or mixed currencies into
+  // the batch; otherwise a later vendor/stub grouping could silently combine
+  // unsafe records.
+  const currencies = new Set(payments.map((p: any) => String(p.currency || p.invoice?.currency || 'USD').toUpperCase()));
+  if (currencies.size > 1) {
+    throw new AppError('A payment batch may contain only one currency', 400);
+  }
+  const invalid: string[] = [];
+  for (const payment of payments as any[]) {
+    const readiness = getApprovalReadiness(payment.invoice);
+    if (!readiness.ready) {
+      invalid.push(`${payment.invoice?.invoice_number || payment.invoice_id}: ${readiness.missing.map((m: any) => m.label).join(', ')}`);
+      continue;
+    }
+    const hasBankSnapshot = Boolean(payment.beneficiary_name_snapshot && payment.account_number_snapshot && payment.bank_snapshot_hash);
+    if (!hasBankSnapshot) invalid.push(`${payment.invoice?.invoice_number || payment.invoice_id}: approved bank details snapshot is missing`);
+  }
+  if (invalid.length) {
+    throw new AppError(`Cannot create payment batch until all invoices pass validation: ${invalid.slice(0, 8).join('; ')}${invalid.length > 8 ? `; and ${invalid.length - 8} more` : ''}`, 400);
   }
 
   // A batch may combine payments from ANY vendors (Accounting Associate decides

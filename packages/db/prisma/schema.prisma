@@ -45,6 +45,7 @@ model Vendor {
   updated_at              DateTime @updatedAt
   invoices                Invoice[]
   bank_change_requests    VendorBankChangeRequest[]
+  vendor_bill_stubs       VendorBillStub[]
   
   @@index([name])
   @@index([is_active])
@@ -445,6 +446,7 @@ model Payment {
   bank_charge_amount Decimal? @db.Decimal(15, 2)
   bank_charge_note String?
   bill_stub     BillStub?
+  vendor_bill_stub_line VendorBillStubLine?
   proof_file_url String?
   proof_file_name String?
   selected_for_batch Boolean  @default(false)
@@ -484,8 +486,49 @@ model PaymentBatch {
   cancellation_reason  String?
   payments             Payment[]
   bill_stubs           BillStub[]
+  vendor_bill_stubs    VendorBillStub[]
   created_at           DateTime           @default(now())
   @@map("APInvoice_PaymentBatch")
+}
+
+model VendorBillStub {
+  id                String             @id @default(uuid())
+  batch_id          String
+  batch             PaymentBatch       @relation(fields: [batch_id], references: [id], onDelete: Cascade)
+  vendor_id         String
+  vendor            Vendor             @relation(fields: [vendor_id], references: [id], onDelete: Restrict)
+  currency          String             @default("USD")
+  total_amount      Decimal            @db.Decimal(15, 2)
+  payment_reference String?
+  status            String             @default("DRAFT")
+  return_reason     String?
+  returned_by       String?
+  returned_at       DateTime?
+  approved_by       String?
+  approved_at       DateTime?
+  created_by        String?
+  created_at        DateTime           @default(now())
+  updated_at        DateTime           @updatedAt
+  lines             VendorBillStubLine[]
+
+  @@index([batch_id])
+  @@index([vendor_id])
+  @@map("APInvoice_VendorBillStub")
+}
+
+model VendorBillStubLine {
+  id           String        @id @default(uuid())
+  bill_stub_id String
+  bill_stub    VendorBillStub @relation(fields: [bill_stub_id], references: [id], onDelete: Cascade)
+  payment_id   String        @unique
+  payment      Payment       @relation(fields: [payment_id], references: [id], onDelete: Cascade)
+  invoice_id   String
+  amount       Decimal       @db.Decimal(15, 2)
+  created_at   DateTime      @default(now())
+
+  @@index([bill_stub_id])
+  @@index([invoice_id])
+  @@map("APInvoice_VendorBillStubLine")
 }
 
 model BillStub {

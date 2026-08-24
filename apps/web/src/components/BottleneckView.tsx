@@ -224,29 +224,6 @@ export default function BottleneckView() {
         }}
       />
 
-      <BottleneckCard
-        title="Awaiting CI/SI"
-        icon={FileText}
-        count={data?.awaiting_cisi.length || 0}
-        accent="default"
-        emptyIcon={FileText}
-        emptyTitle="No proformas awaiting CI/SI"
-        emptyDescription="Paid proforma invoices requiring CI/SI will appear here."
-        items={paginatedAwaitingCISI}
-        renderItem={(item) => (
-          <BottleneckItem
-            item={item}
-            formatCurrency={formatCurrency}
-            formatTimeAgo={formatTimeAgo}
-            formatHours={formatHours}
-          />
-        )}
-        pagination={{
-          currentPage: awaitingCISIPage,
-          totalPages: awaitingCISITotalPages,
-          onPageChange: setAwaitingCISIPage
-        }}
-      />
     </div>
   );
 }

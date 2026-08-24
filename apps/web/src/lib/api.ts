@@ -206,6 +206,7 @@ export const paymentBatchApi = {
     return api.post(`/api/payment-batches/${batchId}/payments/${paymentId}/endorse`, data);
   },
   matchConfirmation: (batchId: string, data: { reference?: string; amount?: number; paidDate?: string; paymentIds?: string[] }) => api.post(`/api/payment-batches/${batchId}/match-confirmation`, data),
+  bulkConfirmations: (file: File) => { const form = new FormData(); form.append('file', file); return api.post('/api/payment-batches/bulk-confirmations', form, { headers: { 'Content-Type': 'multipart/form-data' } }); },
   markExported: (batchId: string) => api.post(`/api/payment-batches/${batchId}/export`),
   exportPerVendor: (batchId: string) => api.get(`/api/payment-batches/${batchId}/export-per-vendor`, { responseType: 'blob' }),
   exportReconciliation: (params?: { status?: string; dateFrom?: string; dateTo?: string }) => api.get('/api/payment-batches/reconciliation', { params, responseType: 'blob' }),

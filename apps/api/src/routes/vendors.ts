@@ -302,6 +302,17 @@ router.patch('/:id/bank-details', authorize(UserRole.ACCOUNTING_SUPERVISOR, User
       throw new AppError('Vendor not found', 404);
     }
 
+    // Bank changes are locked while any linked invoice is in active review/payment.
+    // Users must use the bank-change request workflow so the snapshot and audit trail
+    // cannot be changed underneath an in-flight payment.
+    const activeInvoice = await prisma.invoice.findFirst({
+      where: { vendor_id: vendorId, status: { in: ['PENDING_ACCOUNTING', 'APPROVED', 'PAYMENT_SCHEDULED', 'POSTED_TO_QB', 'PAYMENT_CONFIRMATION_SENT', 'PAID'] as any } },
+      select: { invoice_number: true, status: true },
+    });
+    if (activeInvoice) {
+      throw new AppError(`Bank details are locked while invoice ${activeInvoice.invoice_number} is ${activeInvoice.status}. Submit a bank-change request instead.`, 409);
+    }
+
     // Phase 11: requester != approver — the user applying a bank change cannot
     // be the requester of an open request for the same vendor.
     const pendingOwnRequest = await prisma.vendorBankChangeRequest.findFirst({

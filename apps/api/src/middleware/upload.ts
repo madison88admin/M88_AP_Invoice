@@ -4,13 +4,13 @@ import path from 'path';
 const storage = multer.memoryStorage();
 
 const fileFilter = (req: any, file: any, cb: any) => {
-  const allowedTypes = /jpeg|jpg|png|pdf|xml|ubl/;
+  const allowedTypes = /jpeg|jpg|png|pdf|xml|ubl|csv|xlsx|xls/;
   const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
   // Only check extension for now, mimetype can be unreliable
   if (extname) {
     return cb(null, true);
   } else {
-    cb(new Error('Only PDF, JPG, PNG, XML, and UBL invoice files are allowed'));
+    cb(new Error('Only PDF, JPG, PNG, XML, UBL, CSV, and XLSX files are allowed'));
   }
 };
 

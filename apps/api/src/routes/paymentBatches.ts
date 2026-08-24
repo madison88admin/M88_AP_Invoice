@@ -31,6 +31,7 @@ router.post('/:batchId/bank-charge', authorize(UserRole.ACCOUNTING_ASSOCIATE), p
 router.delete('/:batchId/bank-charge/:paymentId', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.removeBankChargeController);
 router.post('/:batchId/payments/:paymentId/endorse', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), upload.single('stubFile'), paymentBatchController.endorseBillStubController);
 router.post('/:batchId/match-confirmation', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.matchPaymentConfirmationController);
+router.post('/bulk-confirmations', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), upload.single('file'), paymentBatchController.bulkMatchPaymentConfirmationsController);
 router.post('/:batchId/submit', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.submitPaymentBatchController);
 router.post('/:batchId/review', authorize(UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.reviewPaymentBatchController);
 router.post('/:batchId/return', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.returnPaymentBatchController);

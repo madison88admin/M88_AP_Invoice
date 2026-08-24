@@ -874,6 +874,10 @@ export async function matchPaymentConfirmation(
   };
 }
 
+export async function findPaymentBatchByNumber(batchNumber: string) {
+  return prisma.paymentBatch.findUnique({ where: { batch_number: batchNumber }, select: { id: true, batch_number: true } });
+}
+
 /**
  * Sum a batch's payments plus its bank charges. When `changedPaymentId` is
  * given, its charge is treated as `changedCharge` (the post-update value).

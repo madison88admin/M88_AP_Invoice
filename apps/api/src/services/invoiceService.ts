@@ -581,7 +581,7 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
   // Once invoice is approved (PENDING_ACCOUNTING or APPROVED), accounting can ONLY edit bank details
   // All other fields are locked to preserve the approved invoice state
   const approvedStatuses = ['PENDING_ACCOUNTING', 'APPROVED'];
-  if (approvedStatuses.includes(existing.status) && !canFullEdit) {
+  if (approvedStatuses.includes(existing.status)) {
     const allowedFields = ['beneficiary_name', 'bank_name', 'swift_code', 'account_number', 'vendor_id', 'vendor_name_raw', 'new_vendor_name'];
     const attemptedFields = Object.keys(invoiceData).filter(k => invoiceData[k] !== undefined && !protectedFields.includes(k));
     const disallowedFields = attemptedFields.filter(f => !allowedFields.includes(f));

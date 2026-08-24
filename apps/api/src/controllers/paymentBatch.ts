@@ -2,6 +2,7 @@ import { Response, NextFunction } from 'express';
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
+import XLSX from 'xlsx';
 import { AuthRequest } from '../middleware/auth';
 import {
   createPaymentBatch,
@@ -396,6 +397,49 @@ export const matchPaymentConfirmationController = async (
   } catch (error) {
     next(error);
   }
+};
+
+/** Import bank confirmations from CSV/XLSX. Required columns: batch_number or
+ * batch_id, reference; optional amount, paid_date, payment_ids (comma-separated). */
+export const bulkMatchPaymentConfirmationsController = async (
+  req: AuthRequest, res: Response, next: NextFunction
+) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: 'A CSV or XLSX confirmation file is required' });
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+    if (!rows.length) return res.status(400).json({ message: 'Confirmation file contains no rows' });
+    const results: any[] = [];
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const get = (...keys: string[]) => { const k = Object.keys(row).find(x => keys.includes(x.trim().toLowerCase())); return k ? row[k] : undefined; };
+      const batchId = String(get('batch_id', 'batchid') || '').trim();
+      const batchNumber = String(get('batch_number', 'batch number', 'batch') || '').trim();
+      const reference = String(get('reference', 'payment_reference', 'payment reference', 'bank_reference') || '').trim();
+      const amountRaw = get('amount', 'payment_amount', 'payment amount');
+      const paidDateRaw = get('paid_date', 'paid date', 'payment_date', 'payment date');
+      const idsRaw = String(get('payment_ids', 'payment ids') || '').trim();
+      try {
+        let resolvedBatchId = batchId;
+        if (!resolvedBatchId && batchNumber) {
+          const found = await (await import('../services/paymentBatchService')).findPaymentBatchByNumber(batchNumber);
+          resolvedBatchId = found?.id || '';
+        }
+        if (!resolvedBatchId) throw new Error('batch_id or batch_number is required');
+        const result = await matchPaymentConfirmation(resolvedBatchId, {
+          reference: reference || undefined,
+          amount: amountRaw === '' || amountRaw == null ? undefined : Number(amountRaw),
+          paidDate: paidDateRaw ? new Date(paidDateRaw as any).toISOString() : undefined,
+          paymentIds: idsRaw ? idsRaw.split(',').map(x => x.trim()).filter(Boolean) : undefined,
+        }, req.user!.id);
+        results.push({ row: i + 2, ok: true, ...result });
+      } catch (error: any) {
+        results.push({ row: i + 2, ok: false, error: error?.message || 'Unable to match confirmation' });
+      }
+    }
+    res.json({ processed: results.length, succeeded: results.filter(x => x.ok).length, failed: results.filter(x => !x.ok).length, results });
+  } catch (error) { next(error); }
 };
 
 export const exportReconciliationController = async (

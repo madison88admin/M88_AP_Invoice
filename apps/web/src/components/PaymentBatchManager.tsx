@@ -87,7 +87,7 @@ interface PaymentBatch {
   batch_number: string;
   total_amount: number;
   payment_count: number;
-  status: 'DRAFT' | 'PENDING_SUPERVISOR_REVIEW' | 'RETURNED_FOR_CORRECTION' | 'REVIEWED' | 'EXPORTED_TO_BANK' | 'PROCESSING' | 'PROCESSED' | 'PARTIALLY_PAID' | 'FAILED' | 'CANCELLED';
+  status: 'DRAFT' | 'PENDING_SUPERVISOR_REVIEW' | 'APPROVED' | 'BANK_PROCESSED' | 'PENDING_CFO_APPROVAL' | 'PAID' | 'RETURNED_FOR_CORRECTION' | 'REVIEWED' | 'EXPORTED_TO_BANK' | 'PROCESSING' | 'PROCESSED' | 'PARTIALLY_PAID' | 'FAILED' | 'CANCELLED';
   created_at: string;
   processed_at?: string;
   cancelled_at?: string;
@@ -213,6 +213,7 @@ export default function PaymentBatchManager() {
 
   const isAssociate = user?.role === 'ACCOUNTING_ASSOCIATE';
   const isSupervisor = user?.role === 'ACCOUNTING_SUPERVISOR';
+  const isCfo = user?.role === 'CFO';
   const isPurchasing = user?.role === 'PURCHASING_COORDINATOR';
   const isBatchable = (p: ScheduledPayment) => p.status === 'SCHEDULED' || p.status === 'APPROVED_FOR_PAYMENT';
 
@@ -743,7 +744,7 @@ export default function PaymentBatchManager() {
     }
   };
 
-  const handleBatchAction = async (action: 'submit' | 'review' | 'return' | 'export', batchId: string) => {
+  const handleBatchAction = async (action: 'submit' | 'review' | 'return' | 'export' | 'submitCfo', batchId: string) => {
     const reason = action === 'return' ? window.prompt('Reason for returning this batch to Accounting Associate:') : undefined;
     if (action === 'return' && !reason?.trim()) return;
     setProcessing(true);
@@ -752,6 +753,7 @@ export default function PaymentBatchManager() {
       if (action === 'review') await paymentBatchApi.review(batchId);
       if (action === 'return') await paymentBatchApi.returnForCorrection(batchId, reason!.trim());
       if (action === 'export') await paymentBatchApi.markExported(batchId);
+      if (action === 'submitCfo') await paymentBatchApi.submitForCfo(batchId);
       await loadBatches();
       setSelectedBatch(null);
     } catch (error: any) {
@@ -1684,22 +1686,34 @@ export default function PaymentBatchManager() {
 
               {selectedBatch.status === 'PENDING_SUPERVISOR_REVIEW' && isSupervisor && (
                 <div className="flex items-center gap-3 mb-6">
-                  <button onClick={() => handleBatchAction('review', selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'var(--accent-green)', color: 'white' }}>Mark Reviewed</button>
+                  <button onClick={() => handleBatchAction('review', selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'var(--accent-green)', color: 'white' }}>Supervisor Approve</button>
                   <button onClick={() => handleBatchAction('return', selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'var(--accent-amber)', color: 'var(--bg-base)' }}>Return for Correction</button>
                 </div>
               )}
 
-              {selectedBatch.status === 'REVIEWED' && isSupervisor && (
+              {['APPROVED', 'REVIEWED'].includes(selectedBatch.status) && isSupervisor && (
                 <div className="flex items-center gap-3 mb-6">
                   <button onClick={() => handleExportPerVendor(selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2" style={{ background: 'var(--accent-blue)', color: 'white' }}>
                     <Paperclip className="h-4 w-4" strokeWidth={1.75} />
                     {processing ? 'Exporting...' : 'Export Batch (Excel)'}
                   </button>
-                  <button onClick={() => handleBatchAction('export', selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'var(--accent-purple)', color: 'white' }}>Mark Exported to Bank</button>
+                  <button onClick={() => handleBatchAction('export', selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'var(--accent-purple)', color: 'white' }}>Mark Bank Processed</button>
                 </div>
               )}
 
-              {selectedBatch.status === 'REVIEWED' && isAssociate && (
+              {selectedBatch.status === 'BANK_PROCESSED' && isSupervisor && (
+                <div className="flex items-center gap-3 mb-6">
+                  <button onClick={() => handleBatchAction('submitCfo', selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'var(--accent-purple)', color: 'white' }}>Submit for CFO Approval</button>
+                </div>
+              )}
+
+              {selectedBatch.status === 'PENDING_CFO_APPROVAL' && isCfo && (
+                <div className="flex items-center gap-3 mb-6">
+                  <button onClick={() => setShowExecutionModal(true)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}>CFO Approve & Mark Paid</button>
+                </div>
+              )}
+
+              {['APPROVED', 'REVIEWED'].includes(selectedBatch.status) && isAssociate && (
                 <div className="flex items-center gap-3 mb-6">
                   <button onClick={() => handleExportPerVendor(selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2" style={{ background: 'var(--accent-blue)', color: 'white' }}>
                     <Paperclip className="h-4 w-4" strokeWidth={1.75} />
@@ -1711,7 +1725,7 @@ export default function PaymentBatchManager() {
                 </div>
               )}
 
-              {(isAssociate || isSupervisor) && ['REVIEWED', 'EXPORTED_TO_BANK'].includes(selectedBatch.status) && endorsedPayments.length > 0 && (
+              {isCfo && selectedBatch.status === 'PENDING_CFO_APPROVAL' && endorsedPayments.length > 0 && (
                 <div className="flex items-center justify-between p-4 rounded-xl mb-6" style={{ background: 'color-mix(in srgb, var(--accent-green) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-green) 20%, transparent)' }}>
                   <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>
                     <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{endorsedPayments.length} endorsed payment{endorsedPayments.length === 1 ? '' : 's'}</span>
@@ -1755,7 +1769,7 @@ export default function PaymentBatchManager() {
                       <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Scheduled Date</th>
                       <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Status</th>
                       <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Execution</th>
-                      {['REVIEWED', 'EXPORTED_TO_BANK'].includes(selectedBatch.status) && (
+                      {['DRAFT', 'RETURNED_FOR_CORRECTION', 'PENDING_SUPERVISOR_REVIEW'].includes(selectedBatch.status) && (
                         <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Actions</th>
                       )}
                     </tr>
@@ -1846,7 +1860,7 @@ export default function PaymentBatchManager() {
                             {!payment.bill_stub && !payment.reference && !payment.paid_at && !payment.proof_file_url && <span>Pending</span>}
                           </div>
                         </td>
-                        {['REVIEWED', 'EXPORTED_TO_BANK'].includes(selectedBatch.status) && (
+                        {['DRAFT', 'RETURNED_FOR_CORRECTION', 'PENDING_SUPERVISOR_REVIEW'].includes(selectedBatch.status) && (
                           <td className="px-6 py-4 whitespace-nowrap">
                             {['SCHEDULED', 'APPROVED_FOR_PAYMENT'].includes(payment.status) && (
                               <button
@@ -1855,7 +1869,7 @@ export default function PaymentBatchManager() {
                                 className="px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors disabled:opacity-50"
                                 style={{ background: 'var(--accent-amber)', color: 'var(--bg-base)' }}
                               >
-                                Endorse Bill Stub
+                                Create Bill Stub
                               </button>
                             )}
                             {payment.status === 'ENDORSED' && (
@@ -1865,7 +1879,7 @@ export default function PaymentBatchManager() {
                                 className="px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors disabled:opacity-50"
                                 style={{ background: 'color-mix(in srgb, var(--accent-amber) 12%, transparent)', color: 'var(--accent-amber)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}
                               >
-                                Edit Stub
+                                Edit Bill Stub
                               </button>
                             )}
                           </td>

@@ -231,7 +231,7 @@ const startServer = async () => {
 
     server.setTimeout(600000); // 10 minutes
     const sideEffectsEnabled = process.env.DISABLE_SIDE_EFFECTS !== 'true';
-    await startDurableJobWorker();
+    if (sideEffectsEnabled) await startDurableJobWorker();
 
     // Start SharePoint folder watcher (polls IncomingInvoices every 30s)
     const watcherIntervalSec = parseInt(process.env.SHAREPOINT_WATCHER_INTERVAL_SEC || '30', 10);

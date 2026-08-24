@@ -66,6 +66,62 @@ router.post('/bank-change-requests/:id/reject', authorize(UserRole.ACCOUNTING_SU
   }
 });
 
+router.get('/master-change-requests', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    res.json(await prisma.vendorMasterChangeRequest.findMany({
+      where: typeof req.query.status === 'string' ? { status: req.query.status } : undefined,
+      include: { vendor: { select: { id: true, name: true, governance_status: true } } },
+      orderBy: { created_at: 'desc' },
+    }));
+  } catch (error) { next(error); }
+});
+
+router.post('/master-change-requests/:id/approve', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const request = await prisma.vendorMasterChangeRequest.findUnique({ where: { id: req.params.id } });
+    if (!request || request.status !== 'PENDING') throw new AppError('Pending Vendor Master change not found', 404);
+    if (request.requested_by_id === req.user!.id) throw new AppError('Requester cannot approve their own Vendor Master change', 403);
+    const proposed = request.proposed_data as Record<string, any>;
+    if (BANK_FIELDS.some(field => field in proposed)) throw new AppError('Bank fields require the separate bank-change approval workflow', 400);
+    const [vendor] = await prisma.$transaction([
+      prisma.vendor.update({ where: { id: request.vendor_id }, data: { ...proposed, governance_status: 'APPROVED', governance_reviewed_by: req.user!.name, governance_reviewed_at: new Date(), governance_rejection_reason: null } }),
+      prisma.vendorMasterChangeRequest.update({ where: { id: request.id }, data: { status: 'APPROVED', reviewed_by: req.user!.name, reviewed_by_id: req.user!.id, reviewed_at: new Date() } }),
+    ]);
+    res.json({ message: 'Vendor Master change approved', vendor });
+  } catch (error) { next(error); }
+});
+
+router.post('/master-change-requests/:id/reject', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const request = await prisma.vendorMasterChangeRequest.findUnique({ where: { id: req.params.id } });
+    if (!request || request.status !== 'PENDING') throw new AppError('Pending Vendor Master change not found', 404);
+    if (request.requested_by_id === req.user!.id) throw new AppError('Requester cannot reject their own Vendor Master change', 403);
+    const reason = String(req.body.reason || '').trim();
+    if (!reason) throw new AppError('Rejection reason is required', 400);
+    res.json(await prisma.vendorMasterChangeRequest.update({ where: { id: request.id }, data: { status: 'REJECTED', reviewed_by: req.user!.name, reviewed_by_id: req.user!.id, reviewed_at: new Date(), rejection_reason: reason } }));
+  } catch (error) { next(error); }
+});
+
+router.post('/pending/:id/approve', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const vendor = await prisma.vendor.findUnique({ where: { id: req.params.id } });
+    if (!vendor || vendor.governance_status !== 'PENDING') throw new AppError('Pending vendor not found', 404);
+    if (vendor.governance_requested_by === req.user!.name || vendor.governance_requested_by === req.user!.id) throw new AppError('Requester cannot approve their own vendor', 403);
+    res.json(await prisma.vendor.update({ where: { id: vendor.id }, data: { governance_status: 'APPROVED', is_active: true, governance_reviewed_by: req.user!.name, governance_reviewed_at: new Date(), governance_rejection_reason: null } }));
+  } catch (error) { next(error); }
+});
+
+router.post('/pending/:id/reject', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const vendor = await prisma.vendor.findUnique({ where: { id: req.params.id } });
+    if (!vendor || vendor.governance_status !== 'PENDING') throw new AppError('Pending vendor not found', 404);
+    if (vendor.governance_requested_by === req.user!.name || vendor.governance_requested_by === req.user!.id) throw new AppError('Requester cannot reject their own vendor', 403);
+    const reason = String(req.body.reason || '').trim();
+    if (!reason) throw new AppError('Rejection reason is required', 400);
+    res.json(await prisma.vendor.update({ where: { id: vendor.id }, data: { governance_status: 'REJECTED', is_active: false, governance_reviewed_by: req.user!.name, governance_reviewed_at: new Date(), governance_rejection_reason: reason } }));
+  } catch (error) { next(error); }
+});
+
 // Bank Details Masterlist — must be before /:id
 router.get('/bank-details/masterlist', authenticate, async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -160,6 +216,10 @@ router.post('/', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_A
         bank_name_alt: req.body.bank_name_alt || [],
         account_number_alt: req.body.account_number_alt || [],
         swift_code_alt: req.body.swift_code_alt || [],
+        governance_status: 'PENDING',
+        governance_requested_by: req.user!.name || req.user!.id,
+        governance_requested_at: new Date(),
+        is_active: false,
         created_at: new Date(),
         updated_at: new Date(),
       },
@@ -174,7 +234,7 @@ router.post('/', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_A
       }
     }
 
-    res.status(201).json(vendor);
+    res.status(201).json({ ...vendor, message: 'Vendor created as PENDING and requires independent approval before use.' });
   } catch (error) {
     next(error);
   }
@@ -182,7 +242,6 @@ router.post('/', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_A
 
 router.patch('/:id', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const userRole = req.user?.role;
     const updateData = { ...req.body };
 
     const currentVendor = await prisma.vendor.findUnique({ where: { id: req.params.id } });
@@ -214,28 +273,19 @@ router.patch('/:id', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTI
       }
     }
 
-    // If user is not accounting/IT, strip bank fields from the update
-    if (userRole && !ACCOUNTING_ROLES.includes(userRole)) {
-      if (changedBankFields.length > 0) {
-        return res.status(403).json({ 
-          error: { 
-            message: 'You cannot modify bank information. Please submit a bank update request to the Accounting team.',
-            status: 403 
-          } 
-        });
-      }
-      // Remove bank fields from update (no changes detected, but prevent setting them)
-      BANK_FIELDS.forEach(f => delete updateData[f]);
-    }
-
-    const vendor = await prisma.vendor.update({
-      where: { id: req.params.id },
-      data: {
-        ...updateData,
-        updated_at: new Date(),
-      },
-    });
-    res.json(vendor);
+    if (changedBankFields.length > 0) throw new AppError('Inline bank edits are locked. Submit a bank update request for independent approval.', 403);
+    BANK_FIELDS.forEach(field => delete updateData[field]);
+    const reason = String(updateData.change_reason || updateData.reason || '').trim();
+    if (!reason) throw new AppError('A reason is required for Vendor Master changes', 400);
+    ['id', 'created_at', 'updated_at', 'governance_status', 'governance_requested_by', 'governance_requested_at', 'governance_reviewed_by', 'governance_reviewed_at', 'governance_rejection_reason', 'change_reason', 'reason'].forEach(field => delete updateData[field]);
+    const request = await prisma.vendorMasterChangeRequest.create({ data: {
+      vendor_id: currentVendor.id,
+      proposed_data: updateData,
+      reason,
+      requested_by: req.user!.name || req.user!.id,
+      requested_by_id: req.user!.id,
+    } });
+    res.status(202).json({ message: 'Vendor Master change submitted for independent approval', request });
   } catch (error) {
     next(error);
   }
@@ -294,98 +344,7 @@ router.post('/:id/request-bank-update', authenticate, async (req: AuthRequest, r
 // Update vendor bank details AND propagate to all related invoices
 router.patch('/:id/bank-details', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const vendorId = req.params.id;
-    const { bank_name, swift_code, account_number, bank_name_alt, bank_address, account_number_alt, swift_code_alt, iban, sort_code, aba_routing_number, intermediary_bank_name, intermediary_bank_swift } = req.body;
-
-    const vendor = await prisma.vendor.findUnique({ where: { id: vendorId } });
-    if (!vendor) {
-      throw new AppError('Vendor not found', 404);
-    }
-
-    // Phase 11: requester != approver — the user applying a bank change cannot
-    // be the requester of an open request for the same vendor.
-    const pendingOwnRequest = await prisma.vendorBankChangeRequest.findFirst({
-      where: { vendor_id: vendorId, status: 'PENDING', requested_by_id: req.user!.id },
-    });
-    if (pendingOwnRequest) {
-      throw new AppError('You cannot apply a bank change you requested. Ask another Accounting user to review and apply it.', 403);
-    }
-
-    // Phase 11: critical bank-reuse alert when the account number changes to
-    // one already assigned to another active vendor.
-    if (account_number !== undefined && account_number !== vendor.account_number && account_number) {
-      const reuse = await findBankAccountReuse(vendorId, account_number);
-      if (reuse.length > 0) {
-        await alertBankAccountReuse(vendor.name, account_number, reuse, req.user?.id);
-      }
-    }
-
-    // Build update data for vendor
-    const vendorUpdate: Record<string, any> = { updated_at: new Date() };
-    const bankUpdateFields = { bank_name, swift_code, account_number, bank_name_alt, bank_address, account_number_alt, swift_code_alt, iban, sort_code, aba_routing_number, intermediary_bank_name, intermediary_bank_swift };
-    for (const [key, value] of Object.entries(bankUpdateFields)) {
-      if (value !== undefined) {
-        vendorUpdate[key] = value;
-      }
-    }
-
-    // Update vendor
-    await prisma.vendor.update({
-      where: { id: vendorId },
-      data: vendorUpdate,
-    });
-
-    // Propagate bank changes to ALL invoices linked to this vendor
-    const invoiceUpdate: Record<string, any> = {};
-    if (bank_name !== undefined) invoiceUpdate.bank_name = bank_name;
-    if (swift_code !== undefined) invoiceUpdate.swift_code = swift_code;
-    if (account_number !== undefined) invoiceUpdate.account_number = account_number;
-
-    let updatedInvoices = 0;
-    if (Object.keys(invoiceUpdate).length > 0) {
-      const result = await prisma.invoice.updateMany({
-        where: { vendor_id: vendorId },
-        data: { ...invoiceUpdate, updated_at: new Date() },
-      });
-      updatedInvoices = result.count;
-    }
-
-    // Phase 11: auto-approve pending requests from OTHER users whose requested
-    // value matches the applied field (the requester != approver rule already
-    // blocked self-application above).
-    const appliedFields: Record<string, any> = {};
-    if (bank_name !== undefined) appliedFields.bank_name = bank_name;
-    if (swift_code !== undefined) appliedFields.swift_code = swift_code;
-    if (account_number !== undefined) appliedFields.account_number = account_number;
-    const pendingRequests = await prisma.vendorBankChangeRequest.findMany({
-      where: { vendor_id: vendorId, status: 'PENDING' },
-    });
-    for (const pending of pendingRequests) {
-      if (pending.requested_by_id === req.user!.id) continue; // defensive: never self-approve
-      if (pending.field in appliedFields && String(appliedFields[pending.field]) === String(pending.requested_value)) {
-        await prisma.vendorBankChangeRequest.update({
-          where: { id: pending.id },
-          data: { status: 'APPROVED', reviewed_by: req.user!.name || 'Unknown', reviewed_at: new Date() },
-        });
-      }
-    }
-
-    // Create audit log
-    const changedFields = Object.keys(vendorUpdate).filter(k => k !== 'updated_at');
-    await prisma.auditLog.create({
-      data: {
-        action: 'VENDOR_BANK_UPDATED',
-        performed_by: req.user!.id,
-        note: `Vendor "${vendor.name}" bank details updated by ${req.user!.role}. Fields: ${changedFields.join(', ')}. Propagated to ${updatedInvoices} invoice(s).`,
-      },
-    }).catch(() => { /* audit log failure should not block the update */ });
-
-    res.json({
-      message: `Bank details updated for vendor "${vendor.name}" and propagated to ${updatedInvoices} invoice(s)`,
-      vendor_id: vendorId,
-      updated_fields: changedFields,
-      invoices_updated: updatedInvoices,
-    });
+    throw new AppError('Inline bank updates are locked. Use the bank-change request approval workflow.', 403);
   } catch (error) {
     next(error);
   }

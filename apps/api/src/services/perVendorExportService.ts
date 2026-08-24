@@ -47,7 +47,7 @@ export async function exportBatchPerVendor(batchId: string, userId?: string): Pr
   }
 
   // Batch must be reviewed by Accounting Supervisor before export
-  if (![PaymentBatchStatus.REVIEWED, PaymentBatchStatus.EXPORTED_TO_BANK, PaymentBatchStatus.PROCESSED].includes(batch.status as any)) {
+  if (![PaymentBatchStatus.APPROVED, PaymentBatchStatus.BANK_PROCESSED, PaymentBatchStatus.PENDING_CFO_APPROVAL, PaymentBatchStatus.PAID, PaymentBatchStatus.REVIEWED, PaymentBatchStatus.EXPORTED_TO_BANK, PaymentBatchStatus.PROCESSED].includes(batch.status as any)) {
     throw new AppError('Batch must be reviewed by Accounting Supervisor before export', 400);
   }
 

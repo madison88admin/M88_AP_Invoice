@@ -671,8 +671,8 @@ export async function processPayment(paymentId: string, userId: string, executio
     throw new AppError('Payment not found', 404);
   }
 
-  if (payment.status !== 'SCHEDULED') {
-    throw new AppError('Payment must be scheduled to be processed', 400);
+  if (!['SCHEDULED', 'ENDORSED'].includes(payment.status)) {
+    throw new AppError('Payment must be scheduled and have an optional endorsed bill stub to be processed', 400);
   }
 
   // Simulate payment processing
@@ -823,7 +823,14 @@ export async function releaseFromHold(invoiceId: string, userId: string) {
   // Update invoice status back to PENDING_ACCOUNTING so it can be re-posted
   await prisma.invoice.update({
     where: { id: invoiceId },
-    data: { status: InvoiceStatus.PENDING_ACCOUNTING as any },
+    data: {
+      status: InvoiceStatus.PENDING_ACCOUNTING as any,
+      hold_started_at: null,
+      hold_confirmation_due_at: null,
+      hold_confirmed_at: null,
+      hold_confirmed_by: null,
+      hold_reason: null,
+    },
   });
 
   // Re-enter PENDING_ACCOUNTING stage since the previous one was exited when the pre-post check failed
@@ -880,7 +887,14 @@ export async function holdInvoiceForBatchThreshold(invoiceId: string, userId: st
   // Update invoice status to ON_HOLD
   await prisma.invoice.update({
     where: { id: invoiceId },
-    data: { status: InvoiceStatus.ON_HOLD as any },
+    data: {
+      status: InvoiceStatus.ON_HOLD as any,
+      hold_started_at: new Date(),
+      hold_confirmation_due_at: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      hold_confirmed_at: null,
+      hold_confirmed_by: null,
+      hold_reason: reason || `Manually held by Accounting — vendor cumulative amount below $100 batch threshold.`,
+    },
   });
 
   // Create batch threshold exception
@@ -924,7 +938,17 @@ export async function holdInvoiceForBatchThreshold(invoiceId: string, userId: st
     previous_status: previousStatus,
     vendor: invoice.vendor?.name,
     amount: Number(invoice.total_amount),
+    confirmation_due_at: new Date(Date.now() + 24 * 60 * 60 * 1000),
   };
+}
+
+export async function confirmHeldInvoice(invoiceId: string, userId: string) {
+  const invoice = await prisma.invoice.findUnique({ where: { id: invoiceId } });
+  if (!invoice || invoice.status !== InvoiceStatus.ON_HOLD) throw new AppError('Held invoice not found', 404);
+  if (invoice.hold_confirmed_at) return { message: 'Hold already confirmed', invoice };
+  const confirmed = await prisma.invoice.update({ where: { id: invoiceId }, data: { hold_confirmed_at: new Date(), hold_confirmed_by: userId } });
+  await prisma.auditLog.create({ data: { invoice_id: invoiceId, action: 'HOLD_CONFIRMED', performed_by: userId, note: 'Accounting confirmed the hold within the 24-hour SLA.' } });
+  return { message: 'Hold confirmed', invoice: confirmed };
 }
 
 export async function getScheduledPayments() {

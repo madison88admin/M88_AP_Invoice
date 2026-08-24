@@ -15,7 +15,19 @@ const router = Router() as Router;
 type DemoUser = { email: string; name: string; role: string; password: string; brand_scope?: 'TOP_10' | 'OTHER' };
 
 function getDemoUsers(): DemoUser[] {
-  if (!isDemoLoginEnabled() || !process.env.DEMO_USERS_JSON) return [];
+  if (!isDemoLoginEnabled()) return [];
+  // Local development can run without PostgreSQL. Keep this fallback strictly
+  // development-only; production still requires DEMO_USERS_JSON or database users.
+  if (!process.env.DEMO_USERS_JSON && process.env.NODE_ENV === 'development' && !process.env.DATABASE_URL) {
+    return [
+      { email: 'maryan.untiveros@madison88.com', name: 'Maryan', role: UserRole.MLO_ACCOUNT_HOLDER, password: 'madison88' },
+      { email: 'edwin.garcia@madison88.com', name: 'Edwin', role: UserRole.PLANNING_MANAGER, password: 'madison88' },
+      { email: 'glecie.yumena@madison88.com', name: 'Glecie', role: UserRole.PLANNING_MANAGER, password: 'madison88' },
+      { email: 'lindsey.castro@madison88.com', name: 'Lindsey', role: UserRole.SR_MANAGER_GLOBAL_PRODUCTION, password: 'madison88' },
+      { email: 'polly.madison@madison88.com', name: 'Polly', role: UserRole.MS_POLLY, password: 'madison88' },
+    ];
+  }
+  if (!process.env.DEMO_USERS_JSON) return [];
   try {
     const parsed = JSON.parse(process.env.DEMO_USERS_JSON);
     return Array.isArray(parsed) ? parsed : [];
@@ -25,6 +37,10 @@ function getDemoUsers(): DemoUser[] {
 }
 
 const isDemoLoginEnabled = () => process.env.ENABLE_DEMO_LOGIN === 'true' || process.env.NODE_ENV === 'development';
+
+async function auditIfDatabaseEnabled(data: Parameters<typeof logAudit>[0]) {
+  if (process.env.DATABASE_URL) await logAudit(data);
+}
 
 function buildAuthResponse(user: any, id: string) {
   const brandScope = user.role === 'PLANNING_MANAGER' ? (user.brand_scope || undefined) : undefined;
@@ -80,7 +96,7 @@ router.post('/login', async (req, res, next) => {
     );
 
     if (demoUser) {
-      await logAudit({
+      await auditIfDatabaseEnabled({
         performed_by: demoUser.name,
         action: 'USER_LOGIN',
         note: `User ${demoUser.name} (${demoUser.email}) logged in as ${demoUser.role}`,
@@ -109,7 +125,7 @@ router.post('/login', async (req, res, next) => {
         name: dbUser.name,
         role: dbUser.role,
       };
-      await logAudit({
+      await auditIfDatabaseEnabled({
         performed_by: dbUser.name,
         action: 'USER_LOGIN',
         note: `User ${dbUser.name} (${dbUser.email}) logged in as ${dbUser.role}`,
@@ -152,7 +168,7 @@ router.post('/demo-login', async (req, res, next) => {
       throw new AppError('Invalid demo credentials', 401);
     }
 
-    await logAudit({
+    await auditIfDatabaseEnabled({
       performed_by: demoUser.name,
       action: 'USER_LOGIN_DEMO',
       note: `User ${demoUser.name} (${demoUser.email}) logged in via demo login as ${demoUser.role}`,

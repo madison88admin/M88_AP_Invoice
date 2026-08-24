@@ -24,10 +24,18 @@ export default function VendorManagement() {
   const [showBankRequestModal, setShowBankRequestModal] = useState(false);
   const [bankRequestData, setBankRequestData] = useState({ bank_name: '', swift_code: '', account_number: '', reason: '' });
   const [submittingRequest, setSubmittingRequest] = useState(false);
+  const [changeReason, setChangeReason] = useState('');
+  const [masterRequests, setMasterRequests] = useState<any[]>([]);
 
   const canAddVendor = user && ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role);
   const canEditBankInfo = user && ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role);
   const canEditVendor = user && ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role);
+  const canReviewVendor = user && ['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role);
+
+  const loadMasterRequests = async () => {
+    if (!canReviewVendor) return;
+    try { setMasterRequests((await vendorApi.getMasterChangeRequests()).data || []); } catch { setMasterRequests([]); }
+  };
 
   const handleAdd = () => {
     setIsAddMode(true);
@@ -46,6 +54,7 @@ export default function VendorManagement() {
 
   useEffect(() => {
     setLoading(false);
+    void loadMasterRequests();
   }, [vendors]);
 
   const locations = Array.from(new Set(vendors.map(v => v.supplier_location).filter(Boolean))).sort();
@@ -107,12 +116,18 @@ export default function VendorManagement() {
       }
     } else {
       if (!editingVendor.id) return;
+      if (!changeReason.trim()) {
+        showToast('A reason is required. The change will be submitted for approval.', 'error');
+        return;
+      }
       try {
         setSaving(true);
-        await vendorApi.update(editingVendor.id, editingVendor);
-        showToast('Vendor updated successfully', 'success');
+        await vendorApi.update(editingVendor.id, { ...editingVendor, change_reason: changeReason.trim() });
+        showToast('Vendor change submitted for independent approval', 'success');
         setShowEditModal(false);
         setEditingVendor({});
+        setChangeReason('');
+        await loadMasterRequests();
       } catch (error: any) {
         console.error('Failed to save vendor:', error);
         const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to save vendor';
@@ -176,6 +191,13 @@ export default function VendorManagement() {
 
   return (
     <div>
+          {canReviewVendor && masterRequests.length > 0 && <div className="p-5 mb-6 rounded-2xl" style={{ border: '1px solid var(--accent-amber)', background: 'color-mix(in srgb, var(--accent-amber) 8%, var(--bg-card))' }}>
+            <h2 className="font-semibold mb-3">Pending Vendor Master Changes ({masterRequests.length})</h2>
+            <div className="space-y-2">{masterRequests.map(request => <div key={request.id} className="flex items-center justify-between gap-3 p-3 rounded-xl" style={{ background: 'var(--bg-card)' }}>
+              <div><div className="font-medium">{request.vendor?.name}</div><div className="text-xs" style={{ color: 'var(--text-muted)' }}>{request.reason} · requested by {request.requested_by}</div></div>
+              <div className="flex gap-2"><button onClick={async () => { await vendorApi.approveMasterChange(request.id); await loadMasterRequests(); }} className="px-3 py-1.5 rounded-lg text-xs" style={{ background: 'var(--accent-green)', color: 'white' }}>Approve</button><button onClick={async () => { const reason = prompt('Rejection reason:'); if (reason) { await vendorApi.rejectMasterChange(request.id, reason); await loadMasterRequests(); } }} className="px-3 py-1.5 rounded-lg text-xs" style={{ color: 'var(--accent-red)', border: '1px solid var(--accent-red)' }}>Reject</button></div>
+            </div>)}</div>
+          </div>}
           {/* Search and Filter */}
           <div className="p-6 mb-6 rounded-2xl" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
             <div className="flex items-center gap-4">
@@ -272,6 +294,7 @@ export default function VendorManagement() {
                         <div className="min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
                             <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{vendor.name}</h3>
+                            <span className="ml-2 px-2 py-0.5 rounded-full text-[10px]" style={{ background: 'var(--bg-elevated)', color: vendor.governance_status === 'REJECTED' ? 'var(--accent-red)' : vendor.governance_status === 'PENDING' ? 'var(--accent-amber)' : 'var(--accent-green)' }}>{vendor.governance_status || 'APPROVED'}</span>
                             {vendor.is_active === false && (
                               <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-amber) 14%, transparent)', color: 'var(--accent-amber)', border: '1px solid color-mix(in srgb, var(--accent-amber) 25%, transparent)' }}>
                                 Inactive
@@ -286,6 +309,10 @@ export default function VendorManagement() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
+                        {canReviewVendor && vendor.governance_status === 'PENDING' && <>
+                          <button onClick={async (e) => { e.stopPropagation(); await vendorApi.approvePending(vendor.id); window.location.reload(); }} className="px-2 py-1 rounded-lg text-xs" style={{ background: 'var(--accent-green)', color: 'white' }}>Approve</button>
+                          <button onClick={async (e) => { e.stopPropagation(); const reason = prompt('Rejection reason:'); if (reason) { await vendorApi.rejectPending(vendor.id, reason); window.location.reload(); } }} className="px-2 py-1 rounded-lg text-xs" style={{ color: 'var(--accent-red)', border: '1px solid var(--accent-red)' }}>Reject</button>
+                        </>}
                         {canEditVendor && (
                         <button
                           onClick={(e) => {
@@ -460,13 +487,13 @@ export default function VendorManagement() {
                 <div>
                   <div className="flex items-center gap-2 mb-1">
                     <label className="block text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Bank Name</label>
-                    {!canEditBankInfo && !isAddMode && <Lock className="h-3 w-3" style={{ color: 'var(--text-subtle)' }} />}
+                    {!isAddMode && <Lock className="h-3 w-3" style={{ color: 'var(--text-subtle)' }} />}
                   </div>
                   <input
                     type="text"
                     value={editingVendor.bank_name || ''}
                     onChange={(e) => setEditingVendor({ ...editingVendor, bank_name: e.target.value })}
-                    disabled={!canEditBankInfo && !isAddMode}
+                    disabled={!isAddMode}
                     className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm disabled:opacity-60 disabled:cursor-not-allowed"
                     style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
                   />
@@ -474,13 +501,13 @@ export default function VendorManagement() {
                 <div>
                   <div className="flex items-center gap-2 mb-1">
                     <label className="block text-xs font-medium" style={{ color: 'var(--text-muted)' }}>SWIFT Code</label>
-                    {!canEditBankInfo && !isAddMode && <Lock className="h-3 w-3" style={{ color: 'var(--text-subtle)' }} />}
+                    {!isAddMode && <Lock className="h-3 w-3" style={{ color: 'var(--text-subtle)' }} />}
                   </div>
                   <input
                     type="text"
                     value={editingVendor.swift_code || ''}
                     onChange={(e) => setEditingVendor({ ...editingVendor, swift_code: e.target.value })}
-                    disabled={!canEditBankInfo && !isAddMode}
+                    disabled={!isAddMode}
                     className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm disabled:opacity-60 disabled:cursor-not-allowed"
                     style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
                   />
@@ -488,23 +515,27 @@ export default function VendorManagement() {
                 <div>
                   <div className="flex items-center gap-2 mb-1">
                     <label className="block text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Account Number</label>
-                    {!canEditBankInfo && !isAddMode && <Lock className="h-3 w-3" style={{ color: 'var(--text-subtle)' }} />}
+                    {!isAddMode && <Lock className="h-3 w-3" style={{ color: 'var(--text-subtle)' }} />}
                   </div>
                   <input
                     type="text"
                     value={editingVendor.account_number || ''}
                     onChange={(e) => setEditingVendor({ ...editingVendor, account_number: e.target.value })}
-                    disabled={!canEditBankInfo && !isAddMode}
+                    disabled={!isAddMode}
                     className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm disabled:opacity-60 disabled:cursor-not-allowed"
                     style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
                   />
                 </div>
-                {!canEditBankInfo && !isAddMode && (
+                {!isAddMode && (
                   <div className="px-3 py-2 rounded-xl text-xs flex items-start gap-2" style={{ background: 'color-mix(in srgb, var(--accent-amber) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)', color: 'var(--text-secondary)' }}>
                     <Lock className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" style={{ color: 'var(--accent-amber)' }} />
                     <span>Bank information is managed by the Accounting team. Use the "Request Bank Info Update" button in the vendor detail panel to request changes.</span>
                   </div>
                 )}
+                {!isAddMode && <div>
+                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Change reason <span style={{ color: 'var(--accent-red)' }}>*</span></label>
+                  <textarea value={changeReason} onChange={(event) => setChangeReason(event.target.value)} rows={2} placeholder="Required for independent Vendor Master approval" className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }} />
+                </div>}
               </div>
               <div className="mt-6 flex justify-end space-x-3">
                 <button

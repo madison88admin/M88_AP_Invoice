@@ -536,6 +536,23 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
   const canFullEdit = fullEditRoles.includes(userRole);
   const canReassignVendor = isAccounting || canFullEdit;
 
+  const auditLockedStatuses = ['PENDING_ACCOUNTING', 'APPROVED', 'ON_HOLD', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID', 'PAYMENT_CONFIRMATION_SENT'];
+  const immutableAfterApproval = [
+    'vendor_id', 'vendor_name_raw', 'new_vendor_name', 'invoice_number', 'invoice_type',
+    'invoice_date', 'due_date', 'total_amount', 'subtotal', 'tax_amount', 'discount_amount',
+    'currency', 'exchange_rate_to_usd', 'mpo_number', 'mpo_base_number', 'mpo_order_sequence',
+    'material_code', 'material_name', 'qty_shipped', 'invoice_lines', 'beneficiary_name',
+    'bank_name', 'swift_code', 'account_number', 'bank_charges', 'freight_charges',
+    'additional_charges', 'courier_charges', 'handling_fee', 'tt_charge', 'setup_charge',
+    'sample_charge', 'min_order_charge', 'finance_surcharge',
+  ];
+  if (auditLockedStatuses.includes(String(existing.status))) {
+    const attempted = immutableAfterApproval.filter(field => invoiceData[field] !== undefined && JSON.stringify(invoiceData[field]) !== JSON.stringify((existing as any)[field]));
+    if (attempted.length) {
+      throw new AppError(`Approved invoice financial data is read-only. Return the invoice for correction before changing: ${attempted.join(', ')}`, 423);
+    }
+  }
+
   if (!isAccounting && !canFullEdit) {
     throw new AppError('Not authorized to edit invoice data', 403);
   }

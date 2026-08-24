@@ -3167,7 +3167,7 @@ ${dataRows}
               </button>
 
               {/* Edit Invoice Button — shown if user can edit invoice OR edit bank details */}
-              {user && (hasPermission(user.role, 'canEditInvoice') || hasPermission(user.role, 'canEditBankDetails')) && (
+              {user && !['PENDING_ACCOUNTING', 'APPROVED', 'ON_HOLD', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID', 'PAYMENT_CONFIRMATION_SENT'].includes(String(selectedInvoice.status)) && (hasPermission(user.role, 'canEditInvoice') || hasPermission(user.role, 'canEditBankDetails')) && (
                 <button
                   onClick={handleOpenEdit}
                   className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
@@ -3178,6 +3178,11 @@ ${dataRows}
                   <Edit className="h-4 w-4 mr-2" strokeWidth={1.75} />
                   {hasPermission(user.role, 'canEditInvoice') ? 'Edit Invoice' : 'Invoice Details'}
                 </button>
+              )}
+              {['PENDING_ACCOUNTING', 'APPROVED', 'ON_HOLD', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID', 'PAYMENT_CONFIRMATION_SENT'].includes(String(selectedInvoice.status)) && (
+                <div className="w-full px-4 py-2.5 rounded-xl text-xs" style={{ background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border-color)' }}>
+                  Financial, vendor, MPO and line-item fields are locked after approval. Return the invoice for correction before editing.
+                </div>
               )}
 
               {/* Check NextGen Changes Button */}

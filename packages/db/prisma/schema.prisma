@@ -41,9 +41,16 @@ model Vendor {
   is_active               Boolean  @default(true)
   onboarded_by            String?
   bank_verified_at        DateTime?
+  governance_status       String   @default("APPROVED")
+  governance_requested_by String?
+  governance_requested_at DateTime?
+  governance_reviewed_by  String?
+  governance_reviewed_at  DateTime?
+  governance_rejection_reason String?
   created_at              DateTime @default(now())
   updated_at              DateTime @updatedAt
   invoices                Invoice[]
+  master_change_requests  VendorMasterChangeRequest[]
   bank_change_requests    VendorBankChangeRequest[]
   
   @@index([name])
@@ -123,6 +130,11 @@ model Invoice {
   priority_flag         Boolean       @default(false)
   priority_pay_date     DateTime?
   is_urgent             Boolean       @default(false)
+  hold_started_at       DateTime?
+  hold_confirmation_due_at DateTime?
+  hold_confirmed_at     DateTime?
+  hold_confirmed_by     String?
+  hold_reason           String?
   
   // Validation
   is_duplicate          Boolean       @default(false)
@@ -409,6 +421,26 @@ model VendorBankChangeRequest {
   @@index([vendor_id])
   @@index([status])
   @@map("APInvoice_VendorBankChangeRequest")
+}
+
+model VendorMasterChangeRequest {
+  id              String   @id @default(uuid())
+  vendor_id       String
+  vendor          Vendor   @relation(fields: [vendor_id], references: [id], onDelete: Cascade)
+  proposed_data   Json
+  reason          String
+  status          String   @default("PENDING")
+  requested_by    String
+  requested_by_id String
+  reviewed_by     String?
+  reviewed_by_id  String?
+  reviewed_at     DateTime?
+  rejection_reason String?
+  created_at      DateTime @default(now())
+
+  @@index([vendor_id, status])
+  @@index([status, created_at])
+  @@map("APInvoice_VendorMasterChangeRequest")
 }
 
 model Payment {
@@ -703,6 +735,10 @@ enum ExceptionStatus {
 enum PaymentBatchStatus {
   DRAFT
   PENDING_SUPERVISOR_REVIEW
+  APPROVED
+  BANK_PROCESSED
+  PENDING_CFO_APPROVAL
+  PAID
   RETURNED_FOR_CORRECTION
   REVIEWED
   EXPORTED_TO_BANK

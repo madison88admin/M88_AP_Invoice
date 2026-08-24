@@ -131,6 +131,7 @@ export const invoiceApi = {
   post: (id: string, bypassVarianceCheck: boolean = false) => api.post(`/.netlify/functions/proxy-api/invoices/${id}/post`, { bypassVarianceCheck }, { timeout: 300000 }),
   releaseHold: (id: string) => api.post(`/api/invoices/${id}/release-hold`),
   holdForBatchThreshold: (id: string, reason?: string) => api.post(`/api/invoices/${id}/hold`, { reason }),
+  confirmHold: (id: string) => api.post(`/api/invoices/${id}/confirm-hold`),
   checkNextGenSync: async (id: string) => {
     const res = await api.post(`/api/invoices/${id}/check-nextgen-sync`, {}, { timeout: 30000 });
     return res;
@@ -207,6 +208,7 @@ export const paymentBatchApi = {
   },
   matchConfirmation: (batchId: string, data: { reference?: string; amount?: number; paidDate?: string; paymentIds?: string[] }) => api.post(`/api/payment-batches/${batchId}/match-confirmation`, data),
   markExported: (batchId: string) => api.post(`/api/payment-batches/${batchId}/export`),
+  submitForCfo: (batchId: string) => api.post(`/api/payment-batches/${batchId}/submit-cfo`),
   exportPerVendor: (batchId: string) => api.get(`/api/payment-batches/${batchId}/export-per-vendor`, { responseType: 'blob' }),
   exportReconciliation: (params?: { status?: string; dateFrom?: string; dateTo?: string }) => api.get('/api/payment-batches/reconciliation', { params, responseType: 'blob' }),
   process: (batchId: string, data?: { paidDate?: string; reference?: string; bankUsed?: string; remarks?: string; proof?: File | null }) => {
@@ -269,6 +271,11 @@ export const vendorApi = {
     api.post(`/api/vendors/${id}/request-bank-update`, data),
   getBankDetails: () => api.get('/api/vendors/bank-details/masterlist'),
   updateBankDetails: (id: string, data: any) => api.patch(`/api/vendors/${id}/bank-details`, data),
+  getMasterChangeRequests: (status = 'PENDING') => api.get('/api/vendors/master-change-requests', { params: { status } }),
+  approveMasterChange: (id: string) => api.post(`/api/vendors/master-change-requests/${id}/approve`),
+  rejectMasterChange: (id: string, reason: string) => api.post(`/api/vendors/master-change-requests/${id}/reject`, { reason }),
+  approvePending: (id: string) => api.post(`/api/vendors/pending/${id}/approve`),
+  rejectPending: (id: string, reason: string) => api.post(`/api/vendors/pending/${id}/reject`, { reason }),
 };
 
 export const auditLogApi = {

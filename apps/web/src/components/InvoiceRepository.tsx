@@ -69,7 +69,20 @@ export default function InvoiceRepository() {
         invoice.payments?.[0]?.batch_id,
       ].some((value) => String(value || '').toLowerCase().includes(term));
     });
-  }, [invoices, search, status, user?.role]);
+  }, [
+    invoices,
+    search,
+    status,
+    vendorId,
+    category,
+    invoiceType,
+    brand,
+    dateFrom,
+    dateTo,
+    agingBucket,
+    urgentDue,
+    user?.role,
+  ]);
 
   const openTimeline = async (invoiceId: string) => {
     setTimelineLoading(true);

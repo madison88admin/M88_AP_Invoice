@@ -126,7 +126,7 @@ export default function OnHoldQueue() {
 
         {/* Summary Cards */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <SummaryCard label="Total On Hold" value={summary?.total?.toString() || '0'} icon={Pause} color="var(--accent-amber)" />
+          <SummaryCard label="Total Queue (Holds + Exceptions)" value={summary?.total?.toString() || '0'} icon={Pause} color="var(--accent-amber)" />
           <SummaryCard label="On Hold" value={summary?.on_hold?.toString() || '0'} icon={Clock} color="var(--accent-amber)" />
           <SummaryCard label="Exception Flagged" value={summary?.exception_flagged?.toString() || '0'} icon={AlertTriangle} color="var(--accent-red)" />
           <SummaryCard label="Total Amount" value={formatCurrency(summary?.total_amount || 0, 'USD')} icon={AlertTriangle} color="var(--accent-purple)" />

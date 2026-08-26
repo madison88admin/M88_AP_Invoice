@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Archive, Clock, Search } from 'lucide-react';
+import { ArrowLeft, Archive, Clock, Search, CheckCircle, PauseCircle, PlayCircle } from 'lucide-react';
 import { invoiceApi } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 import { isInvoiceActionableForRole } from '../lib/roleAccess';
@@ -11,7 +11,7 @@ export default function InvoiceRepository() {
   const [invoices, setInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [status, setStatus] = useState('__ALL__');
+  const [status, setStatus] = useState(() => isAccounting ? '__ACCOUNTING__' : '__ALL__');
   const [vendorId, setVendorId] = useState('');
   const [category, setCategory] = useState('');
   const [invoiceType, setInvoiceType] = useState('');
@@ -22,6 +22,7 @@ export default function InvoiceRepository() {
   const [urgentDue, setUrgentDue] = useState(false);
   const [timeline, setTimeline] = useState<any | null>(null);
   const [timelineLoading, setTimelineLoading] = useState(false);
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
 
   useEffect(() => {
     invoiceApi.getAll()
@@ -102,6 +103,17 @@ export default function InvoiceRepository() {
     }
   };
 
+  const runAccountingAction = async (invoice: any, action: 'approve' | 'hold' | 'release') => {
+    setActionBusy(`${invoice.id}:${action}`);
+    try {
+      if (action === 'approve') await invoiceApi.approve(invoice.id, user?.name || user?.email || 'Accounting');
+      if (action === 'hold') await invoiceApi.holdForBatchThreshold(invoice.id);
+      if (action === 'release') await invoiceApi.releaseHold(invoice.id);
+      const refreshed = await invoiceApi.getAll();
+      setInvoices(refreshed.data || []);
+    } finally { setActionBusy(null); }
+  };
+
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-3 p-4 rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
@@ -129,7 +141,7 @@ export default function InvoiceRepository() {
           <table className="min-w-full text-sm">
             <thead style={{ background: 'var(--bg-elevated)', color: 'var(--text-muted)' }}>
               <tr>
-                {['Invoice', 'Document', 'Vendor', 'MPO / Material', 'Amount', 'Status', 'Payment', 'Timeline'].map((label) => (
+                {['Invoice', 'Document', 'Vendor', 'MPO / Material', 'Amount', 'Status', 'Payment', 'Timeline', ...(isAccounting ? ['Actions'] : [])].map((label) => (
                   <th key={label} className="px-4 py-3 text-left uppercase text-xs">{label}</th>
                 ))}
               </tr>
@@ -150,9 +162,14 @@ export default function InvoiceRepository() {
                       View
                     </button>
                   </td>
+                  {isAccounting && <td className="px-4 py-3"><div className="flex gap-1.5">
+                    {invoice.status === 'PENDING_ACCOUNTING' && <button disabled={!!actionBusy} onClick={() => void runAccountingAction(invoice, 'approve')} title="Approve invoice" className="p-1.5 rounded-lg" style={{ background: 'color-mix(in srgb, var(--accent-green) 12%, transparent)', color: 'var(--accent-green)' }}><CheckCircle className="h-4 w-4" /></button>}
+                    {invoice.status === 'PENDING_ACCOUNTING' && <button disabled={!!actionBusy} onClick={() => void runAccountingAction(invoice, 'hold')} title="Hold for batch threshold" className="p-1.5 rounded-lg" style={{ background: 'color-mix(in srgb, var(--accent-orange) 12%, transparent)', color: 'var(--accent-orange)' }}><PauseCircle className="h-4 w-4" /></button>}
+                    {invoice.status === 'ON_HOLD' && <button disabled={!!actionBusy} onClick={() => void runAccountingAction(invoice, 'release')} title="Release hold" className="p-1.5 rounded-lg" style={{ background: 'color-mix(in srgb, var(--accent-blue) 12%, transparent)', color: 'var(--accent-blue)' }}><PlayCircle className="h-4 w-4" /></button>}
+                  </div></td>}
                 </tr>
               ))}
-              {!loading && filtered.length === 0 && <tr><td colSpan={8} className="p-10 text-center" style={{ color: 'var(--text-muted)' }}>{status ? 'No invoices match the filters.' : 'No invoices currently require your action. Use the status filter to view history.'}</td></tr>}
+              {!loading && filtered.length === 0 && <tr><td colSpan={isAccounting ? 9 : 8} className="p-10 text-center" style={{ color: 'var(--text-muted)' }}>{status ? 'No invoices match the filters.' : 'No invoices currently require your action. Use the status filter to view history.'}</td></tr>}
               {loading && <tr><td colSpan={8} className="p-10 text-center" style={{ color: 'var(--text-muted)' }}>Loading repository...</td></tr>}
             </tbody>
           </table>

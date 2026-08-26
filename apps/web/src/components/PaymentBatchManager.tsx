@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { Package, Play, X, AlertCircle, CheckCircle, Clock, DollarSign, ArrowLeft, CheckSquare, Calendar, Loader2, Paperclip, Pencil, Download, ChevronDown, ChevronUp, SlidersHorizontal } from 'lucide-react';
+import { Package, Play, X, AlertCircle, CheckCircle, Clock, DollarSign, ArrowLeft, CheckSquare, Calendar, Loader2, Paperclip, Pencil, Download, Upload, ChevronDown, ChevronUp, SlidersHorizontal } from 'lucide-react';
 import { paymentBatchApi, vendorApi, qbApi } from '../lib/api';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
@@ -230,11 +230,24 @@ export default function PaymentBatchManager() {
   const [matchForm, setMatchForm] = useState({ reference: '', amount: '', paidDate: new Date().toISOString().split('T')[0] });
   const [matchSelected, setMatchSelected] = useState<Set<string>>(new Set());
   const [matchSaving, setMatchSaving] = useState(false);
+  const [bulkImporting, setBulkImporting] = useState(false);
 
   const isAssociate = user?.role === 'ACCOUNTING_ASSOCIATE';
   const isSupervisor = user?.role === 'ACCOUNTING_SUPERVISOR';
   const isPurchasing = user?.role === 'PURCHASING_COORDINATOR';
   const isBatchable = (p: ScheduledPayment) => p.status === 'SCHEDULED' || p.status === 'APPROVED_FOR_PAYMENT';
+
+  const handleBulkConfirmationImport = async (file: File) => {
+    setBulkImporting(true);
+    try {
+      const response = await paymentBatchApi.bulkConfirmations(file);
+      const data = response.data || {};
+      showToast(`${data.succeeded || 0} confirmation(s) matched; ${data.failed || 0} failed.`, data.failed ? 'error' : 'success');
+      await Promise.all([loadBatches(), loadStuckBatches()]);
+    } catch (error: any) {
+      showToast(error?.response?.data?.message || 'Unable to import payment confirmations.', 'error');
+    } finally { setBulkImporting(false); }
+  };
 
   const loadStuckBatches = useCallback(async () => {
     setStuckLoading(true);
@@ -1553,6 +1566,11 @@ export default function PaymentBatchManager() {
                 {reconExporting ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Download className="h-3.5 w-3.5 mr-1.5" strokeWidth={1.75} />}
                 Export Reconciliation
               </button>
+              {(isAssociate || isSupervisor) && <label className="flex items-center px-3 py-2 rounded-lg text-xs font-semibold cursor-pointer transition-colors" style={{ background: 'color-mix(in srgb, var(--accent-blue) 12%, transparent)', color: 'var(--accent-blue)', border: '1px solid color-mix(in srgb, var(--accent-blue) 20%, transparent)' }}>
+                {bulkImporting ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Upload className="h-3.5 w-3.5 mr-1.5" />}
+                Import Confirmations
+                <input type="file" accept=".csv,.xlsx,.xls" className="hidden" disabled={bulkImporting} onChange={(e) => { const file = e.target.files?.[0]; if (file) void handleBulkConfirmationImport(file); e.currentTarget.value = ''; }} />
+              </label>}
             </div>
 
             {/* Stuck-batch alert — EXPORTED_TO_BANK batches whose payments haven't been endorsed or confirmed PAID */}

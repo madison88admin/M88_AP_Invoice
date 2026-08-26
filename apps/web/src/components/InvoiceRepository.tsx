@@ -7,6 +7,7 @@ import { isInvoiceActionableForRole } from '../lib/roleAccess';
 
 export default function InvoiceRepository() {
   const { user } = useAuth();
+  const isAccounting = user?.role === 'ACCOUNTING_ASSOCIATE' || user?.role === 'ACCOUNTING_SUPERVISOR';
   const [invoices, setInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -37,11 +38,16 @@ export default function InvoiceRepository() {
     const term = search.trim().toLowerCase();
     const hasDetailedFilter = Boolean(term || vendorId || category || invoiceType || brand || dateFrom || dateTo || agingBucket || urgentDue);
     return invoices.filter((invoice) => {
+      if (isAccounting && status === '__ACCOUNTING__') {
+        const paymentStatus = invoice.payments?.[0]?.status;
+        const accountingStatuses = ['PENDING_ACCOUNTING', 'ON_HOLD', 'APPROVED', 'PAYMENT_SCHEDULED', 'POSTED_TO_QB', 'PAYMENT_CONFIRMATION_SENT', 'PAID'];
+        if (!accountingStatuses.includes(invoice.status) && !['SCHEDULED', 'APPROVED_FOR_PAYMENT', 'ENDORSED', 'PROCESSED'].includes(paymentStatus)) return false;
+      }
       // Keep the default view focused on active work. Once a user applies a
       // detailed filter, search the full role-visible repository so historical
       // invoices can actually be found by vendor, date, aging, etc.
       if (status === '__ACTIVE__' && !hasDetailedFilter && !isInvoiceActionableForRole(invoice, user?.role || '')) return false;
-      if (status && status !== '__ALL__' && invoice.status !== status) return false;
+      if (status && !['__ALL__', '__ACCOUNTING__'].includes(status) && invoice.status !== status) return false;
       if (vendorId && String(invoice.vendor_id || invoice.vendor?.id) !== vendorId) return false;
       if (category && invoice.category !== category) return false;
       if (invoiceType && invoice.invoice_type !== invoiceType) return false;
@@ -82,6 +88,7 @@ export default function InvoiceRepository() {
     agingBucket,
     urgentDue,
     user?.role,
+    isAccounting,
   ]);
 
   const openTimeline = async (invoiceId: string) => {
@@ -104,6 +111,7 @@ export default function InvoiceRepository() {
           </label>
           <select value={status} onChange={(event) => setStatus(event.target.value)} className="px-3 py-2 rounded-xl text-sm" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}>
             <option value="__ALL__">All invoices / history</option>
+            {isAccounting && <option value="__ACCOUNTING__">Accounting workload</option>}
             <option value="__ACTIVE__">My active invoices</option>
             {statuses.map((item) => <option key={item} value={item}>{String(item).replace(/_/g, ' ')}</option>)}
           </select>

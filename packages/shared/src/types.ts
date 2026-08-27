@@ -8,6 +8,7 @@ export enum InvoiceType {
   STATEMENT = 'STATEMENT',
   PREPAID = 'PREPAID',
   PROTO_SAMPLE = 'PROTO_SAMPLE',
+  DEBIT_NOTE = 'DEBIT_NOTE',
 }
 
 export enum InvoiceTemplateType {

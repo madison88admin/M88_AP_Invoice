@@ -8,7 +8,7 @@
 
 [[redirects]]
   from = "/api/invoices/upload*"
-  to = "http://5.223.78.194:3101/api/invoices/upload:splat"
+  to = "http://5.223.78.194:3001/api/invoices/upload:splat"
   status = 200
   force = true
   [redirects.headers]
@@ -16,13 +16,13 @@
 
 [[redirects]]
   from = "/api/*"
-  to = "http://5.223.78.194:3101/api/:splat"
+  to = "http://5.223.78.194:3001/api/:splat"
   status = 200
   force = true
 
 [[redirects]]
   from = "/health/*"
-  to = "http://5.223.78.194:3101/health/:splat"
+  to = "http://5.223.78.194:3001/health/:splat"
   status = 200
   force = true
 

@@ -3932,6 +3932,7 @@ ${dataRows}
                     { value: 'STATEMENT', label: 'Statement' },
                     { value: 'PREPAID', label: 'Prepaid' },
                     { value: 'PROTO_SAMPLE', label: 'Proto Sample' },
+                    { value: 'DEBIT_NOTE', label: 'Debit Note' },
                   ] },
                   { label: 'Payment Terms', field: 'payment_terms', type: 'select', options: [
                     { value: '', label: '— Select —' },

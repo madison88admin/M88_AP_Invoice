@@ -1209,6 +1209,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                     <option value="CI" style={{ background: 'var(--input-bg)' }}>Commercial Invoice (CI)</option>
                     <option value="SI" style={{ background: 'var(--input-bg)' }}>Sales Invoice (SI)</option>
                     <option value="STATEMENT" style={{ background: 'var(--input-bg)' }}>Statement</option>
+                    <option value="DEBIT_NOTE" style={{ background: 'var(--input-bg)' }}>Debit Note</option>
                   </select>
                 </div>
 

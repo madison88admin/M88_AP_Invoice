@@ -61,6 +61,14 @@ function mapDocumentType(docType: string | undefined): string {
   return DOCUMENT_TYPE_MAP[normalized] || 'INVOICE';
 }
 
+/** Deterministic safety net for document headers when an AI engine omits document_type. */
+function detectDocumentTypeFromText(text: string | undefined): string | undefined {
+  if (!text) return undefined;
+  if (/\bDEBIT\s+NOTE(?:\s+NO\.?|\b)/i.test(text)) return 'DEBIT_NOTE';
+  if (/\bCREDIT\s+NOTE(?:\s+NO\.?|\b)/i.test(text)) return 'INVOICE';
+  return undefined;
+}
+
 export interface SignatureInfo {
   signatory_name: string;
   signed_at?: Date;
@@ -1264,7 +1272,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
         bank_swift: aiResult.swift_code || aiResult.bank_info?.swift_code || '',
         bank_account: aiResult.account_number || (aiResult.bank_info as any)?.account_usd || aiResult.bank_info?.account_number || '',
         beneficiary_name: (aiResult as any).beneficiary_name || (aiResult as any).bank_info?.beneficiary_name || '',
-        invoice_type: mapDocumentType(sanitizeSingleValue((aiResult as any).document_type)) as any,
+        invoice_type: mapDocumentType(sanitizeSingleValue((aiResult as any).document_type) || detectDocumentTypeFromText(rawText)) as any,
         tax_id: '',
         company_reg: '',
         incoterm: (aiResult as any).incoterm || undefined,

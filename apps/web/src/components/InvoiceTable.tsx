@@ -317,7 +317,7 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
                       border: '1px solid var(--border-color)',
                     }}
                   >
-                    {invoice.invoice_type}
+                    {invoice.invoice_type === 'DEBIT_NOTE' ? 'Debit Note' : invoice.invoice_type}
                   </span>
                 )}
               </td>

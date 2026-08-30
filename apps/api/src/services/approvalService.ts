@@ -582,7 +582,7 @@ export async function approveInvoice(
   userRole: string,
   signerName: string
 ) {
-  const invoice = await prisma.invoice.findUnique({
+  let invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
     include: { 
       signatures: true,
@@ -610,11 +610,45 @@ export async function approveInvoice(
     throw new AppError('User does not have approval authority', 403);
   }
 
-  const workflowSignatures = invoice.signatures.filter((sig: any) =>
+  let workflowSignatures = invoice!.signatures.filter((sig: any) =>
     !sig.ocr_detected &&
-    sig.invoice_revision === invoice.revision &&
+    sig.invoice_revision === invoice!.revision &&
     sig.approval_status !== 'SUPERSEDED'
   );
+
+  // Pre-approved invoices uploaded by Accounting skip the normal approval chain
+  // and arrive at PENDING_ACCOUNTING with zero signatures.  Create the missing
+  // workflow signatures (Coordinator + PM) as auto-approved so accounting can
+  // proceed to sign their review step.
+  if (workflowSignatures.length === 0 && invoice.status === InvoiceStatus.PENDING_ACCOUNTING) {
+    const now = new Date();
+    const autoSig = async (role: SignatoryRole) =>
+      prisma.signature.create({
+        data: {
+          invoice_id: invoiceId,
+          signatory_role: role as any,
+          signatory_name: 'AUTO-APPROVED',
+          signature_type: SignatureType.COMPUTER_GENERATED as any,
+          signed_at: now,
+          invoice_revision: invoice!.revision,
+          approval_status: 'APPROVED',
+        },
+      });
+    await autoSig(SignatoryRole.COORDINATOR);
+    await autoSig(SignatoryRole.PURCHASING_MANAGER);
+    // Re-fetch to include the newly created signatures
+    const refreshed = await prisma.invoice.findUnique({
+      where: { id: invoiceId },
+      include: { signatures: true, vendor: true, invoice_lines: true },
+    });
+    if (!refreshed) throw new AppError('Invoice not found after signature creation', 500);
+    invoice = refreshed!;
+    workflowSignatures = invoice.signatures.filter((sig: any) =>
+      !sig.ocr_detected &&
+      sig.invoice_revision === refreshed.revision &&
+      sig.approval_status !== 'SUPERSEDED'
+    );
+  }
 
   // Find the first unsigned signature matching any allowed role
   const pendingSignature = workflowSignatures.find(

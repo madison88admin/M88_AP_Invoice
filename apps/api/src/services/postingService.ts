@@ -195,12 +195,17 @@ export async function postInvoice(invoiceId: string, userId: string, bypassVaria
   const requiredSignatures = workflowSignatures.length > 0
     ? workflowSignatures
     : invoice.signatures.filter((sig: any) => sig.ocr_detected);
-  const allSigned = requiredSignatures.length > 0 && requiredSignatures.every((sig: any) =>
-    sig.signed_at !== null &&
-    !sig.invalidated_at &&
-    sig.invoice_revision === invoice.revision &&
-    sig.approval_status === 'APPROVED'
-  );
+  // Pre-approved invoices uploaded by Accounting arrive at PENDING_ACCOUNTING
+  // with zero signatures — they are already considered approved.
+  const preApprovedWithNoSignatures = invoice.status === InvoiceStatus.PENDING_ACCOUNTING
+    && invoice.signatures.length === 0;
+  const allSigned = preApprovedWithNoSignatures
+    || (requiredSignatures.length > 0 && requiredSignatures.every((sig: any) =>
+      sig.signed_at !== null &&
+      !sig.invalidated_at &&
+      sig.invoice_revision === invoice.revision &&
+      sig.approval_status === 'APPROVED'
+    ));
   if (!allSigned && !bypassVarianceCheck) {
     throw new AppError('All approvals must be completed before posting', 400);
   }

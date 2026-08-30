@@ -636,6 +636,18 @@ export async function approveInvoice(
       });
     await autoSig(SignatoryRole.COORDINATOR);
     await autoSig(SignatoryRole.PURCHASING_MANAGER);
+    // Create the ACCOUNTING_REVIEWER step as PENDING for accounting to sign
+    await prisma.signature.create({
+      data: {
+        invoice_id: invoiceId,
+        signatory_role: SignatoryRole.ACCOUNTING_REVIEWER as any,
+        signatory_name: '',
+        signature_type: 'DIGITAL' as any,
+        signed_at: null,
+        invoice_revision: invoice.revision,
+        approval_status: 'PENDING',
+      },
+    });
     // Re-fetch to include the newly created signatures
     const refreshed = await prisma.invoice.findUnique({
       where: { id: invoiceId },

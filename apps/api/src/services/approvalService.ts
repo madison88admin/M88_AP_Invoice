@@ -663,11 +663,61 @@ export async function approveInvoice(
   }
 
   // Find the first unsigned signature matching any allowed role
-  const pendingSignature = workflowSignatures.find(
+  let pendingSignature = workflowSignatures.find(
     (sig: any) => signatoryRoles.includes(sig.signatory_role) && !sig.signed_at
   );
 
+  // PENDING_ACCOUNTING with all workflow signatures signed but no
+  // ACCOUNTING_REVIEWER signature — this happens when the normal approval
+  // chain completes but accounting review was never added. Create it now.
   if (!pendingSignature) {
+    const allWorkflowSigned = workflowSignatures.length > 0
+      && workflowSignatures.every((s: any) => s.signed_at && s.approval_status === 'APPROVED');
+    const hasAccountingSig = workflowSignatures.some(
+      (s: any) => s.signatory_role === (SignatoryRole as any).ACCOUNTING_REVIEWER
+    );
+    if (allWorkflowSigned && !hasAccountingSig
+      && invoice!.status === (InvoiceStatus as any).PENDING_ACCOUNTING) {
+      const created = await prisma.signature.create({
+        data: {
+          invoice_id: invoiceId,
+          signatory_role: (SignatoryRole as any).ACCOUNTING_REVIEWER,
+          signatory_name: signerName,
+          signatory_user_id: userId,
+          signature_type: 'DIGITAL' as any,
+          signed_at: new Date(),
+          invoice_revision: invoice!.revision,
+          approval_status: 'APPROVED',
+        },
+      });
+      // Invoice is now fully approved — advance to PENDING_ACCOUNTING → APPROVED
+      await prisma.invoice.update({
+        where: { id: invoiceId },
+        data: {
+          status: InvoiceStatus.APPROVED as any,
+          current_approver_role: null,
+        },
+      });
+      // Enter Accounting stage for posting
+      await prisma.stageTimestamp.create({
+        data: {
+          invoice_id: invoiceId,
+          stage: InvoiceStatus.PENDING_ACCOUNTING as any,
+          entered_at: new Date(),
+          sla_hours: SLA_LIMITS.ACCOUNTING_DAYS * 24,
+        },
+      });
+      await prisma.auditLog.create({
+        data: {
+          invoice_id: invoiceId,
+          action: 'APPROVED',
+          performed_by: userId,
+          note: `Invoice approved by ${signerName} (ACCOUNTING_REVIEWER) — accounting review completed`,
+        },
+      });
+      await eventBroadcaster.broadcast({ type: 'INVOICE_UPDATED' as any, invoiceId, timestamp: Date.now() });
+      return { success: true, message: 'Invoice approved — ready for posting' };
+    }
     throw new AppError('No pending approval found for this role', 400);
   }
 

@@ -191,7 +191,14 @@ export async function postInvoice(invoiceId: string, userId: string, bypassVaria
   // signature records (no workflow signatures at all). Those legacy invoices fall back
   // to the OCR signature set so they are not permanently stuck; invoices with workflow
   // signatures always require the workflow set to be complete and current.
-  const workflowSignatures = invoice.signatures.filter((sig: any) => !sig.ocr_detected);
+  // Only count current-revision, non-superseded workflow signatures.
+  // Old-revision or SUPERSEDED signatures from prior approval cycles must
+  // not block posting of the current revision.
+  const workflowSignatures = invoice.signatures.filter((sig: any) =>
+    !sig.ocr_detected
+    && sig.approval_status !== 'SUPERSEDED'
+    && sig.invoice_revision === invoice.revision
+  );
   const requiredSignatures = workflowSignatures.length > 0
     ? workflowSignatures
     : invoice.signatures.filter((sig: any) => sig.ocr_detected);

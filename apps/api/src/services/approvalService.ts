@@ -261,6 +261,32 @@ async function createApprovalRequestInternal(
     signature.invoice_revision === invoice.revision &&
     signature.approval_status !== 'SUPERSEDED'
   );
+
+  // Keep the persisted approval chain aligned with the amount-based route.
+  // Older records can contain stale higher-tier signatures (for example a
+  // Senior Manager signature on a sub-threshold invoice). Those signatures
+  // must not remain approvable after a new approval request is created.
+  const routeRoles = new Set(approvalRoute.map((step) => step.role));
+  const staleSignatures = activeWorkflowSignatures.filter((signature: any) => !routeRoles.has(signature.signatory_role));
+  if (staleSignatures.length > 0) {
+    await prisma.signature.updateMany({
+      where: { id: { in: staleSignatures.map((signature: any) => signature.id) } },
+      data: {
+        approval_status: 'SUPERSEDED',
+        invalidated_at: new Date(),
+        invalidation_reason: `Removed from approval route after recalculating tier ${tier}`,
+      },
+    });
+    await prisma.auditLog.create({
+      data: {
+        invoice_id: invoiceId,
+        performed_by: userId,
+        action: 'APPROVAL_ROUTE_NORMALIZED',
+        note: `Removed ${staleSignatures.length} stale approval signature(s) not required for the current amount/brand route.`,
+      },
+    });
+    activeWorkflowSignatures.splice(0, activeWorkflowSignatures.length, ...activeWorkflowSignatures.filter((signature: any) => routeRoles.has(signature.signatory_role)));
+  }
   const routeAlreadyInitialized = approvalRoute.every(step =>
     activeWorkflowSignatures.some((signature: any) => signature.signatory_role === step.role)
   );

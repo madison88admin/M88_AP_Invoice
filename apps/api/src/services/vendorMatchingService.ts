@@ -41,7 +41,14 @@ export async function matchVendor(vendorName: string): Promise<VendorMatchResult
     // Step 1: Exact match on Vendor.name (with normalization)
     const allVendors = await prisma.vendor.findMany();
     
-    for (const vendor of allVendors) {
+    const rankVendor = (vendor: any) => {
+      const bankCompleteness = [vendor.beneficiary_name, vendor.bank_name, vendor.account_number, vendor.swift_code]
+        .filter((value) => typeof value === 'string' ? value.trim().length > 0 : Boolean(value)).length;
+      return (vendor.is_active === false ? 0 : 100) + bankCompleteness;
+    };
+    const rankedVendors = [...allVendors].sort((a: any, b: any) => rankVendor(b) - rankVendor(a));
+
+    for (const vendor of rankedVendors) {
       const normalizedVendorName = normalizeVendorName(vendor.name);
       if (normalizedVendorName === normalizedInput) {
         return {
@@ -54,7 +61,7 @@ export async function matchVendor(vendorName: string): Promise<VendorMatchResult
     }
 
     // Step 2: Exact match on Vendor.name_aliases array
-    for (const vendor of allVendors) {
+    for (const vendor of rankedVendors) {
       for (const alias of vendor.name_aliases) {
         const normalizedAlias = normalizeVendorName(alias);
         if (normalizedAlias === normalizedInput) {
@@ -69,7 +76,7 @@ export async function matchVendor(vendorName: string): Promise<VendorMatchResult
     }
 
     // Step 3: Fuzzy match (Levenshtein distance ≤ 3, case-insensitive)
-    for (const vendor of allVendors) {
+    for (const vendor of rankedVendors) {
       const normalizedVendorName = normalizeVendorName(vendor.name);
       const distance = levenshteinDistance(normalizedInput, normalizedVendorName);
       if (distance <= 3) {
@@ -85,7 +92,7 @@ export async function matchVendor(vendorName: string): Promise<VendorMatchResult
 
     // Step 4: Partial match on key tokens
     const inputTokens = normalizedInput.split(/\s+/).filter(t => t.length > 2);
-    for (const vendor of allVendors) {
+    for (const vendor of rankedVendors) {
       const normalizedVendorName = normalizeVendorName(vendor.name);
       const vendorTokens = normalizedVendorName.split(/\s+/).filter(t => t.length > 2);
       

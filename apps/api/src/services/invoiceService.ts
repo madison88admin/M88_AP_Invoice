@@ -284,6 +284,7 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
     data: {
       invoice_id: invoice.id,
       performed_by: userId,
+      actor_role: userRole || null,
       action: 'INVOICE_CREATED',
       note: isAccountingPreapproved
         ? `Pre-approved ${category} invoice ${invoice_number} uploaded by Accounting; existing signed approval evidence confirmed; purchasing approval and NextGen validation skipped`

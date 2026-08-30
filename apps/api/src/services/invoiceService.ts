@@ -207,7 +207,7 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
       discount_amount: discount_amount ? parseFloat(discount_amount) : null,
       ship_to: ship_to || null,
       sold_to: sold_to || null,
-      invoice_type,
+      invoice_type: invoice_type as any,
       category: category || 'TRIMS',
       order_type,
       brand,

@@ -542,10 +542,14 @@ export async function schedulePayment(
     throw new AppError(`Invoice already has an active or completed payment (${existingPayment.status})`, 409);
   }
 
-  const beneficiary = invoice.vendor?.beneficiary_name || invoice.vendor?.name;
-  const bankName = invoice.vendor?.bank_name;
-  const accountNumber = invoice.vendor?.account_number;
-  const swiftCode = invoice.vendor?.swift_code;
+  // Prefer bank details captured and approved on the invoice; fall back to
+  // the linked Vendor Master when invoice fields are blank. This keeps legacy
+  // invoices payable when their Vendor Master row is incomplete while still
+  // preserving the bank snapshot used for payment controls.
+  const beneficiary = invoice.beneficiary_name || invoice.vendor?.beneficiary_name || invoice.vendor?.name;
+  const bankName = invoice.bank_name || invoice.vendor?.bank_name;
+  const accountNumber = invoice.account_number || invoice.vendor?.account_number;
+  const swiftCode = invoice.swift_code || invoice.vendor?.swift_code;
   if (!beneficiary || !bankName || !accountNumber || !swiftCode) {
     throw new AppError('Verified Vendor Master bank details are required before payment scheduling', 400);
   }

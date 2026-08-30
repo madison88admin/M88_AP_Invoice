@@ -136,6 +136,19 @@ export async function matchOrCreateVendor(
   // Try matching first
   const match = await matchVendor(vendorName);
   if (match) {
+    // Auto-fill beneficiary_name from vendor name when null (one-time cleanup)
+    try {
+      const fullVendor = await prisma.vendor.findUnique({ where: { id: match.vendor_id } });
+      if (fullVendor && !fullVendor.beneficiary_name && vendorName.trim().length > 0) {
+        await prisma.vendor.update({
+          where: { id: match.vendor_id },
+          data: { beneficiary_name: vendorName.trim() },
+        });
+        console.log(`[VendorMatch] Auto-filled beneficiary_name for "${vendorName}"`);
+      }
+    } catch (fillErr: any) {
+      console.warn(`[VendorMatch] Failed to auto-fill beneficiary_name: ${fillErr?.message}`);
+    }
     return { vendor_id: match.vendor_id, vendor_name: match.vendor_name, auto_created: false };
   }
 

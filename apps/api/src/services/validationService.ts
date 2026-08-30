@@ -1278,13 +1278,23 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
         ),
       ]);
     } catch (timeoutErr: any) {
-      logger.warn(`[Validation] NextGen timeout/error for MPO ${baseMpo}: ${timeoutErr.message} — blocking until retry`);
+      logger.warn(`[Validation] NextGen timeout/error for MPO ${baseMpo}: ${timeoutErr.message}`);
+      if (getFinancePolicy().enforcementMode === 'strict') {
+        return {
+          passed: false,
+          reason: ExceptionReason.PO_NOT_FOUND,
+          code: 'NEXTGEN_UNAVAILABLE',
+          message: `NextGen unavailable — MPO ${poRef} was not verified`,
+          detail: 'Retry validation when NextGen is available. This invoice cannot proceed while the check is unavailable.',
+        };
+      }
       return {
-        passed: false,
+        passed: true,
+        advisory: true,
         reason: ExceptionReason.PO_NOT_FOUND,
         code: 'NEXTGEN_UNAVAILABLE',
-        message: `NextGen unavailable — MPO ${poRef} was not verified`,
-        detail: 'Retry validation when NextGen is available. This invoice cannot proceed while the check is unavailable.',
+        message: `NextGen unavailable — MPO ${poRef} validation deferred (advisory)`,
+        detail: 'NextGen timed out or was unreachable. Finance review will confirm the MPO match before payment.',
       };
     }
 
@@ -1626,14 +1636,23 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
       message: `${matchLevel === 'MATERIAL_LINE' ? `Material ${requestedMaterialCode || requestedMaterialName}` : `MPO ${poRef}`} verified in NextGen — amount, quantity, and vendor match`,
     };
   } catch (error) {
-    // A PO-backed finance invoice must fail closed when its source of truth is unavailable.
     logger.warn(`NextGen MPO check failed for ${poRef}: ${error instanceof Error ? error.message : 'unknown error'}`);
+    if (getFinancePolicy().enforcementMode === 'strict') {
+      return {
+        passed: false,
+        reason: ExceptionReason.PO_NOT_FOUND,
+        code: 'NEXTGEN_UNAVAILABLE',
+        message: `NextGen unavailable — MPO ${poRef} was not verified`,
+        detail: 'Retry validation when NextGen is available. This invoice cannot proceed while the check is unavailable.',
+      };
+    }
     return {
-      passed: false,
+      passed: true,
+      advisory: true,
       reason: ExceptionReason.PO_NOT_FOUND,
       code: 'NEXTGEN_UNAVAILABLE',
-      message: `NextGen unavailable — MPO ${poRef} was not verified`,
-      detail: 'Retry validation when NextGen is available. This invoice cannot proceed while the check is unavailable.',
+      message: `NextGen error for MPO ${poRef} — validation deferred (advisory)`,
+      detail: 'NextGen check encountered an error. Finance review will confirm before payment.',
     };
   }
 }

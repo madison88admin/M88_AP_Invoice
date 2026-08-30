@@ -5,6 +5,9 @@ const API_BASE_URL = (import.meta as any).env.VITE_API_URL || '';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
+  // Without a client timeout a stalled request hangs until the 600s server
+  // timeout, which keeps the UI spinner up and blocks the next refresh.
+  timeout: 60_000,
   headers: {
     'Content-Type': 'application/json',
   },

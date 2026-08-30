@@ -1,8 +1,10 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { authorize } from '../middleware/auth';
+import { authenticate, authorize } from '../middleware/auth';
 import { UserRole } from '@ap-invoice/shared';
 import { ollamaFineTuneService } from '../services/ollamaFineTuneService';
 import { cleanupData } from '../controllers/cleanup';
+import { getFileWatcherStatus, triggerFileWatcherScan } from '../services/fileWatcherService';
+import { getSharePointWatcherStatus } from '../services/sharePointWatcherService';
 
 const router = Router() as Router;
 
@@ -307,6 +309,33 @@ router.post('/finetune/dataset', devBypassAdmin, async (req: Request, res: Respo
       datasetPath: result.path,
       count: result.count,
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /api/system/watcher-status
+ * Liveness of the intake watchers: last poll, queue depth, current file, last error.
+ * Without this, a wedged or disabled watcher is only visible in the server logs.
+ */
+router.get('/watcher-status', authenticate, (req: Request, res: Response) => {
+  res.json({
+    side_effects_enabled: process.env.DISABLE_SIDE_EFFECTS !== 'true',
+    server_time: new Date().toISOString(),
+    file_watcher: getFileWatcherStatus(),
+    sharepoint_watcher: getSharePointWatcherStatus(),
+  });
+});
+
+/**
+ * POST /api/system/watcher-scan
+ * Run an intake poll immediately instead of waiting for the next tick.
+ */
+router.post('/watcher-scan', authenticate, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const result = await triggerFileWatcherScan();
+    res.json({ ...result, file_watcher: getFileWatcherStatus() });
   } catch (error) {
     next(error);
   }

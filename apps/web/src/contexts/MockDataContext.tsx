@@ -256,46 +256,84 @@ export const MockDataProvider = ({ children }: MockDataProviderProps) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const refreshInFlight = useRef(false);
+  const refreshInFlight = useRef<Promise<void> | null>(null);
+  const pendingRefresh = useRef<boolean | null>(null);
 
   // Only fetch payment batches for roles that have permission
   const canFetchPaymentBatches = user && ['ACCOUNTING_SUPERVISOR', 'IT_ADMIN'].includes(user.role);
   // SUPERADMIN: no invoice/vendor data needed (system maintenance only)
   const skipInvoiceFetch = user?.role === 'SUPERADMIN';
 
-  const refresh = useCallback(async (silent = false) => {
-    if (!isAuthenticated) return;
-    if (refreshInFlight.current) return;
-    refreshInFlight.current = true;
+  const runRefresh = useCallback(async (silent: boolean) => {
+    if (silent) setIsRefreshing(true); else setLoading(true);
     try {
-      if (silent) setIsRefreshing(true); else setLoading(true);
-      setError(null);
+      const failures: string[] = [];
       const fetches: Promise<any>[] = [];
       if (!skipInvoiceFetch) {
-        fetches.push(invoiceApi.getAll().catch(() => ({ data: [] })));
-        fetches.push(vendorApi.getAll().catch(() => ({ data: [] })));
+        fetches.push(invoiceApi.getAll());
+        fetches.push(vendorApi.getAll());
       }
       if (canFetchPaymentBatches) {
-        fetches.push(paymentBatchApi.getAll().catch(() => ({ data: [] })));
+        fetches.push(paymentBatchApi.getAll());
       }
-      const results = await Promise.all(fetches);
+      const labels = skipInvoiceFetch ? ['payment batches'] : ['invoices', 'vendors', 'payment batches'];
+      const results = await Promise.allSettled(fetches);
+      results.forEach((result, i) => {
+        if (result.status === 'rejected') {
+          const reason: any = result.reason;
+          failures.push(`${labels[i]} (${reason?.response?.status || reason?.code || reason?.message || 'error'})`);
+        }
+      });
+
+      // Apply whatever succeeded; a failed request keeps the previous data
+      // instead of blanking the screen.
+      const valueAt = (i: number) => (results[i]?.status === 'fulfilled' ? (results[i] as PromiseFulfilledResult<any>).value : null);
       if (!skipInvoiceFetch) {
-        const [invoiceRes, vendorRes] = results;
-        setInvoices((invoiceRes.data || []).map(apiInvoiceToMock));
-        setVendors((vendorRes.data || []).map(apiVendorToMock));
+        const invoiceRes = valueAt(0);
+        const vendorRes = valueAt(1);
+        if (invoiceRes) setInvoices((invoiceRes.data || []).map(apiInvoiceToMock));
+        if (vendorRes) setVendors((vendorRes.data || []).map(apiVendorToMock));
       }
       if (canFetchPaymentBatches) {
-        const batchRes = skipInvoiceFetch ? results[0] : results[2];
-        setPaymentBatches((batchRes?.data || []).map(apiBatchToMock));
+        const batchRes = valueAt(skipInvoiceFetch ? 0 : 2);
+        if (batchRes) setPaymentBatches((batchRes.data || []).map(apiBatchToMock));
       }
+
+      setError(failures.length ? `Refresh failed for ${failures.join(', ')}` : null);
     } catch (err: any) {
-      setError(err.message || 'Failed to load data');
+      setError(err?.message || 'Failed to load data');
     } finally {
       setLoading(false);
       setIsRefreshing(false);
-      refreshInFlight.current = false;
     }
-  }, [isAuthenticated, canFetchPaymentBatches, skipInvoiceFetch]);
+  }, [canFetchPaymentBatches, skipInvoiceFetch]);
+
+  // Refreshes coalesce instead of being dropped: a request arriving while one
+  // is in flight is served by a single follow-up pass, so a click or SSE event
+  // during a slow fetch is never silently lost.
+  const refresh = useCallback(async (silent = false) => {
+    if (!isAuthenticated) return;
+    if (refreshInFlight.current) {
+      pendingRefresh.current = pendingRefresh.current === null ? silent : pendingRefresh.current && silent;
+      return refreshInFlight.current;
+    }
+    const run = (async () => {
+      let nextSilent: boolean | null = silent;
+      try {
+        while (nextSilent !== null) {
+          const current = nextSilent;
+          pendingRefresh.current = null;
+          await runRefresh(current);
+          nextSilent = pendingRefresh.current;
+        }
+      } finally {
+        pendingRefresh.current = null;
+        refreshInFlight.current = null;
+      }
+    })();
+    refreshInFlight.current = run;
+    return run;
+  }, [isAuthenticated, runRefresh]);
 
   useEffect(() => {
     if (!isAuthenticated) return;

@@ -304,6 +304,14 @@ export async function downloadInvoicePdf(invoice: any): Promise<Buffer> {
   // 2. Fall back to SharePoint URL
   const sharepointUrl = invoice.sharepoint_folder_url;
   if (!sharepointUrl) {
+    // Provide a specific message when the file exists in DB but not in storage
+    const hasPath = invoice.pdf_path || invoice.raw_file_url;
+    if (hasPath) {
+      throw new AppError(
+        `PDF file referenced in database (${hasPath}) was not found in storage. ` +
+        `Please re-upload the original PDF for this invoice.`, 400
+      );
+    }
     throw new AppError('No pdf_path, SharePoint URL, or raw file URL found for this invoice — cannot re-download PDF', 400);
   }
 

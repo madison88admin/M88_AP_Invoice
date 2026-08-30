@@ -260,7 +260,7 @@ export const reportApi = {
 };
 
 export const vendorApi = {
-  getAll: () => api.get('/api/vendors'),
+  getAll: (params?: { search?: string; limit?: number }) => api.get('/api/vendors', { params }),
   getById: (id: string) => api.get(`/api/vendors/${id}`),
   create: (data: any) => api.post('/api/vendors', data),
   update: (id: string, data: any) => api.patch(`/api/vendors/${id}`, data),

@@ -113,8 +113,20 @@ router.get('/bank-details/masterlist', authenticate, async (req: Request, res: R
 
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const { search, limit } = req.query;
+    const where: any = {};
+    if (search && typeof search === 'string' && search.trim()) {
+      const term = search.trim();
+      where.OR = [
+        { name: { contains: term, mode: 'insensitive' } },
+        { beneficiary_name: { contains: term, mode: 'insensitive' } },
+        { name_aliases: { hasSome: [term] } },
+      ];
+    }
     const vendors = await prisma.vendor.findMany({
+      where,
       orderBy: { name: 'asc' },
+      take: limit ? parseInt(limit as string) : undefined,
     });
     res.json(vendors.map(v => ({ ...v, account_number: maskBankAccount(v.account_number), account_number_alt: v.account_number_alt.map(maskBankAccount), iban: maskBankAccount(v.iban) })));
   } catch (error) {

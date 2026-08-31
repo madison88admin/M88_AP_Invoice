@@ -669,7 +669,7 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     throw new AppError(`Invalid invoice category: ${data.category}`, 400);
   }
 
-  const validInvoiceTypes = ['INVOICE', 'PROFORMA', 'COMMERCIAL', 'SALES', 'STATEMENT', 'PREPAID', 'PROTO_SAMPLE'];
+  const validInvoiceTypes = ['INVOICE', 'PROFORMA', 'COMMERCIAL', 'SALES', 'STATEMENT', 'PREPAID', 'PROTO_SAMPLE', 'DEBIT_NOTE'];
   if (data.invoice_type && !validInvoiceTypes.includes(data.invoice_type)) {
     throw new AppError(`Invalid invoice type: ${data.invoice_type}`, 400);
   }

@@ -416,7 +416,7 @@ export async function approveHeldPayment(paymentId: string, userId: string) {
   });
   if (!payment) throw new AppError('Payment not found', 404);
   if (payment.status !== 'HELD_BELOW_100') {
-    throw new AppError('Only a held payment (below $100) can be released by Purchasing', 400);
+    throw new AppError('Only a held payment (below $100) can be released by an Accounting Supervisor', 400);
   }
 
   const updated = await prisma.payment.update({
@@ -429,7 +429,7 @@ export async function approveHeldPayment(paymentId: string, userId: string) {
       invoice_id: payment.invoice_id,
       action: 'HELD_BELOW_100_APPROVED',
       performed_by: userId,
-      note: 'Purchasing Coordinator approved release of sub-$100 payment — may proceed for payment or consolidation',
+      note: 'Accounting Supervisor approved release of sub-$100 payment — may proceed for payment or consolidation',
     },
   });
 
@@ -438,7 +438,7 @@ export async function approveHeldPayment(paymentId: string, userId: string) {
     invoice_number: payment.invoice?.invoice_number,
     vendor_name: payment.invoice?.vendor?.name,
     title: `Sub-$100 hold released (${payment.invoice?.invoice_number || ''})`,
-    message: 'Purchasing approved the held payment — it is now SCHEDULED and can be batched.',
+    message: 'Accounting Supervisor approved the held payment — it is now SCHEDULED and can be batched.',
     type: 'success',
     category: 'payment',
     target_role: UserRole.ACCOUNTING_ASSOCIATE,
@@ -953,6 +953,7 @@ export async function generatePaymentFile(batchId: string) {
       bank_name: payment.bank_name_snapshot,
       bank_address: payment.bank_address_snapshot,
       swift_code: payment.swift_code_snapshot,
+      aba_routing_number: payment.aba_routing_number_snapshot,
       account_number: payment.account_number_snapshot,
     })),
   };

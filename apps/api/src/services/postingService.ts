@@ -38,6 +38,7 @@ const GL_ACCOUNTS: Record<string, string> = {
   STATEMENT: '6900-Miscellaneous Expenses',
   PREPAID: '1000-Capital Assets',
   PROTO_SAMPLE: '6100-Maintenance Expenses',
+  DEBIT_NOTE: '6000-Operational Expenses',
 };
 
 /** Deterministic GL account for an invoice type (shared by posting + QB export). */
@@ -63,6 +64,13 @@ export function deriveQBMemo(invoice: any): string {
 async function prePostCheck(invoice: any): Promise<PrePostResult> {
   const financePolicy = getFinancePolicy();
   const flags: PrePostFlag[] = [];
+  // NextGen is an external validation source. In Finance advisory mode its
+  // absence or a variance must stay visible in the audit trail without
+  // automatically moving a fully approved invoice to ON_HOLD. Finance can
+  // explicitly enable strict mode when the source data is complete enough to
+  // support blocking enforcement.
+  const externalValidationSeverity: PrePostFlag['severity'] =
+    financePolicy.enforcementMode === 'strict' ? 'block' : 'warn';
 
   // 1. GL account — deterministic lookup
   const gl_account = deriveGLAccount(invoice.invoice_type);
@@ -109,7 +117,7 @@ async function prePostCheck(invoice: any): Promise<PrePostResult> {
       if (!po) {
         flags.push({
           type: 'PO_NOT_FOUND',
-          severity: 'block',
+          severity: externalValidationSeverity,
           detail: `PO ${poRef} referenced but not found in NextGen.`,
         });
       } else {
@@ -121,7 +129,7 @@ async function prePostCheck(invoice: any): Promise<PrePostResult> {
           if (absoluteDifference > financePolicy.invoiceRoundingTolerance && variance > financePolicy.poAmountTolerancePercent) {
             flags.push({
               type: 'AMOUNT_VARIANCE',
-              severity: 'block',
+              severity: externalValidationSeverity,
               detail: `Invoice $${invoiceAmount.toFixed(2)} vs PO $${poAmount.toFixed(2)} — ${(variance * 100).toFixed(1)}% variance exceeds ${(financePolicy.poAmountTolerancePercent * 100).toFixed(2)}% Finance tolerance.`,
             });
           } else if (absoluteDifference > financePolicy.invoiceRoundingTolerance && variance > financePolicy.postingWarningPercent) {
@@ -134,11 +142,9 @@ async function prePostCheck(invoice: any): Promise<PrePostResult> {
         }
       }
     } catch (error) {
-      // Fail closed: Accounting must not post a PO-backed invoice whose source
-      // of truth could not be verified at posting time.
       flags.push({
         type: 'PO_NOT_FOUND',
-        severity: 'block',
+        severity: externalValidationSeverity,
         detail: `NextGen lookup failed for PO ${poRef}: ${error instanceof Error ? error.message : 'unknown error'}`,
       });
     }
@@ -218,7 +224,7 @@ export async function postInvoice(invoiceId: string, userId: string, bypassVaria
   }
 
   // The sub-$100 hold is applied at payment scheduling time (HELD_BELOW_100 +
-  // Purchasing release approval), NOT here. Posting never blocks a fully approved
+  // Accounting Supervisor release approval), NOT here. Posting never blocks a fully approved
   // invoice on a vendor-cumulative threshold — see schedulePayment below.
 
   // Check for any unresolved exceptions
@@ -550,8 +556,9 @@ export async function schedulePayment(
   const bankName = invoice.bank_name || invoice.vendor?.bank_name;
   const accountNumber = invoice.account_number || invoice.vendor?.account_number;
   const swiftCode = invoice.swift_code || invoice.vendor?.swift_code;
-  if (!beneficiary || !bankName || !accountNumber || !swiftCode) {
-    throw new AppError('Verified Vendor Master bank details are required before payment scheduling', 400);
+  const abaRoutingNumber = invoice.vendor?.aba_routing_number;
+  if (!beneficiary || !bankName || !accountNumber || (!swiftCode && !abaRoutingNumber)) {
+    throw new AppError('Verified bank details are required before payment scheduling (SWIFT or ABA routing is required)', 400);
   }
   const snapshotAt = new Date();
   const bankSnapshotHash = crypto.createHash('sha256').update(JSON.stringify({
@@ -560,6 +567,7 @@ export async function schedulePayment(
     bank_name: bankName,
     bank_address: invoice.vendor?.bank_address || '',
     swift_code: swiftCode,
+    aba_routing_number: abaRoutingNumber,
     account_number: accountNumber,
     invoice_revision: invoice.revision,
   })).digest('hex');
@@ -601,7 +609,8 @@ export async function schedulePayment(
       beneficiary_name_snapshot: beneficiary,
       bank_name_snapshot: bankName,
       bank_address_snapshot: invoice.vendor?.bank_address || null,
-      swift_code_snapshot: swiftCode,
+      swift_code_snapshot: swiftCode || null,
+      aba_routing_number_snapshot: abaRoutingNumber || null,
       account_number_snapshot: accountNumber,
       bank_snapshot_hash: bankSnapshotHash,
       bank_snapshot_at: snapshotAt,

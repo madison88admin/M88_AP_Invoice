@@ -1,5 +1,4 @@
 import prisma, { isDbEnabled } from '../config/database';
-import { AppError } from '../middleware/errorHandler';
 
 export interface VendorMatchResult {
   vendor_id: string;
@@ -16,6 +15,7 @@ function normalizeVendorName(name: string): string {
   return name
     .toUpperCase()
     .replace(/CO\.?,?\s*LTD\.?/gi, '')
+    .replace(/\bLTD\.?/gi, '')
     .replace(/LIMITED/gi, '')
     .replace(/CORPORATION/gi, '')
     .replace(/INC\.?/gi, '')
@@ -26,6 +26,33 @@ function normalizeVendorName(name: string): string {
     .replace(/-/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function normalizedBankFingerprint(vendor: any): string | null {
+  const values = [vendor.beneficiary_name, vendor.bank_name, vendor.account_number, vendor.swift_code]
+    .map((value) => String(value || '').trim().toUpperCase());
+  if (!values.some(Boolean)) return null;
+  return values.join('|');
+}
+
+/**
+ * Select one canonical candidate only when duplicate master records do not
+ * disagree on payment details. Conflicting bank records must be resolved by
+ * Accounting/Finance; silently picking the "most complete" record could route
+ * money to the wrong account.
+ */
+function selectSafeCandidate(candidates: any[], sourceName: string): any | null {
+  if (candidates.length === 0) return null;
+
+  const populatedFingerprints = new Set(
+    candidates.map(normalizedBankFingerprint).filter((value): value is string => Boolean(value))
+  );
+  if (populatedFingerprints.size > 1) {
+    console.warn(`[VendorMatch] Ambiguous vendor "${sourceName}" has conflicting bank records; Accounting/Finance canonical mapping is required.`);
+    return null;
+  }
+
+  return candidates[0];
 }
 
 export async function matchVendor(vendorName: string): Promise<VendorMatchResult | null> {
@@ -48,32 +75,34 @@ export async function matchVendor(vendorName: string): Promise<VendorMatchResult
     };
     const rankedVendors = [...allVendors].sort((a: any, b: any) => rankVendor(b) - rankVendor(a));
 
-    for (const vendor of rankedVendors) {
-      const normalizedVendorName = normalizeVendorName(vendor.name);
-      if (normalizedVendorName === normalizedInput) {
-        return {
-          vendor_id: vendor.id,
-          vendor_name: vendor.name,
-          match_type: 'exact',
-          confidence: 1.0,
-        };
-      }
+    const exactCandidates = rankedVendors.filter((vendor: any) =>
+      normalizeVendorName(vendor.name) === normalizedInput
+    );
+    const exactVendor = selectSafeCandidate(exactCandidates, vendorName);
+    if (exactVendor) {
+      return {
+        vendor_id: exactVendor.id,
+        vendor_name: exactVendor.name,
+        match_type: 'exact',
+        confidence: 1.0,
+      };
     }
+    if (exactCandidates.length > 0) return null;
 
     // Step 2: Exact match on Vendor.name_aliases array
-    for (const vendor of rankedVendors) {
-      for (const alias of vendor.name_aliases) {
-        const normalizedAlias = normalizeVendorName(alias);
-        if (normalizedAlias === normalizedInput) {
-          return {
-            vendor_id: vendor.id,
-            vendor_name: vendor.name,
-            match_type: 'alias',
-            confidence: 0.95,
-          };
-        }
-      }
+    const aliasCandidates = rankedVendors.filter((vendor: any) =>
+      (vendor.name_aliases || []).some((alias: string) => normalizeVendorName(alias) === normalizedInput)
+    );
+    const aliasVendor = selectSafeCandidate(aliasCandidates, vendorName);
+    if (aliasVendor) {
+      return {
+        vendor_id: aliasVendor.id,
+        vendor_name: aliasVendor.name,
+        match_type: 'alias',
+        confidence: 0.95,
+      };
     }
+    if (aliasCandidates.length > 0) return null;
 
     // Step 3: Fuzzy match (Levenshtein distance ≤ 3, case-insensitive)
     for (const vendor of rankedVendors) {
@@ -136,19 +165,9 @@ export async function matchOrCreateVendor(
   // Try matching first
   const match = await matchVendor(vendorName);
   if (match) {
-    // Auto-fill beneficiary_name from vendor name when null (one-time cleanup)
-    try {
-      const fullVendor = await prisma.vendor.findUnique({ where: { id: match.vendor_id } });
-      if (fullVendor && !fullVendor.beneficiary_name && vendorName.trim().length > 0) {
-        await prisma.vendor.update({
-          where: { id: match.vendor_id },
-          data: { beneficiary_name: vendorName.trim() },
-        });
-        console.log(`[VendorMatch] Auto-filled beneficiary_name for "${vendorName}"`);
-      }
-    } catch (fillErr: any) {
-      console.warn(`[VendorMatch] Failed to auto-fill beneficiary_name: ${fillErr?.message}`);
-    }
+    // OCR/vendor matching is read-only. Beneficiary and bank fields are
+    // financial master data and may only be changed through the controlled
+    // Accounting vendor workflow.
     return { vendor_id: match.vendor_id, vendor_name: match.vendor_name, auto_created: false };
   }
 

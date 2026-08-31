@@ -436,6 +436,7 @@ model Payment {
   bank_name_snapshot String?
   bank_address_snapshot String?
   swift_code_snapshot String?
+  aba_routing_number_snapshot String?
   account_number_snapshot String?
   bank_snapshot_hash String?
   bank_snapshot_at DateTime?

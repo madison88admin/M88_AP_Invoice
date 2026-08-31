@@ -9,8 +9,12 @@ afterEach(() => {
 });
 
 describe('getFinancePolicy', () => {
-  it('uses strict safe defaults', () => {
-    expect(getFinancePolicy()).toMatchObject({ poAmountTolerancePercent: 0, invoiceRoundingTolerance: 0.02 });
+  it('uses Finance advisory defaults', () => {
+    expect(getFinancePolicy()).toMatchObject({
+      poAmountTolerancePercent: 0.01,
+      invoiceRoundingTolerance: 1,
+      enforcementMode: 'advisory',
+    });
   });
 
   it('accepts bounded Finance configuration', () => {
@@ -21,7 +25,7 @@ describe('getFinancePolicy', () => {
 
   it('rejects unsafe tolerance configuration', () => {
     process.env.FINANCE_PO_AMOUNT_TOLERANCE_PCT = '0.50';
-    expect(getFinancePolicy().poAmountTolerancePercent).toBe(0);
+    expect(getFinancePolicy().poAmountTolerancePercent).toBe(0.01);
   });
 
   it('defaults to advisory enforcement and honors strict', () => {

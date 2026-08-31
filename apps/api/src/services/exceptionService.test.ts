@@ -153,7 +153,7 @@ describe('exception workflow smoke test', () => {
     prismaMock.invoice.findUnique.mockResolvedValue({
       ...flaggedInvoice,
       total_amount: '150.00',
-      invoice_date: new Date('2026-08-01'),
+      invoice_date: new Date(Date.now() - 9 * 24 * 60 * 60 * 1000),
       vendor: { bank_verified_at: null },
       exceptions: [
         {

@@ -81,6 +81,7 @@ function makePayment(overrides: Record<string, any> = {}) {
     bank_charge_note: overrides.bank_charge_note ?? null,
     beneficiary_name_snapshot: overrides.beneficiary_name_snapshot ?? 'Test Beneficiary',
     account_number_snapshot: overrides.account_number_snapshot ?? '000123456789',
+    aba_routing_number_snapshot: overrides.aba_routing_number_snapshot ?? null,
     bank_snapshot_hash: overrides.bank_snapshot_hash ?? 'test-bank-snapshot-hash',
     bill_stub: overrides.bill_stub ?? null,
     selected_for_batch: false,
@@ -781,7 +782,7 @@ describe('approveHeldPayment', () => {
     }));
     paymentUpdate.mockResolvedValue({ id: 'pay-held', status: 'SCHEDULED' });
 
-    const result = await approveHeldPayment('pay-held', 'purch-1');
+    const result = await approveHeldPayment('pay-held', 'accounting-supervisor-1');
 
     expect(paymentUpdate).toHaveBeenCalledWith({
       where: { id: 'pay-held' },
@@ -792,7 +793,8 @@ describe('approveHeldPayment', () => {
       data: expect.objectContaining({
         invoice_id: 'inv-held',
         action: 'HELD_BELOW_100_APPROVED',
-        performed_by: 'purch-1',
+        performed_by: 'accounting-supervisor-1',
+        note: expect.stringContaining('Accounting Supervisor'),
       }),
     }));
     expect(notificationCreate).toHaveBeenCalledWith(expect.objectContaining({

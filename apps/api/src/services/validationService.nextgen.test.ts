@@ -5,14 +5,18 @@ const {
   invoiceFindUnique,
   invoiceUpdate,
   exceptionCreate,
+  exceptionFindFirst,
   aliasFindMany,
+  invoiceLineFindMany,
   getFullPOByMPO,
   getNextGenMetricsMock,
 } = vi.hoisted(() => ({
   invoiceFindUnique: vi.fn(),
   invoiceUpdate: vi.fn(),
   exceptionCreate: vi.fn(),
+  exceptionFindFirst: vi.fn(),
   aliasFindMany: vi.fn(),
+  invoiceLineFindMany: vi.fn(),
   getFullPOByMPO: vi.fn(),
   getNextGenMetricsMock: vi.fn(),
 }));
@@ -20,7 +24,8 @@ const {
 vi.mock('../config/database', () => ({
   default: {
     invoice: { findUnique: invoiceFindUnique, update: invoiceUpdate },
-    exception: { create: exceptionCreate },
+    invoiceLine: { findMany: invoiceLineFindMany },
+    exception: { create: exceptionCreate, findFirst: exceptionFindFirst },
     entityAlias: { findMany: aliasFindMany },
   },
 }));
@@ -49,6 +54,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   invoiceFindUnique.mockResolvedValue(INVOICE);
   aliasFindMany.mockResolvedValue([]); // no aliases configured by default
+  invoiceLineFindMany.mockResolvedValue([]);
+  exceptionFindFirst.mockResolvedValue(null);
   getNextGenMetricsMock.mockReturnValue({
     cooldown_active: false,
     consecutive_failures: 0,

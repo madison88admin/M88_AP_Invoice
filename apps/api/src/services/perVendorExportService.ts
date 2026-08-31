@@ -87,6 +87,7 @@ export async function exportBatchPerVendor(batchId: string, userId?: string): Pr
     'Bank Name': p.bank_name_snapshot || '',
     'Bank Address': p.bank_address_snapshot || '',
     'SWIFT Code': p.swift_code_snapshot || '',
+    'ABA / Routing Number': p.aba_routing_number_snapshot || '',
     'Account Number': p.account_number_snapshot || '',
     'Reference': p.reference || '',
   }));
@@ -107,6 +108,7 @@ export async function exportBatchPerVendor(batchId: string, userId?: string): Pr
     'Bank Name': '',
     'Bank Address': '',
     'SWIFT Code': '',
+    'ABA / Routing Number': '',
     'Account Number': '',
     'Reference': '',
   };
@@ -114,7 +116,7 @@ export async function exportBatchPerVendor(batchId: string, userId?: string): Pr
   const allRows = [...rows, totalRow];
 
   const ws = XLSX.utils.json_to_sheet(allRows, {
-    header: ['#', 'Invoice Number', 'MPO Number', 'PO Number', 'Brand', 'Bill To Entity', 'Amount', 'Bank Charge', 'Currency', 'Payment Date', 'Beneficiary Name', 'Bank Name', 'Bank Address', 'SWIFT Code', 'Account Number', 'Reference'],
+    header: ['#', 'Invoice Number', 'MPO Number', 'PO Number', 'Brand', 'Bill To Entity', 'Amount', 'Bank Charge', 'Currency', 'Payment Date', 'Beneficiary Name', 'Bank Name', 'Bank Address', 'SWIFT Code', 'ABA / Routing Number', 'Account Number', 'Reference'],
   });
 
   ws['!cols'] = [
@@ -132,6 +134,7 @@ export async function exportBatchPerVendor(batchId: string, userId?: string): Pr
     { wch: 25 },  // Bank Name
     { wch: 30 },  // Bank Address
     { wch: 14 },  // SWIFT Code
+    { wch: 20 },  // ABA / Routing Number
     { wch: 20 },  // Account Number
     { wch: 20 },  // Reference
   ];
@@ -155,6 +158,7 @@ export async function exportBatchPerVendor(batchId: string, userId?: string): Pr
     ['Bank Name', singleVendor ? (batch.payments[0]?.bank_name_snapshot || '') : 'Multiple — see Payments sheet'],
     ['Bank Address', singleVendor ? (batch.payments[0]?.bank_address_snapshot || '') : 'Multiple — see Payments sheet'],
     ['SWIFT Code', singleVendor ? (batch.payments[0]?.swift_code_snapshot || '') : 'Multiple — see Payments sheet'],
+    ['ABA / Routing Number', singleVendor ? (batch.payments[0]?.aba_routing_number_snapshot || '') : 'Multiple — see Payments sheet'],
     ['Account Number', singleVendor ? (batch.payments[0]?.account_number_snapshot || '') : 'Multiple — see Payments sheet'],
     ['Status', batch.status],
     ['Generated', new Date().toISOString()],

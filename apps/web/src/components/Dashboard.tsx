@@ -3148,23 +3148,27 @@ ${dataRows}
                 {openingDocument ? 'Opening PDF...' : 'View Actual Invoice PDF'}
               </button>
 
-              {/* Replace / Re-link PDF — lets users fix wrong PDF associations */}
-              <input
-                ref={replacePdfInputRef}
-                type="file"
-                accept=".pdf,application/pdf"
-                onChange={(e) => void handleReplacePdf(e)}
-                className="hidden"
-              />
-              <button
-                onClick={() => replacePdfInputRef.current?.click()}
-                disabled={replacingPdf}
-                className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
-                style={replacingPdf ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-color)' }}
-              >
-                {replacingPdf ? <Loader2 className="h-4 w-4 mr-2 animate-spin" strokeWidth={1.75} /> : <Upload className="h-4 w-4 mr-2" strokeWidth={1.75} />}
-                {replacingPdf ? 'Replacing PDF...' : 'Replace / Re-link PDF'}
-              </button>
+              {/* Replace / Re-link PDF is a controlled correction action. */}
+              {user && ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'PURCHASING_COORDINATOR', 'IT_ADMIN'].includes(user.role) && (
+                <>
+                  <input
+                    ref={replacePdfInputRef}
+                    type="file"
+                    accept=".pdf,application/pdf"
+                    onChange={(e) => void handleReplacePdf(e)}
+                    className="hidden"
+                  />
+                  <button
+                    onClick={() => replacePdfInputRef.current?.click()}
+                    disabled={replacingPdf}
+                    className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
+                    style={replacingPdf ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-color)' }}
+                  >
+                    {replacingPdf ? <Loader2 className="h-4 w-4 mr-2 animate-spin" strokeWidth={1.75} /> : <Upload className="h-4 w-4 mr-2" strokeWidth={1.75} />}
+                    {replacingPdf ? 'Replacing PDF...' : 'Replace / Re-link PDF'}
+                  </button>
+                </>
+              )}
 
               {/* Edit Invoice Button — shown if user can edit invoice OR edit bank details */}
               {user && (hasPermission(user.role, 'canEditInvoice') || hasPermission(user.role, 'canEditBankDetails')) && (

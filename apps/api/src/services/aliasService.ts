@@ -70,9 +70,12 @@ export function namesEquivalent(
   ]);
   const wordsA = normA.split(/[\s,.&()\-]+/).filter(w => w.length > 2 && !stopWords.has(w));
   const wordsB = normB.split(/[\s,.&()\-]+/).filter(w => w.length > 2 && !stopWords.has(w));
-  // If they share at least one significant root word (3+ chars), consider equivalent
+  // Require at least two significant shared tokens. A single generic word
+  // (for example "Vendor" in "Vendor A" and "Vendor B") is not enough for a
+  // financial master-data match; one-token variants must be explicitly mapped
+  // through the alias table.
   const shared = wordsA.filter(w => wordsB.some(wb => wb.includes(w) || w.includes(wb)));
-  return shared.length > 0;
+  return shared.length >= 2;
 }
 
 export async function listAliases(entityType?: string) {

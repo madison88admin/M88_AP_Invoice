@@ -55,6 +55,34 @@ describe('vendor matching financial controls', () => {
     await expect(matchVendor('CHECKPOINT SYSTEMS LIMITED')).resolves.toBeNull();
   });
 
+  it('matches the exact PT SML legal entity before an overlapping alias on another bank record', async () => {
+    vendorFindMany.mockResolvedValue([
+      vendor({
+        id: 'sml-indonesia',
+        name: 'PT SML Indonesia',
+        name_aliases: ['SML INDONESIA PRIVATE'],
+        account_number: '111111',
+      }),
+      vendor({
+        id: 'sml-private',
+        name: 'PT SML INDONESIA PRIVATE',
+        account_number: '222222',
+      }),
+      vendor({
+        id: 'sml-hk',
+        name: 'SML (Hongkong) Limited',
+        account_number: '333333',
+      }),
+    ]);
+
+    await expect(matchVendor('PT. SML INDONESIA PRIVATE')).resolves.toMatchObject({
+      vendor_id: 'sml-private',
+      vendor_name: 'PT SML INDONESIA PRIVATE',
+      match_type: 'exact',
+      confidence: 1,
+    });
+  });
+
   it('never writes beneficiary or bank master data during OCR matching', async () => {
     vendorFindMany.mockResolvedValue([
       vendor({ beneficiary_name: null, bank_name: null, account_number: null, swift_code: null }),

@@ -206,7 +206,7 @@ export default function InvoiceUpload() {
         invoice_currency_original: ocrResult.invoice_currency_original,
         exchange_rate_to_usd: ocrResult.exchange_rate_to_usd,
         currency: ocrResult.currency,
-        payment_terms: String(ocrResult.payment_terms) as PaymentTerms,
+        payment_terms: ocrResult.payment_terms ? String(ocrResult.payment_terms) as PaymentTerms : undefined,
         incoterm: ocrResult.incoterm,
         subtotal: ocrResult.subtotal,
         tax_amount: ocrResult.tax_amount,
@@ -741,7 +741,7 @@ export default function InvoiceUpload() {
                 <option value="">Select a vendor...</option>
                 {vendorSuggestions.map((vendor) => (
                   <option key={vendor.id} value={vendor.id}>
-                    {vendor.name} (Confidence: {(vendor.confidence * 100).toFixed(0)}%)
+                    {vendor.name}{vendor.confidence > 0 ? ` (Confidence: ${(vendor.confidence * 100).toFixed(0)}%)` : ' (Manual selection)'}
                   </option>
                 ))}
               </select>

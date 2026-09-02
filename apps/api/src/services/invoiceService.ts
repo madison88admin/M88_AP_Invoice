@@ -1,5 +1,5 @@
 import prisma from '../config/database';
-import { InvoiceStatus, InvoiceType, InvoiceCategory, BrandTier, InvoiceSource } from '@ap-invoice/shared';
+import { InvoiceStatus, InvoiceType, InvoiceCategory, BrandTier, InvoiceSource, OrderType, BillToEntity } from '@ap-invoice/shared';
 import { AppError } from '../middleware/errorHandler';
 import { isTop10Brand, TOP_10_BRANDS } from '@ap-invoice/shared';
 import { logAudit, resolveAuditActorNames } from './auditLogService';
@@ -24,6 +24,39 @@ function isValidInvoiceType(value: any): value is InvoiceType {
 
 function isValidInvoiceSource(value: any): value is InvoiceSource {
   return value && Object.values(InvoiceSource).includes(value as InvoiceSource);
+}
+
+function cleanOptionalString(value: any): string | null {
+  if (value === undefined || value === null) return null;
+  const cleaned = String(value).trim();
+  if (!cleaned || ['undefined', 'null', 'n/a', 'na', '-'].includes(cleaned.toLowerCase())) return null;
+  return cleaned;
+}
+
+function safeOptionalNumber(value: any): number | null {
+  if (value === undefined || value === null || value === '') return null;
+  const normalized = typeof value === 'string' ? value.replace(/,/g, '').trim() : value;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function safeOptionalInteger(value: any): number | null {
+  const parsed = safeOptionalNumber(value);
+  return parsed === null ? null : Math.trunc(parsed);
+}
+
+function safeOrderType(value: any): OrderType | null {
+  const normalized = cleanOptionalString(value)?.toUpperCase();
+  return normalized && Object.values(OrderType).includes(normalized as OrderType)
+    ? normalized as OrderType
+    : null;
+}
+
+function safeBillToEntity(value: any): BillToEntity {
+  const normalized = cleanOptionalString(value)?.toUpperCase().replace(/[\s-]+/g, '_');
+  return normalized && Object.values(BillToEntity).includes(normalized as BillToEntity)
+    ? normalized as BillToEntity
+    : BillToEntity.MADISON_88_LTD;
 }
 
 const ACCOUNTING_PREAPPROVED_CATEGORIES = new Set([
@@ -113,8 +146,8 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
   if (!invoice_number || String(invoice_number).trim() === '') {
     throw new AppError('Invoice number is required', 400);
   }
-  const parsedAmount = parseFloat(total_amount);
-  if (isNaN(parsedAmount) || parsedAmount <= 0) {
+  const parsedAmount = safeOptionalNumber(total_amount);
+  if (parsedAmount === null || parsedAmount <= 0) {
     throw new AppError('Total amount must be a positive number', 400);
   }
 
@@ -195,33 +228,33 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
       vendor_id: resolvedVendorId,
       total_amount: parsedAmount,
       invoice_currency_original,
-      exchange_rate_to_usd: exchange_rate_to_usd ? parseFloat(exchange_rate_to_usd) : null,
+      exchange_rate_to_usd: safeOptionalNumber(exchange_rate_to_usd),
       currency: currency || 'USD',
-      payment_terms,
-      incoterm,
-      bank_charges: parseFloat(bank_charges) || 0,
-      freight_charges: parseFloat(freight_charges) || 0,
-      additional_charges: parseFloat(additional_charges) || 0,
-      subtotal: subtotal ? parseFloat(subtotal) : null,
-      tax_amount: tax_amount ? parseFloat(tax_amount) : null,
-      discount_amount: discount_amount ? parseFloat(discount_amount) : null,
+      payment_terms: cleanOptionalString(payment_terms),
+      incoterm: cleanOptionalString(incoterm),
+      bank_charges: safeOptionalNumber(bank_charges) || 0,
+      freight_charges: safeOptionalNumber(freight_charges) || 0,
+      additional_charges: safeOptionalNumber(additional_charges) || 0,
+      subtotal: safeOptionalNumber(subtotal),
+      tax_amount: safeOptionalNumber(tax_amount),
+      discount_amount: safeOptionalNumber(discount_amount),
       ship_to: ship_to || null,
       sold_to: sold_to || null,
       invoice_type: invoice_type as any,
       category: category || 'TRIMS',
-      order_type,
+      order_type: safeOrderType(order_type),
       brand,
       brand_code,
       brand_tier,
       season,
-      qty_shipped: qty_shipped ? parseInt(qty_shipped) : null,
+      qty_shipped: safeOptionalInteger(qty_shipped),
       mpo_number,
       mpo_base_number: parsedMpo.baseMpo,
       mpo_order_sequence: parsedMpo.orderSequence,
       material_code: material_code || parsedMpo.materialCode,
       material_name,
       customer_po_number,
-      bill_to_entity: bill_to_entity || 'MADISON_88_LTD',
+      bill_to_entity: safeBillToEntity(bill_to_entity),
       is_handwritten: is_handwritten || false,
       priority_flag: priority_flag || false,
       priority_pay_date: safeDate(priority_pay_date),
@@ -237,7 +270,7 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
       bank_name: bank_name || undefined,
       swift_code: swift_code || undefined,
       account_number: account_number || undefined,
-      ocr_confidence_score: ocr_confidence_score ? parseFloat(ocr_confidence_score) : null,
+      ocr_confidence_score: safeOptionalNumber(ocr_confidence_score),
       source_document_type: source_document_type || undefined,
       structured_source_format: structured_source_format || undefined,
       document_layout_fingerprint: document_layout_fingerprint || undefined,
@@ -252,16 +285,16 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
             mpo_order_sequence: line.mpo_order_sequence || parsedMpo.orderSequence || null,
             material_code: line.material_code || line.item_code || parsedMpo.materialCode || null,
             material_name: line.material_name || line.description || null,
-            quantity: line.quantity != null ? Number(line.quantity) : null,
-            selling_quantity: line.selling_quantity != null ? Number(line.selling_quantity) : null,
-            unit_price: line.unit_price != null ? Number(line.unit_price) : null,
-            line_amount: line.line_amount != null ? Number(line.line_amount) : (line.total_amount != null ? Number(line.total_amount) : null),
+            quantity: safeOptionalNumber(line.quantity),
+            selling_quantity: safeOptionalNumber(line.selling_quantity),
+            unit_price: safeOptionalNumber(line.unit_price),
+            line_amount: safeOptionalNumber(line.line_amount ?? line.total_amount),
             size: line.size || null,
-            received_quantity: line.received_quantity != null ? Number(line.received_quantity) : null,
-            accepted_quantity: line.accepted_quantity != null ? Number(line.accepted_quantity) : null,
-            previously_invoiced_quantity: line.previously_invoiced_quantity != null ? Number(line.previously_invoiced_quantity) : null,
-            remaining_receivable_quantity: line.remaining_receivable_quantity != null ? Number(line.remaining_receivable_quantity) : null,
-            extraction_confidence: line.extraction_confidence != null ? Number(line.extraction_confidence) : null,
+            received_quantity: safeOptionalNumber(line.received_quantity),
+            accepted_quantity: safeOptionalNumber(line.accepted_quantity),
+            previously_invoiced_quantity: safeOptionalNumber(line.previously_invoiced_quantity),
+            remaining_receivable_quantity: safeOptionalNumber(line.remaining_receivable_quantity),
+            extraction_confidence: safeOptionalNumber(line.extraction_confidence),
             field_confidence: line.field_confidence || undefined,
             extraction_provenance: line.extraction_provenance || undefined,
             source_evidence: line.source_evidence || undefined,

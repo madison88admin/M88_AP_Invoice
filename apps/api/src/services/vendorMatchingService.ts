@@ -14,6 +14,11 @@ export interface VendorMatchResult {
 function normalizeVendorName(name: string): string {
   return name
     .toUpperCase()
+    // Indonesian legal prefix. Treat `PT`, `PT.`, and punctuation variants as
+    // equivalent, while retaining the rest of the legal entity name (for
+    // example, INDONESIA vs INDONESIA PRIVATE) so distinct SML entities never
+    // collapse into one bank record.
+    .replace(/^\s*PT\.?\s+/, '')
     .replace(/CO\.?,?\s*LTD\.?/gi, '')
     .replace(/\bLTD\.?/gi, '')
     .replace(/LIMITED/gi, '')
@@ -29,7 +34,7 @@ function normalizeVendorName(name: string): string {
 }
 
 function normalizedBankFingerprint(vendor: any): string | null {
-  const values = [vendor.beneficiary_name, vendor.bank_name, vendor.account_number, vendor.swift_code]
+  const values = [vendor.beneficiary_name, vendor.bank_name, vendor.account_number, vendor.swift_code, vendor.aba_routing_number]
     .map((value) => String(value || '').trim().toUpperCase());
   if (!values.some(Boolean)) return null;
   return values.join('|');

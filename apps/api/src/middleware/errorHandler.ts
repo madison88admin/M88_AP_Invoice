@@ -30,6 +30,18 @@ export const errorHandler = (
     });
   }
 
+  // Invalid OCR/manual form values should be actionable to the user rather
+  // than appearing as an opaque server failure. Do not expose the underlying
+  // Prisma query or database details in the response.
+  if (err.name === 'PrismaClientValidationError') {
+    return res.status(400).json({
+      error: {
+        message: 'One or more invoice fields contain an invalid value. Please review the extracted fields and try again.',
+        status: 400,
+      },
+    });
+  }
+
   res.status(500).json({
     error: {
       message: 'Internal server error',

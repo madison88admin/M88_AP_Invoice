@@ -113,8 +113,59 @@ let mpoCacheFetchPromise: Promise<any[]> | null = null;
 
 // Full PO data cache — stores complete PO data (with line items) by MPO number
 // This avoids re-fetching PO details for validation checks
+// Persisted to disk so the cache survives API restarts
+const PO_DATA_CACHE_FILE = path.join(process.cwd(), 'data', 'po-data-cache.json');
 const poDataCache = new Map<string, { data: any; timestamp: number }>();
 const PO_DATA_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+let poCacheDirty = false; // Track unsaved writes
+
+/** Load persisted PO data cache from disk (best-effort). */
+function loadPODataCacheFromDisk(): void {
+  try {
+    if (fs.existsSync(PO_DATA_CACHE_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(PO_DATA_CACHE_FILE, 'utf-8')) as { saved_at: number; entries: Record<string, { data: any; timestamp: number }> };
+      if (raw.entries && typeof raw.entries === 'object') {
+        const now = Date.now();
+        let loaded = 0;
+        for (const [key, val] of Object.entries(raw.entries)) {
+          if (val && val.data && (now - val.timestamp) < PO_DATA_CACHE_TTL_MS) {
+            poDataCache.set(key, val);
+            loaded++;
+          }
+        }
+        logger.info(`PO data cache: loaded ${loaded} entries from disk`);
+      }
+    }
+  } catch (err) {
+    logger.warn(`PO data cache: could not load from disk (${err instanceof Error ? err.message : String(err)})`);
+  }
+}
+
+/** Persist PO data cache to disk (best-effort, fire-and-forget). */
+function savePODataCacheToDisk(): void {
+  try {
+    if (poDataCache.size === 0) return;
+    const entries: Record<string, { data: any; timestamp: number }> = {};
+    for (const [key, val] of poDataCache.entries()) {
+      entries[key] = val;
+    }
+    const dir = path.dirname(PO_DATA_CACHE_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(PO_DATA_CACHE_FILE, JSON.stringify({ saved_at: Date.now(), entries }), 'utf-8');
+    poCacheDirty = false;
+    logger.info(`PO data cache: persisted ${poDataCache.size} entries to disk`);
+  } catch (err) {
+    logger.warn(`PO data cache: could not persist to disk (${err instanceof Error ? err.message : String(err)})`);
+  }
+}
+
+// Load cache at module init so it's warm before any request
+loadPODataCacheFromDisk();
+
+// Periodically flush dirty cache to disk (every 5 minutes)
+setInterval(() => {
+  if (poCacheDirty) savePODataCacheToDisk();
+}, 5 * 60 * 1000).unref();
 
 export function getCachedPOData(mpoNumber: string): any | null {
   const entry = poDataCache.get(mpoNumber);
@@ -123,12 +174,14 @@ export function getCachedPOData(mpoNumber: string): any | null {
   }
   if (entry) {
     poDataCache.delete(mpoNumber); // expired
+    poCacheDirty = true;
   }
   return null;
 }
 
 export function setCachedPOData(mpoNumber: string, data: any): void {
   poDataCache.set(mpoNumber, { data, timestamp: Date.now() });
+  poCacheDirty = true;
   // Clean up old entries periodically
   if (poDataCache.size > 500) {
     const now = Date.now();
@@ -142,6 +195,8 @@ export function setCachedPOData(mpoNumber: string, data: any): void {
 
 export function clearPODataCache(): void {
   poDataCache.clear();
+  poCacheDirty = true;
+  savePODataCacheToDisk();
 }
 let entityBrowserListBroken = false; // Skip GetEntityBrowserList after first 500 error
 

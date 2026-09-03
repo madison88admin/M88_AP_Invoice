@@ -450,13 +450,28 @@ export async function postInvoice(invoiceId: string, userId: string, bypassVaria
   // date). If scheduling unexpectedly fails, the invoice stays POSTED_TO_QB
   // and can be scheduled via the API later.
   let payment: any = null;
+  let paymentScheduleError: string | null = null;
   try {
     payment = await schedulePayment(invoiceId, undefined, userId);
   } catch (err) {
-    logger.warn(`Auto-schedule failed for invoice ${invoiceId}: ${err instanceof Error ? err.message : String(err)}`);
+    paymentScheduleError = err instanceof Error ? err.message : String(err);
+    logger.warn(`Auto-schedule failed for invoice ${invoiceId}: ${paymentScheduleError}`);
+    await prisma.auditLog.create({
+      data: {
+        invoice_id: invoiceId,
+        action: 'PAYMENT_SCHEDULE_FAILED',
+        performed_by: userId,
+        note: `Invoice posted, but payment scheduling failed: ${paymentScheduleError}`,
+      },
+    });
   }
 
-  return { ...postingResult, payment_scheduled: !!payment, payment };
+  return {
+    ...postingResult,
+    payment_scheduled: !!payment,
+    payment_schedule_error: paymentScheduleError,
+    payment,
+  };
 }
 
 async function postToQuickBooks(invoice: any, glAccount: string, qbMemo: string) {

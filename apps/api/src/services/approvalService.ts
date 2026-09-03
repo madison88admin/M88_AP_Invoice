@@ -88,10 +88,10 @@ function validateBrandForApproval(
 
 /**
  * Determine the approval route based on invoice amount and brand
- * 3-tier system per new flow:
- * - Planning Tier (<=2000): Coordinator + Purchasing Manager (shared 7-day SLA)
- * - Tier 2 (2001-99999): + MLO Account Holder + MLO Planning Manager + Sr. Manager GPO
- * - Tier 3 (>=100000): + Ms. Polly
+ * 3-tier system:
+ * - Tier 1 ($0–$4,999): Purchasing Team — Coordinator + Purchasing Manager
+ * - Tier 2 ($5,000–$99,999): + Sr. Manager - Planning / Lindsey
+ * - Tier 3 ($100,000+): + President
  */
 export function determineApprovalRoute(
   amount: number,
@@ -102,32 +102,18 @@ export function determineApprovalRoute(
   const tier = determineApprovalTier(amount);
   const route: ApprovalRouteStep[] = [];
 
-  // Planning Tier: amount <= $2,000 → Coordinator + Purchasing Manager (shared 7-day SLA)
+  // Tier 1: $0–$4,999 → Coordinator + Purchasing Manager
   route.push({ role: SignatoryRole.COORDINATOR, assignee_name: 'Any Coordinator', sla_days: SLA_LIMITS.COORDINATOR_DAYS });
   route.push({ role: SignatoryRole.PURCHASING_MANAGER, assignee_name: 'Any Purchasing Manager', sla_days: SLA_LIMITS.PURCHASING_MANAGER_DAYS });
 
+  // Tier 2: $5,000–$99,999 → + Sr. Manager - Planning / Lindsey
   if (tier >= 2) {
-    const brandValidation = validateBrandForApproval(brandCode, brandName, brandTier);
-    if (brandValidation.needsException) {
-      throw new AppError(brandValidation.exceptionDetail!, 400);
-    }
-
-    // MLO Account Holder — brand-dependent: Edwin for TOP_10, Glecie for OTHER
-    const mloAccountHolder = brandValidation.tier === BrandTier.TOP_10
-      ? MLO_ACCOUNT_HOLDER_EDWIN
-      : MLO_ACCOUNT_HOLDER_GLECIE;
-
-    // MLO Account Holder approval step
-    route.push({ role: SignatoryRole.MLO_ACCOUNT_HOLDER, assignee_name: mloAccountHolder, sla_days: SLA_LIMITS.MLO_ACCOUNT_HOLDER_DAYS });
-
-    // MLO Planning Manager approval step
-    route.push({ role: SignatoryRole.MLO_PLANNING_MANAGER, assignee_name: mloAccountHolder, sla_days: SLA_LIMITS.MLO_PLANNING_MANAGER_DAYS });
-
     route.push({ role: SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION, assignee_name: SR_MANAGER_NAME, sla_days: SLA_LIMITS.SR_MANAGER_DAYS });
   }
 
+  // Tier 3: $100,000+ → + President
   if (tier >= 3) {
-    route.push({ role: SignatoryRole.MS_POLLY, assignee_name: MS_POLLY_NAME, sla_days: SLA_LIMITS.MS_POLLY_DAYS });
+    route.push({ role: SignatoryRole.PRESIDENT, assignee_name: 'President', sla_days: SLA_LIMITS.PRESIDENT_DAYS || 5 });
   }
 
   return route;
@@ -1382,7 +1368,7 @@ function mapUserRoleToSignatoryRoles(userRole: string): SignatoryRole[] {
     'ACCOUNTING_ASSOCIATE': [SignatoryRole.ACCOUNTING_REVIEWER],
     'ACCOUNTING_SUPERVISOR': [SignatoryRole.ACCOUNTING_REVIEWER],
     'CFO': [SignatoryRole.ACCOUNTING_REVIEWER],
-    'PRESIDENT': [SignatoryRole.ACCOUNTING_REVIEWER],
+    'PRESIDENT': [SignatoryRole.PRESIDENT, SignatoryRole.ACCOUNTING_REVIEWER],
   };
 
   return mapping[userRole] || [];
@@ -1396,6 +1382,7 @@ function getSLAForRole(signerRole: string): number {
     [SignatoryRole.MLO_PLANNING_MANAGER]: SLA_LIMITS.MLO_PLANNING_MANAGER_DAYS,
     [SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION]: SLA_LIMITS.SR_MANAGER_DAYS,
     [SignatoryRole.MS_POLLY]: SLA_LIMITS.MS_POLLY_DAYS,
+    [SignatoryRole.PRESIDENT]: SLA_LIMITS.PRESIDENT_DAYS || 5,
     [SignatoryRole.ACCOUNTING_REVIEWER]: SLA_LIMITS.ACCOUNTING_DAYS,
   };
   return mapping[signerRole] || 7;

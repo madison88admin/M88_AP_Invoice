@@ -134,9 +134,9 @@ export const INVOICE_TYPE_KEYWORDS: Record<string, InvoiceType> = {
 
 // ─── APPROVAL ROUTING (3 tiers per new flow) ───
 export const APPROVAL_THRESHOLDS = {
-  TIER_1: 2000.00,   // Planning Tier: USD 0.1 to $2,000 (Coordinator + Purchasing Manager shared SLA)
-  TIER_2: 99999.99,  // USD $2,001 to $99,999
-  // Above TIER_2 = Tier 3 ($100,000+)
+  TIER_1: 4999.99,   // Purchasing Team: USD 0.1 to $4,999 (Coordinator + Purchasing Manager)
+  TIER_2: 99999.99,  // USD $5,000 to $99,999 (Sr. Manager - Planning / Lindsey)
+  // Above TIER_2 = Tier 3 ($100,000+) (President)
 };
 
 // ─── VENDOR THRESHOLD CONFIG ───
@@ -164,24 +164,20 @@ export const CITIBUSINESS_EXPORT_CONFIG = {
 };
 
 export const SIGNATURE_REQUIREMENTS = {
-  // Planning Tier (≤$2,000): Coordinator + Purchasing Manager (shared 7-day SLA)
+  // Tier 1 ($0–$4,999): Purchasing Team (Coordinator + Purchasing Manager)
   TIER_1: [SignatoryRole.COORDINATOR, SignatoryRole.PURCHASING_MANAGER],
-  // Tier 2 ($2,001–$99,999): + MLO Account Holder + MLO Planning Manager + Sr. Manager Global Production
+  // Tier 2 ($5,000–$99,999): + Sr. Manager - Planning / Lindsey
   TIER_2: [
     SignatoryRole.COORDINATOR,
     SignatoryRole.PURCHASING_MANAGER,
-    SignatoryRole.MLO_ACCOUNT_HOLDER,
-    SignatoryRole.MLO_PLANNING_MANAGER,
     SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION,
   ],
-  // Tier 3 (≥$100,000): + Ms. Polly
+  // Tier 3 ($100,000+): + President
   TIER_3: [
     SignatoryRole.COORDINATOR,
     SignatoryRole.PURCHASING_MANAGER,
-    SignatoryRole.MLO_ACCOUNT_HOLDER,
-    SignatoryRole.MLO_PLANNING_MANAGER,
     SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION,
-    SignatoryRole.MS_POLLY,
+    SignatoryRole.PRESIDENT,
   ],
 };
 
@@ -192,6 +188,7 @@ export const SLA_LIMITS = {
   MLO_PLANNING_MANAGER_DAYS: 2,
   SR_MANAGER_DAYS: 3,
   MS_POLLY_DAYS: 7,
+  PRESIDENT_DAYS: 5,
   ACCOUNTING_DAYS: 7,
   PAYMENT_DAYS: 5,
   APPROVAL_HOURS: 48,
@@ -521,6 +518,7 @@ export function mapSignatoryRoleToPendingStatus(role: SignatoryRole): string {
     [SignatoryRole.MLO_PLANNING_MANAGER]: 'PENDING_MLO_PLANNING_MANAGER',
     [SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION]: 'PENDING_SR_MANAGER',
     [SignatoryRole.MS_POLLY]: 'PENDING_POLLY',
+    [SignatoryRole.PRESIDENT]: 'PENDING_PRESIDENT',
     [SignatoryRole.ACCOUNTING_REVIEWER]: 'PENDING_ACCOUNTING',
   };
   return mapping[role] || 'PENDING_ACCOUNTING';

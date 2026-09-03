@@ -114,54 +114,69 @@ export async function getScheduledPaymentsForBatch(filters: ScheduledPaymentFilt
   if (filters.approvalFrom) approvalRange.gte = new Date(filters.approvalFrom);
   if (filters.approvalTo) approvalRange.lte = new Date(`${filters.approvalTo}T23:59:59.999Z`);
 
-  // The default Accounting queue must retain full visibility after posting:
-  // scheduled, submitted for supervisor review, approved, and held payments.
-  // Held/review rows remain non-batchable until the required Accounting action.
-  const defaultStatuses = {
+  // The default Accounting queue shows ALL invoices in accounting stages:
+  // PENDING_ACCOUNTING, APPROVED, POSTED_TO_QB, and all payment statuses.
+  // This gives Accounting a single unified view of everything they need to act on.
+  const defaultInvoiceStatuses = {
+    in: [
+      'PENDING_ACCOUNTING', 'APPROVED',
+      'SCHEDULED', 'FOR_PAYMENT', 'APPROVED_FOR_PAYMENT', 'HELD_BELOW_100',
+    ],
+  };
+  const defaultPaymentStatuses = {
     in: ['SCHEDULED', 'FOR_PAYMENT', 'APPROVED_FOR_PAYMENT', 'HELD_BELOW_100'],
   };
 
   // Non-status filters are shared by the default and explicit-status views.
-  const baseWhere: any = {
+  const invoiceBaseWhere: any = {
+    ...(filters.vendorId ? { vendor_id: filters.vendorId } : {}),
+    ...(filters.search ? {
+      OR: [
+        { invoice_number: { contains: filters.search, mode: 'insensitive' as const } },
+        { mpo_number: { contains: filters.search, mode: 'insensitive' as const } },
+        { material_code: { contains: filters.search, mode: 'insensitive' as const } },
+        { brand: { contains: filters.search, mode: 'insensitive' as const } },
+        { qb_memo: { contains: filters.search, mode: 'insensitive' as const } },
+        { vendor: { name: { contains: filters.search, mode: 'insensitive' as const } } },
+      ],
+    } : {}),
+    ...(filters.brand ? { brand: { contains: filters.brand, mode: 'insensitive' as const } } : {}),
+    ...(filters.memo ? { qb_memo: { contains: filters.memo, mode: 'insensitive' as const } } : {}),
+    ...(filters.category ? { category: filters.category as any } : {}),
+    ...(hasDueFilter ? { due_date: dueDateRange } : {}),
+    ...(filters.invoiceDateFrom || filters.invoiceDateTo ? { invoice_date: invoiceDateRange } : {}),
+    ...(filters.approvalFrom || filters.approvalTo ? {
+      signatures: {
+        some: {
+          signatory_role: 'PURCHASING_MANAGER' as any,
+          signed_at: approvalRange,
+        },
+      },
+    } : {}),
+  };
+
+  // An explicit status filter wins; otherwise return all accounting-stage invoices.
+  const invoiceWhere = filters.status
+    ? { ...invoiceBaseWhere, status: filters.status }
+    : { ...invoiceBaseWhere, status: defaultInvoiceStatuses };
+
+  // Also build a payment-level query for existing payment records (used for
+  // filtering by payment_date, currency, etc. that only exist on payments).
+  const paymentBaseWhere: any = {
     batch_id: null,
     payment_date: paymentDate,
     ...(filters.currency ? { currency: filters.currency } : {}),
     invoice: {
-      ...(filters.vendorId ? { vendor_id: filters.vendorId } : {}),
-      ...(filters.search ? {
-        OR: [
-          { invoice_number: { contains: filters.search, mode: 'insensitive' as const } },
-          { mpo_number: { contains: filters.search, mode: 'insensitive' as const } },
-          { material_code: { contains: filters.search, mode: 'insensitive' as const } },
-          { brand: { contains: filters.search, mode: 'insensitive' as const } },
-          { qb_memo: { contains: filters.search, mode: 'insensitive' as const } },
-          { vendor: { name: { contains: filters.search, mode: 'insensitive' as const } } },
-        ],
-      } : {}),
-      ...(filters.brand ? { brand: { contains: filters.brand, mode: 'insensitive' as const } } : {}),
-      ...(filters.memo ? { qb_memo: { contains: filters.memo, mode: 'insensitive' as const } } : {}),
-      ...(filters.category ? { category: filters.category as any } : {}),
-      ...(hasDueFilter ? { due_date: dueDateRange } : {}),
-      ...(filters.invoiceDateFrom || filters.invoiceDateTo ? { invoice_date: invoiceDateRange } : {}),
-      ...(filters.approvalFrom || filters.approvalTo ? {
-        signatures: {
-          some: {
-            signatory_role: 'PURCHASING_MANAGER' as any,
-            signed_at: approvalRange,
-          },
-        },
-      } : {}),
+      ...invoiceBaseWhere,
     },
   };
+  const paymentWhere = filters.status
+    ? { ...paymentBaseWhere, status: filters.status }
+    : { ...paymentBaseWhere, status: defaultPaymentStatuses };
 
-  // An explicit status filter wins; otherwise return the complete post-posting
-  // Accounting payment queue. Date filters in baseWhere apply to every status.
-  const where = filters.status
-    ? { ...baseWhere, status: filters.status }
-    : { ...baseWhere, status: defaultStatuses };
-
+  // Query 1: Existing payment records (SCHEDULED, FOR_PAYMENT, etc.)
   const payments = await prisma.payment.findMany({
-    where,
+    where: paymentWhere,
     include: {
       invoice: {
         include: {
@@ -183,13 +198,96 @@ export async function getScheduledPaymentsForBatch(filters: ScheduledPaymentFilt
     },
   });
 
+  // Query 2: Invoices without Payment records (PENDING_ACCOUNTING, APPROVED,
+  // POSTED_TO_QB) — these are items Accounting still needs to act on.
+  // Only include when no explicit status filter narrows to payment-only statuses.
+  const paymentOnlyStatuses = ['SCHEDULED', 'FOR_PAYMENT', 'APPROVED_FOR_PAYMENT', 'HELD_BELOW_100'];
+  const needsInvoiceQuery = !filters.status || !paymentOnlyStatuses.includes(filters.status);
+  let invoiceOnlyPayments: any[] = [];
+  if (needsInvoiceQuery) {
+    // Build the invoice-only query: invoices that either have no payment, or
+    // whose payment is in a terminal/non-batchable state.
+    const invoiceOnlyStatuses = filters.status
+      ? { in: [filters.status] }
+      : { in: ['PENDING_ACCOUNTING', 'APPROVED', 'POSTED_TO_QB'] };
+
+    const invoiceOnlyWhere: any = {
+      ...invoiceBaseWhere,
+      status: invoiceOnlyStatuses,
+      // No batch_id filter — these are invoices, not payments
+    };
+
+    // Apply payment-date and currency filters to the invoice query too
+    if (filters.currency) invoiceOnlyWhere.currency = filters.currency;
+    if (filters.dateFrom || filters.dateTo) {
+      // For invoices without payments, use invoice_date as a fallback
+      // since payment_date doesn't exist on the invoice.
+    }
+
+    const invoicesWithoutPayments = await prisma.invoice.findMany({
+      where: invoiceOnlyWhere,
+      include: {
+        vendor: true,
+        payments: {
+          where: { batch_id: null, status: { notIn: ['CANCELLED', 'VOIDED'] } },
+          take: 1,
+        },
+        signatures: {
+          where: {
+            signatory_role: 'PURCHASING_MANAGER' as any,
+            signed_at: { not: null },
+          },
+          select: { signed_at: true },
+          orderBy: { signed_at: 'desc' as const },
+          take: 1,
+        },
+      },
+      orderBy: { created_at: 'asc' },
+    });
+
+    // Only include invoices that don't already have an active payment record
+    // (the payments query above already returned those).
+    const paymentInvoiceIds = new Set(payments.map((p: any) => p.invoice?.id).filter(Boolean));
+    invoiceOnlyPayments = invoicesWithoutPayments
+      .filter((inv: any) => !paymentInvoiceIds.has(inv.id))
+      .map((inv: any) => ({
+        id: `inv-${inv.id}`,
+        invoice_id: inv.id,
+        status: 'AWAITING_POSTING' as any,
+        amount: Number(inv.total_amount || 0),
+        currency: inv.currency || 'USD',
+        payment_date: inv.due_date || null,
+        payment_date_source: 'DUE_DATE',
+        payment_date_from_due: true,
+        batch_id: null,
+        selected_for_batch: false,
+        remarks: null,
+        created_at: inv.created_at,
+        invoice: {
+          ...inv,
+          signatures: inv.signatures,
+        },
+        invoice_date: inv.invoice_date || null,
+        due_date: inv.due_date || null,
+        brand: inv.brand || null,
+        category: inv.category || null,
+        qb_memo: inv.qb_memo || null,
+        approval_date: inv.signatures?.[0]?.signed_at || null,
+        aging_days: null,
+        open_balance: Number(inv.total_amount || 0),
+      }));
+  }
+
+  // Merge: payments + invoice-only items, deduplicated
+  const allItems = [...payments, ...invoiceOnlyPayments];
+
   // Enrich with derived fields (invoice date, due date, brand, memo, category,
   // manager approval date, aging days, open balance)
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
   const DAY_MS = 86400000;
 
-  let enriched = payments.map((payment: any) => {
+  let enriched = allItems.map((payment: any) => {
     const due = payment.invoice?.due_date ? new Date(payment.invoice.due_date) : null;
     let agingDays: number | null = null;
     if (due && !isNaN(due.getTime())) {

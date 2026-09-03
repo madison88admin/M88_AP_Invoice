@@ -3,8 +3,8 @@ import { isWithinRoleThreshold } from './roleAccess';
 
 // The order signatures are collected in the workflow.
 export const APPROVAL_ROLE_ORDER = [
-  'COORDINATOR', 'PURCHASING_MANAGER', 'MLO_ACCOUNT_HOLDER',
-  'MLO_PLANNING_MANAGER', 'SR_MANAGER_GLOBAL_PRODUCTION', 'MS_POLLY',
+  'COORDINATOR', 'PURCHASING_MANAGER',
+  'SR_MANAGER_GLOBAL_PRODUCTION', 'PRESIDENT',
   'ACCOUNTING_REVIEWER',
 ];
 
@@ -19,7 +19,7 @@ export const mapUserRoleToSignatoryRoles = (role: string): string[] => {
     'MS_POLLY': ['MS_POLLY'],
     'ACCOUNTING_ASSOCIATE': ['ACCOUNTING_REVIEWER'],
     'ACCOUNTING_SUPERVISOR': ['ACCOUNTING_REVIEWER'],
-    'PRESIDENT': ['ACCOUNTING_REVIEWER'],
+    'PRESIDENT': ['PRESIDENT', 'ACCOUNTING_REVIEWER'],
     'SUPERADMIN': [],
   };
   return mapping[role] || [];

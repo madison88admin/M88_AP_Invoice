@@ -15,6 +15,7 @@ const statusGuide: Record<InvoiceStatus, { label: string; description: string; n
   [InvoiceStatus.PENDING_MLO_PLANNING_MANAGER]: { label: 'Pending MLO Planning Manager', description: 'Awaiting MLO planning manager approval.', nextSteps: 'MLO planning manager approves, then Sr. Manager.', color: 'bg-amber-500' },
   [InvoiceStatus.PENDING_SR_MANAGER]: { label: 'Pending Sr. Manager', description: 'Awaiting senior manager approval.', nextSteps: 'Sr. Manager approves, then accounting.', color: 'bg-amber-500' },
   [InvoiceStatus.PENDING_POLLY]: { label: 'Pending Polly', description: 'Awaiting Ms. Polly approval for high-value invoices.', nextSteps: 'Ms. Polly approves.', color: 'bg-amber-500' },
+  [InvoiceStatus.PENDING_PRESIDENT]: { label: 'Pending President', description: 'Awaiting President approval for invoices ≥$100,000.', nextSteps: 'President approves.', color: 'bg-red-500' },
   [InvoiceStatus.PENDING_ACCOUNTING]: { label: 'Pending Accounting', description: 'Awaiting accounting review.', nextSteps: 'Accounting posts to QuickBooks.', color: 'bg-blue-500' },
   [InvoiceStatus.APPROVED]: { label: 'Approved', description: 'All approvals completed.', nextSteps: 'Accounting posts to QuickBooks.', color: 'bg-green-500' },
   [InvoiceStatus.POSTED_TO_QB]: { label: 'Posted to QB', description: 'Invoice posted to QuickBooks.', nextSteps: 'Accounting schedules payment.', color: 'bg-blue-500' },

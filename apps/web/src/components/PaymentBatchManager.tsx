@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
-import { Package, Play, X, AlertCircle, CheckCircle, Clock, DollarSign, ArrowLeft, CheckSquare, Calendar, Loader2, Paperclip, Pencil, Download, Upload, ChevronDown, ChevronUp, SlidersHorizontal } from 'lucide-react';
-import { paymentBatchApi, vendorApi, qbApi } from '../lib/api';
+import { Package, Play, X, AlertCircle, CheckCircle, Clock, DollarSign, ArrowLeft, CheckSquare, Calendar, Loader2, Paperclip, Pencil, Download, Upload, ChevronDown, ChevronUp, SlidersHorizontal, Send } from 'lucide-react';
+import { paymentBatchApi, vendorApi, qbApi, invoiceApi } from '../lib/api';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -178,6 +177,8 @@ export default function PaymentBatchManager() {
   const [stuckBatches, setStuckBatches] = useState<(PaymentBatch & { days_stuck?: number; pending_payments?: number })[]>([]);
   const [stuckLoading, setStuckLoading] = useState(false);
   const [scheduledPayments, setScheduledPayments] = useState<ScheduledPayment[]>([]);
+  const [bulkApproving, setBulkApproving] = useState(false);
+  const [postingInvoiceId, setPostingInvoiceId] = useState<string | null>(null);
   const [selectedBatch, setSelectedBatch] = useState<PaymentBatch | null>(null);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [showExecutionModal, setShowExecutionModal] = useState(false);
@@ -234,7 +235,7 @@ export default function PaymentBatchManager() {
 
   const isAssociate = user?.role === 'ACCOUNTING_ASSOCIATE';
   const isSupervisor = user?.role === 'ACCOUNTING_SUPERVISOR';
-  const isBatchable = (p: ScheduledPayment) => p.status === 'SCHEDULED' || p.status === 'APPROVED_FOR_PAYMENT';
+  const isBatchable = (p: ScheduledPayment) => ['SCHEDULED', 'APPROVED_FOR_PAYMENT', 'AWAITING_POSTING'].includes(p.status);
 
   const handleBulkConfirmationImport = async (file: File) => {
     setBulkImporting(true);
@@ -333,6 +334,46 @@ export default function PaymentBatchManager() {
       setFilteredTotals([]);
     }
   }, [filters, user?.id, user?.role]);
+
+  // Bulk approve all pending-review invoices at once (Supervisor)
+  const handleBulkApproveAll = async () => {
+    const pendingReview = scheduledPayments.filter(p => p.status === 'FOR_PAYMENT');
+    if (pendingReview.length === 0) return;
+    setBulkApproving(true);
+    try {
+      for (const payment of pendingReview) {
+        await paymentBatchApi.approveForPayment(payment.id, 'Bulk approved by Accounting Supervisor');
+      }
+      showToast(`Approved ${pendingReview.length} payment(s) for batching.`, 'success');
+      await loadScheduledPayments();
+    } catch (error: any) {
+      const message = error?.response?.data?.error?.message || error?.response?.data?.message || 'Bulk approve failed.';
+      showToast(message, 'error');
+    } finally {
+      setBulkApproving(false);
+    }
+  };
+
+  // Post an awaiting-posting invoice from the main list
+  const handlePostFromList = async (payment: ScheduledPayment) => {
+    const invoiceId = payment.invoice?.id;
+    if (!invoiceId) return;
+    setPostingInvoiceId(invoiceId);
+    try {
+      const response = await invoiceApi.post(invoiceId, false);
+      if (response.data?.payment_scheduled === false) {
+        showToast(response.data?.payment_schedule_error || `Invoice posted, but payment scheduling needs attention.`, 'error');
+      } else {
+        showToast(`Invoice ${payment.invoice?.invoice_number} posted and added to the payment queue.`, 'success');
+      }
+      await loadScheduledPayments();
+    } catch (error: any) {
+      const message = error?.response?.data?.error?.message || error?.response?.data?.message || 'Unable to post invoice.';
+      showToast(message, 'error');
+    } finally {
+      setPostingInvoiceId(null);
+    }
+  };
 
   useEffect(() => {
     const init = async () => {
@@ -941,6 +982,8 @@ export default function PaymentBatchManager() {
         return { background: 'color-mix(in srgb, var(--accent-blue) 12%, transparent)', color: 'var(--accent-blue)', border: '1px solid color-mix(in srgb, var(--accent-blue) 20%, transparent)' };
       case 'HELD_BELOW_100':
         return { background: 'color-mix(in srgb, var(--text-muted) 12%, transparent)', color: 'var(--text-muted)', border: '1px solid color-mix(in srgb, var(--text-muted) 25%, transparent)' };
+      case 'AWAITING_POSTING':
+        return { background: 'color-mix(in srgb, var(--accent-purple) 12%, transparent)', color: 'var(--accent-purple)', border: '1px solid color-mix(in srgb, var(--accent-purple) 20%, transparent)' };
       default:
         return { background: 'var(--bg-card-hover)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' };
     }
@@ -952,6 +995,7 @@ export default function PaymentBatchManager() {
       case 'APPROVED_FOR_PAYMENT': return 'Approved';
       case 'SCHEDULED': return 'Scheduled';
       case 'HELD_BELOW_100': return 'Held <$100';
+      case 'AWAITING_POSTING': return 'Awaiting Posting';
       default: return status;
     }
   };
@@ -968,7 +1012,7 @@ export default function PaymentBatchManager() {
     );
   }
 
-  const overdueCount = scheduledPayments.filter(p => p.status === 'SCHEDULED' && (p.aging_days ?? 0) > 0).length;
+  const overdueCount = scheduledPayments.filter(p => ['SCHEDULED', 'APPROVED_FOR_PAYMENT', 'AWAITING_POSTING'].includes(p.status) && (p.aging_days ?? 0) > 0).length;
 
   const selectedPayments = scheduledPayments.filter(p => selectedPaymentIds.has(p.id));
   const selectedTotal = selectedPayments.reduce((sum, p) => sum + p.amount, 0);
@@ -1050,7 +1094,7 @@ export default function PaymentBatchManager() {
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Accounting Payment Queue</h2>
-                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>All post-approved payments, including supervisor review and held items</p>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>All accounting-stage invoices — awaiting posting, scheduled, held, and pending review</p>
                 </div>
                 <div className="flex items-center gap-3">
                   <button
@@ -1535,6 +1579,17 @@ export default function PaymentBatchManager() {
                                       Reject
                                     </button>
                                   </>
+                                )}
+                                {payment.status === 'AWAITING_POSTING' && (
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); handlePostFromList(payment); }}
+                                    disabled={postingInvoiceId === payment.invoice?.id}
+                                    className="px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors disabled:opacity-50"
+                                    style={{ background: 'var(--accent-purple)', color: 'white' }}
+                                  >
+                                    {postingInvoiceId === payment.invoice?.id ? <Loader2 className="h-3 w-3 mr-1 animate-spin inline" /> : <Send className="h-3 w-3 mr-1 inline" />}
+                                    {postingInvoiceId === payment.invoice?.id ? 'Posting…' : 'Post'}
+                                  </button>
                                 )}
                               </div>
                             </td>

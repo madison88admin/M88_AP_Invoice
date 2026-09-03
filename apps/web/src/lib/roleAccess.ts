@@ -268,25 +268,23 @@ export const ROLE_STAGE_ACCESS: Record<string, string[]> = {
   PLANNING_MANAGER: ['PENDING_MLO_PLANNING_MANAGER'],
   SR_MANAGER_GLOBAL_PRODUCTION: ['PENDING_SR_MANAGER'],
   MS_POLLY: ['PENDING_POLLY'],
-  PRESIDENT: ['PENDING_ACCOUNTING', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID'],
+  PRESIDENT: ['PENDING_PRESIDENT', 'PENDING_ACCOUNTING', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID'],
   IT_ADMIN: [], // System maintenance only; cannot approve/reject/hold
   CC_REPORTS: [], // Reports only; no invoice stage access
   INVOICE_UPLOADER: [], // Upload only; no invoice stage access
 };
 
 // Minimum invoice amount threshold per role (0 = no threshold, sees all tiers)
-// Tier 1: ≤$2,000 (Coordinator + PM)
-// Tier 2: $2,001–$99,999 (+ MLO Account Holder + MLO Planning Manager + Sr. Manager)
+// Tier 1: $0–$4,999 (Coordinator + PM)
+// Tier 2: $5,000–$99,999 (+ Sr. Manager Lindsey)
 // Tier 3: ≥$100,000 (+ Ms. Polly)
 export const ROLE_TIER_THRESHOLD: Record<string, number> = {
   SUPERADMIN: 0,
   IT_ADMIN: 0,
   PURCHASING_COORDINATOR: 0,        // All tiers (on all routes)
   PURCHASING_MANAGER: 0,            // All tiers (on all routes)
-  MLO_ACCOUNT_HOLDER: 2000,         // Tier 2+ only
-  PLANNING_MANAGER: 2000,           // Tier 2+ only
-  SR_MANAGER_GLOBAL_PRODUCTION: 2000, // Tier 2+ only
-  MS_POLLY: 100000,                 // Tier 3 only
+  SR_MANAGER_GLOBAL_PRODUCTION: 5000,  // Tier 2+ only ($5,000+)
+  PRESIDENT_SIGNATORY: 100000,       // Tier 3 only ($100,000+)
   ACCOUNTING_ASSOCIATE: 0,          // All tiers (all go through accounting)
   ACCOUNTING_SUPERVISOR: 0,         // All tiers
   PRESIDENT: 0,                     // All tiers

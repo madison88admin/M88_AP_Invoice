@@ -38,7 +38,7 @@ export function useDashboardStats() {
 
       const pendingValidation = invoices.filter((i: any) => i.status === 'VALIDATION_PENDING').length;
       const awaitingApproval = invoices.filter((i: any) =>
-        ['PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_MLO_ACCOUNT_HOLDER', 'PENDING_MLO_PLANNING_MANAGER', 'PENDING_SR_MANAGER', 'PENDING_POLLY'].includes(i.status)
+        ['PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_MLO_ACCOUNT_HOLDER', 'PENDING_MLO_PLANNING_MANAGER', 'PENDING_SR_MANAGER', 'PENDING_POLLY', 'PENDING_PRESIDENT'].includes(i.status)
       ).length;
       const urgentPayments = invoices.filter((i: any) => {
         if (!i.due_date) return false;

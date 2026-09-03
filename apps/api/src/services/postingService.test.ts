@@ -233,6 +233,30 @@ describe('postInvoice — the sub-$100 hold lives at scheduling, not posting', (
     expect(auditLogCreate.mock.calls.some((c: any) => c[0]?.data?.action === 'ACCOUNTING_AUTO_HOLD')).toBe(false);
   });
 
+  it('reports a failed automatic payment schedule instead of silently hiding a posted invoice', async () => {
+    const invoice = makePostableInvoice({ total_amount: 150 });
+    invoiceFindUnique
+      .mockResolvedValueOnce(invoice)
+      .mockResolvedValueOnce({ ...invoice, status: 'POSTED_TO_QB' });
+    invoiceUpdate.mockResolvedValue({});
+    auditLogCreate.mockResolvedValue({});
+    stageTimestampCreate.mockResolvedValue({});
+    paymentCreate.mockRejectedValueOnce(new Error('Verified bank details are required before payment scheduling'));
+
+    const result = (await postInvoice('inv-post', 'assoc-1')) as {
+      success: boolean;
+      payment_scheduled: boolean;
+      payment_schedule_error: string;
+    };
+
+    expect(result.success).toBe(true);
+    expect(result.payment_scheduled).toBe(false);
+    expect(result.payment_schedule_error).toContain('Verified bank details are required');
+    expect(auditLogCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ action: 'PAYMENT_SCHEDULE_FAILED' }),
+    }));
+  });
+
   it('posts a legacy invoice that only has OCR-detected signatures (no workflow signatures)', async () => {
     const ocrOnly = makePostableInvoice({
       signatures: [

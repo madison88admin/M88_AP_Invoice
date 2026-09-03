@@ -218,6 +218,7 @@ async function getWaitingOnMeInvoices(userRole?: string) {
     PLANNING_MANAGER: [InvoiceStatus.PENDING_MLO_PLANNING_MANAGER],
     SR_MANAGER: [InvoiceStatus.PENDING_SR_MANAGER],
     MS_POLLY: [InvoiceStatus.PENDING_POLLY],
+    PRESIDENT: [InvoiceStatus.PENDING_PRESIDENT],
     ACCOUNTING: [InvoiceStatus.PENDING_ACCOUNTING],
   };
 

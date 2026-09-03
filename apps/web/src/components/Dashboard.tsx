@@ -317,7 +317,7 @@ export default function Dashboard() {
       const unpaidStatuses: InvoiceStatus[] = [
         InvoiceStatus.PENDING_COORDINATOR, InvoiceStatus.PENDING_MANAGER,
         InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER, InvoiceStatus.PENDING_MLO_PLANNING_MANAGER,
-        InvoiceStatus.PENDING_SR_MANAGER, InvoiceStatus.PENDING_POLLY,
+        InvoiceStatus.PENDING_SR_MANAGER, InvoiceStatus.PENDING_POLLY, InvoiceStatus.PENDING_PRESIDENT,
         InvoiceStatus.PENDING_ACCOUNTING, InvoiceStatus.APPROVED,
         InvoiceStatus.POSTED_TO_QB, InvoiceStatus.PAYMENT_SCHEDULED,
         InvoiceStatus.VALIDATION_PENDING, InvoiceStatus.ON_HOLD, InvoiceStatus.EXCEPTION_FLAGGED,
@@ -1045,7 +1045,10 @@ export default function Dashboard() {
     try {
       setPosting(true);
       try {
-        await invoiceApi.post(selectedInvoice.id, bypassVarianceCheck);
+        const response = await invoiceApi.post(selectedInvoice.id, bypassVarianceCheck);
+        if (response.data?.payment_scheduled === false) {
+          throw new Error(response.data?.payment_schedule_error || 'Invoice was posted, but its payment record could not be created. Open Payment Batches to complete payment setup.');
+        }
       } catch (error: any) {
         const message = error?.response?.data?.error?.message || error?.response?.data?.message || '';
         const overrideNotAllowed = bypassVarianceCheck
@@ -1057,14 +1060,17 @@ export default function Dashboard() {
         // override so advisory checks remain recorded and financial controls
         // are not bypassed.
         setBypassVarianceCheck(false);
-        await invoiceApi.post(selectedInvoice.id, false);
+        const response = await invoiceApi.post(selectedInvoice.id, false);
+        if (response.data?.payment_scheduled === false) {
+          throw new Error(response.data?.payment_schedule_error || 'Invoice was posted, but its payment record could not be created. Open Payment Batches to complete payment setup.');
+        }
       }
       showToast('Invoice posted to accounting successfully', 'success');
       await refresh();
       setSelectedInvoice(null);
     } catch (error: any) {
       console.error('Failed to post invoice:', error);
-      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to post invoice';
+      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || error?.message || 'Failed to post invoice';
       showToast(msg, 'error');
     } finally {
       setPosting(false);
@@ -1283,7 +1289,7 @@ export default function Dashboard() {
     const unpaidStatuses: InvoiceStatus[] = [
       InvoiceStatus.PENDING_COORDINATOR, InvoiceStatus.PENDING_MANAGER,
       InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER, InvoiceStatus.PENDING_MLO_PLANNING_MANAGER,
-      InvoiceStatus.PENDING_SR_MANAGER, InvoiceStatus.PENDING_POLLY,
+      InvoiceStatus.PENDING_SR_MANAGER, InvoiceStatus.PENDING_POLLY, InvoiceStatus.PENDING_PRESIDENT,
       InvoiceStatus.PENDING_ACCOUNTING, InvoiceStatus.APPROVED,
       InvoiceStatus.POSTED_TO_QB, InvoiceStatus.PAYMENT_SCHEDULED,
       InvoiceStatus.VALIDATION_PENDING, InvoiceStatus.ON_HOLD, InvoiceStatus.EXCEPTION_FLAGGED,
@@ -1333,7 +1339,7 @@ export default function Dashboard() {
       InvoiceStatus.EXCEPTION_FLAGGED, InvoiceStatus.ON_HOLD,
       InvoiceStatus.PENDING_COORDINATOR, InvoiceStatus.PENDING_MANAGER,
       InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER, InvoiceStatus.PENDING_MLO_PLANNING_MANAGER,
-      InvoiceStatus.PENDING_SR_MANAGER, InvoiceStatus.PENDING_POLLY,
+      InvoiceStatus.PENDING_SR_MANAGER, InvoiceStatus.PENDING_POLLY, InvoiceStatus.PENDING_PRESIDENT,
       InvoiceStatus.PENDING_ACCOUNTING, InvoiceStatus.APPROVED,
       InvoiceStatus.POSTED_TO_QB, InvoiceStatus.PAYMENT_SCHEDULED, InvoiceStatus.PAID,
     ];
@@ -1372,7 +1378,7 @@ export default function Dashboard() {
       InvoiceStatus.POSTED_TO_QB, InvoiceStatus.PAYMENT_SCHEDULED,
       InvoiceStatus.PENDING_COORDINATOR, InvoiceStatus.PENDING_MANAGER,
       InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER, InvoiceStatus.PENDING_MLO_PLANNING_MANAGER,
-      InvoiceStatus.PENDING_SR_MANAGER, InvoiceStatus.PENDING_POLLY,
+      InvoiceStatus.PENDING_SR_MANAGER, InvoiceStatus.PENDING_POLLY, InvoiceStatus.PENDING_PRESIDENT,
       InvoiceStatus.VALIDATION_PENDING, InvoiceStatus.ON_HOLD,
     ];
     return roleFilteredInvoices.filter(inv => {

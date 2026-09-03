@@ -12,20 +12,17 @@ const PENDING_APPROVAL_STATUSES = [
 ];
 
 // Minimum invoice amount threshold per role (0 = no threshold)
-// Tier 1: ≤$2,000 (Coordinator + PM)
-// Tier 2: $2,001–$99,999 (+ MLO Account Holder + MLO Planning Manager + Sr. Manager)
-// Tier 3: ≥$100,000 (+ Ms. Polly)
+// Tier 1: $0–$4,999 (Coordinator + PM)
+// Tier 2: $5,000–$99,999 (+ Sr. Manager Lindsey)
+// Tier 3: $100,000+ (+ President)
 const ROLE_TIER_THRESHOLD: Record<string, number> = {
   PURCHASING_COORDINATOR: 0,
   PURCHASING_MANAGER: 0,
-  MLO_ACCOUNT_HOLDER: 2000,
-  PLANNING_MANAGER: 2000,
-  SR_MANAGER_GLOBAL_PRODUCTION: 2000,
-  MS_POLLY: 100000,
+  SR_MANAGER_GLOBAL_PRODUCTION: 5000,
+  PRESIDENT: 100000,
   ACCOUNTING_ASSOCIATE: 0,
   ACCOUNTING_SUPERVISOR: 0,
   CFO: 0,
-  PRESIDENT: 0,
   IT_ADMIN: 0,
   SUPERADMIN: 0,
 };
@@ -217,7 +214,7 @@ function mapUserRoleToSignatoryRoles(userRole: UserRole): SignatoryRole[] {
     [UserRole.IT_ADMIN]: [SignatoryRole.COORDINATOR],
     [UserRole.SUPERADMIN]: [],
     [UserRole.ADMIN]: [],
-    [UserRole.PRESIDENT]: [SignatoryRole.ACCOUNTING_REVIEWER],
+    [UserRole.PRESIDENT]: [SignatoryRole.PRESIDENT, SignatoryRole.ACCOUNTING_REVIEWER],
     [UserRole.CC_REPORTS]: [],
     [UserRole.INVOICE_UPLOADER]: [],
   };

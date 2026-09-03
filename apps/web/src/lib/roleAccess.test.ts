@@ -31,8 +31,8 @@ describe('Role Access', () => {
   });
 
   it('isWithinRoleThreshold filters by threshold', () => {
-    expect(isWithinRoleThreshold('MS_POLLY', 50000)).toBe(false);
-    expect(isWithinRoleThreshold('MS_POLLY', 150000)).toBe(true);
+    expect(isWithinRoleThreshold('SR_MANAGER_GLOBAL_PRODUCTION', 3000)).toBe(false);
+    expect(isWithinRoleThreshold('SR_MANAGER_GLOBAL_PRODUCTION', 10000)).toBe(true);
   });
 
   it('IT_ADMIN has system health access', () => {

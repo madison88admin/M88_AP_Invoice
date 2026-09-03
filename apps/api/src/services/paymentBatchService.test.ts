@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock the prisma client before importing the service.
-const { paymentFindMany, auditLogFindMany, paymentUpdateMany, auditLogCreate, paymentBatchFindUnique, paymentBatchFindMany, paymentUpdate, paymentBatchUpdate, paymentBatchCreate, billStubUpsert, invoiceUpdate, paymentCount, paymentFindUnique, notificationCreate } = vi.hoisted(() => ({
+const { paymentFindMany, auditLogFindMany, paymentUpdateMany, auditLogCreate, paymentBatchFindUnique, paymentBatchFindMany, paymentUpdate, paymentBatchUpdate, paymentBatchCreate, billStubUpsert, invoiceUpdate, invoiceFindMany, paymentCount, paymentFindUnique, notificationCreate } = vi.hoisted(() => ({
   paymentFindMany: vi.fn(),
   auditLogFindMany: vi.fn(),
   paymentUpdateMany: vi.fn(),
@@ -13,6 +13,7 @@ const { paymentFindMany, auditLogFindMany, paymentUpdateMany, auditLogCreate, pa
   paymentBatchCreate: vi.fn(),
   billStubUpsert: vi.fn(),
   invoiceUpdate: vi.fn(),
+  invoiceFindMany: vi.fn().mockResolvedValue([]),
   paymentCount: vi.fn(),
   paymentFindUnique: vi.fn(),
   notificationCreate: vi.fn(),
@@ -22,7 +23,7 @@ vi.mock('../config/database', () => ({
   default: {
     payment: { findMany: paymentFindMany, updateMany: paymentUpdateMany, update: paymentUpdate, count: paymentCount, findUnique: paymentFindUnique },
     paymentBatch: { findUnique: paymentBatchFindUnique, findMany: paymentBatchFindMany, update: paymentBatchUpdate, create: paymentBatchCreate },
-    invoice: { update: invoiceUpdate },
+    invoice: { update: invoiceUpdate, findMany: invoiceFindMany },
     billStub: { upsert: billStubUpsert },
     auditLog: { findMany: auditLogFindMany, create: auditLogCreate },
     // Callback-form transaction: run the callback against the same mocked models.

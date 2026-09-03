@@ -23,6 +23,7 @@ const statusColors: Partial<Record<InvoiceStatus, { bg: string; color: string }>
   [InvoiceStatus.PENDING_MLO_PLANNING_MANAGER]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' },
   [InvoiceStatus.PENDING_SR_MANAGER]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' },
   [InvoiceStatus.PENDING_POLLY]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' },
+  [InvoiceStatus.PENDING_PRESIDENT]: { bg: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', color: 'var(--accent-red)' },
   [InvoiceStatus.PENDING_ACCOUNTING]: { bg: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', color: 'var(--accent-blue)' },
   [InvoiceStatus.APPROVED]: { bg: 'color-mix(in srgb, var(--accent-lime) 10%, transparent)', color: 'var(--accent-lime)' },
   [InvoiceStatus.POSTED_TO_QB]: { bg: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', color: 'var(--accent-blue)' },

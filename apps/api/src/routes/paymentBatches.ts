@@ -26,7 +26,7 @@ router.post('/payments/:paymentId/remarks', authorize(UserRole.ACCOUNTING_ASSOCI
 router.post('/payments/:paymentId/for-payment', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.markPaymentForPaymentController);
 router.post('/payments/:paymentId/approve-for-payment', authorize(UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.approvePaymentForPaymentController);
 router.post('/payments/:paymentId/reject-for-payment', authorize(UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.rejectPaymentForPaymentController);
-router.post('/payments/:paymentId/approve-held', authorize(UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.approveHeldPaymentController);
+router.post('/payments/:paymentId/approve-held', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.approveHeldPaymentController);
 router.post('/:batchId/bank-charge', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.applyBankChargeController);
 router.delete('/:batchId/bank-charge/:paymentId', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.removeBankChargeController);
 router.post('/:batchId/payments/:paymentId/endorse', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), upload.single('stubFile'), paymentBatchController.endorseBillStubController);

@@ -93,7 +93,7 @@ describe('posting document mappings', () => {
 });
 
 describe('schedulePayment — sub-$100 hold (item 8)', () => {
-  it('holds payments under the threshold as HELD_BELOW_100 and notifies Accounting Supervisor', async () => {
+  it('holds payments under the threshold as HELD_BELOW_100 and notifies Accounting', async () => {
     invoiceFindUnique.mockResolvedValue(makeInvoice({ total_amount: 59.67 }));
     paymentCreate.mockResolvedValue({ id: 'pay-held', status: 'HELD_BELOW_100' });
 
@@ -107,7 +107,7 @@ describe('schedulePayment — sub-$100 hold (item 8)', () => {
     }));
     expect(payment.status).toBe('HELD_BELOW_100');
 
-    // Accounting Supervisor owns payment holds and release approval.
+    // Accounting owns payment holds and release approval.
     const holdNotification = notificationCreate.mock.calls[0][0];
     expect(holdNotification.target_role).toBe('ACCOUNTING_SUPERVISOR');
     expect(holdNotification.type).toBe('warning');

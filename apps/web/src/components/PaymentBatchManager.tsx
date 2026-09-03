@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Package, Play, X, AlertCircle, CheckCircle, Clock, DollarSign, ArrowLeft, CheckSquare, Calendar, Loader2, Paperclip, Pencil, Download, Upload, ChevronDown, ChevronUp, SlidersHorizontal, Send } from 'lucide-react';
 import { paymentBatchApi, vendorApi, qbApi, invoiceApi } from '../lib/api';
+import { splitServerAndLocalSelections, retainLocalSelections, toggleId, toPayableIds, isLocalOnlySelection } from '../lib/queueSelection';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -193,6 +194,9 @@ export default function PaymentBatchManager() {
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [selectedPaymentIds, setSelectedPaymentIds] = useState<Set<string>>(new Set());
+  // AWAITING_POSTING rows have no Payment record yet (synthetic `inv-…` ids), so
+  // their checkbox selection is LOCAL-only and survives queue refreshes.
+  const awaitingSelectedRef = useRef<Set<string>>(new Set());
   const [selectedReturnPaymentIds, setSelectedReturnPaymentIds] = useState<Set<string>>(new Set());
   const [showReturnModal, setShowReturnModal] = useState(false);
   const [returnReason, setReturnReason] = useState('');
@@ -224,6 +228,8 @@ export default function PaymentBatchManager() {
   const [qbExporting, setQbExporting] = useState(false);
   const [bulkReleasing, setBulkReleasing] = useState(false);
   const [bulkPostingAll, setBulkPostingAll] = useState(false);
+  const [bulkMarking, setBulkMarking] = useState(false);
+  const [bulkActionBusy, setBulkActionBusy] = useState<'post' | 'mark' | null>(null);
   const [reconExporting, setReconExporting] = useState(false);
   const [stubTarget, setStubTarget] = useState<Payment | null>(null);
   const [stubForm, setStubForm] = useState({ stubDate: '', type: 'Bank Transfer', reference: '', originalAmount: '', balance: '', discount: '', paidAmount: '' });
@@ -237,6 +243,9 @@ export default function PaymentBatchManager() {
 
   const isAssociate = user?.role === 'ACCOUNTING_ASSOCIATE';
   const isSupervisor = user?.role === 'ACCOUNTING_SUPERVISOR';
+  // Both accounting roles can release sub-$100 (HELD_BELOW_100) payments so the
+  // queue never stalls while waiting on the supervisor.
+  const canReleaseHeld = isSupervisor || isAssociate;
   const isBatchable = (p: ScheduledPayment) => ['SCHEDULED', 'APPROVED_FOR_PAYMENT', 'AWAITING_POSTING'].includes(p.status);
 
   const handleBulkConfirmationImport = async (file: File) => {
@@ -315,6 +324,11 @@ export default function PaymentBatchManager() {
       mapped.forEach((p: ScheduledPayment) => {
         if (p.selected_for_batch && p.selected_by === user?.id) selected.add(p.id);
       });
+      // Preserve local checkbox selections of awaiting-posting invoices across
+      // refreshes (awaiting rows have synthetic `inv-…` ids and cannot be
+      // persisted server-side).
+      awaitingSelectedRef.current = retainLocalSelections(awaitingSelectedRef.current, mapped);
+      awaitingSelectedRef.current.forEach((id) => selected.add(id));
       setSelectedPaymentIds(selected);
       if (user?.role === 'ACCOUNTING_SUPERVISOR') {
         paymentBatchApi.getScheduledPayments({ status: 'FOR_PAYMENT' })
@@ -423,6 +437,89 @@ export default function PaymentBatchManager() {
     }
   };
 
+  // Mark all SCHEDULED payments for supervisor review in one click (Associate)
+  const handleMarkAllForPayment = async () => {
+    const scheduled = scheduledPayments.filter(p => p.status === 'SCHEDULED');
+    if (scheduled.length === 0) return;
+    setBulkMarking(true);
+    let marked = 0;
+    let failed = 0;
+    try {
+      for (const payment of scheduled) {
+        try {
+          await paymentBatchApi.markForPayment(payment.id);
+          marked++;
+        } catch { failed++; }
+      }
+      if (marked > 0) showToast(`Marked ${marked} payment(s) for supervisor review.${failed > 0 ? ` ${failed} failed.` : ''}`, failed === marked ? 'error' : 'success');
+      else showToast('No payments could be marked for payment.', 'error');
+      await loadScheduledPayments();
+    } catch (error: any) {
+      showToast('Bulk mark for payment failed.', 'error');
+    } finally {
+      setBulkMarking(false);
+    }
+  };
+
+  // Post only the SELECTED awaiting-posting invoices (checkbox selection)
+  const handlePostSelected = async () => {
+    const awaiting = selectedPayments.filter(p => p.status === 'AWAITING_POSTING');
+    if (awaiting.length === 0) return;
+    setBulkActionBusy('post');
+    let posted = 0;
+    let failed = 0;
+    try {
+      for (const payment of awaiting) {
+        const invoiceId = payment.invoice?.id;
+        if (!invoiceId) { failed++; continue; }
+        try {
+          const response = await invoiceApi.post(invoiceId, false);
+          if (response.data?.payment_scheduled !== false) posted++;
+          else failed++;
+        } catch { failed++; }
+      }
+      if (posted > 0) showToast(`Posted ${posted} selected invoice(s).${failed > 0 ? ` ${failed} failed.` : ''}`, failed === posted ? 'error' : 'success');
+      else showToast('No selected invoices were posted.', 'error');
+      // Drop successfully posted invoices from the local awaiting selection
+      awaiting.forEach(p => { if (p.invoice?.id) awaitingSelectedRef.current.delete(p.id); });
+      setSelectedPaymentIds(new Set());
+      await loadScheduledPayments();
+    } catch (error: any) {
+      showToast('Bulk post failed.', 'error');
+    } finally {
+      setBulkActionBusy(null);
+    }
+  };
+
+  // Submit only the SELECTED scheduled payments for supervisor approval
+  const handleMarkSelectedForApproval = async () => {
+    const scheduled = selectedPayments.filter(p => p.status === 'SCHEDULED');
+    if (scheduled.length === 0) return;
+    setBulkActionBusy('mark');
+    let marked = 0;
+    let failed = 0;
+    try {
+      for (const payment of scheduled) {
+        try {
+          await paymentBatchApi.markForPayment(payment.id);
+          marked++;
+        } catch { failed++; }
+      }
+      if (marked > 0) showToast(`Submitted ${marked} selected payment(s) for supervisor approval.${failed > 0 ? ` ${failed} failed.` : ''}`, failed === marked ? 'error' : 'success');
+      else showToast('No selected payments could be submitted.', 'error');
+      // Submitted payments move to FOR_PAYMENT — clear their server-side batch selection
+      if (marked > 0) {
+        try { await paymentBatchApi.deselectPayments(scheduled.map(p => p.id)); } catch { /* selection was local-only or already clear */ }
+      }
+      setSelectedPaymentIds(new Set());
+      await loadScheduledPayments();
+    } catch (error: any) {
+      showToast('Bulk submit failed.', 'error');
+    } finally {
+      setBulkActionBusy(null);
+    }
+  };
+
   useEffect(() => {
     const init = async () => {
       setLoading(true);
@@ -443,6 +540,15 @@ export default function PaymentBatchManager() {
     const payment = scheduledPayments.find(p => p.id === paymentId);
     if (!payment || !isBatchable(payment)) return;
     const isSelected = selectedPaymentIds.has(paymentId);
+    if (isLocalOnlySelection(payment.status)) {
+      // Local-only selection — no Payment row exists yet (synthetic `inv-…` id),
+      // so it cannot be persisted server-side; it exists so awaiting invoices
+      // can be bulk-posted via "Post Selected".
+      if (isSelected) awaitingSelectedRef.current.delete(paymentId);
+      else awaitingSelectedRef.current.add(paymentId);
+      setSelectedPaymentIds(prev => toggleId(prev, paymentId));
+      return;
+    }
     setActionLoading(true);
     try {
       if (isSelected) {
@@ -534,7 +640,9 @@ export default function PaymentBatchManager() {
     if (unselected.length === 0) return;
     setActionLoading(true);
     try {
-      await paymentBatchApi.selectPayments(unselected.map(p => p.id));
+      const { serverIds, localIds } = splitServerAndLocalSelections(unselected, unselected.map(p => p.id));
+      localIds.forEach(id => awaitingSelectedRef.current.add(id));
+      if (serverIds.length > 0) await paymentBatchApi.selectPayments(serverIds);
       setSelectedPaymentIds(new Set(scheduledPayments.map(p => p.id)));
     } catch (error: any) {
       console.error('Failed to select all payments:', error);
@@ -549,7 +657,9 @@ export default function PaymentBatchManager() {
     if (selectedPaymentIds.size === 0) return;
     setActionLoading(true);
     try {
-      await paymentBatchApi.deselectPayments(Array.from(selectedPaymentIds));
+      const { serverIds, localIds } = splitServerAndLocalSelections(scheduledPayments, selectedPaymentIds);
+      localIds.forEach(id => awaitingSelectedRef.current.delete(id));
+      if (serverIds.length > 0) await paymentBatchApi.deselectPayments(serverIds);
       setSelectedPaymentIds(new Set());
     } catch (error: any) {
       console.error('Failed to deselect all payments:', error);
@@ -687,13 +797,16 @@ export default function PaymentBatchManager() {
   };
 
   const handleCreateBatch = async () => {
-    if (selectedPaymentIds.size === 0) return;
+    if (payableSelectedIds.length === 0) {
+      showToast('Select scheduled payments to create a batch (awaiting-posting invoices must be posted first).', 'error');
+      return;
+    }
     setProcessing(true);
     setActionMessage(null);
     try {
-      const response = await paymentBatchApi.create(Array.from(selectedPaymentIds));
+      const response = await paymentBatchApi.create(payableSelectedIds);
       const batchCount = Number(response.data?.batch_count || 1);
-      const paymentCount = Number(response.data?.payment_count || selectedPaymentIds.size);
+      const paymentCount = Number(response.data?.payment_count || payableSelectedIds.length);
       await Promise.all([loadBatches(), loadScheduledPayments()]);
       setSelectedPaymentIds(new Set());
       setActiveTab('batches');
@@ -713,10 +826,13 @@ export default function PaymentBatchManager() {
   };
 
   const handleCreateAndSubmitBatch = async () => {
-    if (selectedPaymentIds.size === 0) return;
+    if (payableSelectedIds.length === 0) {
+      showToast('Select scheduled payments to create a batch (awaiting-posting invoices must be posted first).', 'error');
+      return;
+    }
     setProcessing(true);
     try {
-      const response = await paymentBatchApi.create(Array.from(selectedPaymentIds));
+      const response = await paymentBatchApi.create(payableSelectedIds);
       const batch = response.data?.batches?.[0] || response.data?.batch;
       if (batch?.id) await paymentBatchApi.submit(batch.id);
       await Promise.all([loadBatches(), loadScheduledPayments()]);
@@ -1067,7 +1183,10 @@ export default function PaymentBatchManager() {
   const forPaymentCount = scheduledPayments.filter(p => p.status === 'FOR_PAYMENT').length;
 
   const selectedPayments = scheduledPayments.filter(p => selectedPaymentIds.has(p.id));
+  const selectedAwaitingCount = selectedPayments.filter(p => p.status === 'AWAITING_POSTING').length;
+  const selectedScheduledCount = selectedPayments.filter(p => p.status === 'SCHEDULED').length;
   const selectedTotal = selectedPayments.reduce((sum, p) => sum + p.amount, 0);
+  const payableSelectedIds = toPayableIds(scheduledPayments, selectedPaymentIds);
   const previewVendors = Array.from(new Set(selectedPayments.map(p => p.invoice.vendor.name))).filter(Boolean);
 
   const dateCell = (d?: string | null) => (d ? new Date(d).toLocaleDateString() : '—');
@@ -1242,11 +1361,11 @@ export default function PaymentBatchManager() {
               )}
 
               {/* Quick Action Banners — only when items exist */}
-              {isSupervisor && heldCount > 0 && (
+              {canReleaseHeld && heldCount > 0 && (
                 <div className="flex items-center justify-between p-3 rounded-xl mb-4" style={{ background: 'color-mix(in srgb, var(--accent-amber) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}>
                   <div className="flex items-center gap-3">
                     <DollarSign className="h-4 w-4" style={{ color: 'var(--accent-amber)' }} strokeWidth={1.75} />
-                    <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{heldCount} sub-$100 payment{heldCount === 1 ? '' : 's'} on hold — Supervisor release required</span>
+                    <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{heldCount} sub-$100 payment{heldCount === 1 ? '' : 's'} on hold — release to add them to a batch</span>
                   </div>
                   <button
                     onClick={handleReleaseAllHeld}
@@ -1278,6 +1397,24 @@ export default function PaymentBatchManager() {
                 </div>
               )}
 
+              {isAssociate && scheduledCount > 0 && (
+                <div className="flex items-center justify-between p-3 rounded-xl mb-4" style={{ background: 'color-mix(in srgb, var(--accent-amber) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}>
+                  <div className="flex items-center gap-3">
+                    <CheckCircle className="h-4 w-4" style={{ color: 'var(--accent-amber)' }} strokeWidth={1.75} />
+                    <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{scheduledCount} scheduled payment{scheduledCount === 1 ? '' : 's'} ready for supervisor approval</span>
+                  </div>
+                  <button
+                    onClick={handleMarkAllForPayment}
+                    disabled={bulkMarking}
+                    className="flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
+                    style={{ background: 'var(--accent-amber)', color: 'white' }}
+                  >
+                    {bulkMarking ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <CheckCircle className="h-3.5 w-3.5 mr-1.5" strokeWidth={2} />}
+                    Mark All for Payment ({scheduledCount})
+                  </button>
+                </div>
+              )}
+
               {overdueCount > 0 && (
                 <div className="flex items-center justify-between p-3 rounded-xl mb-4" style={{ background: 'color-mix(in srgb, var(--accent-red) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}>
                   <div className="flex items-center gap-3">
@@ -1296,33 +1433,30 @@ export default function PaymentBatchManager() {
                 </div>
               )}
 
-              {isSupervisor && filters.status === 'FOR_PAYMENT' && (() => {
-                const queueRows = scheduledPayments.filter(p => p.status === 'FOR_PAYMENT');
-                return queueRows.length > 0 && (
-                  <div className="flex items-center justify-between p-4 rounded-xl mb-4" style={{ background: 'color-mix(in srgb, var(--accent-green) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-green) 20%, transparent)' }}>
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 rounded-lg" style={{ background: 'var(--accent-green)' }}>
-                        <CheckCircle className="h-4 w-4 text-white" strokeWidth={1.75} />
-                      </div>
-                      <div>
-                        <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{queueRows.length} payment{queueRows.length === 1 ? '' : 's'} awaiting your approval</div>
-                        <div className="text-xs" style={{ color: 'var(--text-muted)' }}>Approve all at once — this is the final approval; only the payment process follows</div>
-                      </div>
+              {isSupervisor && pendingReviewCount > 0 && (
+                <div className="flex items-center justify-between p-4 rounded-xl mb-4" style={{ background: 'color-mix(in srgb, var(--accent-green) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-green) 20%, transparent)' }}>
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg" style={{ background: 'var(--accent-green)' }}>
+                      <CheckCircle className="h-4 w-4 text-white" strokeWidth={1.75} />
                     </div>
-                    <button
-                      onClick={() => { setApproveAllIds(queueRows.map(p => p.id)); setApproveAllNote(''); setShowApproveAllModal(true); }}
-                      disabled={processing}
-                      className="flex items-center px-4 py-2 rounded-xl text-sm font-semibold transition-colors disabled:opacity-50"
-                      style={{ background: 'var(--accent-green)', color: 'white' }}
-                      onMouseEnter={(e) => { if (!processing) e.currentTarget.style.opacity = '0.9'; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
-                    >
-                      {processing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle className="h-4 w-4 mr-2" strokeWidth={1.75} />}
-                      Approve All ({queueRows.length})
-                    </button>
+                    <div>
+                      <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{pendingReviewCount} payment{pendingReviewCount === 1 ? '' : 's'} awaiting your approval</div>
+                      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>Approve all at once — this is the final approval; only the payment process follows</div>
+                    </div>
                   </div>
-                );
-              })()}
+                  <button
+                    onClick={handleOpenApproveAllFromBanner}
+                    disabled={processing}
+                    className="flex items-center px-4 py-2 rounded-xl text-sm font-semibold transition-colors disabled:opacity-50"
+                    style={{ background: 'var(--accent-green)', color: 'white' }}
+                    onMouseEnter={(e) => { if (!processing) e.currentTarget.style.opacity = '0.9'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
+                  >
+                    {processing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle className="h-4 w-4 mr-2" strokeWidth={1.75} />}
+                    Approve All ({pendingReviewCount})
+                  </button>
+                </div>
+              )}
 
               {/* Filters — essentials always visible, the rest behind "More filters" */}
               <div className="mb-4 rounded-xl overflow-hidden" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
@@ -1466,7 +1600,30 @@ export default function PaymentBatchManager() {
                       <span className="text-sm ml-2" style={{ color: 'var(--text-muted)' }}>Total: ${selectedTotal.toLocaleString()}</span>
                     </div>
                   </div>
-                  {isAssociate && (
+                  <div className="flex items-center gap-2">
+                  {selectedAwaitingCount > 0 && (
+                    <button
+                      onClick={handlePostSelected}
+                      disabled={bulkActionBusy !== null}
+                      className="flex items-center px-4 py-2 rounded-xl text-sm font-semibold transition-colors disabled:opacity-50"
+                      style={{ background: 'var(--accent-purple)', color: 'white' }}
+                    >
+                      {bulkActionBusy === 'post' ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" strokeWidth={1.75} />}
+                      Post Selected ({selectedAwaitingCount})
+                    </button>
+                  )}
+                  {isAssociate && selectedScheduledCount > 0 && (
+                    <button
+                      onClick={handleMarkSelectedForApproval}
+                      disabled={bulkActionBusy !== null}
+                      className="flex items-center px-4 py-2 rounded-xl text-sm font-semibold transition-colors disabled:opacity-50"
+                      style={{ background: 'var(--accent-amber)', color: 'white' }}
+                    >
+                      {bulkActionBusy === 'mark' ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle className="h-4 w-4 mr-2" strokeWidth={1.75} />}
+                      Submit for Approval ({selectedScheduledCount})
+                    </button>
+                  )}
+                  {isAssociate && payableSelectedIds.length > 0 && (
                     <button
                       onClick={handleCreateAndSubmitBatch}
                       disabled={processing}
@@ -1479,6 +1636,7 @@ export default function PaymentBatchManager() {
                       Create & Submit Batch
                     </button>
                   )}
+                  </div>
                   {isSupervisor && (
                     <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
                       View-only access — Associate manages batches
@@ -1634,7 +1792,7 @@ export default function PaymentBatchManager() {
                                     )}
                                   </>
                                 )}
-                                {isSupervisor && payment.status === 'HELD_BELOW_100' && (
+                                {canReleaseHeld && payment.status === 'HELD_BELOW_100' && (
                                   <button
                                     onClick={(e) => { e.stopPropagation(); handleApproveHeld(payment); }}
                                     disabled={actionLoading}

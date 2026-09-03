@@ -157,7 +157,7 @@ async function prePostCheck(invoice: any): Promise<PrePostResult> {
 // ─── POST INVOICE ───────────────────────────────────────────────────────────
 
 export async function postInvoice(invoiceId: string, userId: string, bypassVarianceCheck: boolean = false) {
-  const invoice = await prisma.invoice.findUnique({
+  let invoice: any = await prisma.invoice.findUnique({
     where: { id: invoiceId },
     include: {
       vendor: true,
@@ -169,6 +169,66 @@ export async function postInvoice(invoiceId: string, userId: string, bypassVaria
 
   if (!invoice) {
     throw new AppError('Invoice not found', 404);
+  }
+
+  // In Finance advisory mode, invoices held only for NextGen/PO advisory
+  // exceptions (PO_NOT_FOUND etc.) are auto-released here and flow straight
+  // through to posting — the only intentional hold is HELD_BELOW_100 at the
+  // payment scheduling stage. ON_HOLD with genuine blocking exceptions still
+  // requires an explicit release from the On-Hold Queue.
+  if (invoice.status === InvoiceStatus.ON_HOLD as any && getFinancePolicy().enforcementMode === 'advisory') {
+    const pendingExcs = (invoice.exceptions || []).filter((exc: any) => exc.status === 'PENDING');
+    const blocking = pendingExcs.filter((exc: any) => {
+      const detail = String(exc.detail || '').toLowerCase();
+      // NextGen-derived exceptions are advisory in this mode: PO_NOT_FOUND,
+      // anything mentioning nextgen, and AMOUNT_MISMATCH holds that compare the
+      // invoice against a NextGen PO (detail references "vs po" / "variance").
+      // Internal financial/data-integrity exceptions stay blocking.
+      const nextGenDerived = exc.reason === (ExceptionReason.PO_NOT_FOUND as any)
+        || detail.includes('nextgen')
+        || detail.includes('vs po')
+        || detail.includes('variance');
+      return !nextGenDerived
+        && exc.reason !== (ExceptionReason.BATCH_THRESHOLD_NOT_MET as any);
+    });
+    if (blocking.length === 0) {
+      // Auto-release: resolve advisory pending exceptions and move back to
+      // PENDING_ACCOUNTING so posting proceeds without a manual release.
+      for (const exc of pendingExcs) {
+        await prisma.exception.update({
+          where: { id: exc.id },
+          data: {
+            status: 'RESOLVED' as any,
+            resolved_at: new Date(),
+            resolved_by: userId,
+            resolution_notes: 'Auto-resolved: advisory NextGen hold released at posting time.',
+          },
+        });
+      }
+      await prisma.invoice.update({
+        where: { id: invoiceId },
+        data: { status: InvoiceStatus.PENDING_ACCOUNTING as any },
+      });
+      await prisma.auditLog.create({
+        data: {
+          invoice_id: invoiceId,
+          action: 'AUTO_RELEASED_ADVISORY_HOLD',
+          performed_by: userId,
+          note: `Invoice auto-released from ON_HOLD — only advisory NextGen exception(s) pending (${pendingExcs.length}). Held invoices now only occur at the payment batch stage.`,
+        },
+      });
+      invoice = {
+        ...invoice,
+        status: InvoiceStatus.PENDING_ACCOUNTING as any,
+        exceptions: invoice.exceptions.map((exc: any) =>
+          pendingExcs.some((p: any) => p.id === exc.id)
+            ? { ...exc, status: 'RESOLVED' }
+            : exc
+        ),
+      };
+    } else {
+      throw new AppError('Invoice is on hold with blocking exceptions — release from the On-Hold Queue first', 400);
+    }
   }
 
   if (invoice.status !== InvoiceStatus.APPROVED as any && invoice.status !== InvoiceStatus.PENDING_ACCOUNTING as any) {
@@ -656,7 +716,7 @@ export async function schedulePayment(
       invoice_number: invoice.invoice_number,
       vendor_name: invoice.vendor?.name || 'Unknown',
       title: `Invoice ${invoice.invoice_number} held (below $${BATCH_THRESHOLD_CONFIG.AMOUNT})`,
-      message: `Payment of ${invoice.currency} ${Number(invoice.total_amount).toFixed(2)} is under the $${BATCH_THRESHOLD_CONFIG.AMOUNT} threshold — held (HELD_BELOW_100) until it falls within the batch cut-off. Accounting Supervisor approval is required for release.`,
+      message: `Payment of ${invoice.currency} ${Number(invoice.total_amount).toFixed(2)} is under the $${BATCH_THRESHOLD_CONFIG.AMOUNT} threshold — held (HELD_BELOW_100) until it falls within the batch cut-off. Accounting approval is required for release.`,
       type: 'warning',
       category: 'payment',
       target_role: UserRole.ACCOUNTING_SUPERVISOR,
@@ -701,7 +761,7 @@ export async function schedulePayment(
       invoice_id: invoiceId,
       action: 'PAYMENT_SCHEDULED',
       performed_by: userId,
-      note: `Payment of ${invoice.currency} ${Number(invoice.total_amount).toFixed(2)} scheduled for ${resolvedPaymentDate.toISOString().split('T')[0]}${heldBelow100 ? ` — HELD_BELOW_100 (under $${BATCH_THRESHOLD_CONFIG.AMOUNT}); Accounting Supervisor notified for release approval` : ''}`,
+      note: `Payment of ${invoice.currency} ${Number(invoice.total_amount).toFixed(2)} scheduled for ${resolvedPaymentDate.toISOString().split('T')[0]}${heldBelow100 ? ` — HELD_BELOW_100 (under $${BATCH_THRESHOLD_CONFIG.AMOUNT}); Accounting notified for release approval` : ''}`,
     },
   });
 

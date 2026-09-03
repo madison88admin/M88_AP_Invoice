@@ -671,7 +671,7 @@ describe('approveHeldPayment', () => {
         invoice_id: 'inv-held',
         action: 'HELD_BELOW_100_APPROVED',
         performed_by: 'accounting-supervisor-1',
-        note: expect.stringContaining('Accounting Supervisor'),
+        note: expect.stringContaining('Accounting approved'),
       }),
     }));
     expect(notificationCreate).toHaveBeenCalledWith(expect.objectContaining({

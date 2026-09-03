@@ -222,6 +222,8 @@ export default function PaymentBatchManager() {
   const [bankChargeForm, setBankChargeForm] = useState({ paymentId: '', amount: '', note: '' });
   const [bankChargeSaving, setBankChargeSaving] = useState(false);
   const [qbExporting, setQbExporting] = useState(false);
+  const [bulkReleasing, setBulkReleasing] = useState(false);
+  const [bulkPostingAll, setBulkPostingAll] = useState(false);
   const [reconExporting, setReconExporting] = useState(false);
   const [stubTarget, setStubTarget] = useState<Payment | null>(null);
   const [stubForm, setStubForm] = useState({ stubDate: '', type: 'Bank Transfer', reference: '', originalAmount: '', balance: '', discount: '', paidAmount: '' });
@@ -372,6 +374,52 @@ export default function PaymentBatchManager() {
       showToast(message, 'error');
     } finally {
       setPostingInvoiceId(null);
+    }
+  };
+
+  // Bulk release all held payments at once (Supervisor)
+  const handleReleaseAllHeld = async () => {
+    const held = scheduledPayments.filter(p => p.status === 'HELD_BELOW_100');
+    if (held.length === 0) return;
+    setBulkReleasing(true);
+    try {
+      for (const payment of held) {
+        await paymentBatchApi.approveHeld(payment.id);
+      }
+      showToast(`Released ${held.length} held payment(s).`, 'success');
+      await loadScheduledPayments();
+    } catch (error: any) {
+      const message = error?.response?.data?.error?.message || error?.response?.data?.message || 'Bulk release failed.';
+      showToast(message, 'error');
+    } finally {
+      setBulkReleasing(false);
+    }
+  };
+
+  // Bulk post all awaiting-posting invoices at once
+  const handleBulkPostAll = async () => {
+    const awaiting = scheduledPayments.filter(p => p.status === 'AWAITING_POSTING');
+    if (awaiting.length === 0) return;
+    setBulkPostingAll(true);
+    let posted = 0;
+    let failed = 0;
+    try {
+      for (const payment of awaiting) {
+        const invoiceId = payment.invoice?.id;
+        if (!invoiceId) continue;
+        try {
+          const response = await invoiceApi.post(invoiceId, false);
+          if (response.data?.payment_scheduled !== false) posted++;
+          else failed++;
+        } catch { failed++; }
+      }
+      if (posted > 0) showToast(`Posted ${posted} invoice(s) to accounting.${failed > 0 ? ` ${failed} failed.` : ''}`, posted > 0 ? 'success' : 'error');
+      else showToast('No invoices were posted.', 'error');
+      await loadScheduledPayments();
+    } catch (error: any) {
+      showToast('Bulk post failed.', 'error');
+    } finally {
+      setBulkPostingAll(false);
     }
   };
 
@@ -1013,6 +1061,10 @@ export default function PaymentBatchManager() {
   }
 
   const overdueCount = scheduledPayments.filter(p => ['SCHEDULED', 'APPROVED_FOR_PAYMENT', 'AWAITING_POSTING'].includes(p.status) && (p.aging_days ?? 0) > 0).length;
+  const awaitingPostingCount = scheduledPayments.filter(p => p.status === 'AWAITING_POSTING').length;
+  const scheduledCount = scheduledPayments.filter(p => p.status === 'SCHEDULED').length;
+  const heldCount = scheduledPayments.filter(p => p.status === 'HELD_BELOW_100').length;
+  const forPaymentCount = scheduledPayments.filter(p => p.status === 'FOR_PAYMENT').length;
 
   const selectedPayments = scheduledPayments.filter(p => selectedPaymentIds.has(p.id));
   const selectedTotal = selectedPayments.reduce((sum, p) => sum + p.amount, 0);
@@ -1128,87 +1180,119 @@ export default function PaymentBatchManager() {
                 </div>
               </div>
 
-              {overdueCount > 0 && (
-                <div className="flex items-center justify-between p-4 rounded-xl mb-4" style={{ background: 'color-mix(in srgb, var(--accent-red) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}>
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-lg" style={{ background: 'var(--accent-red)' }}>
-                      <AlertCircle className="h-4 w-4 text-white" strokeWidth={1.75} />
+              {/* Status Summary Cards */}
+              {(isAssociate || isSupervisor) && scheduledPayments.length > 0 && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                  <button
+                    onClick={() => setFilters({ ...filters, status: '' })}
+                    className={`flex items-center gap-3 p-3 rounded-xl transition-all ${filters.status === '' ? 'ring-2 ring-offset-1' : ''}`}
+                    style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', ...(filters.status === '' ? { ringColor: 'var(--accent-purple)' } : {}) }}
+                  >
+                    <div className="p-2 rounded-lg" style={{ background: 'color-mix(in srgb, var(--accent-blue) 12%, transparent)' }}>
+                      <Package className="h-4 w-4" style={{ color: 'var(--accent-blue)' }} strokeWidth={1.75} />
                     </div>
-                    <div>
-                      <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{overdueCount} scheduled payment{overdueCount === 1 ? '' : 's'} overdue — past the due date</div>
-                      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>Filter the schedule to see all overdue payments and prioritize them for batching</div>
+                    <div className="text-left">
+                      <div className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{scheduledPayments.length}</div>
+                      <div className="text-[10px] font-medium uppercase" style={{ color: 'var(--text-muted)' }}>Total</div>
                     </div>
-                  </div>
-                  {filters.aging !== 'overdue' && (
-                    <button
-                      onClick={() => setFilters({ ...filters, aging: 'overdue', status: '' })}
-                      className="px-3 py-2 rounded-lg text-xs font-semibold transition-colors"
-                      style={{ background: 'var(--accent-red)', color: 'white' }}
-                      onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.9'; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
-                    >
-                      View Overdue
-                    </button>
-                  )}
-                </div>
-              )}
+                  </button>
 
-              {(isAssociate || isSupervisor) && pendingHeldCount > 0 && (
-                <div className="flex items-center justify-between p-4 rounded-xl mb-4" style={{ background: 'color-mix(in srgb, var(--text-muted) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--text-muted) 25%, transparent)' }}>
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-lg" style={{ background: 'var(--text-muted)' }}>
-                      <DollarSign className="h-4 w-4 text-white" strokeWidth={1.75} />
-                    </div>
-                    <div>
-                      <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{pendingHeldCount} sub-$100 payment{pendingHeldCount === 1 ? '' : 's'} on hold</div>
-                      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{isSupervisor ? 'Review and release the hold so the payment can be batched' : 'Accounting Supervisor approval is required to release the hold'}</div>
-                    </div>
-                  </div>
                   <button
                     onClick={() => setFilters({ ...filters, status: 'HELD_BELOW_100' })}
-                    className="px-3 py-2 rounded-lg text-xs font-semibold transition-colors"
-                    style={{ background: 'var(--text-muted)', color: 'var(--bg-base)' }}
-                    onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.9'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
+                    className={`flex items-center gap-3 p-3 rounded-xl transition-all ${filters.status === 'HELD_BELOW_100' ? 'ring-2 ring-offset-1' : ''}`}
+                    style={{ background: 'var(--bg-elevated)', border: `1px solid ${heldCount > 0 ? 'color-mix(in srgb, var(--accent-amber) 30%, transparent)' : 'var(--border-color)'}` }}
                   >
-                    Open Held Queue
+                    <div className="p-2 rounded-lg" style={{ background: heldCount > 0 ? 'color-mix(in srgb, var(--accent-amber) 12%, transparent)' : 'var(--bg-card-hover)' }}>
+                      <DollarSign className="h-4 w-4" style={{ color: heldCount > 0 ? 'var(--accent-amber)' : 'var(--text-muted)' }} strokeWidth={1.75} />
+                    </div>
+                    <div className="text-left">
+                      <div className="text-lg font-bold" style={{ color: heldCount > 0 ? 'var(--accent-amber)' : 'var(--text-primary)' }}>{heldCount}</div>
+                      <div className="text-[10px] font-medium uppercase" style={{ color: 'var(--text-muted)' }}>Held &lt;$100</div>
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={() => setFilters({ ...filters, aging: 'overdue', status: '' })}
+                    className={`flex items-center gap-3 p-3 rounded-xl transition-all ${filters.aging === 'overdue' ? 'ring-2 ring-offset-1' : ''}`}
+                    style={{ background: 'var(--bg-elevated)', border: `1px solid ${overdueCount > 0 ? 'color-mix(in srgb, var(--accent-red) 30%, transparent)' : 'var(--border-color)'}` }}
+                  >
+                    <div className="p-2 rounded-lg" style={{ background: overdueCount > 0 ? 'color-mix(in srgb, var(--accent-red) 12%, transparent)' : 'var(--bg-card-hover)' }}>
+                      <AlertCircle className="h-4 w-4" style={{ color: overdueCount > 0 ? 'var(--accent-red)' : 'var(--text-muted)' }} strokeWidth={1.75} />
+                    </div>
+                    <div className="text-left">
+                      <div className="text-lg font-bold" style={{ color: overdueCount > 0 ? 'var(--accent-red)' : 'var(--text-primary)' }}>{overdueCount}</div>
+                      <div className="text-[10px] font-medium uppercase" style={{ color: 'var(--text-muted)' }}>Overdue</div>
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={() => setFilters({ ...filters, status: 'FOR_PAYMENT' })}
+                    className={`flex items-center gap-3 p-3 rounded-xl transition-all ${filters.status === 'FOR_PAYMENT' ? 'ring-2 ring-offset-1' : ''}`}
+                    style={{ background: 'var(--bg-elevated)', border: `1px solid ${forPaymentCount > 0 ? 'color-mix(in srgb, var(--accent-green) 30%, transparent)' : 'var(--border-color)'}` }}
+                  >
+                    <div className="p-2 rounded-lg" style={{ background: forPaymentCount > 0 ? 'color-mix(in srgb, var(--accent-green) 12%, transparent)' : 'var(--bg-card-hover)' }}>
+                      <CheckCircle className="h-4 w-4" style={{ color: forPaymentCount > 0 ? 'var(--accent-green)' : 'var(--text-muted)' }} strokeWidth={1.75} />
+                    </div>
+                    <div className="text-left">
+                      <div className="text-lg font-bold" style={{ color: forPaymentCount > 0 ? 'var(--accent-green)' : 'var(--text-primary)' }}>{forPaymentCount}</div>
+                      <div className="text-[10px] font-medium uppercase" style={{ color: 'var(--text-muted)' }}>For Review</div>
+                    </div>
                   </button>
                 </div>
               )}
 
-              {isSupervisor && pendingReviewCount > 0 && (
-                <div className="flex items-center justify-between p-4 rounded-xl mb-4" style={{ background: 'color-mix(in srgb, var(--accent-amber) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}>
+              {/* Quick Action Banners — only when items exist */}
+              {isSupervisor && heldCount > 0 && (
+                <div className="flex items-center justify-between p-3 rounded-xl mb-4" style={{ background: 'color-mix(in srgb, var(--accent-amber) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}>
                   <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-lg" style={{ background: 'var(--accent-amber)' }}>
-                      <Clock className="h-4 w-4 text-white" strokeWidth={1.75} />
-                    </div>
-                    <div>
-                      <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{pendingReviewCount} payment{pendingReviewCount === 1 ? '' : 's'} awaiting your approval</div>
-                      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>Review and approve, or reject with a reason</div>
-                    </div>
+                    <DollarSign className="h-4 w-4" style={{ color: 'var(--accent-amber)' }} strokeWidth={1.75} />
+                    <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{heldCount} sub-$100 payment{heldCount === 1 ? '' : 's'} on hold — Supervisor release required</span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={handleOpenApproveAllFromBanner}
-                      disabled={processing}
-                      className="px-3 py-2 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
-                      style={{ background: 'var(--accent-green)', color: 'white' }}
-                      onMouseEnter={(e) => { if (!processing) e.currentTarget.style.opacity = '0.9'; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
-                    >
-                      {processing ? <Loader2 className="h-3.5 w-3.5 mr-1.5 inline animate-spin" /> : <CheckCircle className="h-3.5 w-3.5 mr-1.5 inline" strokeWidth={2} />}
-                      Approve All ({pendingReviewCount})
-                    </button>
-                    <button
-                      onClick={() => setFilters({ ...filters, status: 'FOR_PAYMENT' })}
-                      className="px-3 py-2 rounded-lg text-xs font-semibold transition-colors"
-                      style={{ background: 'var(--accent-amber)', color: 'var(--bg-base)' }}
-                      onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.9'; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
-                    >
-                      Open Review Queue
-                    </button>
+                  <button
+                    onClick={handleReleaseAllHeld}
+                    disabled={bulkReleasing}
+                    className="flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
+                    style={{ background: 'var(--accent-green)', color: 'white' }}
+                  >
+                    {bulkReleasing ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <CheckCircle className="h-3.5 w-3.5 mr-1.5" strokeWidth={2} />}
+                    Release All ({heldCount})
+                  </button>
+                </div>
+              )}
+
+              {awaitingPostingCount > 0 && (
+                <div className="flex items-center justify-between p-3 rounded-xl mb-4" style={{ background: 'color-mix(in srgb, var(--accent-purple) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-purple) 20%, transparent)' }}>
+                  <div className="flex items-center gap-3">
+                    <Send className="h-4 w-4" style={{ color: 'var(--accent-purple)' }} strokeWidth={1.75} />
+                    <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{awaitingPostingCount} invoice{awaitingPostingCount === 1 ? '' : 's'} awaiting posting to QuickBooks</span>
                   </div>
+                  <button
+                    onClick={handleBulkPostAll}
+                    disabled={bulkPostingAll}
+                    className="flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
+                    style={{ background: 'var(--accent-purple)', color: 'white' }}
+                  >
+                    {bulkPostingAll ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Send className="h-3.5 w-3.5 mr-1.5" />}
+                    Post All ({awaitingPostingCount})
+                  </button>
+                </div>
+              )}
+
+              {overdueCount > 0 && (
+                <div className="flex items-center justify-between p-3 rounded-xl mb-4" style={{ background: 'color-mix(in srgb, var(--accent-red) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}>
+                  <div className="flex items-center gap-3">
+                    <AlertCircle className="h-4 w-4" style={{ color: 'var(--accent-red)' }} strokeWidth={1.75} />
+                    <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{overdueCount} payment{overdueCount === 1 ? '' : 's'} past due date</span>
+                  </div>
+                  {filters.aging !== 'overdue' && (
+                    <button
+                      onClick={() => setFilters({ ...filters, aging: 'overdue', status: '' })}
+                      className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+                      style={{ background: 'var(--accent-red)', color: 'white' }}
+                    >
+                      View Overdue
+                    </button>
+                  )}
                 </div>
               )}
 

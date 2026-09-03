@@ -114,20 +114,12 @@ export async function getScheduledPaymentsForBatch(filters: ScheduledPaymentFilt
   if (filters.approvalFrom) approvalRange.gte = new Date(filters.approvalFrom);
   if (filters.approvalTo) approvalRange.lte = new Date(`${filters.approvalTo}T23:59:59.999Z`);
 
-  // The default Accounting queue shows ALL invoices in accounting stages:
-  // PENDING_ACCOUNTING, APPROVED, POSTED_TO_QB, and all payment statuses.
-  // This gives Accounting a single unified view of everything they need to act on.
+  // The Accounting Payment Queue shows invoices pending accounting action:
+  // PENDING_ACCOUNTING, APPROVED, POSTED_TO_QB — but NOT payments already in a batch.
   const defaultInvoiceStatuses = {
-    in: [
-      'PENDING_ACCOUNTING', 'APPROVED',
-      'SCHEDULED', 'FOR_PAYMENT', 'APPROVED_FOR_PAYMENT', 'HELD_BELOW_100',
-    ],
-  };
-  const defaultPaymentStatuses = {
-    in: ['SCHEDULED', 'FOR_PAYMENT', 'APPROVED_FOR_PAYMENT', 'HELD_BELOW_100'],
+    in: ['PENDING_ACCOUNTING', 'APPROVED', 'POSTED_TO_QB'],
   };
 
-  // Non-status filters are shared by the default and explicit-status views.
   const invoiceBaseWhere: any = {
     ...(filters.vendorId ? { vendor_id: filters.vendorId } : {}),
     ...(filters.search ? {
@@ -155,131 +147,73 @@ export async function getScheduledPaymentsForBatch(filters: ScheduledPaymentFilt
     } : {}),
   };
 
-  // An explicit status filter wins; otherwise return all accounting-stage invoices.
+  // Apply explicit status filter or default to accounting-stage invoices
   const invoiceWhere = filters.status
     ? { ...invoiceBaseWhere, status: filters.status }
     : { ...invoiceBaseWhere, status: defaultInvoiceStatuses };
 
-  // Also build a payment-level query for existing payment records (used for
-  // filtering by payment_date, currency, etc. that only exist on payments).
-  const paymentBaseWhere: any = {
-    batch_id: null,
-    payment_date: paymentDate,
-    ...(filters.currency ? { currency: filters.currency } : {}),
-    invoice: {
-      ...invoiceBaseWhere,
-    },
-  };
-  const paymentWhere = filters.status
-    ? { ...paymentBaseWhere, status: filters.status }
-    : { ...paymentBaseWhere, status: defaultPaymentStatuses };
-
-  // Query 1: Existing payment records (SCHEDULED, FOR_PAYMENT, etc.)
-  const payments = await prisma.payment.findMany({
-    where: paymentWhere,
+  // Query invoices directly — exclude any that already have a Payment in a batch
+  const invoices = await prisma.invoice.findMany({
+    where: invoiceWhere,
     include: {
-      invoice: {
-        include: {
-          vendor: true,
-          signatures: {
-            where: {
-              signatory_role: 'PURCHASING_MANAGER' as any,
-              signed_at: { not: null },
-            },
-            select: { signed_at: true },
-            orderBy: { signed_at: 'desc' as const },
-            take: 1,
-          },
+      vendor: true,
+      payments: {
+        where: { status: { notIn: ['CANCELLED', 'VOIDED'] } },
+      },
+      signatures: {
+        where: {
+          signatory_role: 'PURCHASING_MANAGER' as any,
+          signed_at: { not: null },
         },
+        select: { signed_at: true },
+        orderBy: { signed_at: 'desc' as const },
+        take: 1,
       },
     },
-    orderBy: {
-      payment_date: 'asc',
-    },
+    orderBy: { created_at: 'asc' },
   });
 
-  // Query 2: Invoices without Payment records (PENDING_ACCOUNTING, APPROVED,
-  // POSTED_TO_QB) — these are items Accounting still needs to act on.
-  // Only include when no explicit status filter narrows to payment-only statuses.
-  const paymentOnlyStatuses = ['SCHEDULED', 'FOR_PAYMENT', 'APPROVED_FOR_PAYMENT', 'HELD_BELOW_100'];
-  const needsInvoiceQuery = !filters.status || !paymentOnlyStatuses.includes(filters.status);
-  let invoiceOnlyPayments: any[] = [];
-  if (needsInvoiceQuery) {
-    // Build the invoice-only query: invoices that either have no payment, or
-    // whose payment is in a terminal/non-batchable state.
-    const invoiceOnlyStatuses = filters.status
-      ? { in: [filters.status] }
-      : { in: ['PENDING_ACCOUNTING', 'APPROVED', 'POSTED_TO_QB'] };
+  // Filter out invoices that already have an active payment in a batch
+  const unbatched = invoices.filter((inv: any) => {
+    const activePayments = (inv.payments || []).filter((p: any) =>
+      p.batch_id !== null && !['CANCELLED', 'VOIDED'].includes(p.status)
+    );
+    return activePayments.length === 0;
+  });
 
-    const invoiceOnlyWhere: any = {
-      ...invoiceBaseWhere,
-      status: invoiceOnlyStatuses,
-      // No batch_id filter — these are invoices, not payments
+  // Map to a unified response format
+  const allItems = unbatched.map((inv: any) => {
+    const existingPayment = (inv.payments || []).find((p: any) =>
+      p.batch_id === null && !['CANCELLED', 'VOIDED'].includes(p.status)
+    );
+    const { signatures, payments, ...invoiceRest } = inv;
+    return {
+      id: existingPayment?.id || `inv-${inv.id}`,
+      invoice_id: inv.id,
+      status: existingPayment?.status || 'AWAITING_POSTING',
+      amount: existingPayment ? Number(existingPayment.amount) : Number(inv.total_amount || 0),
+      currency: existingPayment?.currency || inv.currency || 'USD',
+      payment_date: existingPayment?.payment_date || inv.due_date || null,
+      payment_date_source: existingPayment?.payment_date_source || 'DUE_DATE',
+      payment_date_from_due: existingPayment?.payment_date_source === 'DUE_DATE',
+      batch_id: existingPayment?.batch_id || null,
+      selected_for_batch: existingPayment?.selected_for_batch || false,
+      selected_by: existingPayment?.selected_by || null,
+      remarks: existingPayment?.remarks || null,
+      created_at: inv.created_at,
+      // Keep signatures at top-level so enrichment can read approval_date
+      signatures,
+      invoice: invoiceRest,
+      invoice_date: inv.invoice_date || null,
+      due_date: inv.due_date || null,
+      brand: inv.brand || null,
+      category: inv.category || null,
+      qb_memo: inv.qb_memo || null,
+      approval_date: signatures?.[0]?.signed_at || null,
+      aging_days: null,
+      open_balance: existingPayment ? Number(existingPayment.amount) : Number(inv.total_amount || 0),
     };
-
-    // Apply payment-date and currency filters to the invoice query too
-    if (filters.currency) invoiceOnlyWhere.currency = filters.currency;
-    if (filters.dateFrom || filters.dateTo) {
-      // For invoices without payments, use invoice_date as a fallback
-      // since payment_date doesn't exist on the invoice.
-    }
-
-    const invoicesWithoutPayments = await prisma.invoice.findMany({
-      where: invoiceOnlyWhere,
-      include: {
-        vendor: true,
-        payments: {
-          where: { batch_id: null, status: { notIn: ['CANCELLED', 'VOIDED'] } },
-          take: 1,
-        },
-        signatures: {
-          where: {
-            signatory_role: 'PURCHASING_MANAGER' as any,
-            signed_at: { not: null },
-          },
-          select: { signed_at: true },
-          orderBy: { signed_at: 'desc' as const },
-          take: 1,
-        },
-      },
-      orderBy: { created_at: 'asc' },
-    });
-
-    // Only include invoices that don't already have an active payment record
-    // (the payments query above already returned those).
-    const paymentInvoiceIds = new Set(payments.map((p: any) => p.invoice?.id).filter(Boolean));
-    invoiceOnlyPayments = invoicesWithoutPayments
-      .filter((inv: any) => !paymentInvoiceIds.has(inv.id))
-      .map((inv: any) => ({
-        id: `inv-${inv.id}`,
-        invoice_id: inv.id,
-        status: 'AWAITING_POSTING' as any,
-        amount: Number(inv.total_amount || 0),
-        currency: inv.currency || 'USD',
-        payment_date: inv.due_date || null,
-        payment_date_source: 'DUE_DATE',
-        payment_date_from_due: true,
-        batch_id: null,
-        selected_for_batch: false,
-        remarks: null,
-        created_at: inv.created_at,
-        invoice: {
-          ...inv,
-          signatures: inv.signatures,
-        },
-        invoice_date: inv.invoice_date || null,
-        due_date: inv.due_date || null,
-        brand: inv.brand || null,
-        category: inv.category || null,
-        qb_memo: inv.qb_memo || null,
-        approval_date: inv.signatures?.[0]?.signed_at || null,
-        aging_days: null,
-        open_balance: Number(inv.total_amount || 0),
-      }));
-  }
-
-  // Merge: payments + invoice-only items, deduplicated
-  const allItems = [...payments, ...invoiceOnlyPayments];
+  });
 
   // Enrich with derived fields (invoice date, due date, brand, memo, category,
   // manager approval date, aging days, open balance)
@@ -294,23 +228,23 @@ export async function getScheduledPaymentsForBatch(filters: ScheduledPaymentFilt
       const dueStart = new Date(due.getFullYear(), due.getMonth(), due.getDate());
       agingDays = Math.floor((startOfToday.getTime() - dueStart.getTime()) / DAY_MS); // >0 = overdue days
     }
-    const { signatures, ...invoiceRest } = payment.invoice || {};
+    // Strip signatures from the nested invoice object (may be on invoice or top-level)
+    const sigs = payment.signatures || payment.invoice?.signatures;
+    const { signatures: _sig, ...invoiceRest } = payment.invoice || {};
     return {
       ...payment,
+      signatures: undefined, // strip top-level signatures too
       invoice: invoiceRest,
       invoice_date: payment.invoice?.invoice_date || null,
       due_date: payment.invoice?.due_date || null,
       brand: payment.invoice?.brand || null,
       category: payment.invoice?.category || null,
       qb_memo: payment.invoice?.qb_memo || null,
-      approval_date: signatures?.[0]?.signed_at || null,
+      approval_date: sigs?.[0]?.signed_at || null,
       aging_days: agingDays,
       open_balance: Number(payment.amount || 0),
       remarks: payment.remarks || null,
-      // How the payment date was set — stored explicitly on the record
-      // (DUE_DATE / MANUAL / DEFAULT), not inferred from date equality.
       payment_date_source: payment.payment_date_source || 'DUE_DATE',
-      // True only when the payment date came from the invoice due date.
       payment_date_from_due: payment.payment_date_source === 'DUE_DATE',
     };
   });

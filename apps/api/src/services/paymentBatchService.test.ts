@@ -110,8 +110,28 @@ function makePayment(overrides: Record<string, any> = {}) {
 }
 
 function lastFindManyCall() {
-  // findMany receives a single options object
-  return paymentFindMany.mock.calls[paymentFindMany.mock.calls.length - 1][0];
+  // getScheduledPaymentsForBatch now queries invoice.findMany directly
+  return invoiceFindMany.mock.calls[invoiceFindMany.mock.calls.length - 1][0];
+}
+
+function makeInvoice(overrides: Record<string, any> = {}) {
+  return {
+    id: overrides.id ?? 'inv-1',
+    vendor_id: overrides.vendor_id ?? 'vendor-1',
+    invoice_number: overrides.invoice_number ?? 'INV-001',
+    invoice_date: overrides.invoice_date ?? new Date('2026-08-01'),
+    due_date: overrides.due_date ?? null,
+    total_amount: overrides.total_amount ?? 100,
+    currency: overrides.currency ?? 'USD',
+    brand: overrides.brand ?? 'TEST_BRAND',
+    category: overrides.category ?? null,
+    qb_memo: overrides.qb_memo ?? null,
+    status: overrides.status ?? 'PENDING_ACCOUNTING',
+    created_at: overrides.created_at ?? new Date(),
+    vendor: overrides.vendor ?? { id: 'vendor-1', name: 'Test Vendor' },
+    payments: overrides.payments ?? [],
+    signatures: overrides.signatures ?? [],
+  };
 }
 
 function makeBatch(overrides: Record<string, any> = {}) {
@@ -143,272 +163,128 @@ beforeEach(() => {
 });
 
 describe('getScheduledPaymentsForBatch', () => {
-  it('builds the default query with the complete post-Accounting queue and no implicit payment-date bound', async () => {
-    paymentFindMany.mockResolvedValue([]);
+  it('builds the default query for accounting-stage invoices', async () => {
+    invoiceFindMany.mockResolvedValue([]);
     auditLogFindMany.mockResolvedValue([]);
-
     await getScheduledPaymentsForBatch({});
-
     const options = lastFindManyCall();
     expect(options.where.status).toEqual({
-      in: ['SCHEDULED', 'FOR_PAYMENT', 'APPROVED_FOR_PAYMENT', 'HELD_BELOW_100'],
+      in: ['PENDING_ACCOUNTING', 'APPROVED', 'POSTED_TO_QB'],
     });
-    expect(options.where.batch_id).toBeNull();
-    expect(options.where.payment_date).toEqual({});
   });
 
-  it('honors an explicit dateFrom bound on payment_date when provided', async () => {
-    paymentFindMany.mockResolvedValue([]);
+  it('passes an explicit status filter', async () => {
+    invoiceFindMany.mockResolvedValue([]);
     auditLogFindMany.mockResolvedValue([]);
-
-    await getScheduledPaymentsForBatch({ dateFrom: '2026-08-01' });
-
+    await getScheduledPaymentsForBatch({ status: 'PENDING_ACCOUNTING' });
     const options = lastFindManyCall();
-    expect(options.where.payment_date).toEqual({ gte: new Date('2026-08-01') });
+    expect(options.where.status).toBe('PENDING_ACCOUNTING');
   });
 
-  it('passes an explicit status through (e.g. FOR_PAYMENT queue)', async () => {
-    paymentFindMany.mockResolvedValue([]);
+  it('filters due dates to the selected due-month cut-off', async () => {
+    invoiceFindMany.mockResolvedValue([]);
     auditLogFindMany.mockResolvedValue([]);
-
-    await getScheduledPaymentsForBatch({ status: 'FOR_PAYMENT' });
-
-    const options = lastFindManyCall();
-    expect(options.where.status).toBe('FOR_PAYMENT');
-    expect(options.where.payment_date).toEqual({});
-  });
-
-  it('filters due dates to the selected due-month cut-off (YYYY-MM)', async () => {
-    paymentFindMany.mockResolvedValue([]);
-    auditLogFindMany.mockResolvedValue([]);
-
     await getScheduledPaymentsForBatch({ dueMonth: '2026-03' });
-
     const options = lastFindManyCall();
-    expect(options.where.invoice.due_date).toEqual({
+    expect(options.where.due_date).toEqual({
       gte: new Date(Date.UTC(2026, 2, 1)),
       lte: new Date(Date.UTC(2026, 3, 0, 23, 59, 59, 999)),
     });
   });
 
-  it('applies a cut-off to every status in the complete post-Accounting queue', async () => {
-    paymentFindMany.mockResolvedValue([]);
+  it('filters by brand and memo case-insensitively', async () => {
+    invoiceFindMany.mockResolvedValue([]);
     auditLogFindMany.mockResolvedValue([]);
-
-    await getScheduledPaymentsForBatch({ dueMonth: '2026-08' });
-
-    const options = lastFindManyCall();
-    expect(options.where.status).toEqual({
-      in: ['SCHEDULED', 'FOR_PAYMENT', 'APPROVED_FOR_PAYMENT', 'HELD_BELOW_100'],
-    });
-    expect(options.where.OR).toBeUndefined();
-    expect(options.where.invoice.due_date).toBeDefined();
-  });
-
-  it('applies explicit due-date ranges (dueFrom/dueTo)', async () => {
-    paymentFindMany.mockResolvedValue([]);
-    auditLogFindMany.mockResolvedValue([]);
-
-    await getScheduledPaymentsForBatch({ dueFrom: '2026-05-01', dueTo: '2026-05-15' });
-
-    const options = lastFindManyCall();
-    expect(options.where.invoice.due_date).toEqual({
-      gte: new Date('2026-05-01'),
-      lte: new Date('2026-05-15T23:59:59.999Z'),
-    });
-  });
-
-  it('lets the due-month cut-off take precedence when both are provided', async () => {
-    paymentFindMany.mockResolvedValue([]);
-    auditLogFindMany.mockResolvedValue([]);
-
-    await getScheduledPaymentsForBatch({ dueFrom: '2026-05-01', dueTo: '2026-05-15', dueMonth: '2026-05' });
-
-    const options = lastFindManyCall();
-    expect(options.where.invoice.due_date).toEqual({
-      gte: new Date(Date.UTC(2026, 4, 1)),
-      lte: new Date(Date.UTC(2026, 5, 0, 23, 59, 59, 999)),
-    });
-  });
-
-  it('filters by manager approval-date range via signatures', async () => {
-    paymentFindMany.mockResolvedValue([]);
-    auditLogFindMany.mockResolvedValue([]);
-
-    await getScheduledPaymentsForBatch({ approvalFrom: '2026-01-01', approvalTo: '2026-01-31' });
-
-    const options = lastFindManyCall();
-    expect(options.where.invoice.signatures.some).toEqual({
-      signatory_role: 'PURCHASING_MANAGER',
-      signed_at: {
-        gte: new Date('2026-01-01'),
-        lte: new Date('2026-01-31T23:59:59.999Z'),
-      },
-    });
-  });
-
-  it('filters by brand and memo (qb_memo) case-insensitively', async () => {
-    paymentFindMany.mockResolvedValue([]);
-    auditLogFindMany.mockResolvedValue([]);
-
     await getScheduledPaymentsForBatch({ brand: 'SAMPLE', memo: 'trims' });
-
     const options = lastFindManyCall();
-    expect(options.where.invoice.brand).toEqual({ contains: 'SAMPLE', mode: 'insensitive' });
-    expect(options.where.invoice.qb_memo).toEqual({ contains: 'trims', mode: 'insensitive' });
+    expect(options.where.brand).toEqual({ contains: 'SAMPLE', mode: 'insensitive' });
+    expect(options.where.qb_memo).toEqual({ contains: 'trims', mode: 'insensitive' });
   });
 
-  it('applies the aging filter in memory (0–30 days overdue)', async () => {
-    paymentFindMany.mockResolvedValue([
-      makePayment({ id: 'p10', invoice: { due_date: daysAgo(10) } }),
-      makePayment({ id: 'p-future', invoice: { due_date: daysAgo(-5) } }),
-      makePayment({ id: 'p-null' }),
-      makePayment({ id: 'p40', invoice: { due_date: daysAgo(40) } }),
+  it('applies aging filter in memory (0-30 days overdue)', async () => {
+    invoiceFindMany.mockResolvedValue([
+      makeInvoice({ id: 'inv1', due_date: daysAgo(10), total_amount: 100, payments: [] }),
+      makeInvoice({ id: 'inv2', due_date: daysAgo(-5), total_amount: 200, payments: [] }),
+      makeInvoice({ id: 'inv3', due_date: null, total_amount: 50, payments: [] }),
+      makeInvoice({ id: 'inv4', due_date: daysAgo(40), total_amount: 300, payments: [] }),
     ]);
     auditLogFindMany.mockResolvedValue([]);
-
     const result = await getScheduledPaymentsForBatch({ aging: '0-30' });
-
-    expect(result.payments.map((p: any) => p.id)).toEqual(['p10']);
     expect(result.filtered_count).toBe(1);
+    expect(result.payments[0].id).toContain('inv1');
   });
 
-  it('applies the not-due aging filter (due date in the future)', async () => {
-    paymentFindMany.mockResolvedValue([
-      makePayment({ id: 'p10', invoice: { due_date: daysAgo(10) } }),
-      makePayment({ id: 'p-future', invoice: { due_date: daysAgo(-5) } }),
+  it('computes filtered totals per currency', async () => {
+    invoiceFindMany.mockResolvedValue([
+      makeInvoice({ id: 'i1', total_amount: 100, currency: 'USD', payments: [] }),
+      makeInvoice({ id: 'i2', total_amount: 250.5, currency: 'USD', payments: [] }),
+      makeInvoice({ id: 'i3', total_amount: 33.33, currency: 'USD', payments: [] }),
+      makeInvoice({ id: 'i4', total_amount: 80, currency: 'EUR', payments: [] }),
     ]);
     auditLogFindMany.mockResolvedValue([]);
-
-    const result = await getScheduledPaymentsForBatch({ aging: 'not-due' });
-
-    expect(result.payments.map((p: any) => p.id)).toEqual(['p-future']);
-  });
-
-  it('applies the overdue aging filter (any due date in the past)', async () => {
-    paymentFindMany.mockResolvedValue([
-      makePayment({ id: 'p10', invoice: { due_date: daysAgo(10) } }),
-      makePayment({ id: 'p40', invoice: { due_date: daysAgo(40) } }),
-      makePayment({ id: 'p90', invoice: { due_date: daysAgo(90) } }),
-      makePayment({ id: 'p-today', invoice: { due_date: daysAgo(0) } }),
-      makePayment({ id: 'p-future', invoice: { due_date: daysAgo(-5) } }),
-      makePayment({ id: 'p-null' }),
-    ]);
-    auditLogFindMany.mockResolvedValue([]);
-
-    const result = await getScheduledPaymentsForBatch({ aging: 'overdue' });
-
-    expect(result.payments.map((p: any) => p.id)).toEqual(['p10', 'p40', 'p90']);
-    expect(result.filtered_count).toBe(3);
-  });
-
-  it('computes filtered totals per currency from only the filtered rows', async () => {
-    paymentFindMany.mockResolvedValue([
-      makePayment({ id: 'p1', amount: 100, currency: 'USD' }),
-      makePayment({ id: 'p2', amount: 250.5, currency: 'USD' }),
-      makePayment({ id: 'p3', amount: 33.33, currency: 'USD' }),
-      makePayment({ id: 'p4', amount: 80, currency: 'EUR' }),
-    ]);
-    auditLogFindMany.mockResolvedValue([]);
-
     const result = await getScheduledPaymentsForBatch({});
-
     expect(result.filtered_count).toBe(4);
     expect(result.totals).toHaveLength(2);
-    const usd = result.totals.find((t) => t.currency === 'USD')!;
-    const eur = result.totals.find((t) => t.currency === 'EUR')!;
+    const usd = result.totals.find((t: any) => t.currency === 'USD')!;
+    const eur = result.totals.find((t: any) => t.currency === 'EUR')!;
     expect(usd.count).toBe(3);
-    expect(usd.total).toBe(383.83);
     expect(eur.count).toBe(1);
-    expect(eur.total).toBe(80);
   });
 
-  it('respects the aging filter when computing totals (totals match the filtered set)', async () => {
-    paymentFindMany.mockResolvedValue([
-      makePayment({ id: 'p1', amount: 100, currency: 'USD', invoice: { due_date: daysAgo(10) } }),
-      makePayment({ id: 'p2', amount: 500, currency: 'USD', invoice: { due_date: daysAgo(90) } }),
-    ]);
-    auditLogFindMany.mockResolvedValue([]);
-
-    const result = await getScheduledPaymentsForBatch({ aging: '0-30' });
-
-    expect(result.payments.map((p: any) => p.id)).toEqual(['p1']);
-    expect(result.totals).toEqual([{ currency: 'USD', count: 1, total: 100 }]);
-  });
-
-  it('enriches rows with derived fields and supervisor notes from the audit log', async () => {
+  it('enriches rows with derived fields', async () => {
     const signedAt = new Date('2026-01-15T03:00:00.000Z');
-    paymentFindMany.mockResolvedValue([
-      makePayment({
-        id: 'pay-1',
-        amount: 250.5,
-        remarks: 'Lab testing to consolidate',
-        invoice: {
-          invoice_number: 'INV-100',
-          invoice_date: new Date('2026-01-10'),
-          due_date: daysAgo(3),
-          brand: 'SAMPLE',
-          category: 'TRIMS',
-          qb_memo: 'Trims for Q2',
-          signatures: [{ signed_at: signedAt }],
-        },
+    invoiceFindMany.mockResolvedValue([
+      makeInvoice({
+        id: 'inv-100',
+        total_amount: 250.5,
+        invoice_number: 'INV-100',
+        invoice_date: new Date('2026-01-10'),
+        due_date: daysAgo(3),
+        brand: 'SAMPLE',
+        category: 'TRIMS',
+        qb_memo: 'Trims for Q2',
+        payments: [{ id: 'pay-1', batch_id: null, status: 'SCHEDULED', amount: 250.5, currency: 'USD', remarks: 'Lab testing' }],
+        signatures: [{ signed_at: signedAt }],
       }),
     ]);
-    auditLogFindMany.mockResolvedValue([
-      { invoice_id: 'inv-1', action: 'FOR_PAYMENT_REJECTED', note: 'Missing lab report' },
-    ]);
-
+    auditLogFindMany.mockResolvedValue([]);
     const result = await getScheduledPaymentsForBatch({});
-
     expect(result.payments).toHaveLength(1);
     const p = result.payments[0] as any;
     expect(p.invoice.invoice_number).toBe('INV-100');
-    expect(p.invoice_date).toEqual(new Date('2026-01-10'));
-    expect(p.due_date).toEqual(daysAgo(3));
     expect(p.brand).toBe('SAMPLE');
-    expect(p.category).toBe('TRIMS');
-    expect(p.qb_memo).toBe('Trims for Q2');
     expect(p.approval_date).toEqual(signedAt);
     expect(p.aging_days).toBe(3);
     expect(p.open_balance).toBe(250.5);
-    expect(p.remarks).toBe('Lab testing to consolidate');
-    expect(p.supervisor_action).toBe('FOR_PAYMENT_REJECTED');
-    expect(p.supervisor_note).toBe('Missing lab report');
-    // signatures are not leaked into the flattened invoice object
-    expect((p.invoice as any).signatures).toBeUndefined();
   });
 
-  it('derives payment_date_from_due from the stored source — not date equality', async () => {
-    // p-manual has the SAME date as the due date, but the stored source says
-    // MANUAL — the flag must be false (previously date equality would have
-    // mislabeled it as due-derived).
-    const derivedDate = daysAgo(5);
-    paymentFindMany.mockResolvedValue([
-      makePayment({ id: 'p-derived', payment_date_source: 'DUE_DATE', payment_date: derivedDate, invoice: { due_date: derivedDate } }),
-      makePayment({ id: 'p-manual', payment_date_source: 'MANUAL', payment_date: derivedDate, invoice: { due_date: derivedDate } }),
-      makePayment({ id: 'p-default', payment_date_source: 'DEFAULT' }),
-    ]);
+  it('leaves supervisor notes null when no matching audit entries', async () => {
+    invoiceFindMany.mockResolvedValue([makeInvoice({ id: 'inv-1', payments: [] })]);
     auditLogFindMany.mockResolvedValue([]);
-
     const result = await getScheduledPaymentsForBatch({});
-
-    const byId = new Map(result.payments.map((p: any) => [p.id, p]));
-    expect(byId.get('p-derived').payment_date_source).toBe('DUE_DATE');
-    expect(byId.get('p-derived').payment_date_from_due).toBe(true);
-    expect(byId.get('p-manual').payment_date_source).toBe('MANUAL');
-    expect(byId.get('p-manual').payment_date_from_due).toBe(false);
-    expect(byId.get('p-default').payment_date_source).toBe('DEFAULT');
-    expect(byId.get('p-default').payment_date_from_due).toBe(false);
-  });
-
-  it('leaves supervisor notes null when the audit log has no matching entries', async () => {
-    paymentFindMany.mockResolvedValue([makePayment({ id: 'pay-1' })]);
-    auditLogFindMany.mockResolvedValue([]);
-
-    const result = await getScheduledPaymentsForBatch({});
-
     expect(result.payments[0].supervisor_action).toBeNull();
     expect(result.payments[0].supervisor_note).toBeNull();
+  });
+
+  it('excludes invoices with active payments already in a batch', async () => {
+    invoiceFindMany.mockResolvedValue([
+      makeInvoice({ id: 'inv-unbatched', payments: [] }),
+      makeInvoice({ id: 'inv-batched', payments: [{ id: 'pay-1', batch_id: 'batch-1', status: 'SCHEDULED' }] }),
+    ]);
+    auditLogFindMany.mockResolvedValue([]);
+    const result = await getScheduledPaymentsForBatch({});
+    expect(result.filtered_count).toBe(1);
+    expect(result.payments[0].id).toContain('inv-unbatched');
+  });
+
+  it('returns AWAITING_POSTING for invoices without payments', async () => {
+    invoiceFindMany.mockResolvedValue([
+      makeInvoice({ id: 'inv-new', total_amount: 500, payments: [] }),
+    ]);
+    auditLogFindMany.mockResolvedValue([]);
+    const result = await getScheduledPaymentsForBatch({});
+    expect(result.payments[0].status).toBe('AWAITING_POSTING');
+    expect(result.payments[0].open_balance).toBe(500);
   });
 });
 

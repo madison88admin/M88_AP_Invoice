@@ -285,6 +285,36 @@ describe('postInvoice — the sub-$100 hold lives at scheduling, not posting', (
     }));
   });
 
+  it('does not let an existing pending NextGen advisory block an approved invoice', async () => {
+    vi.stubEnv('FINANCE_ENFORCEMENT_MODE', 'advisory');
+    const invoice = makePostableInvoice({
+      invoice_number: 'IA00501606',
+      mpo_number: 'MPO016019',
+      total_amount: 371.06,
+      exceptions: [{
+        id: 'nextgen-advisory-1',
+        reason: 'PO_NOT_FOUND',
+        status: 'PENDING',
+        detail: 'NextGen critical data changed: amount from 350.76 to 371.06',
+      }],
+    });
+    invoiceFindUnique
+      .mockResolvedValueOnce(invoice)
+      .mockResolvedValueOnce({ ...invoice, status: 'POSTED_TO_QB' });
+    nextGenGetFullPOByMPO.mockResolvedValue(null);
+    invoiceUpdate.mockResolvedValue({});
+    auditLogCreate.mockResolvedValue({});
+    stageTimestampCreate.mockResolvedValue({});
+
+    const result = (await postInvoice('inv-post', 'assoc-1')) as { success: boolean; payment_scheduled: boolean };
+
+    expect(result.success).toBe(true);
+    expect(result.payment_scheduled).toBe(true);
+    expect(invoiceUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'POSTED_TO_QB' }),
+    }));
+  });
+
   it('moves a missing NextGen PO to ON_HOLD only when Finance strict mode is enabled', async () => {
     vi.stubEnv('FINANCE_ENFORCEMENT_MODE', 'strict');
     const poBacked = makePostableInvoice({ mpo_number: 'MPO016019', total_amount: 150 });

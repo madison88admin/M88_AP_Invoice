@@ -1044,7 +1044,21 @@ export default function Dashboard() {
 
     try {
       setPosting(true);
-      await invoiceApi.post(selectedInvoice.id, bypassVarianceCheck);
+      try {
+        await invoiceApi.post(selectedInvoice.id, bypassVarianceCheck);
+      } catch (error: any) {
+        const message = error?.response?.data?.error?.message || error?.response?.data?.message || '';
+        const overrideNotAllowed = bypassVarianceCheck
+          && error?.response?.status === 403
+          && message.includes('Bypass is only available');
+        if (!overrideNotAllowed) throw error;
+
+        // The user still requested a normal post. Retry without the restricted
+        // override so advisory checks remain recorded and financial controls
+        // are not bypassed.
+        setBypassVarianceCheck(false);
+        await invoiceApi.post(selectedInvoice.id, false);
+      }
       showToast('Invoice posted to accounting successfully', 'success');
       await refresh();
       setSelectedInvoice(null);

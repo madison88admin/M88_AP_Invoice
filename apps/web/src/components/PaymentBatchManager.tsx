@@ -234,7 +234,6 @@ export default function PaymentBatchManager() {
 
   const isAssociate = user?.role === 'ACCOUNTING_ASSOCIATE';
   const isSupervisor = user?.role === 'ACCOUNTING_SUPERVISOR';
-  const isPurchasing = user?.role === 'PURCHASING_COORDINATOR';
   const isBatchable = (p: ScheduledPayment) => p.status === 'SCHEDULED' || p.status === 'APPROVED_FOR_PAYMENT';
 
   const handleBulkConfirmationImport = async (file: File) => {
@@ -321,7 +320,7 @@ export default function PaymentBatchManager() {
       } else {
         setPendingReviewCount(0);
       }
-      if (user?.role === 'PURCHASING_COORDINATOR') {
+      if (['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR'].includes(user?.role || '')) {
         paymentBatchApi.getScheduledPayments({ status: 'HELD_BELOW_100' })
           .then((r) => setPendingHeldCount(Number(r.data?.filtered_count ?? r.data?.payments?.length ?? 0)))
           .catch(() => setPendingHeldCount(0));
@@ -995,7 +994,7 @@ export default function PaymentBatchManager() {
             }
           >
             <Calendar className="h-4 w-4" strokeWidth={1.75} />
-            Scheduled Payments
+            Accounting Payment Queue
             {scheduledPayments.length > 0 && (
               <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: activeTab === 'scheduled' ? 'rgba(255,255,255,0.2)' : 'var(--bg-elevated)' }}>
                 {scheduledPayments.length}
@@ -1050,8 +1049,8 @@ export default function PaymentBatchManager() {
             <div className="p-6">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Scheduled Payments</h2>
-                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Select payments to include in a new batch</p>
+                  <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Accounting Payment Queue</h2>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>All post-approved payments, including supervisor review and held items</p>
                 </div>
                 <div className="flex items-center gap-3">
                   <button
@@ -1110,15 +1109,15 @@ export default function PaymentBatchManager() {
                 </div>
               )}
 
-              {isPurchasing && pendingHeldCount > 0 && (
+              {(isAssociate || isSupervisor) && pendingHeldCount > 0 && (
                 <div className="flex items-center justify-between p-4 rounded-xl mb-4" style={{ background: 'color-mix(in srgb, var(--text-muted) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--text-muted) 25%, transparent)' }}>
                   <div className="flex items-center gap-3">
                     <div className="p-2 rounded-lg" style={{ background: 'var(--text-muted)' }}>
                       <DollarSign className="h-4 w-4 text-white" strokeWidth={1.75} />
                     </div>
                     <div>
-                      <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{pendingHeldCount} sub-$100 payment{pendingHeldCount === 1 ? '' : 's'} held — awaiting your approval</div>
-                      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>Approve release so the payment can proceed for payment or be consolidated</div>
+                      <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{pendingHeldCount} sub-$100 payment{pendingHeldCount === 1 ? '' : 's'} on hold</div>
+                      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{isSupervisor ? 'Review and release the hold so the payment can be batched' : 'Accounting Supervisor approval is required to release the hold'}</div>
                     </div>
                   </div>
                   <button
@@ -1248,11 +1247,11 @@ export default function PaymentBatchManager() {
                     <div className="md:col-span-2">
                       <label style={filterLabel}>Status</label>
                       <select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })} style={filterInput}>
-                        <option value="">Scheduled + Approved</option>
+                        <option value="">All post-approved payments</option>
                         <option value="SCHEDULED">Scheduled</option>
                         <option value="FOR_PAYMENT">For Payment (supervisor review)</option>
                         <option value="APPROVED_FOR_PAYMENT">Approved for payment</option>
-                        <option value="HELD_BELOW_100">Held below $100 (Purchasing review)</option>
+                        <option value="HELD_BELOW_100">On hold below $100</option>
                       </select>
                     </div>
                     <div className="md:col-span-2">
@@ -1374,8 +1373,8 @@ export default function PaymentBatchManager() {
                   <Calendar className="h-12 w-12 mx-auto mb-3" style={{ color: 'var(--text-muted)', opacity: 0.5 }} />
                   {filters.status === 'HELD_BELOW_100' ? (
                     <>
-                      <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Held queue is clear — no sub-$100 payments awaiting Purchasing approval</p>
-                      <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Sub-$100 payments held on posting appear here for the Purchasing Coordinator to release</p>
+                      <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Held queue is clear — no sub-$100 payments awaiting release</p>
+                      <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Sub-$100 payments held on posting appear here for Accounting Supervisor review</p>
                     </>
                   ) : filters.status === 'FOR_PAYMENT' ? (
                     <>
@@ -1384,8 +1383,8 @@ export default function PaymentBatchManager() {
                     </>
                   ) : (
                     <>
-                      <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No scheduled payments available for batching</p>
-                      <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Post invoices to QB and schedule payments first</p>
+                      <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No post-approved payments found</p>
+                      <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Post and approve invoices in Accounting first</p>
                     </>
                   )}
                 </div>
@@ -1507,14 +1506,14 @@ export default function PaymentBatchManager() {
                                     )}
                                   </>
                                 )}
-                                {isPurchasing && payment.status === 'HELD_BELOW_100' && (
+                                {isSupervisor && payment.status === 'HELD_BELOW_100' && (
                                   <button
                                     onClick={(e) => { e.stopPropagation(); handleApproveHeld(payment); }}
                                     disabled={actionLoading}
                                     className="px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors disabled:opacity-50"
                                     style={{ background: 'var(--accent-green)', color: 'white' }}
                                   >
-                                    Approve Release
+                                    Release Hold
                                   </button>
                                 )}
                                 {isSupervisor && payment.status === 'FOR_PAYMENT' && (

@@ -81,7 +81,7 @@ export interface ScheduledPaymentFilters {
   memo?: string; // qb_memo contains
   category?: string; // split/account e.g. TRIMS, YARN, SAMPLE_CHARGES
   aging?: string; // 'not-due' | '0-30' | '31-60' | '60+'
-  status?: string; // explicit status view: 'FOR_PAYMENT' (supervisor queue), 'SCHEDULED', 'APPROVED_FOR_PAYMENT'
+  status?: string; // explicit status view; blank returns the complete post-Accounting queue
 }
 
 export async function getScheduledPaymentsForBatch(filters: ScheduledPaymentFilters = {}) {
@@ -114,16 +114,14 @@ export async function getScheduledPaymentsForBatch(filters: ScheduledPaymentFilt
   if (filters.approvalFrom) approvalRange.gte = new Date(filters.approvalFrom);
   if (filters.approvalTo) approvalRange.lte = new Date(`${filters.approvalTo}T23:59:59.999Z`);
 
-  // Default view: batchable payments (SCHEDULED + supervisor-approved) PLUS
-  // HELD_BELOW_100 payments whose due date falls within the applied cut-off
-  // window (due-month / due-range) — the "appears when it falls within the
-  // Associate's cut-off, on or before the due date" rule. An explicit status
-  // filter switches the view (e.g. FOR_PAYMENT queue, HELD_BELOW_100 queue).
-  const defaultStatuses = { in: ['SCHEDULED', 'APPROVED_FOR_PAYMENT'] };
+  // The default Accounting queue must retain full visibility after posting:
+  // scheduled, submitted for supervisor review, approved, and held payments.
+  // Held/review rows remain non-batchable until the required Accounting action.
+  const defaultStatuses = {
+    in: ['SCHEDULED', 'FOR_PAYMENT', 'APPROVED_FOR_PAYMENT', 'HELD_BELOW_100'],
+  };
 
-  // Non-status filters are shared by every branch; the status OR must live at
-  // the TOP level of `where` — `status: { OR: [...] }` containing nested
-  // `status` filters is invalid Prisma and 500s the cut-off view.
+  // Non-status filters are shared by the default and explicit-status views.
   const baseWhere: any = {
     batch_id: null,
     payment_date: paymentDate,
@@ -156,20 +154,11 @@ export async function getScheduledPaymentsForBatch(filters: ScheduledPaymentFilt
     },
   };
 
-  // Status: an explicit status filter wins; otherwise the default batchable
-  // view PLUS HELD_BELOW_100 payments whose due date falls within the applied
-  // cut-off window (due-month / due-range).
+  // An explicit status filter wins; otherwise return the complete post-posting
+  // Accounting payment queue. Date filters in baseWhere apply to every status.
   const where = filters.status
     ? { ...baseWhere, status: filters.status }
-    : hasDueFilter
-      ? {
-          ...baseWhere,
-          OR: [
-            { status: defaultStatuses },
-            { status: 'HELD_BELOW_100', invoice: { due_date: dueDateRange } },
-          ],
-        }
-      : { ...baseWhere, status: defaultStatuses };
+    : { ...baseWhere, status: defaultStatuses };
 
   const payments = await prisma.payment.findMany({
     where,

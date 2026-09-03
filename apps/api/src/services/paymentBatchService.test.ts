@@ -142,14 +142,16 @@ beforeEach(() => {
 });
 
 describe('getScheduledPaymentsForBatch', () => {
-  it('builds the default query: batchable statuses only, no implicit payment-date bound (past-due invoices stay visible)', async () => {
+  it('builds the default query with the complete post-Accounting queue and no implicit payment-date bound', async () => {
     paymentFindMany.mockResolvedValue([]);
     auditLogFindMany.mockResolvedValue([]);
 
     await getScheduledPaymentsForBatch({});
 
     const options = lastFindManyCall();
-    expect(options.where.status).toEqual({ in: ['SCHEDULED', 'APPROVED_FOR_PAYMENT'] });
+    expect(options.where.status).toEqual({
+      in: ['SCHEDULED', 'FOR_PAYMENT', 'APPROVED_FOR_PAYMENT', 'HELD_BELOW_100'],
+    });
     expect(options.where.batch_id).toBeNull();
     expect(options.where.payment_date).toEqual({});
   });
@@ -188,20 +190,18 @@ describe('getScheduledPaymentsForBatch', () => {
     });
   });
 
-  it('places the held-payments OR at the TOP level of where (regression: field-level status OR is invalid Prisma and 500s the cut-off view)', async () => {
+  it('applies a cut-off to every status in the complete post-Accounting queue', async () => {
     paymentFindMany.mockResolvedValue([]);
     auditLogFindMany.mockResolvedValue([]);
 
     await getScheduledPaymentsForBatch({ dueMonth: '2026-08' });
 
     const options = lastFindManyCall();
-    // Prisma rejects `status: { OR: [...] }` containing nested `status` filters
-    // (Unknown argument `OR`) — the OR must be a top-level where condition.
-    expect(options.where.status).toBeUndefined();
-    expect(options.where.OR).toEqual([
-      { status: { in: ['SCHEDULED', 'APPROVED_FOR_PAYMENT'] } },
-      { status: 'HELD_BELOW_100', invoice: { due_date: options.where.invoice.due_date } },
-    ]);
+    expect(options.where.status).toEqual({
+      in: ['SCHEDULED', 'FOR_PAYMENT', 'APPROVED_FOR_PAYMENT', 'HELD_BELOW_100'],
+    });
+    expect(options.where.OR).toBeUndefined();
+    expect(options.where.invoice.due_date).toBeDefined();
   });
 
   it('applies explicit due-date ranges (dueFrom/dueTo)', async () => {

@@ -254,6 +254,22 @@ export async function postInvoice(invoiceId: string, userId: string, bypassVaria
       (exc: any) => exc.reason !== ExceptionReason.BATCH_THRESHOLD_NOT_MET as any
     ));
   }
+
+  // NextGen is an external reconciliation source. In Finance advisory mode,
+  // existing NextGen/PO exceptions stay visible and pending for follow-up but
+  // must not stop an otherwise fully approved invoice from posting. Internal
+  // arithmetic/data-integrity exceptions continue to block as normal.
+  if (getFinancePolicy().enforcementMode === 'advisory') {
+    unresolvedExceptions.splice(
+      0,
+      unresolvedExceptions.length,
+      ...unresolvedExceptions.filter((exc: any) => {
+        const detail = String(exc.detail || '').toLowerCase();
+        return exc.reason !== (ExceptionReason.PO_NOT_FOUND as any)
+          && !detail.includes('nextgen');
+      })
+    );
+  }
   
   if (unresolvedExceptions.length > 0 && !bypassVarianceCheck) {
     throw new AppError('Invoice has unresolved exceptions and cannot be posted', 400);

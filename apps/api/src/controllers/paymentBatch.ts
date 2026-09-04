@@ -15,6 +15,7 @@ import {
   selectPaymentsForBatch,
   deselectPaymentsForBatch,
   submitPaymentBatchForReview,
+  updatePaymentBillsSetup,
   reviewPaymentBatch,
   returnPaymentBatch,
   returnInvoicesFromBatch,
@@ -81,6 +82,19 @@ export const getScheduledPaymentsForBatchController = async (
 
 export const submitPaymentBatchController = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try { res.json(await submitPaymentBatchForReview(req.params.batchId, req.user!.id)); } catch (error) { next(error); }
+};
+
+export const updatePaymentBillsSetupController = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { batchId } = req.params;
+    const { paymentMethod, bankAccount, paymentDate } = req.body;
+    const result = await updatePaymentBillsSetup(batchId, req.user!.id, {
+      payment_method: paymentMethod,
+      payment_bank_account: bankAccount,
+      payment_date: paymentDate,
+    });
+    res.json(result);
+  } catch (error) { next(error); }
 };
 
 export const reviewPaymentBatchController = async (req: AuthRequest, res: Response, next: NextFunction) => {

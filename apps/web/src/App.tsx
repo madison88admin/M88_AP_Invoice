@@ -19,7 +19,6 @@ import SLAAnalyticsDashboard from './components/SLAAnalyticsDashboard';
 import OnHoldQueue from './components/OnHoldQueue';
 import UserManagement from './components/UserManagement';
 import SettingsPage from './components/SettingsPage';
-import InvoiceRepository from './components/InvoiceRepository';
 import BankDetailsMasterlist from './components/BankDetailsMasterlist';
 import FinanceControlsDashboard from './components/FinanceControlsDashboard';
 
@@ -152,7 +151,7 @@ function App() {
                 <Route path="/repository" element={
                   <ProtectedRoute>
                     <AppLayout title="Invoice Repository" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}><FileText className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
-                      <InvoiceRepository />
+                      <Dashboard mode="repository" />
                     </AppLayout>
                   </ProtectedRoute>
                 } />

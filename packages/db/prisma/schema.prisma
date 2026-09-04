@@ -485,6 +485,13 @@ model PaymentBatch {
   cancelled_by         String?
   cancelled_at         DateTime?
   cancellation_reason  String?
+  // QuickBooks "Pay Bills"-style payment setup chosen by the Accounting
+  // Associate while the batch is DRAFT / RETURNED_FOR_CORRECTION, before it is
+  // submitted for supervisor review. Mirrors the QB Pay Bills dialog (method,
+  // bank account, payment date). payment_method: CHECK | EFT | WIRE.
+  payment_method        String?
+  payment_bank_account  String?
+  payment_date          DateTime?
   payments             Payment[]
   bill_stubs           BillStub[]
   vendor_bill_stubs    VendorBillStub[]
@@ -814,6 +821,27 @@ model Notification {
   @@index([created_at])
   @@index([invoice_id])
   @@map("APInvoice_Notification")
+}
+
+model EmailIntakeEvent {
+  id            String   @id @default(uuid())
+  source        String
+  mailbox       String?
+  message_id    String?
+  attachment_id String?
+  file_name     String?
+  stage         String
+  status        String   @default("SUCCESS")
+  invoice_id    String?
+  error         String?
+  metadata      Json?
+  created_at    DateTime @default(now())
+
+  @@index([created_at])
+  @@index([source, created_at])
+  @@index([message_id])
+  @@index([status, created_at])
+  @@map("APInvoice_EmailIntakeEvent")
 }
 
 model FinanceControlRun {

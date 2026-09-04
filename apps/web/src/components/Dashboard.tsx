@@ -146,7 +146,7 @@ function isReturnedSignatureForUser(
   );
 }
 
-export default function Dashboard() {
+export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' | 'repository' } = {}) {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuth();
@@ -439,15 +439,21 @@ export default function Dashboard() {
     const queryId = new URLSearchParams(location.search).get('invoiceId');
     const targetId = state?.selectedInvoiceId || queryId;
     if (targetId && invoices.length > 0) {
+      if (mode === 'dashboard') {
+        // Static dashboard: hand the invoice off to the functional Invoice
+        // Repository page instead of opening an action panel here.
+        navigate(`/repository?invoiceId=${encodeURIComponent(targetId)}`, { replace: true });
+        return;
+      }
       const target = invoices.find(inv => inv.id === targetId);
       if (target) {
         setDetailTab('overview');
         setSelectedInvoice(target);
-        // Clear the state so it doesn't re-trigger on refresh
-        navigate('/', { replace: true, state: {} });
+        // Clear the state/query so it doesn't re-trigger on refresh
+        navigate('/repository', { replace: true, state: {} });
       }
     }
-  }, [location.state, location.search, invoices, navigate]);
+  }, [location.state, location.search, invoices, navigate, mode]);
 
   // Keep an open invoice detail panel synchronized with background refreshes.
   useEffect(() => {
@@ -1044,10 +1050,11 @@ export default function Dashboard() {
 
     try {
       setPosting(true);
+      let postResponse: any = null;
       try {
-        const response = await invoiceApi.post(selectedInvoice.id, bypassVarianceCheck);
-        if (response.data?.payment_scheduled === false) {
-          throw new Error(response.data?.payment_schedule_error || 'Invoice was posted, but its payment record could not be created. Open Payment Batches to complete payment setup.');
+        postResponse = await invoiceApi.post(selectedInvoice.id, bypassVarianceCheck);
+        if (postResponse.data?.payment_scheduled === false) {
+          throw new Error(postResponse.data?.payment_schedule_error || 'Invoice was posted, but its payment record could not be created. Open Payment Batches to complete payment setup.');
         }
       } catch (error: any) {
         const message = error?.response?.data?.error?.message || error?.response?.data?.message || '';
@@ -1060,12 +1067,18 @@ export default function Dashboard() {
         // override so advisory checks remain recorded and financial controls
         // are not bypassed.
         setBypassVarianceCheck(false);
-        const response = await invoiceApi.post(selectedInvoice.id, false);
-        if (response.data?.payment_scheduled === false) {
-          throw new Error(response.data?.payment_schedule_error || 'Invoice was posted, but its payment record could not be created. Open Payment Batches to complete payment setup.');
+        postResponse = await invoiceApi.post(selectedInvoice.id, false);
+        if (postResponse.data?.payment_scheduled === false) {
+          throw new Error(postResponse.data?.payment_schedule_error || 'Invoice was posted, but its payment record could not be created. Open Payment Batches to complete payment setup.');
         }
       }
-      showToast('Invoice posted to accounting successfully', 'success');
+      const batchInfo = postResponse?.data?.batch;
+      showToast(
+        batchInfo?.batched
+          ? `Invoice posted to accounting — added to batch ${batchInfo.batch_number}. Open Payment Batches to submit and process it.`
+          : 'Invoice posted to accounting successfully',
+        'success'
+      );
       await refresh();
       setSelectedInvoice(null);
     } catch (error: any) {
@@ -1989,11 +2002,11 @@ ${dataRows}
       {/* Primary Action Bar */}
           <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Dashboard</h2>
-              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{user?.role === 'SUPERADMIN' ? 'System maintenance, user and role management' : 'Manage invoices, approvals, and validations'}</p>
+              <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>{mode === 'repository' ? 'Invoice Repository' : 'Dashboard'}</h2>
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{mode === 'repository' ? 'Open an invoice to approve, reject, post, and manage payments' : user?.role === 'SUPERADMIN' ? 'System maintenance, user and role management' : 'Manage invoices, approvals, and validations'}</p>
             </div>
             <div className="flex items-center gap-3">
-              {user && (user.role === 'PURCHASING_COORDINATOR' || user.role === 'IT_ADMIN') && (
+              {mode === 'repository' && user && (user.role === 'PURCHASING_COORDINATOR' || user.role === 'IT_ADMIN') && (
                 <button
                   onClick={() => setShowUploadModal(true)}
                   className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition-all"
@@ -2379,7 +2392,15 @@ ${dataRows}
             <div data-invoice-table>
             <InvoiceTable
               invoices={displayedInvoices}
-              onInvoiceClick={(inv) => { setDetailTab('overview'); setSelectedInvoice(inv); }}
+              onInvoiceClick={(inv) => {
+                if (mode === 'dashboard') {
+                  // Static dashboard — take the user to the functional page
+                  navigate(`/repository?invoiceId=${encodeURIComponent(inv.id)}`);
+                  return;
+                }
+                setDetailTab('overview');
+                setSelectedInvoice(inv);
+              }}
               loading={loading}
               emptyHint={activeFilterCount > 0 ? 'filters' : 'default'}
             />
@@ -2648,8 +2669,8 @@ ${dataRows}
         </div>
       </div>
 
-      {/* Invoice Detail Panel */}
-      {selectedInvoice && (
+      {/* Invoice Detail Panel — functional page only; the dashboard is static */}
+      {mode === 'repository' && selectedInvoice && (
         <div className="fixed right-0 top-0 h-full w-full sm:w-[560px] lg:w-[640px] flex flex-col z-50 animate-slide-in-right" style={{ background: 'var(--bg-card)', borderLeft: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
           {/* Panel Header — Invoice number + status + close */}
           <div className="px-6 py-4 flex-shrink-0" style={{ borderBottom: '1px solid var(--border-color)' }}>
@@ -3644,7 +3665,7 @@ ${dataRows}
       )}
 
       {/* NextGen Alias Management Modal */}
-      {showAliasModal && (
+      {mode === 'repository' && showAliasModal && (
         <div className="fixed inset-0 flex items-center justify-center z-50 animate-backdrop" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
           <div className="max-w-lg w-full mx-2 sm:mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div className="p-6">
@@ -3743,7 +3764,7 @@ ${dataRows}
       )}
 
       {/* Reject Modal */}
-      {showRejectModal && (
+      {mode === 'repository' && showRejectModal && (
         <div className="fixed inset-0 flex items-center justify-center z-50 animate-backdrop" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
           <div className="max-w-md w-full mx-2 sm:mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div className="p-6">
@@ -3786,7 +3807,7 @@ ${dataRows}
       )}
 
       {/* Return to Previous Approver Modal */}
-      {showReturnModal && (
+      {mode === 'repository' && showReturnModal && (
         <div className="fixed inset-0 flex items-center justify-center z-50 animate-backdrop" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
           <div className="max-w-md w-full mx-2 sm:mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div className="p-6">
@@ -3830,7 +3851,7 @@ ${dataRows}
       )}
 
       {/* Delete Confirmation Modal */}
-      {showDeleteModal && selectedInvoice && (
+      {mode === 'repository' && showDeleteModal && selectedInvoice && (
         <div className="fixed inset-0 flex items-center justify-center z-50 animate-backdrop" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
           <div className="max-w-md w-full mx-2 sm:mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div className="p-6">
@@ -3871,7 +3892,7 @@ ${dataRows}
       )}
 
       {/* Send Payment Confirmation Modal */}
-      {showConfirmSendModal && selectedInvoice && (
+      {mode === 'repository' && showConfirmSendModal && selectedInvoice && (
         <div className="fixed inset-0 flex items-center justify-center z-50 animate-backdrop" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
           <div className="max-w-md w-full mx-2 sm:mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div className="p-6">
@@ -3922,7 +3943,7 @@ ${dataRows}
       )}
 
       {/* Edit Invoice Modal */}
-      {showEditModal && selectedInvoice && (
+      {mode === 'repository' && showEditModal && selectedInvoice && (
         <div className="fixed inset-0 flex items-center justify-center z-50 animate-backdrop" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
           <div className="max-w-2xl w-full mx-2 sm:mx-4 max-h-[90vh] overflow-y-auto rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div className="p-6">
@@ -4276,10 +4297,10 @@ ${dataRows}
       </div>
 
       {/* Upload Invoice Modal */}
-      <UploadInvoiceModal isOpen={showUploadModal} onClose={() => setShowUploadModal(false)} />
+      {mode === 'repository' && <UploadInvoiceModal isOpen={showUploadModal} onClose={() => setShowUploadModal(false)} />}
 
       {/* Hold for Batch Threshold Modal */}
-      {showHoldModal && selectedInvoice && (
+      {mode === 'repository' && showHoldModal && selectedInvoice && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.5)' }} onClick={() => !holdingInvoice && setShowHoldModal(false)}>
           <div className="w-full max-w-md rounded-2xl p-6 animate-scale-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 24px 64px rgba(0,0,0,0.3)' }} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-3 mb-4">
@@ -4352,7 +4373,7 @@ ${dataRows}
       )}
 
       {/* Bank Details Change Request Modal */}
-      {showBankChangeModal && selectedInvoice && (
+      {mode === 'repository' && showBankChangeModal && selectedInvoice && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.5)' }} onClick={() => !submittingBankChange && setShowBankChangeModal(false)}>
           <div className="w-full max-w-md rounded-2xl p-6 animate-scale-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 24px 64px rgba(0,0,0,0.3)' }} onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Request Bank Details Change</h3>

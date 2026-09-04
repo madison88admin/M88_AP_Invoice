@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Package, Play, X, AlertCircle, CheckCircle, Clock, DollarSign, ArrowLeft, CheckSquare, Calendar, Loader2, Paperclip, Pencil, Download, Upload, ChevronDown, ChevronUp, SlidersHorizontal, Send } from 'lucide-react';
+import { Package, Play, X, AlertCircle, CheckCircle, Clock, DollarSign, ArrowLeft, CheckSquare, Calendar, CreditCard, Loader2, Paperclip, Pencil, Download, Upload, ChevronDown, ChevronUp, SlidersHorizontal, Send } from 'lucide-react';
 import { paymentBatchApi, vendorApi, qbApi, invoiceApi } from '../lib/api';
 import { splitServerAndLocalSelections, retainLocalSelections, toggleId, toPayableIds, isLocalOnlySelection } from '../lib/queueSelection';
 import axios from 'axios';
@@ -94,6 +94,10 @@ interface PaymentBatch {
   cancellation_reason?: string;
   return_reason?: string;
   review_note?: string;
+  // QuickBooks "Pay Bills"-style setup chosen by the Associate on the DRAFT batch
+  payment_method?: string | null; // CHECK | EFT | WIRE
+  payment_bank_account?: string | null;
+  payment_date?: string | null;
   payments: Payment[];
   vendor_bill_stubs?: VendorBillStub[];
 }
@@ -122,6 +126,9 @@ function mapBatchPayload(b: any): PaymentBatch {
     cancellation_reason: b.cancellation_reason || undefined,
     return_reason: b.return_reason || undefined,
     review_note: b.review_note || undefined,
+    payment_method: b.payment_method || null,
+    payment_bank_account: b.payment_bank_account || null,
+    payment_date: b.payment_date || null,
     vendor_bill_stubs: (b.vendor_bill_stubs || []).map((s: any) => ({
       id: s.id,
       vendor: s.vendor,
@@ -170,11 +177,46 @@ function mapBatchPayload(b: any): PaymentBatch {
   };
 }
 
+/** Batch statuses offered in the Batches-tab status filter (workflow order). */
+const BATCH_STATUSES = [
+  'DRAFT',
+  'PENDING_SUPERVISOR_REVIEW',
+  'RETURNED_FOR_CORRECTION',
+  'REVIEWED',
+  'EXPORTED_TO_BANK',
+  'PROCESSING',
+  'PROCESSED',
+  'PARTIALLY_PAID',
+  'FAILED',
+  'CANCELLED',
+] as const;
+
+/** QuickBooks Pay Bills-style payment method options (batch level). */
+const PAYMENT_METHOD_OPTIONS = [
+  { value: 'CHECK', label: 'Check' },
+  { value: 'EFT', label: 'EFT / ACH (Bank Transfer)' },
+  { value: 'WIRE', label: 'Wire' },
+] as const;
+
+const PAYMENT_METHOD_LABELS: Record<string, string> = Object.fromEntries(
+  PAYMENT_METHOD_OPTIONS.map((o) => [o.value, o.label])
+);
+
+/** Next Wednesday as YYYY-MM-DD (local time) — the app's scheduled pay-run day. */
+function nextWednesdayInputValue(): string {
+  const d = new Date();
+  const diff = (3 - d.getDay() + 7) % 7; // 3 = Wednesday
+  d.setDate(d.getDate() + diff);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 export default function PaymentBatchManager() {
   const { user } = useAuth();
   const { showToast } = useToast();
   const [activeTab, setActiveTab] = useState<'scheduled' | 'batches'>('scheduled');
   const [batches, setBatches] = useState<PaymentBatch[]>([]);
+  const [batchStatusFilter, setBatchStatusFilter] = useState('');
   const [stuckBatches, setStuckBatches] = useState<(PaymentBatch & { days_stuck?: number; pending_payments?: number })[]>([]);
   const [stuckLoading, setStuckLoading] = useState(false);
   const [scheduledPayments, setScheduledPayments] = useState<ScheduledPayment[]>([]);
@@ -225,6 +267,10 @@ export default function PaymentBatchManager() {
   const [showBankChargeModal, setShowBankChargeModal] = useState(false);
   const [bankChargeForm, setBankChargeForm] = useState({ paymentId: '', amount: '', note: '' });
   const [bankChargeSaving, setBankChargeSaving] = useState(false);
+  const [payBillsForm, setPayBillsForm] = useState({ paymentMethod: '', bankAccount: '', paymentDate: '' });
+  const [payBillsSaving, setPayBillsSaving] = useState(false);
+  const [quickSubmittingId, setQuickSubmittingId] = useState<string | null>(null);
+  const [bulkEndorsing, setBulkEndorsing] = useState(false);
   const [qbExporting, setQbExporting] = useState(false);
   const [bulkReleasing, setBulkReleasing] = useState(false);
   const [bulkPostingAll, setBulkPostingAll] = useState(false);
@@ -278,12 +324,16 @@ export default function PaymentBatchManager() {
     try {
       const response = await paymentBatchApi.getAll();
       const data = response.data || [];
-      setBatches(data.map((b: any) => mapBatchPayload(b)));
+      const mapped = data.map((b: any) => mapBatchPayload(b));
+      setBatches(mapped);
+      return mapped;
     } catch (error) {
       console.error('Failed to load payment batches:', error);
       setBatches([]);
+      return [];
+    } finally {
+      loadStuckBatches();
     }
-    loadStuckBatches();
   }, [loadStuckBatches]);
 
   const loadScheduledPayments = useCallback(async () => {
@@ -380,7 +430,13 @@ export default function PaymentBatchManager() {
       if (response.data?.payment_scheduled === false) {
         showToast(response.data?.payment_schedule_error || `Invoice posted, but payment scheduling needs attention.`, 'error');
       } else {
-        showToast(`Invoice ${payment.invoice?.invoice_number} posted and added to the payment queue.`, 'success');
+        const batchInfo = response.data?.batch;
+        showToast(
+          batchInfo?.batched
+            ? `Invoice ${payment.invoice?.invoice_number} posted — added to batch ${batchInfo.batch_number}. Open the batch to process it.`
+            : `Invoice ${payment.invoice?.invoice_number} posted and added to the payment queue.`,
+          'success'
+        );
       }
       await loadScheduledPayments();
     } catch (error: any) {
@@ -523,7 +579,7 @@ export default function PaymentBatchManager() {
   useEffect(() => {
     const init = async () => {
       setLoading(true);
-      await Promise.all([
+      const [loadedBatches] = await Promise.all([
         loadBatches(),
         loadScheduledPayments(),
         vendorApi.getAll().then((res) => {
@@ -531,6 +587,21 @@ export default function PaymentBatchManager() {
           setVendorList(vendors);
         }).catch(() => setVendorList([])),
       ]);
+      // Deep link: /payment-batches?batch=<batchId> opens that batch directly
+      // (used by "Post & Create Batch" actions elsewhere in the app).
+      const params = new URLSearchParams(window.location.search);
+      const openBatchId = params.get('batch');
+      if (openBatchId) {
+        const target = (loadedBatches || []).find((b: PaymentBatch) => b.id === openBatchId);
+        if (target) {
+          setSelectedBatch(target);
+          setActiveTab('batches');
+        }
+        // Clean the query param so a refresh doesn't keep re-opening it
+        params.delete('batch');
+        const qs = params.toString();
+        window.history.replaceState(null, '', qs ? `${window.location.pathname}?${qs}` : window.location.pathname);
+      }
       setLoading(false);
     };
     init();
@@ -833,15 +904,27 @@ export default function PaymentBatchManager() {
     setProcessing(true);
     try {
       const response = await paymentBatchApi.create(payableSelectedIds);
-      const batch = response.data?.batches?.[0] || response.data?.batch;
-      if (batch?.id) await paymentBatchApi.submit(batch.id);
-      await Promise.all([loadBatches(), loadScheduledPayments()]);
+      const firstBatch = response.data?.batches?.[0] || response.data?.batch;
+      const batchCount = Number(response.data?.batch_count || 1);
       setSelectedPaymentIds(new Set());
+      await loadScheduledPayments();
+      const reloaded = await loadBatches();
       setActiveTab('batches');
-      setActionMessage({ type: 'success', text: 'Batch validated, grouped by vendor, and submitted for supervisor review.' });
+      if (firstBatch?.id) {
+        // Open the new batch so the Associate completes the Pay Bills setup, then submits.
+        const target = (reloaded || []).find((b: PaymentBatch) => b.id === firstBatch.id);
+        const opened = target || mapBatchPayload(firstBatch);
+        setSelectedBatch(opened);
+        showToast(
+          `Batch ${opened.batch_number} created — complete the Payment Setup (method + date), then click Submit for Supervisor Review.`,
+          'success'
+        );
+      } else {
+        showToast(`${batchCount} batch${batchCount === 1 ? '' : 'es'} created — open ${batchCount === 1 ? 'it' : 'them'} in the Batches tab to complete the Payment Setup and submit.`, 'success');
+      }
     } catch (error: any) {
-      const msg = error?.response?.data?.error?.message || 'Unable to create and submit payment batch';
-      setActionMessage({ type: 'error', text: msg });
+      const msg = error?.response?.data?.error?.message || 'Unable to create payment batch';
+      showToast(msg, 'error');
     } finally {
       setProcessing(false);
     }
@@ -901,7 +984,59 @@ export default function PaymentBatchManager() {
     }
   };
 
+  // QB Pay Bills-style setup: while a batch is DRAFT / RETURNED_FOR_CORRECTION the
+  // Associate picks the payment method, bank account, and payment date before it can
+  // be submitted for supervisor review.
+  const payBillsEditable = isAssociate && ['DRAFT', 'RETURNED_FOR_CORRECTION'].includes(selectedBatch?.status || '');
+  const payBillsComplete = Boolean(selectedBatch?.payment_method && selectedBatch?.payment_date);
+
+  // Seed the Pay Bills form whenever a different batch is opened (default date = next Wednesday).
+  useEffect(() => {
+    if (!selectedBatch) return;
+    setPayBillsForm({
+      paymentMethod: selectedBatch.payment_method || '',
+      bankAccount: selectedBatch.payment_bank_account || '',
+      paymentDate: selectedBatch.payment_date ? String(selectedBatch.payment_date).slice(0, 10) : nextWednesdayInputValue(),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedBatch?.id]);
+
+  const handleSavePayBills = async () => {
+    if (!selectedBatch) return;
+    if (!payBillsForm.paymentMethod || !payBillsForm.paymentDate) {
+      showToast('Payment method and payment date are required (Pay Bills setup).', 'error');
+      return;
+    }
+    setPayBillsSaving(true);
+    try {
+      await paymentBatchApi.updatePaymentBillsSetup(selectedBatch.id, {
+        paymentMethod: payBillsForm.paymentMethod,
+        bankAccount: payBillsForm.bankAccount.trim() || null,
+        paymentDate: payBillsForm.paymentDate,
+      });
+      showToast('Payment setup saved — batch is ready to submit for supervisor review', 'success');
+      await Promise.all([loadBatches(), refreshSelectedBatch(selectedBatch.id)]);
+    } catch (error: any) {
+      const msg = error?.response?.data?.error?.message || 'Failed to save payment setup';
+      showToast(msg, 'error');
+    } finally {
+      setPayBillsSaving(false);
+    }
+  };
+
   const endorsedPayments = selectedBatch?.payments.filter(p => p.status === 'ENDORSED') ?? [];
+
+  // Payments that still carry the "Endorse Bill Stub" action — the ones a Bulk
+  // "Endorse All" would cover (mirrors the per-row button eligibility: batch
+  // reviewed/exported, payment SCHEDULED or APPROVED_FOR_PAYMENT, and the row
+  // that owns the vendor stub when one exists).
+  const endorsablePayments = (selectedBatch?.payments || []).filter((payment) => {
+    if (!selectedBatch) return false;
+    if (!['REVIEWED', 'EXPORTED_TO_BANK'].includes(selectedBatch.status)) return false;
+    if (!['SCHEDULED', 'APPROVED_FOR_PAYMENT'].includes(payment.status)) return false;
+    const groupedStub = selectedBatch.vendor_bill_stubs?.find((stub) => stub.lines.some((line) => line.payment_id === payment.id));
+    return !groupedStub || groupedStub.lines[0]?.payment_id === payment.id;
+  });
 
   const openStubModal = (payment: Payment) => {
     const stub = payment.bill_stub;
@@ -942,6 +1077,56 @@ export default function PaymentBatchManager() {
       showToast(msg, 'error');
     } finally {
       setStubSaving(false);
+    }
+  };
+
+  /** Submit a DRAFT batch straight from the Batches list (Pay Bills setup already complete). */
+  const quickSubmitBatch = async (batch: PaymentBatch) => {
+    setQuickSubmittingId(batch.id);
+    try {
+      await paymentBatchApi.submit(batch.id);
+      showToast(`Batch ${batch.batch_number} submitted for supervisor review`, 'success');
+      if (selectedBatch?.id === batch.id) { setSelectedBatch(null); }
+      await loadBatches();
+    } catch (error: any) {
+      const msg = error?.response?.data?.error?.message || 'Failed to submit batch';
+      showToast(msg, 'error');
+      await loadBatches();
+    } finally {
+      setQuickSubmittingId(null);
+    }
+  };
+
+  /** Endorse every eligible payment in one go using the same defaults as the per-payment modal. */
+  const handleEndorseAll = async () => {
+    if (!selectedBatch || endorsablePayments.length === 0) return;
+    setBulkEndorsing(true);
+    let done = 0;
+    let failed = 0;
+    try {
+      for (const payment of endorsablePayments) {
+        const groupedStub = selectedBatch.vendor_bill_stubs?.find((stub) => stub.lines.some((line) => line.payment_id === payment.id));
+        const groupedTotal = groupedStub ? groupedStub.total_amount : Number(payment.amount);
+        try {
+          await paymentBatchApi.endorseBillStub(selectedBatch.id, payment.id, {
+            stubDate: new Date().toISOString().split('T')[0],
+            type: 'Bank Transfer',
+            originalAmount: groupedTotal,
+            balance: groupedTotal,
+            paidAmount: groupedTotal,
+          });
+          done++;
+        } catch { failed++; }
+      }
+      showToast(
+        done > 0
+          ? `${done} payment${done === 1 ? '' : 's'} endorsed in one go${failed > 0 ? `; ${failed} failed — endorse those individually` : ''}`
+          : 'No payments could be endorsed — endorse individually',
+        failed === done ? 'error' : 'success'
+      );
+      await Promise.all([loadBatches(), refreshSelectedBatch(selectedBatch.id)]);
+    } finally {
+      setBulkEndorsing(false);
     }
   };
 
@@ -1188,6 +1373,9 @@ export default function PaymentBatchManager() {
   const selectedTotal = selectedPayments.reduce((sum, p) => sum + p.amount, 0);
   const payableSelectedIds = toPayableIds(scheduledPayments, selectedPaymentIds);
   const previewVendors = Array.from(new Set(selectedPayments.map(p => p.invoice.vendor.name))).filter(Boolean);
+  const visibleBatches = batchStatusFilter
+    ? batches.filter((b) => b.status === batchStatusFilter)
+    : batches;
 
   const dateCell = (d?: string | null) => (d ? new Date(d).toLocaleDateString() : '—');
   const filterLabel: React.CSSProperties = { display: 'block', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4, color: 'var(--text-muted)' };
@@ -1633,7 +1821,7 @@ export default function PaymentBatchManager() {
                       onMouseLeave={(e) => { if (!processing) e.currentTarget.style.background = 'var(--accent-lime)'; }}
                     >
                       {processing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Package className="h-4 w-4 mr-2" />}
-                      Create & Submit Batch
+                      Create Batch & Set Up
                     </button>
                   )}
                   </div>
@@ -1670,7 +1858,7 @@ export default function PaymentBatchManager() {
                   ) : (
                     <>
                       <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No post-approved payments found</p>
-                      <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Post and approve invoices in Accounting first</p>
+                      <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Posting an invoice automatically adds it to a batch — open the Batches tab to submit and process it</p>
                     </>
                   )}
                 </div>
@@ -1869,6 +2057,40 @@ export default function PaymentBatchManager() {
               </label>}
             </div>
 
+            {/* Status filter — inspect batches by status (DRAFT, PROCESSED, EXPORTED_TO_BANK, etc.) */}
+            <div className="flex flex-wrap items-center gap-3 mb-4 p-3 rounded-xl" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
+              <div className="flex items-center gap-2">
+                <SlidersHorizontal className="h-4 w-4" strokeWidth={1.75} style={{ color: 'var(--text-muted)' }} />
+                <label htmlFor="batch-status-filter" style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>Status</label>
+              </div>
+              <select
+                id="batch-status-filter"
+                value={batchStatusFilter}
+                onChange={(e) => setBatchStatusFilter(e.target.value)}
+                style={{ ...filterInput, width: 'auto', minWidth: 220, padding: '7px 12px' }}
+              >
+                <option value="">All statuses</option>
+                {BATCH_STATUSES.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                {visibleBatches.length} of {batches.length} batch{batches.length === 1 ? '' : 'es'}
+              </span>
+              {batchStatusFilter && (
+                <button
+                  onClick={() => setBatchStatusFilter('')}
+                  className="text-xs font-semibold flex items-center gap-1 px-2 py-1 rounded-md transition-colors"
+                  style={{ color: 'var(--accent-purple)', background: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.85'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
+                >
+                  <X className="h-3 w-3" strokeWidth={2} />
+                  Clear
+                </button>
+              )}
+            </div>
+
             {/* Stuck-batch alert — EXPORTED_TO_BANK batches whose payments haven't been endorsed or confirmed PAID */}
             {stuckBatches.length > 0 && (
               <div className="mb-4 p-4 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-red) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 25%, transparent)' }}>
@@ -1907,15 +2129,19 @@ export default function PaymentBatchManager() {
               </div>
             )}
 
-            {batches.length === 0 ? (
+            {visibleBatches.length === 0 ? (
               <div className="text-center py-12">
                 <Package className="h-12 w-12 mx-auto mb-3" style={{ color: 'var(--text-muted)', opacity: 0.5 }} />
                 <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No payment batches found</p>
-                <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Select scheduled payments and create a batch first</p>
+                <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                  {batchStatusFilter
+                    ? `No batches with status ${batchStatusFilter} — pick another status or clear the filter`
+                    : 'Select scheduled payments and create a batch first'}
+                </p>
               </div>
             ) : (
               <div className="space-y-3">
-                {batches.map((batch) => (
+                {visibleBatches.map((batch) => (
                   <div
                     key={batch.id}
                     className="flex items-center justify-between p-4 rounded-xl cursor-pointer transition-colors"
@@ -1938,11 +2164,32 @@ export default function PaymentBatchManager() {
                         </div>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <div className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium" style={getStatusStyle(batch.status)}>
-                        {batch.status}
+                    <div className="flex items-center gap-3">
+                      <div className="text-right">
+                        <div className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium" style={getStatusStyle(batch.status)}>
+                          {batch.status}
+                        </div>
+                        <div className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>{new Date(batch.created_at).toLocaleDateString()}</div>
                       </div>
-                      <div className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>{new Date(batch.created_at).toLocaleDateString()}</div>
+                      {isAssociate && batch.status === 'DRAFT' && (
+                        batch.payment_method && batch.payment_date ? (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); quickSubmitBatch(batch); }}
+                            disabled={processing || quickSubmittingId === batch.id}
+                            className="flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
+                            style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}
+                            title="Pay Bills setup complete — submit for supervisor review"
+                          >
+                            {quickSubmittingId === batch.id ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Play className="h-3.5 w-3.5 mr-1" strokeWidth={2} />}
+                            Submit
+                          </button>
+                        ) : (
+                          <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-[11px] font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-amber) 12%, transparent)', color: 'var(--accent-amber)', border: '1px solid color-mix(in srgb, var(--accent-amber) 25%, transparent)' }}>
+                            <AlertCircle className="h-3.5 w-3.5 mr-1" strokeWidth={2} />
+                            Setup needed to submit
+                          </span>
+                        )
+                      )}
                     </div>
                   </div>
                 ))}
@@ -2005,6 +2252,72 @@ export default function PaymentBatchManager() {
                 </div>
               </div>
 
+              {payBillsEditable && (
+                <div className="p-4 rounded-xl mb-6" style={{ background: 'color-mix(in srgb, var(--accent-blue) 6%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-blue) 25%, transparent)' }}>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center">
+                      <CreditCard className="h-4 w-4 mr-2" style={{ color: 'var(--accent-blue)' }} strokeWidth={1.75} />
+                      <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Payment Setup (Pay Bills)</span>
+                    </div>
+                    {payBillsComplete && (
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-green) 12%, transparent)', color: 'var(--accent-green)' }}>
+                        <CheckCircle className="h-3.5 w-3.5 mr-1" strokeWidth={1.75} /> Ready to submit
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+                    <div>
+                      <label style={filterLabel}>Payment method *</label>
+                      <select value={payBillsForm.paymentMethod} onChange={(e) => setPayBillsForm({ ...payBillsForm, paymentMethod: e.target.value })} style={filterInput}>
+                        <option value="">Select method…</option>
+                        {PAYMENT_METHOD_OPTIONS.map((o) => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={filterLabel}>Payment date *</label>
+                      <input type="date" value={payBillsForm.paymentDate} onChange={(e) => setPayBillsForm({ ...payBillsForm, paymentDate: e.target.value })} style={filterInput} />
+                    </div>
+                    <div>
+                      <label style={filterLabel}>Bank account</label>
+                      <input value={payBillsForm.bankAccount} onChange={(e) => setPayBillsForm({ ...payBillsForm, bankAccount: e.target.value })} placeholder="e.g. HSBC USD Operating" style={filterInput} />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button onClick={handleSavePayBills} disabled={payBillsSaving || processing} className="flex items-center px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors disabled:opacity-50" style={{ background: 'var(--accent-blue)', color: 'white' }}>
+                        {payBillsSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle className="h-4 w-4 mr-2" strokeWidth={1.75} />}
+                        {payBillsComplete ? 'Update Setup' : 'Save Setup'}
+                      </button>
+                    </div>
+                  </div>
+                  <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
+                    QuickBooks Pay Bills-style setup: choose how this batch will be paid, from which bank account, and on which date. Method and date are required before this batch can be submitted for supervisor review.
+                  </p>
+                </div>
+              )}
+
+              {!payBillsEditable && selectedBatch.payment_method && (
+                <div className="flex flex-wrap items-center gap-2 mb-6 p-3 rounded-xl" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
+                  <span className="text-xs font-semibold uppercase tracking-wider flex items-center" style={{ color: 'var(--text-muted)' }}>
+                    <CreditCard className="h-3.5 w-3.5 mr-1.5" strokeWidth={1.75} /> Pay Bills setup:
+                  </span>
+                  <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-blue) 12%, transparent)', color: 'var(--accent-blue)' }}>
+                    {PAYMENT_METHOD_LABELS[selectedBatch.payment_method] || selectedBatch.payment_method}
+                  </span>
+                  {selectedBatch.payment_date && (
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium" style={{ background: 'var(--bg-card-hover)', color: 'var(--text-secondary)' }}>
+                      <Calendar className="h-3.5 w-3.5 mr-1.5" strokeWidth={1.75} />
+                      {new Date(selectedBatch.payment_date).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}
+                    </span>
+                  )}
+                  {selectedBatch.payment_bank_account && (
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium" style={{ background: 'var(--bg-card-hover)', color: 'var(--text-secondary)' }}>
+                      {selectedBatch.payment_bank_account}
+                    </span>
+                  )}
+                </div>
+              )}
+
               {(['DRAFT', 'RETURNED_FOR_CORRECTION'].includes(selectedBatch.status)) && isAssociate && (
                 <div className="flex items-center space-x-3 mb-6">
                   <button onClick={openBankChargeModal} disabled={processing}
@@ -2016,7 +2329,8 @@ export default function PaymentBatchManager() {
                     <DollarSign className="h-4 w-4 mr-2" strokeWidth={1.75} />
                     {chargedPayment ? `Bank Charge: ${chargedPayment.currency} ${Number(chargedPayment.bank_charge_amount).toLocaleString()} (Edit)` : 'Apply Bank Charge'}
                   </button>
-                  <button onClick={() => handleBatchAction('submit', selectedBatch.id)} disabled={processing}
+                  <button onClick={() => handleBatchAction('submit', selectedBatch.id)} disabled={processing || !payBillsComplete}
+                    title={!payBillsComplete ? 'Complete the Payment Setup (method + date) first' : undefined}
                     className="flex items-center px-4 py-2.5 rounded-xl transition-colors disabled:opacity-50 text-sm font-semibold"
                     style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}
                     onMouseEnter={(e) => { if (!processing) e.currentTarget.style.background = 'var(--accent-lime-hover)'; }}
@@ -2034,6 +2348,11 @@ export default function PaymentBatchManager() {
                     <X className="h-4 w-4 mr-2" strokeWidth={1.75} />
                     Cancel Batch
                   </button>
+                  {!payBillsComplete && (
+                    <span className="text-xs font-medium" style={{ color: 'var(--accent-amber)' }}>
+                      Complete the Payment Setup (method + date) to enable Submit.
+                    </span>
+                  )}
                 </div>
               )}
 
@@ -2095,7 +2414,21 @@ export default function PaymentBatchManager() {
                   </div>
                 </div>
               )}
-              <h3 className="text-md font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Payments in Batch</h3>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-md font-semibold" style={{ color: 'var(--text-primary)' }}>Payments in Batch</h3>
+                {endorsablePayments.length > 0 && (
+                  <button
+                    onClick={handleEndorseAll}
+                    disabled={processing || bulkEndorsing}
+                    className="flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
+                    style={{ background: 'var(--accent-amber)', color: 'var(--bg-base)' }}
+                    title="Endorse every payment that still needs a bill stub — auto-filled amounts and today's stub date (per-payment endorse stays available for special stubs)"
+                  >
+                    {bulkEndorsing ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <CheckCircle className="h-4 w-4 mr-1.5" strokeWidth={2} />}
+                    Endorse All ({endorsablePayments.length})
+                  </button>
+                )}
+              </div>
               <div className="overflow-x-auto">
                 <table className="min-w-full">
                   <thead style={{ background: 'var(--bg-elevated)' }}>

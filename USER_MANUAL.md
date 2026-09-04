@@ -279,6 +279,17 @@ Based on invoice amount:
    - PO existence in NextGen
 6. If checks pass → Invoice posted to QuickBooks
 7. Status changes to `POSTED_TO_QB`
+8. The scheduled payment is **automatically placed in a payment batch** (DRAFT) — it appears immediately in **Payment Batches → Batches** tab
+9. Consecutive postings by the same Associate consolidate into the same open DRAFT batch
+10. Sub-$100 payments are not batched automatically — they stay HELD until Accounting approves their release, then they join a batch
+
+### Pay Bills Setup (before submitting a batch)
+Before a DRAFT batch can be submitted for supervisor review, the Associate must complete the **Payment Setup (Pay Bills)** card on the batch — the same choices QuickBooks "Pay Bills" asks for:
+1. **Payment method** — Check, EFT / ACH (Bank Transfer), or Wire
+2. **Payment date** — the intended payment-run date for the whole batch (defaults to the next Wednesday)
+3. **Bank account** — which company bank account the payments come from (optional free text for now)
+4. Click **Save Setup** — Submit for Supervisor Review unlocks once the method and date are saved
+5. Then process the batch: **Submit** → Supervisor **Review** → **Export** → endorse bill stubs → **Match Confirmation** → batch `PROCESSED`
 
 ### Variance Check Bypass (Accounting Supervisor Only)
 If invoice has high variance (>5%) but is legitimate:

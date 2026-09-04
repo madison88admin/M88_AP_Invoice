@@ -188,6 +188,7 @@ export const paymentBatchApi = {
   review: (batchId: string, note?: string) => api.post(`/api/payment-batches/${batchId}/review`, { note }),
   returnForCorrection: (batchId: string, reason: string) => api.post(`/api/payment-batches/${batchId}/return`, { reason }),
   returnInvoices: (batchId: string, paymentIds: string[], reason: string) => api.post(`/api/payment-batches/${batchId}/return-invoices`, { paymentIds, reason }),
+  updatePaymentBillsSetup: (batchId: string, data: { paymentMethod?: string | null; bankAccount?: string | null; paymentDate?: string | null }) => api.post(`/api/payment-batches/${batchId}/payment-setup`, data),
   applyBankCharge: (batchId: string, paymentId: string, amount: number, note?: string) => api.post(`/api/payment-batches/${batchId}/bank-charge`, { paymentId, amount, note }),
   removeBankCharge: (batchId: string, paymentId: string) => api.delete(`/api/payment-batches/${batchId}/bank-charge/${paymentId}`),
   endorseBillStub: (batchId: string, paymentId: string, data: { stubDate?: string; type?: string; reference?: string; originalAmount?: number; balance?: number; discount?: number; paidAmount?: number; stubFile?: File | null }) => {

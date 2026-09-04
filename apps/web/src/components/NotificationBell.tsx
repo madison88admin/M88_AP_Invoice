@@ -64,7 +64,7 @@ export default function NotificationBell() {
                 type: typeMap[n.type] || 'info',
                 action: n.invoice_number ? {
                   label: 'View',
-                  onClick: () => window.open(`/?invoiceId=${n.invoice_id}`, '_self'),
+                  onClick: () => window.open(`/repository?invoiceId=${n.invoice_id}`, '_self'),
                 } : undefined,
               });
             }

@@ -959,6 +959,9 @@ export async function generatePaymentFile(batchId: string) {
   const paymentFile = {
     batch_number: batch.batch_number,
     batch_date: batch.created_at.toISOString().split('T')[0],
+    payment_method: batch.payment_method || null,
+    payment_bank_account: batch.payment_bank_account || null,
+    payment_date: batch.payment_date ? batch.payment_date.toISOString().split('T')[0] : null,
     total_amount: batch.total_amount,
     payment_count: batch.payment_count,
     payments: batch.payments.map((payment: any) => ({
@@ -1068,6 +1071,9 @@ export async function createPaymentBatch(
   const totalAmount = payments.reduce((sum: number, p: any) => sum + Number(p.amount), 0);
 
   // Create payment batch
+  // QB Pay Bills setup defaults: method = EFT, date = next Wednesday (the
+  // scheduled pay-run day). The Associate can change both while the batch is
+  // DRAFT before submitting — defaulting just removes the Save click.
   const batch = await prisma.paymentBatch.create({
     data: {
       batch_number: generateBatchNumber(),
@@ -1075,6 +1081,8 @@ export async function createPaymentBatch(
       payment_count: payments.length,
       status: PaymentBatchStatus.DRAFT as any,
       created_by: userId,
+      payment_method: 'EFT',
+      payment_date: getNextWednesday(),
       payments: {
         connect: paymentIds.map((id) => ({ id })),
       },
@@ -1120,6 +1128,127 @@ export async function createGroupedPaymentBatches(paymentIds: string[], userId: 
     batch_count: 1,
     payment_count: uniquePaymentIds.length,
   };
+}
+
+/**
+ * Auto-surface a payment as a payment batch the moment its invoice is posted
+ * to accounting — the batch shows up in Payment Batches immediately and is
+ * processed there (submit → supervisor review → export → endorse → payment
+ * confirmation) without a separate select-and-create step.
+ *
+ * The payment joins the poster's most recent still-open DRAFT batch of the
+ * same currency, so consecutive postings consolidate into a single batch;
+ * otherwise a fresh DRAFT batch is created. Sub-$100 HELD_BELOW_100 payments
+ * are skipped — they only batch after Accounting releases them.
+ *
+ * The Accounting team (Associate + Supervisor) is notified each time so they
+ * know a new batch is ready to process.
+ */
+export async function autoBatchPaymentOnPost(
+  payment: { id: string; invoice_id: string | null; amount: number; currency?: string | null; status: string },
+  userId: string,
+  invoiceInfo?: { invoice_number?: string | null; vendor_name?: string | null }
+) {
+  if (!payment?.id) return { batched: false, reason: 'NO_PAYMENT' };
+  if (payment.status !== 'SCHEDULED') {
+    return {
+      batched: false,
+      reason: payment.status === 'HELD_BELOW_100' ? 'HELD_BELOW_100' : `NOT_SCHEDULED (${payment.status})`,
+    };
+  }
+
+  const currency = String(payment.currency || 'USD').toUpperCase();
+
+  // Reuse the poster's most recent open DRAFT batch of the same currency so a
+  // run of postings lands in one batch instead of one tiny batch per invoice.
+  const openBatch = await prisma.paymentBatch.findFirst({
+    where: { status: PaymentBatchStatus.DRAFT as any, created_by: userId, currency },
+    orderBy: { created_at: 'desc' },
+  });
+
+  if (openBatch) {
+    await prisma.payment.update({
+      where: { id: payment.id },
+      data: { batch_id: openBatch.id },
+    });
+    const newTotal = Math.round((Number(openBatch.total_amount) + Number(payment.amount)) * 100) / 100;
+    await prisma.paymentBatch.update({
+      where: { id: openBatch.id },
+      data: {
+        total_amount: newTotal.toFixed(2),
+        payment_count: { increment: 1 },
+      },
+    });
+    await prisma.auditLog.create({
+      data: {
+        invoice_id: payment.invoice_id || null,
+        action: 'PAYMENT_ADDED_TO_BATCH',
+        performed_by: userId,
+        note: `Auto-batched on posting: payment ${payment.id} added to batch ${openBatch.batch_number} (new total ${newTotal.toFixed(2)}, ${openBatch.payment_count + 1} payments)`,
+      },
+    });
+    await notifyAccountingBatchReady(openBatch.batch_number, invoiceInfo, payment.invoice_id, 'ADDED');
+    logger.info(`[PaymentBatch] Auto-added payment ${payment.id} to batch ${openBatch.batch_number} (posted by ${userId})`);
+    return { batched: true, batch_id: openBatch.id, batch_number: openBatch.batch_number, action: 'ADDED' };
+  }
+
+  // No open DRAFT batch of the same currency from this user — create a fresh one.
+  const batch = await prisma.paymentBatch.create({
+    data: {
+      batch_number: generateBatchNumber(),
+      total_amount: Number(payment.amount).toFixed(2),
+      payment_count: 1,
+      currency,
+      status: PaymentBatchStatus.DRAFT as any,
+      created_by: userId,
+      // QB Pay Bills setup defaults (method = EFT, date = next Wednesday)
+      payment_method: 'EFT',
+      payment_date: getNextWednesday(),
+      payments: { connect: { id: payment.id } },
+    },
+  });
+  await prisma.auditLog.create({
+    data: {
+      invoice_id: payment.invoice_id || null,
+      action: 'PAYMENT_BATCH_CREATED',
+      performed_by: userId,
+      note: `Auto-batched on posting: batch ${batch.batch_number} created for payment ${payment.id} (${Number(payment.amount).toFixed(2)})`,
+    },
+  });
+  await notifyAccountingBatchReady(batch.batch_number, invoiceInfo, payment.invoice_id, 'CREATED');
+  logger.info(`[PaymentBatch] Auto-created batch ${batch.batch_number} for payment ${payment.id} (posted by ${userId})`);
+  return { batched: true, batch_id: batch.id, batch_number: batch.batch_number, action: 'CREATED' };
+}
+
+/** Notify the Accounting team (Associate + Supervisor) that a posted invoice's batch is ready to process. */
+async function notifyAccountingBatchReady(
+  batchNumber: string,
+  invoiceInfo: { invoice_number?: string | null; vendor_name?: string | null } | undefined,
+  invoiceId: string | null,
+  action: 'CREATED' | 'ADDED'
+) {
+  const invoiceNumber = invoiceInfo?.invoice_number?.trim() || '';
+  const vendorName = invoiceInfo?.vendor_name?.trim() || 'Unknown';
+  const title =
+    action === 'CREATED'
+      ? `Payment batch ${batchNumber} created`
+      : `Payment added to batch ${batchNumber}`;
+  const message =
+    action === 'CREATED'
+      ? `Posting created batch ${batchNumber} for invoice ${invoiceNumber} (${vendorName}) — open Payment Batches to submit and process it.`
+      : `Invoice ${invoiceNumber} (${vendorName}) was posted and added to batch ${batchNumber} — open Payment Batches to submit and process it.`;
+  for (const role of [UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR]) {
+    await inAppNotificationService.create({
+      invoice_id: invoiceId || undefined,
+      invoice_number: invoiceNumber || undefined,
+      vendor_name: vendorName,
+      title,
+      message,
+      type: 'success',
+      category: 'payment',
+      target_role: role,
+    });
+  }
 }
 
 export async function getPaymentBatches() {
@@ -1238,6 +1367,70 @@ export async function processPaymentBatch(
   return updatedBatch;
 }
 
+/** Payment methods offered on the QB Pay Bills-style batch setup. */
+export const PAYMENT_METHODS = ['CHECK', 'EFT', 'WIRE'] as const;
+
+export interface PaymentBillsSetupInput {
+  payment_method?: string | null; // CHECK | EFT | WIRE
+  payment_bank_account?: string | null;
+  payment_date?: string | null; // 'YYYY-MM-DD' or ISO date
+}
+
+/**
+ * Save the QuickBooks "Pay Bills"-style payment setup on a batch (method,
+ * bank account, payment date). Mirrors the QB Pay Bills dialog: the
+ * Accounting Associate chooses how the batch will be paid, from which bank
+ * account, and on which date BEFORE the batch leaves the draft stage.
+ */
+export async function updatePaymentBillsSetup(
+  batchId: string,
+  userId: string,
+  input: PaymentBillsSetupInput = {}
+) {
+  const methodRaw = (input?.payment_method || '').toString().trim().toUpperCase();
+  const method = methodRaw ? methodRaw : null;
+  if (method && !(PAYMENT_METHODS as readonly string[]).includes(method)) {
+    throw new AppError('payment_method must be one of: CHECK, EFT, WIRE', 400);
+  }
+
+  let paymentDate: Date | null = null;
+  if (input?.payment_date) {
+    const parsed = new Date(input.payment_date);
+    if (isNaN(parsed.getTime())) throw new AppError('payment_date must be a valid date', 400);
+    paymentDate = parsed;
+  }
+  const bankAccount =
+    typeof input?.payment_bank_account === 'string' && input.payment_bank_account.trim()
+      ? input.payment_bank_account.trim()
+      : null;
+
+  const batch = await prisma.paymentBatch.findUnique({ where: { id: batchId } });
+  if (!batch) throw new AppError('Payment batch not found', 404);
+  if (![PaymentBatchStatus.DRAFT, PaymentBatchStatus.RETURNED_FOR_CORRECTION].includes(batch.status as any)) {
+    throw new AppError('Payment setup can only be changed while the batch is a draft or returned for correction', 400);
+  }
+
+  const updated = await prisma.paymentBatch.update({
+    where: { id: batchId },
+    data: {
+      payment_method: method,
+      payment_bank_account: bankAccount,
+      payment_date: paymentDate,
+    },
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      action: 'PAYMENT_BATCH_PAYMENT_SETUP',
+      performed_by: userId,
+      note: `Pay Bills setup saved on batch ${batch.batch_number}: method=${method || '—'}, bank=${bankAccount || '—'}, date=${paymentDate ? paymentDate.toISOString().split('T')[0] : '—'}`,
+    },
+  });
+
+  logger.info(`[PaymentBatch] Pay Bills setup updated on ${batch.batch_number} by ${userId}`);
+  return updated;
+}
+
 export async function submitPaymentBatchForReview(batchId: string, userId: string) {
   const batch = await prisma.paymentBatch.findUnique({ where: { id: batchId }, include: { payments: true } });
   if (!batch) throw new AppError('Payment batch not found', 404);
@@ -1245,6 +1438,11 @@ export async function submitPaymentBatchForReview(batchId: string, userId: strin
     throw new AppError('Only draft or returned batches can be submitted', 400);
   }
   if (batch.payments.length === 0) throw new AppError('Cannot submit an empty batch', 400);
+  // QB "Pay Bills" gate: a batch cannot leave the draft stage without the
+  // payment setup (method + payment date at minimum) chosen by the Associate.
+  if (!batch.payment_method || !batch.payment_date) {
+    throw new AppError('Complete the Pay Bills payment setup first — payment method and payment date are required before submitting for review.', 400);
+  }
   return prisma.paymentBatch.update({
     where: { id: batchId },
     data: {

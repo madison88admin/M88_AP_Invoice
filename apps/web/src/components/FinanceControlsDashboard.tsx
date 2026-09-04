@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import api from '../lib/api';
-import { AlertTriangle, CheckCircle2, X, Filter, RefreshCw, Loader2, Clock, User, FileText, RotateCcw, Flag, CircleDot } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, X, Filter, RefreshCw, Loader2, Clock, User, FileText, RotateCcw, Flag, CircleDot, Mail } from 'lucide-react';
 
 type Finding = {
   id: string;
@@ -35,6 +35,23 @@ type Run = {
   findings: Finding[];
 };
 
+type IntakeEvent = {
+  id: string;
+  source: string;
+  stage: string;
+  status: string;
+  file_name?: string | null;
+  invoice_id?: string | null;
+  error?: string | null;
+  created_at: string;
+};
+
+type IntakeMonitor = {
+  latest_poll_at?: string | null;
+  failures_24h: number;
+  events: IntakeEvent[];
+};
+
 const SEV_COLOR: Record<string, string> = {
   CRITICAL: 'var(--accent-red)',
   HIGH: 'var(--accent-amber)',
@@ -64,8 +81,16 @@ export default function FinanceControlsDashboard() {
   const [codeFilter, setCodeFilter] = useState('');
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
   const [acting, setActing] = useState('');
+  const [intakeMonitor, setIntakeMonitor] = useState<IntakeMonitor | null>(null);
 
-  const load = useCallback(async () => setRuns((await api.get('/api/finance-controls/runs')).data), []);
+  const load = useCallback(async () => {
+    const [runResult, monitorResult] = await Promise.allSettled([
+      api.get('/api/finance-controls/runs'),
+      api.get('/api/email-intake-monitor?limit=50'),
+    ]);
+    if (runResult.status === 'fulfilled') setRuns(runResult.value.data);
+    if (monitorResult.status === 'fulfilled') setIntakeMonitor(monitorResult.value.data);
+  }, []);
   useEffect(() => { void load(); }, [load]);
 
   // Keep the selected run valid — after a fresh scan/reconcile, jump to the newest run.
@@ -143,6 +168,49 @@ export default function FinanceControlsDashboard() {
 
   return (
     <div className="space-y-5">
+      <div className="rounded-xl border overflow-hidden" style={{ background: 'var(--bg-card)' }}>
+        <div className="p-4 flex flex-wrap items-center gap-3 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
+          <Mail className="h-4 w-4" style={{ color: 'var(--accent-blue)' }} />
+          <div>
+            <div className="font-semibold">Invoice intake monitoring</div>
+            <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              Received → Attachment detected → Uploaded → Extracted → Created / Failed
+            </div>
+          </div>
+          <div className="ml-auto text-xs text-right" style={{ color: 'var(--text-muted)' }}>
+            <div>Last Graph poll: {fmtDate(intakeMonitor?.latest_poll_at)}</div>
+            <div style={{ color: intakeMonitor?.failures_24h ? 'var(--accent-red)' : 'var(--accent-lime)' }}>
+              {intakeMonitor?.failures_24h ?? 0} failures in 24h
+            </div>
+          </div>
+        </div>
+        {!intakeMonitor ? (
+          <div className="p-4 text-sm" style={{ color: 'var(--text-muted)' }}>Intake monitoring data is not available yet.</div>
+        ) : intakeMonitor.events.length === 0 ? (
+          <div className="p-4 text-sm" style={{ color: 'var(--text-muted)' }}>No intake events recorded yet.</div>
+        ) : (
+          <div className="max-h-72 overflow-y-auto divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
+            {intakeMonitor.events.map((event) => (
+              <div key={event.id} className="px-4 py-3 flex items-start gap-3 text-sm">
+                <span
+                  className="mt-1 h-2 w-2 rounded-full shrink-0"
+                  style={{ background: event.status === 'FAILED' ? 'var(--accent-red)' : event.stage === 'CREATED' ? 'var(--accent-lime)' : 'var(--accent-blue)' }}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap gap-2 items-center">
+                    <span className="font-medium">{event.stage.replace(/_/g, ' ')}</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: 'var(--bg-elevated)', color: 'var(--text-muted)' }}>{event.source.replace(/_/g, ' ')}</span>
+                    {event.file_name && <span className="truncate" style={{ color: 'var(--text-secondary)' }}>{event.file_name}</span>}
+                  </div>
+                  {event.error && <div className="text-xs mt-1" style={{ color: 'var(--accent-red)' }}>{event.error}</div>}
+                </div>
+                <span className="text-[11px] whitespace-nowrap" style={{ color: 'var(--text-subtle)' }}>{fmtDate(event.created_at)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* Actions + run selector */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-3">

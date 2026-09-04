@@ -1,14 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { InvoiceStatus } from '@ap-invoice/shared';
 import { useMockData } from '../contexts/MockDataContext';
 import { MockInvoice } from '../lib/mockData';
 import { invoiceApi } from '../lib/api';
-import { FileText, Search, Filter, Download, Eye, CheckCircle, XCircle, Calendar, FileSearch, AlertTriangle, Landmark, Clock, User, Paperclip, Check, X as XIcon, Loader2 } from 'lucide-react';
+import { FileText, Search, Filter, Download, Eye, CheckCircle, XCircle, Calendar, FileSearch, AlertTriangle, Landmark, Clock, User, Paperclip, Check, X as XIcon, Loader2, Send } from 'lucide-react';
 export default function AccountingReview() {
   const { invoices } = useMockData();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [selectedInvoice, setSelectedInvoice] = useState<MockInvoice | null>(null);
+  const [postingInvoiceId, setPostingInvoiceId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'posted' | 'soa' | 'bank-requests'>('posted');
   const [filters, setFilters] = useState({
     status: InvoiceStatus.POSTED_TO_QB,
@@ -154,6 +156,37 @@ ${dataRows}
     URL.revokeObjectURL(url);
   };
 
+  // Invoices that can still be posted to accounting (posting auto-creates the batch)
+  const isPostable = (invoice: MockInvoice) =>
+    invoice.status === InvoiceStatus.PENDING_ACCOUNTING || invoice.status === InvoiceStatus.APPROVED;
+
+  // Post the invoice to accounting (which auto-creates a payment batch) and
+  // jump straight to Payment Batches with the resulting batch opened.
+  const handlePostAndCreateBatch = async (invoice: MockInvoice) => {
+    setPostingInvoiceId(invoice.id);
+    try {
+      const response = await invoiceApi.post(invoice.id, false);
+      if (response.data?.payment_scheduled === false) {
+        showToast(response.data?.payment_schedule_error || 'Invoice was posted, but its payment could not be scheduled.', 'error');
+        return;
+      }
+      const batchId = response.data?.batch?.batch_id;
+      const batchNumber = response.data?.batch?.batch_number;
+      showToast(
+        batchId
+          ? `Invoice ${invoice.invoice_number} posted — opening batch ${batchNumber}`
+          : `Invoice ${invoice.invoice_number} posted to accounting`,
+        'success'
+      );
+      navigate(batchId ? `/payment-batches?batch=${batchId}` : '/payment-batches');
+    } catch (err: any) {
+      const msg = err?.response?.data?.error?.message || err?.response?.data?.message || 'Failed to post invoice';
+      showToast(msg, 'error');
+    } finally {
+      setPostingInvoiceId(null);
+    }
+  };
+
   return (
     <div>
         {/* Tab Switcher */}
@@ -294,7 +327,7 @@ ${dataRows}
                             <User className="h-3 w-3" strokeWidth={1.75} />
                             {req.requested_by}
                           </span>
-                          <Link to={`/?invoiceId=${req.invoice_id}`} className="flex items-center gap-1 transition-colors" style={{ color: 'var(--accent-blue)' }}>
+                          <Link to={`/repository?invoiceId=${req.invoice_id}`} className="flex items-center gap-1 transition-colors" style={{ color: 'var(--accent-blue)' }}>
                             <Eye className="h-3 w-3" strokeWidth={1.75} />
                             View Invoice
                           </Link>
@@ -381,6 +414,8 @@ ${dataRows}
                 className="px-4 py-3 rounded-xl focus:outline-none transition-all text-sm"
                 style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
               >
+                <option value={InvoiceStatus.PENDING_ACCOUNTING}>Pending Accounting (postable)</option>
+                <option value={InvoiceStatus.APPROVED}>Approved (postable)</option>
                 <option value={InvoiceStatus.POSTED_TO_QB}>Posted</option>
                 <option value={InvoiceStatus.PAID}>Paid</option>
                 <option value={InvoiceStatus.PAYMENT_CONFIRMATION_SENT}>Confirmation Sent</option>
@@ -449,12 +484,31 @@ ${dataRows}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--text-secondary)' }}>{invoice.updated_at ? new Date(invoice.updated_at).toLocaleDateString() : 'N/A'}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                        <button onClick={() => setSelectedInvoice(invoice)} className="transition-colors" style={{ color: 'var(--accent-purple)' }}
-                          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-violet)'; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--accent-purple)'; }}
-                        >
-                          <Eye className="h-5 w-5" strokeWidth={1.75} />
-                        </button>
+                        <div className="flex items-center gap-2">
+                          {isPostable(invoice) && (
+                            <button
+                              onClick={() => handlePostAndCreateBatch(invoice)}
+                              disabled={postingInvoiceId === invoice.id}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                              title="Post to accounting (auto-creates a payment batch) and open the batch to process it"
+                              style={{ background: 'color-mix(in srgb, var(--accent-purple) 12%, transparent)', color: 'var(--accent-purple)', border: '1px solid color-mix(in srgb, var(--accent-purple) 20%, transparent)' }}
+                              onMouseEnter={(e) => { if (postingInvoiceId !== invoice.id) e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-purple) 22%, transparent)'; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-purple) 12%, transparent)'; }}
+                            >
+                              {postingInvoiceId === invoice.id
+                                ? <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2.5} />
+                                : <Send className="h-3.5 w-3.5" strokeWidth={2} />}
+                              {postingInvoiceId === invoice.id ? 'Posting...' : 'Post & Create Batch'}
+                            </button>
+                          )}
+                          <button onClick={() => setSelectedInvoice(invoice)} className="transition-colors" style={{ color: 'var(--accent-purple)' }}
+                            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-violet)'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--accent-purple)'; }}
+                            title="View details"
+                          >
+                            <Eye className="h-5 w-5" strokeWidth={1.75} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}

@@ -1,13 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock the prisma client before importing the service.
-const { paymentFindMany, auditLogFindMany, paymentUpdateMany, auditLogCreate, paymentBatchFindUnique, paymentBatchFindMany, paymentUpdate, paymentBatchUpdate, paymentBatchCreate, billStubUpsert, invoiceUpdate, invoiceFindMany, paymentCount, paymentFindUnique, notificationCreate } = vi.hoisted(() => ({
+const { paymentFindMany, auditLogFindMany, paymentUpdateMany, auditLogCreate, paymentBatchFindUnique, paymentBatchFindMany, paymentBatchFindFirst, paymentUpdate, paymentBatchUpdate, paymentBatchCreate, billStubUpsert, invoiceUpdate, invoiceFindMany, paymentCount, paymentFindUnique, notificationCreate } = vi.hoisted(() => ({
   paymentFindMany: vi.fn(),
   auditLogFindMany: vi.fn(),
   paymentUpdateMany: vi.fn(),
   auditLogCreate: vi.fn(),
   paymentBatchFindUnique: vi.fn(),
   paymentBatchFindMany: vi.fn(),
+  paymentBatchFindFirst: vi.fn(),
   paymentUpdate: vi.fn(),
   paymentBatchUpdate: vi.fn(),
   paymentBatchCreate: vi.fn(),
@@ -22,7 +23,7 @@ const { paymentFindMany, auditLogFindMany, paymentUpdateMany, auditLogCreate, pa
 vi.mock('../config/database', () => ({
   default: {
     payment: { findMany: paymentFindMany, updateMany: paymentUpdateMany, update: paymentUpdate, count: paymentCount, findUnique: paymentFindUnique },
-    paymentBatch: { findUnique: paymentBatchFindUnique, findMany: paymentBatchFindMany, update: paymentBatchUpdate, create: paymentBatchCreate },
+    paymentBatch: { findUnique: paymentBatchFindUnique, findMany: paymentBatchFindMany, findFirst: paymentBatchFindFirst, update: paymentBatchUpdate, create: paymentBatchCreate },
     invoice: { update: invoiceUpdate, findMany: invoiceFindMany },
     billStub: { upsert: billStubUpsert },
     auditLog: { findMany: auditLogFindMany, create: auditLogCreate },
@@ -38,7 +39,7 @@ vi.mock('./inAppNotificationService', () => ({
   inAppNotificationService: { create: notificationCreate, notifyStageTransition: vi.fn() },
 }));
 
-import { getScheduledPaymentsForBatch, bulkApprovePaymentsForPayment, applyBankCharge, removeBankCharge, endorseBillStub, matchPaymentConfirmation, approveHeldPayment, markPaymentForPayment, returnInvoicesFromBatch, getStuckBatches, markPaymentBatchExported, createPaymentBatch, createGroupedPaymentBatches, reviewPaymentBatch, processPaymentBatch } from './paymentBatchService';
+import { getScheduledPaymentsForBatch, bulkApprovePaymentsForPayment, applyBankCharge, removeBankCharge, endorseBillStub, matchPaymentConfirmation, approveHeldPayment, markPaymentForPayment, returnInvoicesFromBatch, getStuckBatches, markPaymentBatchExported, createPaymentBatch, createGroupedPaymentBatches, reviewPaymentBatch, processPaymentBatch, autoBatchPaymentOnPost, updatePaymentBillsSetup, submitPaymentBatchForReview } from './paymentBatchService';
 
 describe('payment batch segregation of duties', () => {
   it('prevents the preparer from reviewing their own batch', async () => {
@@ -152,6 +153,7 @@ beforeEach(() => {
   auditLogCreate.mockReset();
   paymentBatchFindUnique.mockReset();
   paymentBatchFindMany.mockReset();
+  paymentBatchFindFirst.mockReset();
   paymentUpdate.mockReset();
   paymentBatchUpdate.mockReset();
   paymentBatchCreate.mockReset();
@@ -972,5 +974,209 @@ describe('createPaymentBatch / createGroupedPaymentBatches (multi-vendor)', () =
     expect(result.payment_count).toBe(3);
     expect(paymentBatchCreate).toHaveBeenCalledTimes(1);
     expect(paymentBatchCreate.mock.calls[0][0].data.payments.connect).toHaveLength(3);
+  });
+});
+
+describe('autoBatchPaymentOnPost (posting → batch)', () => {
+  it('creates a new DRAFT batch when the poster has no open batch of that currency', async () => {
+    paymentBatchFindFirst.mockResolvedValue(null);
+    paymentBatchCreate.mockResolvedValue({ id: 'batch-new', batch_number: 'PB202608140010', status: 'DRAFT' });
+
+    const result = await autoBatchPaymentOnPost(
+      { id: 'pay-1', invoice_id: 'inv-1', amount: 250, currency: 'USD', status: 'SCHEDULED' },
+      'assoc-1',
+      { invoice_number: 'INV-100', vendor_name: 'Acme Co' }
+    );
+
+    expect(paymentBatchFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ status: 'DRAFT', created_by: 'assoc-1', currency: 'USD' }) })
+    );
+    expect(paymentBatchCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        total_amount: '250.00',
+        payment_count: 1,
+        currency: 'USD',
+        status: 'DRAFT',
+        created_by: 'assoc-1',
+        payments: { connect: { id: 'pay-1' } },
+      }),
+    });
+    expect(auditLogCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ action: 'PAYMENT_BATCH_CREATED', invoice_id: 'inv-1' }),
+    });
+    // Accounting team (Associate + Supervisor) is notified that the batch is ready
+    expect(notificationCreate).toHaveBeenCalledTimes(2);
+    expect(notificationCreate).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Payment batch PB202608140010 created',
+      target_role: 'ACCOUNTING_ASSOCIATE',
+      category: 'payment',
+      invoice_id: 'inv-1',
+      invoice_number: 'INV-100',
+    }));
+    expect(notificationCreate).toHaveBeenCalledWith(expect.objectContaining({ target_role: 'ACCOUNTING_SUPERVISOR' }));
+    expect(result).toEqual({ batched: true, batch_id: 'batch-new', batch_number: 'PB202608140010', action: 'CREATED' });
+  });
+
+  it('adds the payment to the poster\'s open DRAFT batch instead of creating another', async () => {
+    paymentBatchFindFirst.mockResolvedValue({
+      id: 'batch-open',
+      batch_number: 'PB202608140009',
+      status: 'DRAFT',
+      created_by: 'assoc-1',
+      currency: 'USD',
+      total_amount: '100.00',
+      payment_count: 1,
+    });
+
+    const result = await autoBatchPaymentOnPost(
+      { id: 'pay-2', invoice_id: 'inv-2', amount: 50, currency: 'USD', status: 'SCHEDULED' },
+      'assoc-1'
+    );
+
+    expect(paymentUpdate).toHaveBeenCalledWith({
+      where: { id: 'pay-2' },
+      data: { batch_id: 'batch-open' },
+    });
+    expect(paymentBatchUpdate).toHaveBeenCalledWith({
+      where: { id: 'batch-open' },
+      data: { total_amount: '150.00', payment_count: { increment: 1 } },
+    });
+    expect(paymentBatchCreate).not.toHaveBeenCalled();
+    expect(auditLogCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ action: 'PAYMENT_ADDED_TO_BATCH', invoice_id: 'inv-2' }),
+    });
+    // Accounting team notified when a payment joins an existing batch too
+    expect(notificationCreate).toHaveBeenCalledTimes(2);
+    expect(notificationCreate).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Payment added to batch PB202608140009',
+      target_role: 'ACCOUNTING_ASSOCIATE',
+    }));
+    expect(notificationCreate).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Payment added to batch PB202608140009',
+      target_role: 'ACCOUNTING_SUPERVISOR',
+    }));
+    expect(result).toEqual({ batched: true, batch_id: 'batch-open', batch_number: 'PB202608140009', action: 'ADDED' });
+  });
+
+  it('skips sub-$100 HELD payments (they batch only after release)', async () => {
+    const result = await autoBatchPaymentOnPost(
+      { id: 'pay-3', invoice_id: 'inv-3', amount: 59.67, currency: 'USD', status: 'HELD_BELOW_100' },
+      'assoc-1'
+    );
+
+    expect(result).toEqual({ batched: false, reason: 'HELD_BELOW_100' });
+    expect(paymentBatchFindFirst).not.toHaveBeenCalled();
+    expect(paymentBatchCreate).not.toHaveBeenCalled();
+    expect(notificationCreate).not.toHaveBeenCalled();
+  });
+
+  it('does not reuse another user\'s open DRAFT batch', async () => {
+    paymentBatchFindFirst.mockResolvedValue(null);
+    paymentBatchCreate.mockResolvedValue({ id: 'batch-other', batch_number: 'PB202608140011', status: 'DRAFT' });
+
+    await autoBatchPaymentOnPost(
+      { id: 'pay-4', invoice_id: 'inv-4', amount: 30, currency: 'USD', status: 'SCHEDULED' },
+      'assoc-2'
+    );
+
+    // The lookup is scoped to the poster, so someone else's draft is never returned
+    expect(paymentBatchFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ created_by: 'assoc-2' }) })
+    );
+    expect(paymentBatchCreate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('QB Pay Bills-style payment setup', () => {
+  beforeEach(() => {
+    paymentBatchFindUnique.mockReset();
+    paymentBatchUpdate.mockReset();
+    auditLogCreate.mockReset();
+  });
+
+  it('saves method / bank / date and writes an audit entry', async () => {
+    paymentBatchFindUnique.mockResolvedValue({ id: 'batch-1', batch_number: 'PB1', status: 'DRAFT' });
+    paymentBatchUpdate.mockResolvedValue({ id: 'batch-1', payment_method: 'EFT', payment_bank_account: 'HSBC USD Operating', payment_date: new Date('2026-09-09') });
+    auditLogCreate.mockResolvedValue({});
+
+    const updated = await updatePaymentBillsSetup('batch-1', 'user-1', {
+      payment_method: 'eft',
+      payment_bank_account: ' HSBC USD Operating ',
+      payment_date: '2026-09-09',
+    });
+
+    expect(paymentBatchUpdate).toHaveBeenCalledWith({
+      where: { id: 'batch-1' },
+      data: {
+        payment_method: 'EFT',
+        payment_bank_account: 'HSBC USD Operating',
+        payment_date: expect.any(Date),
+      },
+    });
+    expect(auditLogCreate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'PAYMENT_BATCH_PAYMENT_SETUP' }) }));
+    expect(updated.payment_method).toBe('EFT');
+  });
+
+  it('rejects an unknown payment method before touching the batch', async () => {
+    await expect(
+      updatePaymentBillsSetup('batch-1', 'user-1', { payment_method: 'CRYPTO' })
+    ).rejects.toThrow('must be one of');
+    expect(paymentBatchUpdate).not.toHaveBeenCalled();
+    expect(paymentBatchFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('only allows setup changes while the batch is a draft or returned for correction', async () => {
+    paymentBatchFindUnique.mockResolvedValue({ id: 'batch-1', status: 'REVIEWED' });
+    await expect(
+      updatePaymentBillsSetup('batch-1', 'user-1', { payment_method: 'EFT', payment_date: '2026-09-09' })
+    ).rejects.toThrow('draft or returned');
+    expect(paymentBatchUpdate).not.toHaveBeenCalled();
+  });
+
+  it('blocks submit for supervisor review until the Pay Bills setup exists', async () => {
+    paymentBatchFindUnique.mockResolvedValue({
+      id: 'batch-1',
+      status: 'DRAFT',
+      payments: [{ id: 'p1' }],
+      payment_method: null,
+      payment_date: null,
+    });
+    await expect(submitPaymentBatchForReview('batch-1', 'user-1')).rejects.toThrow('Pay Bills payment setup');
+    expect(paymentBatchUpdate).not.toHaveBeenCalled();
+  });
+
+  it('allows submit once the payment method and date are saved', async () => {
+    paymentBatchFindUnique.mockResolvedValue({
+      id: 'batch-1',
+      status: 'DRAFT',
+      payments: [{ id: 'p1' }],
+      payment_method: 'WIRE',
+      payment_date: new Date('2026-09-09'),
+    });
+    paymentBatchUpdate.mockResolvedValue({ id: 'batch-1', status: 'PENDING_SUPERVISOR_REVIEW' });
+
+    const result = await submitPaymentBatchForReview('batch-1', 'user-1');
+    expect(paymentBatchUpdate).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('PENDING_SUPERVISOR_REVIEW');
+  });
+
+  it('pre-fills the QB Pay Bills defaults (EFT, next Wednesday) on auto-created batches', async () => {
+    paymentBatchFindFirst.mockResolvedValue(null);
+    paymentBatchCreate.mockResolvedValue({ id: 'batch-x', status: 'DRAFT' });
+
+    await autoBatchPaymentOnPost(
+      { id: 'pay-5', invoice_id: 'inv-5', amount: 100, currency: 'USD', status: 'SCHEDULED' },
+      'assoc-3'
+    );
+
+    expect(paymentBatchCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          payment_method: 'EFT',
+          payment_date: expect.any(Date),
+          payment_count: 1,
+        }),
+      })
+    );
   });
 });

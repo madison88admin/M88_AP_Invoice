@@ -12,10 +12,20 @@ import { sanitizeInvoiceType, sanitizeCategory } from '../utils/enumSanitizer';
 import prisma from '../config/database';
 import { logger } from '../utils/logger';
 import { AppError } from '../middleware/errorHandler';
+import { alertEmailIntakeFailure, recordEmailIntakeEvent } from './emailIntakeMonitoringService';
 
 const clientId = process.env.GRAPH_API_CLIENT_ID || '';
 const clientSecret = process.env.GRAPH_API_CLIENT_SECRET || '';
 const tenantId = process.env.GRAPH_API_TENANT_ID || '';
+const mailboxAddress = process.env.AP_MAILBOX_ADDRESS || 'PURCHASINGTEAM@madison88.com';
+let emailPollerTimer: NodeJS.Timeout | null = null;
+let emailPollerStarted = false;
+let emailPollInProgress = false;
+const processedMessageIds = new Set<string>();
+
+export function isEmailPollerConfigured(): boolean {
+  return Boolean(clientId && clientSecret && tenantId && mailboxAddress);
+}
 
 export interface EmailAttachment {
   id: string;
@@ -60,41 +70,98 @@ export async function getGraphClient(): Promise<Client> {
 }
 
 export async function pollAPMailbox(): Promise<void> {
+  if (emailPollInProgress) {
+    logger.info('Email poll skipped because the previous poll is still running');
+    return;
+  }
+
+  emailPollInProgress = true;
   try {
     const client = await getGraphClient();
-    
-    // Get messages from the last 5 minutes
-    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    const configuredLookback = Number(process.env.EMAIL_POLLER_LOOKBACK_MINUTES || 15);
+    const lookbackMinutes = Number.isFinite(configuredLookback)
+      ? Math.max(5, configuredLookback)
+      : 15;
+    const receivedAfter = new Date(Date.now() - lookbackMinutes * 60 * 1000).toISOString();
+    const mailboxPath = `/users/${encodeURIComponent(mailboxAddress)}`;
     
     const messages = await client
-      .api('/mailFolders/Inbox/messages')
-      .filter(`receivedDateTime ge ${fiveMinutesAgo} and hasAttachments eq true`)
+      .api(`${mailboxPath}/mailFolders/Inbox/messages`)
+      .filter(`receivedDateTime ge ${receivedAfter} and hasAttachments eq true`)
       .select('id,subject,from,receivedDateTime,hasAttachments')
+      .orderby('receivedDateTime asc')
+      .top(100)
       .get();
+
+    await recordEmailIntakeEvent({
+      source: 'GRAPH', stage: 'POLL_SUCCESS', mailbox: mailboxAddress,
+      metadata: { message_count: messages.value?.length || 0, received_after: receivedAfter },
+    });
 
     if (messages.value && messages.value.length > 0) {
       logger.info(`Found ${messages.value.length} new emails with attachments`);
       
       for (const message of messages.value) {
+        if (processedMessageIds.has(message.id)) continue;
+
+        const marker = `[Graph message ${message.id}]`;
+        const alreadyProcessed = await prisma.auditLog.findFirst({
+          where: {
+            action: 'EMAIL_INTAKE',
+            note: { contains: marker },
+          },
+          select: { id: true },
+        });
+        if (alreadyProcessed) {
+          processedMessageIds.add(message.id);
+          continue;
+        }
+
+        await recordEmailIntakeEvent({
+          source: 'GRAPH', stage: 'RECEIVED', mailbox: mailboxAddress,
+          messageId: message.id, metadata: { subject: message.subject, from: message.from?.emailAddress?.address },
+        });
+
         await processEmailMessage(message);
+
+        // Only remember messages that produced an invoice audit record. Failed
+        // messages remain eligible for retry during the overlapping lookback.
+        const processed = await prisma.auditLog.findFirst({
+          where: {
+            action: 'EMAIL_INTAKE',
+            note: { contains: marker },
+          },
+          select: { id: true },
+        });
+        if (processed) processedMessageIds.add(message.id);
       }
     }
   } catch (error) {
     logger.error('Error polling AP mailbox:', error);
+    const detail = error instanceof Error ? error.message : String(error);
+    await recordEmailIntakeEvent({ source: 'GRAPH', stage: 'POLL_FAILED', status: 'FAILED', mailbox: mailboxAddress, error: detail });
+    await alertEmailIntakeFailure({ source: 'Microsoft Graph mailbox poll', error: detail });
+  } finally {
+    emailPollInProgress = false;
   }
 }
 
 async function processEmailMessage(message: any): Promise<void> {
   try {
     const client = await getGraphClient();
+    const mailboxPath = `/users/${encodeURIComponent(mailboxAddress)}`;
     
     const attachments = await client
-      .api(`/messages/${message.id}/attachments`)
+      .api(`${mailboxPath}/messages/${message.id}/attachments`)
       .get();
 
     if (attachments.value && attachments.value.length > 0) {
       for (const attachment of attachments.value) {
         if (isInvoiceAttachment(attachment)) {
+          await recordEmailIntakeEvent({
+            source: 'GRAPH', stage: 'ATTACHMENT_DETECTED', mailbox: mailboxAddress,
+            messageId: message.id, attachmentId: attachment.id, fileName: attachment.name,
+          });
           await processAttachment(attachment, message);
         }
       }
@@ -141,7 +208,8 @@ async function processAttachment(attachment: any, message: any): Promise<void> {
                 attachment.contentType,
                 `${attachment.name}_part${i + 1}`,
                 message,
-                i
+                i,
+                attachment.id,
               );
             } catch (splitErr) {
               logger.error(`[EmailIntake] Error processing split ${i + 1} of ${attachment.name}:`, splitErr);
@@ -155,7 +223,7 @@ async function processAttachment(attachment: any, message: any): Promise<void> {
     }
     
     // Single invoice — process normally
-    await processSingleInvoiceAttachment(buffer, attachment.contentType, attachment.name, message);
+    await processSingleInvoiceAttachment(buffer, attachment.contentType, attachment.name, message, undefined, attachment.id);
     
   } catch (error) {
     logger.error(`Error processing attachment ${attachment.name}:`, error);
@@ -168,7 +236,8 @@ async function processSingleInvoiceAttachment(
   contentType: string,
   fileName: string,
   message: any,
-  splitIndex?: number
+  splitIndex?: number,
+  attachmentId?: string,
 ): Promise<void> {
   try {
     // Upload to VPS Supabase Storage FIRST (before OCR — ensures file is saved even if OCR fails)
@@ -178,13 +247,24 @@ async function processSingleInvoiceAttachment(
       if (uploadedPath) {
         storagePath = uploadedPath;
         logger.info(`[Email Intake] Invoice uploaded to VPS storage: ${storagePath}`);
+        await recordEmailIntakeEvent({
+          source: 'GRAPH', stage: 'UPLOADED', mailbox: mailboxAddress, messageId: message.id,
+          attachmentId, fileName, metadata: { storage_path: storagePath },
+        });
       }
     } catch (storageError) {
       logger.warn(`Failed to upload invoice to VPS storage for ${fileName}:`, storageError);
+      const detail = storageError instanceof Error ? storageError.message : String(storageError);
+      await recordEmailIntakeEvent({ source: 'GRAPH', stage: 'FAILED', status: 'FAILED', mailbox: mailboxAddress, messageId: message.id, attachmentId, fileName, error: `Storage upload failed: ${detail}` });
+      await alertEmailIntakeFailure({ source: 'Microsoft Graph storage upload', fileName, error: detail });
     }
 
     // Analyze invoice using OCR
     const ocrResult = await analyzeInvoice(buffer, contentType);
+    await recordEmailIntakeEvent({
+      source: 'GRAPH', stage: 'EXTRACTED', mailbox: mailboxAddress, messageId: message.id,
+      attachmentId, fileName, metadata: { invoice_number: ocrResult.invoice_number, confidence: ocrResult.ocr_confidence_score },
+    });
 
     // OCR confidence threshold check — flag low confidence for manual review
     const OCR_CONFIDENCE_THRESHOLD = parseFloat(process.env.OCR_CONFIDENCE_THRESHOLD || '0.60');
@@ -313,6 +393,10 @@ async function processSingleInvoiceAttachment(
         vendor: true,
       },
     });
+    await recordEmailIntakeEvent({
+      source: 'GRAPH', stage: 'CREATED', mailbox: mailboxAddress, messageId: message.id,
+      attachmentId, fileName, invoiceId: invoice.id, metadata: { invoice_number: invoice.invoice_number },
+    });
 
     // Create signature records if detected
     if (ocrResult.signatures && ocrResult.signatures.length > 0) {
@@ -336,7 +420,7 @@ async function processSingleInvoiceAttachment(
         invoice_id: invoice.id,
         action: 'EMAIL_INTAKE',
         performed_by: 'email_poller',
-        note: `Email intake from ${message.from?.emailAddress?.address}: ${fileName}${splitIndex !== undefined ? ` (part ${splitIndex + 1})` : ''}${sharepointUrl ? `. Uploaded to SharePoint: ${sharepointUrl}` : ''}`,
+        note: `[Graph message ${message.id}] Email intake from ${message.from?.emailAddress?.address}: ${fileName}${splitIndex !== undefined ? ` (part ${splitIndex + 1})` : ''}${sharepointUrl ? `. Uploaded to SharePoint: ${sharepointUrl}` : ''}`,
       },
     });
 
@@ -380,19 +464,47 @@ async function processSingleInvoiceAttachment(
     
   } catch (error) {
     logger.error(`Error processing attachment ${fileName}:`, error);
+    const detail = error instanceof Error ? error.message : String(error);
+    await recordEmailIntakeEvent({
+      source: 'GRAPH', stage: 'FAILED', status: 'FAILED', mailbox: mailboxAddress,
+      messageId: message.id, attachmentId, fileName, error: detail,
+    });
+    await alertEmailIntakeFailure({ source: 'Microsoft Graph', fileName, error: detail });
   }
 }
 
 export async function startEmailPoller(intervalMinutes: number = 5): Promise<void> {
-  logger.info(`Starting email poller with ${intervalMinutes} minute interval`);
+  if (emailPollerStarted) {
+    logger.info('Email poller is already running; duplicate start ignored');
+    return;
+  }
+  if (!isEmailPollerConfigured()) {
+    logger.warn('Email poller not started because Microsoft Graph credentials or mailbox are not configured');
+    return;
+  }
+
+  const safeIntervalMinutes = Number.isFinite(intervalMinutes)
+    ? Math.max(1, intervalMinutes)
+    : 5;
+  emailPollerStarted = true;
+  logger.info(`Starting email poller for ${mailboxAddress} with ${safeIntervalMinutes} minute interval`);
   
   // Initial poll
   await pollAPMailbox();
   
   // Set up recurring poll
-  setInterval(async () => {
+  emailPollerTimer = setInterval(async () => {
     await pollAPMailbox();
-  }, intervalMinutes * 60 * 1000);
+  }, safeIntervalMinutes * 60 * 1000);
+  emailPollerTimer.unref();
+}
+
+export function stopEmailPoller(): void {
+  if (emailPollerTimer) {
+    clearInterval(emailPollerTimer);
+    emailPollerTimer = null;
+  }
+  emailPollerStarted = false;
 }
 
 export interface SharePointFileData {
@@ -411,8 +523,11 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
   exceptions?: string[];
   error?: string;
 }> {
+  const intakeKey = data.sharepointUrl;
   try {
     logger.info(`Processing SharePoint file: ${data.fileName} from ${data.sharepointUrl}`);
+    await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'RECEIVED', messageId: intakeKey, fileName: data.fileName, metadata: { from: data.fromAddress } });
+    await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'ATTACHMENT_DETECTED', messageId: intakeKey, fileName: data.fileName });
 
     // Download file from SharePoint
     const client = await getGraphClient();
@@ -430,6 +545,7 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
     // Download file content
     const response = await client.api(downloadUrl).get();
     const buffer = Buffer.from(response, 'binary');
+    await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'UPLOADED', messageId: intakeKey, fileName: data.fileName, metadata: { sharepoint_url: data.sharepointUrl } });
 
     // Upload to VPS Supabase Storage (primary storage)
     let storagePath: string | undefined;
@@ -440,10 +556,14 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
       }
     } catch (storageError) {
       logger.warn(`Failed to upload SharePoint file to VPS storage for ${data.fileName}:`, storageError);
+      const detail = storageError instanceof Error ? storageError.message : String(storageError);
+      await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'FAILED', status: 'FAILED', messageId: intakeKey, fileName: data.fileName, error: `Storage upload failed: ${detail}` });
+      await alertEmailIntakeFailure({ source: 'Power Automate/SharePoint storage upload', fileName: data.fileName, error: detail });
     }
 
     // Analyze invoice using OCR
     const ocrResult = await analyzeInvoice(buffer, 'application/pdf');
+    await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'EXTRACTED', messageId: intakeKey, fileName: data.fileName, metadata: { invoice_number: ocrResult.invoice_number, confidence: ocrResult.ocr_confidence_score } });
 
     // OCR confidence threshold check
     const OCR_CONFIDENCE_THRESHOLD = parseFloat(process.env.OCR_CONFIDENCE_THRESHOLD || '0.60');
@@ -540,6 +660,7 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
         vendor: true,
       },
     });
+    await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'CREATED', messageId: intakeKey, fileName: data.fileName, invoiceId: invoice.id, metadata: { invoice_number: invoice.invoice_number } });
 
     // Create signature records if detected
     if (ocrResult.signatures && ocrResult.signatures.length > 0) {
@@ -621,9 +742,12 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
 
   } catch (error) {
     logger.error(`Error processing SharePoint file ${data.fileName}:`, error);
+    const detail = error instanceof Error ? error.message : String(error);
+    await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'FAILED', status: 'FAILED', messageId: intakeKey, fileName: data.fileName, error: detail });
+    await alertEmailIntakeFailure({ source: 'Power Automate/SharePoint', fileName: data.fileName, error: detail });
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: detail,
     };
   }
 }
@@ -645,8 +769,11 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
   exceptions?: string[];
   error?: string;
 }> {
+  const intakeKey = `${data.fromAddress}|${data.receivedDateTime}|${data.fileName}`;
   try {
     logger.info(`Processing Power Automate attachment: ${data.fileName} from ${data.fromAddress}`);
+    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'RECEIVED', messageId: intakeKey, fileName: data.fileName, metadata: { from: data.fromAddress, subject: data.emailSubject } });
+    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'ATTACHMENT_DETECTED', messageId: intakeKey, fileName: data.fileName });
 
     // Convert base64 to buffer
     const buffer = Buffer.from(data.attachmentBase64, 'base64');
@@ -658,13 +785,18 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
       if (uploadedPath) {
         storagePath = uploadedPath;
         logger.info(`[Power Automate] Invoice uploaded to VPS storage: ${storagePath}`);
+        await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'UPLOADED', messageId: intakeKey, fileName: data.fileName, metadata: { storage_path: storagePath } });
       }
     } catch (storageError) {
       logger.warn(`Failed to upload invoice to VPS storage for ${data.fileName}:`, storageError);
+      const detail = storageError instanceof Error ? storageError.message : String(storageError);
+      await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'FAILED', status: 'FAILED', messageId: intakeKey, fileName: data.fileName, error: `Storage upload failed: ${detail}` });
+      await alertEmailIntakeFailure({ source: 'Power Automate storage upload', fileName: data.fileName, error: detail });
     }
 
     // Analyze invoice using OCR
     const ocrResult = await analyzeInvoice(buffer, data.contentType);
+    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'EXTRACTED', messageId: intakeKey, fileName: data.fileName, metadata: { invoice_number: ocrResult.invoice_number, confidence: ocrResult.ocr_confidence_score } });
 
     // OCR confidence threshold check
     const OCR_CONFIDENCE_THRESHOLD = parseFloat(process.env.OCR_CONFIDENCE_THRESHOLD || '0.60');
@@ -780,6 +912,7 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
         vendor: true,
       },
     });
+    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'CREATED', messageId: intakeKey, fileName: data.fileName, invoiceId: invoice.id, metadata: { invoice_number: invoice.invoice_number } });
 
     // Create signature records if detected
     if (ocrResult.signatures && ocrResult.signatures.length > 0) {
@@ -861,9 +994,12 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
 
   } catch (error) {
     logger.error(`Error processing Power Automate attachment ${data.fileName}:`, error);
+    const detail = error instanceof Error ? error.message : String(error);
+    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'FAILED', status: 'FAILED', messageId: intakeKey, fileName: data.fileName, error: detail });
+    await alertEmailIntakeFailure({ source: 'Power Automate', fileName: data.fileName, error: detail });
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: detail,
     };
   }
 }

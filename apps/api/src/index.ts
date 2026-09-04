@@ -8,6 +8,7 @@ import rateLimit from 'express-rate-limit';
 import invoiceRoutes from './routes/invoices';
 import vendorRoutes from './routes/vendors';
 import emailIntakeRoutes from './routes/emailIntake';
+import emailIntakeMonitorRoutes from './routes/emailIntakeMonitor';
 import emailInvoiceRoutes from './routes/emailInvoice';
 import paymentConfirmationRoutes from './routes/paymentConfirmation';
 import apiKeyRoutes from './routes/apiKeys';
@@ -53,6 +54,8 @@ import { startFileWatcher, stopFileWatcher } from './services/fileWatcherService
 import { invoiceUploadQueue } from './services/invoiceUploadQueue';
 import { runAnomalyScan, runFourWayReconciliation } from './services/financeControlRunService';
 import { startDurableJobWorker, stopDurableJobWorker } from './services/durableJobWorker';
+import { isEmailPollerConfigured, startEmailPoller, stopEmailPoller } from './services/emailIntakeService';
+import { checkEmailPollHealth } from './services/emailIntakeMonitoringService';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -97,6 +100,7 @@ app.use('/api/invoices', invoiceRoutes);
 app.use('/api/workbench', workbenchRoutes);
 app.use('/api/vendors', vendorRoutes);
 app.use('/api/email-intake', emailIntakeRoutes);
+app.use('/api/email-intake-monitor', emailIntakeMonitorRoutes);
 app.use('/api/email', emailInvoiceRoutes);
 app.use('/api/payment-confirmations', paymentConfirmationRoutes);
 app.use('/api/api-keys', apiKeyRoutes);
@@ -233,6 +237,30 @@ const startServer = async () => {
     const sideEffectsEnabled = process.env.DISABLE_SIDE_EFFECTS !== 'true';
     await startDurableJobWorker();
 
+    // Power Automate is the primary intake path. Microsoft Graph polling is the
+    // automatic fallback so attached invoices are still collected when the flow
+    // is delayed or does not trigger.
+    if (sideEffectsEnabled) {
+      if (isEmailPollerConfigured()) {
+        const configuredInterval = Number(process.env.EMAIL_POLLER_INTERVAL_MINUTES || 5);
+        const emailPollerIntervalMinutes = Number.isFinite(configuredInterval)
+          ? Math.max(1, configuredInterval)
+          : 5;
+        startEmailPoller(emailPollerIntervalMinutes).catch((err) => {
+          logger.error('Failed to start Microsoft Graph email poller:', err);
+        });
+      } else {
+        logger.warn('Microsoft Graph email fallback is disabled because its credentials are incomplete');
+      }
+    }
+
+    const emailPollHealthInterval = sideEffectsEnabled && isEmailPollerConfigured()
+      ? setInterval(() => {
+          checkEmailPollHealth().catch((err) => logger.error('Email poll health check failed:', err));
+        }, 5 * 60 * 1000)
+      : undefined;
+    emailPollHealthInterval?.unref();
+
     // Start SharePoint folder watcher (polls IncomingInvoices every 30s)
     const watcherIntervalSec = parseInt(process.env.SHAREPOINT_WATCHER_INTERVAL_SEC || '30', 10);
     if (sideEffectsEnabled) startSharePointWatcher(watcherIntervalSec).catch((err) => {
@@ -336,6 +364,8 @@ const startServer = async () => {
       logger.info('Shutting down server...');
       stopSharePointWatcher();
       stopFileWatcher();
+      stopEmailPoller();
+      if (emailPollHealthInterval) clearInterval(emailPollHealthInterval);
       if (slaInterval) clearInterval(slaInterval);
       if (mpoCacheSyncInterval) clearInterval(mpoCacheSyncInterval);
       if (initialSlaTimer) clearTimeout(initialSlaTimer);

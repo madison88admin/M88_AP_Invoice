@@ -1,13 +1,21 @@
+import { useState } from 'react';
 import { InvoiceStatus, OrderType, calcWorkingHoursElapsed } from '@ap-invoice/shared';
 import { formatCurrency, formatDate } from '../lib/utils';
-import { FileText, Calendar, DollarSign, Eye, Check, Flag, Clock, Zap, AlertTriangle, PenTool } from 'lucide-react';
+import { FileText, Calendar, DollarSign, Eye, Check, Flag, Clock, Zap, AlertTriangle, PenTool, Send, Loader2 } from 'lucide-react';
 import { MockInvoice } from '../lib/mockData';
 import { POValidationBadge } from './POValidationBadge';
 import { Skeleton } from './ui/Skeleton';
+import { useAuth } from '../contexts/AuthContext';
+import { hasPermission, canUserApproveStatus } from '../lib/roleAccess';
 
 interface InvoiceTableProps {
   invoices: MockInvoice[];
   onInvoiceClick?: (invoice: MockInvoice) => void;
+  /** Direct row actions (Invoice Repository). When provided, rows show only the actions that apply to that invoice's status/role. */
+  onApprove?: (invoice: MockInvoice) => void;
+  onPost?: (invoice: MockInvoice) => void;
+  /** Freezes the column header row while the (single-scroll) list scrolls. */
+  stickyHeader?: boolean;
   loading?: boolean;
   emptyHint?: 'filters' | 'default';
 }
@@ -70,9 +78,53 @@ function getDueDateStatus(invoice: MockInvoice): { isOverdue: boolean; isNear: b
   };
 }
 
-export default function InvoiceTable({ invoices, onInvoiceClick, loading = false, emptyHint = 'default' }: InvoiceTableProps) {
+export default function InvoiceTable({ invoices, onInvoiceClick, onApprove, onPost, stickyHeader = false, loading = false, emptyHint = 'default' }: InvoiceTableProps) {
   // Use invoices as-is
   const sortedInvoices = invoices;
+  const { user } = useAuth();
+  const [busyId, setBusyId] = useState<string | null>(null);
+  // Direct row actions (approve/post) are accounting-side only — every other
+  // role keeps the classic buttons that open the invoice detail panel.
+  const isAccounting = !!user && (user.role === 'ACCOUNTING_ASSOCIATE' || user.role === 'ACCOUNTING_SUPERVISOR');
+  const hasQuickActions = isAccounting && !!(onApprove || onPost);
+
+  // Mirror the approval action rules from the invoice detail panel so a row
+  // only offers Approve when this role is the current approver of that stage.
+  const canApproveInvoice = (invoice: MockInvoice): boolean => {
+    if (!user || !onApprove) return false;
+    if (!hasPermission(user.role, 'canApprove')) return false;
+    const status = String(invoice.status);
+    if (!status.startsWith('PENDING_') || status === 'PENDING_ACCOUNTING') return false;
+    if (!canUserApproveStatus(user.role, status)) return false;
+    const stage = String((invoice as any).current_stage || '');
+    if (stage) {
+      const role = user.role;
+      const stageMatch =
+        stage === role ||
+        (stage === 'COORDINATOR' && role === 'PURCHASING_COORDINATOR') ||
+        (stage === 'MLO_PLANNING_MANAGER' && ['PLANNING_MANAGER', 'MLO_ACCOUNT_HOLDER', 'MLO_PLANNING_MANAGER'].includes(role)) ||
+        (stage === 'ACCOUNTING_REVIEWER' && ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'PRESIDENT'].includes(role));
+      if (!stageMatch) return false;
+    }
+    return true;
+  };
+
+  const canPostInvoice = (invoice: MockInvoice): boolean => {
+    if (!user || !onPost) return false;
+    if (!hasPermission(user.role, 'canPost')) return false;
+    const status = String(invoice.status);
+    return status === 'APPROVED' || status === 'PENDING_ACCOUNTING';
+  };
+
+  const runQuickAction = async (invoice: MockInvoice, action: (inv: MockInvoice) => void | Promise<void>) => {
+    if (busyId === invoice.id) return;
+    setBusyId(invoice.id);
+    try {
+      await action(invoice);
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   if (loading) {
     return (
@@ -99,8 +151,19 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="min-w-full">
+    <div className={stickyHeader ? '' : 'overflow-x-auto'}>
+      {stickyHeader && (
+        <style>{`
+          [data-inv-sticky-table] thead th {
+            position: sticky;
+            top: 0;
+            z-index: 5;
+            background: var(--bg-elevated);
+            box-shadow: inset 0 -1px 0 var(--border-subtle);
+          }
+        `}</style>
+      )}
+      <table className="min-w-full" data-inv-sticky-table={stickyHeader ? 'true' : undefined}>
         <thead style={{ background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border-subtle)' }}>
           <tr>
             <th className="px-4 py-3 text-left" style={{ width: '32px' }}>
@@ -413,32 +476,71 @@ export default function InvoiceTable({ invoices, onInvoiceClick, loading = false
                   >
                     <Eye className="h-4 w-4" strokeWidth={1.75} />
                   </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onInvoiceClick?.(invoice);
-                    }}
-                    className="p-2 rounded-xl transition-colors"
-                    style={{ color: 'var(--text-muted)' }}
-                    onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-lime)'; e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent'; }}
-                    title="Approve"
-                  >
-                    <Check className="h-4 w-4" strokeWidth={1.75} />
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onInvoiceClick?.(invoice);
-                    }}
-                    className="p-2 rounded-xl transition-colors"
-                    style={{ color: 'var(--text-muted)' }}
-                    onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-red)'; e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent'; }}
-                    title="Flag"
-                  >
-                    <Flag className="h-4 w-4" strokeWidth={1.75} />
-                  </button>
+                  {!hasQuickActions ? (
+                    <>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onInvoiceClick?.(invoice);
+                        }}
+                        className="p-2 rounded-xl transition-colors"
+                        style={{ color: 'var(--text-muted)' }}
+                        onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-lime)'; e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent'; }}
+                        title="Approve"
+                      >
+                        <Check className="h-4 w-4" strokeWidth={1.75} />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onInvoiceClick?.(invoice);
+                        }}
+                        className="p-2 rounded-xl transition-colors"
+                        style={{ color: 'var(--text-muted)' }}
+                        onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-red)'; e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent'; }}
+                        title="Flag"
+                      >
+                        <Flag className="h-4 w-4" strokeWidth={1.75} />
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      {canApproveInvoice(invoice) && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void runQuickAction(invoice, onApprove!);
+                          }}
+                          disabled={busyId === invoice.id}
+                          className="p-2 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          style={{ color: 'var(--text-muted)' }}
+                          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-lime)'; e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent'; }}
+                          title="Approve invoice"
+                        >
+                          {busyId === invoice.id ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.75} /> : <Check className="h-4 w-4" strokeWidth={1.75} />}
+                        </button>
+                      )}
+                      {canPostInvoice(invoice) && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void runQuickAction(invoice, onPost!);
+                          }}
+                          disabled={busyId === invoice.id}
+                          className="p-2 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          style={{ color: 'var(--text-muted)' }}
+                          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-purple)'; e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent'; }}
+                          title="Post to Accounting"
+                        >
+                          {busyId === invoice.id ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.75} /> : <Send className="h-4 w-4" strokeWidth={1.75} />}
+                        </button>
+                      )}
+                    </>
+                  )}
                 </div>
               </td>
             </tr>

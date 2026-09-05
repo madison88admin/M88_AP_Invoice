@@ -391,15 +391,27 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
     return dateB.getTime() - dateA.getTime(); // Descending order (newest first)
   });
 
-  // Pagination: show 4 invoices per page
+  // Pagination: show 4 invoices per page on the dashboard. The Invoice
+  // Repository page lists every filtered invoice in one scroll instead.
   const [currentPage, setCurrentPage] = useState(1);
   const invoicesPerPage = 4;
-  const totalPages = Math.max(1, Math.ceil(sortedInvoices.length / invoicesPerPage));
+  const repositoryOneScroll = mode === 'repository';
+  const totalPages = repositoryOneScroll ? 1 : Math.max(1, Math.ceil(sortedInvoices.length / invoicesPerPage));
+
+  // Invoice Repository single-scroll list: live visibility marker + jump-to-top.
+  const repoListRef = useRef<HTMLDivElement | null>(null);
+  const repoScrollRaf = useRef<number>(0);
+  const [repoAtTop, setRepoAtTop] = useState(true);
+  const [repoRange, setRepoRange] = useState<string | null>(null);
 
   // Reset to page 1 whenever the active filters change, so a narrowed result set
-  // never leaves the user stranded on a now-empty page.
+  // never leaves the user stranded on a now-empty page. The repository list also
+  // returns to the top with its marker reset.
   useEffect(() => {
     setCurrentPage(1);
+    repoListRef.current?.scrollTo({ top: 0 });
+    setRepoAtTop(true);
+    setRepoRange(null);
   }, [filters]);
 
   // Fetch vendor list for filter dropdown
@@ -420,10 +432,52 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
   }, [invoices]);
 
   // Clamp the current page so it can never exceed the available pages.
-  const safePage = Math.min(currentPage, totalPages);
+  const safePage = repositoryOneScroll ? 1 : Math.min(currentPage, totalPages);
   const startIndex = (safePage - 1) * invoicesPerPage;
-  const endIndex = startIndex + invoicesPerPage;
-  const displayedInvoices = sortedInvoices.slice(startIndex, endIndex);
+  const endIndex = repositoryOneScroll ? sortedInvoices.length : startIndex + invoicesPerPage;
+  const displayedInvoices = repositoryOneScroll ? sortedInvoices : sortedInvoices.slice(startIndex, endIndex);
+
+  const jumpRepoToTop = () => {
+    repoListRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // Track which rows are currently visible inside the repository scroll container
+  // so the card header can show a live "Rows x–y of n" marker while scrolling.
+  const handleRepoListScroll = () => {
+    if (repoScrollRaf.current) return;
+    repoScrollRaf.current = requestAnimationFrame(() => {
+      repoScrollRaf.current = 0;
+      const container = repoListRef.current;
+      if (!container) return;
+      const rows = Array.from(container.querySelectorAll<HTMLTableRowElement>('tbody tr'));
+      const total = rows.length;
+      if (total === 0) {
+        setRepoAtTop(true);
+        setRepoRange(null);
+        return;
+      }
+      const scrollTop = container.scrollTop;
+      const clientHeight = container.clientHeight;
+      // Rows fully above the viewport form a leading prefix.
+      let fullyAbove = 0;
+      for (let i = 0; i < total; i++) {
+        const row = rows[i];
+        if (row.offsetTop + row.offsetHeight <= scrollTop + 1) fullyAbove = i + 1;
+        else break;
+      }
+      // Rows fully below the viewport form a trailing suffix.
+      let fullyBelow = 0;
+      for (let i = total - 1; i >= 0; i--) {
+        if (rows[i].offsetTop >= scrollTop + clientHeight) fullyBelow++;
+        else break;
+      }
+      const firstVisible = Math.min(fullyAbove, total - 1);
+      const lastVisible = Math.max(firstVisible, total - 1 - fullyBelow);
+      const atTop = scrollTop < 4;
+      setRepoAtTop(atTop);
+      setRepoRange(atTop ? null : `Rows ${firstVisible + 1}–${lastVisible + 1} of ${total}`);
+    });
+  };
 
   // Sync loading state with context and trigger count-up animations
   useEffect(() => {
@@ -703,6 +757,24 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
       showToast('Invoice approved successfully', 'success');
       await refresh();
       setSelectedInvoice(null);
+    } catch (error: any) {
+      console.error('Failed to approve invoice:', error);
+      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to approve invoice';
+      showToast(msg, 'error');
+    }
+  };
+
+  // Direct row action (Invoice Repository) — same approval call as the panel, no panel needed.
+  const handleRowApprove = async (invoice: MockInvoice) => {
+    try {
+      if (!user) {
+        showToast('You must be logged in to approve invoices', 'error');
+        return;
+      }
+      await invoiceApi.approve(invoice.id, user.name);
+      showToast(`Invoice ${invoice.invoice_number} approved`, 'success');
+      await refresh();
+      if (selectedInvoice?.id === invoice.id) setSelectedInvoice(null);
     } catch (error: any) {
       console.error('Failed to approve invoice:', error);
       const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to approve invoice';
@@ -1087,6 +1159,29 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
       showToast(msg, 'error');
     } finally {
       setPosting(false);
+    }
+  };
+
+  // Direct row action (Invoice Repository) — standard post (no bypass) straight from the row.
+  const handleRowPost = async (invoice: MockInvoice) => {
+    try {
+      const postResponse: any = await invoiceApi.post(invoice.id, false);
+      if (postResponse.data?.payment_scheduled === false) {
+        throw new Error(postResponse.data?.payment_schedule_error || 'Invoice was posted, but its payment record could not be created. Open Payment Batches to complete payment setup.');
+      }
+      const batchInfo = postResponse?.data?.batch;
+      showToast(
+        batchInfo?.batched
+          ? `Invoice ${invoice.invoice_number} posted — added to batch ${batchInfo.batch_number}. Open Payment Batches to submit and process it.`
+          : 'Invoice posted to accounting successfully',
+        'success'
+      );
+      await refresh();
+      if (selectedInvoice?.id === invoice.id) setSelectedInvoice(null);
+    } catch (error: any) {
+      console.error('Failed to post invoice:', error);
+      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || error?.message || 'Failed to post invoice';
+      showToast(msg, 'error');
     }
   };
 
@@ -2033,8 +2128,8 @@ ${dataRows}
             </div>
           </div>
 
-          {/* KPI Cards */}
-          {loading ? (
+          {/* KPI Cards — dashboard only */}
+          {mode === 'dashboard' && (loading ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
               {[...Array(8)].map((_, i) => (
                 <div
@@ -2070,14 +2165,15 @@ ${dataRows}
                 );
               })}
             </div>
-          )}
+          ))}
 
-          {/* Bottleneck View - Hide for IT_ADMIN and SUPERADMIN */}
-          {user && user.role !== 'IT_ADMIN' && user.role !== 'SUPERADMIN' && (
+          {/* Bottleneck View - Hide for IT_ADMIN and SUPERADMIN (dashboard only) */}
+          {mode === 'dashboard' && user && user.role !== 'IT_ADMIN' && user.role !== 'SUPERADMIN' && (
             <BottleneckView />
           )}
 
-          {/* Secondary Role-Specific Actions */}
+          {/* Secondary Role-Specific Actions — dashboard only */}
+          {mode === 'dashboard' && (
           <div className="mb-6 flex flex-wrap items-center gap-3">
             {user && ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR'].includes(user.role) && (
               <button
@@ -2103,9 +2199,10 @@ ${dataRows}
               </button>
             )}
           </div>
+          )}
 
-          {/* My Tasks Widget */}
-          {user && user.role !== 'MS_POLLY' && user.role !== 'IT_ADMIN' && user.role !== 'SUPERADMIN' && (
+          {/* My Tasks Widget — dashboard only */}
+          {mode === 'dashboard' && user && user.role !== 'MS_POLLY' && user.role !== 'IT_ADMIN' && user.role !== 'SUPERADMIN' && (
             <MyTasksWidget
               user={user}
               invoices={allInvoices}
@@ -2387,9 +2484,37 @@ ${dataRows}
                   </span>
                 )}
               </h2>
-              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{displayedInvoices.length} records</span>
+              {mode === 'repository' ? (
+                <div className="flex items-center gap-3">
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    {repoRange || `${displayedInvoices.length} records`}
+                  </span>
+                  <button
+                    onClick={jumpRepoToTop}
+                    disabled={repoAtTop}
+                    title="Jump to top of list"
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                    style={repoAtTop
+                      ? { background: 'var(--bg-elevated)', color: 'var(--text-muted)' }
+                      : { background: 'color-mix(in srgb, var(--accent-purple) 12%, transparent)', color: 'var(--accent-purple)', border: '1px solid color-mix(in srgb, var(--accent-purple) 25%, transparent)' }}
+                    onMouseEnter={(e) => { if (!repoAtTop) { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-purple) 22%, transparent)'; } }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = repoAtTop ? 'var(--bg-elevated)' : 'color-mix(in srgb, var(--accent-purple) 12%, transparent)'; }}
+                  >
+                    ↑ Top
+                  </button>
+                </div>
+              ) : (
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{displayedInvoices.length} records</span>
+              )}
             </div>
-            <div data-invoice-table>
+            <div
+              data-invoice-table
+              ref={repoListRef}
+              onScroll={mode === 'repository' ? handleRepoListScroll : undefined}
+              style={mode === 'repository'
+                ? { maxHeight: 'calc(100vh - 340px)', minHeight: 360, overflow: 'auto', position: 'relative' }
+                : undefined}
+            >
             <InvoiceTable
               invoices={displayedInvoices}
               onInvoiceClick={(inv) => {
@@ -2401,12 +2526,18 @@ ${dataRows}
                 setDetailTab('overview');
                 setSelectedInvoice(inv);
               }}
+              // Direct row actions are accounting-side only. Other roles keep the
+              // classic buttons that open the detail panel, so this change never
+              // surfaces extra actions to approvers, IT admin, or other users.
+              onApprove={mode === 'repository' && user && (user.role === 'ACCOUNTING_ASSOCIATE' || user.role === 'ACCOUNTING_SUPERVISOR') ? handleRowApprove : undefined}
+              onPost={mode === 'repository' && user && (user.role === 'ACCOUNTING_ASSOCIATE' || user.role === 'ACCOUNTING_SUPERVISOR') ? handleRowPost : undefined}
+              stickyHeader={mode === 'repository'}
               loading={loading}
               emptyHint={activeFilterCount > 0 ? 'filters' : 'default'}
             />
             
-            {/* Pagination */}
-            {sortedInvoices.length > 0 && (
+            {/* Pagination — dashboard only; the repository shows every invoice in one scroll */}
+            {mode === 'dashboard' && sortedInvoices.length > 0 && (
               <div className="flex items-center justify-between py-4 px-6" style={{ borderTop: '1px solid var(--border-subtle)' }}>
                 <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
                   Showing {startIndex + 1}-{Math.min(endIndex, sortedInvoices.length)} of {sortedInvoices.length} invoices
@@ -2442,8 +2573,8 @@ ${dataRows}
           </div>
           )}
 
-          {/* Supplier Balance Analysis - For ACCOUNTING roles */}
-          {user && (user.role === 'ACCOUNTING_SUPERVISOR' || user.role === 'ACCOUNTING_ASSOCIATE') && (
+          {/* Supplier Balance Analysis - dashboard only */}
+          {mode === 'dashboard' && user && (user.role === 'ACCOUNTING_SUPERVISOR' || user.role === 'ACCOUNTING_ASSOCIATE') && (
             <div className="mt-6 rounded-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.25)]" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
               <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
                 <div>
@@ -2526,8 +2657,8 @@ ${dataRows}
             </div>
           )}
 
-          {/* Payables Aging - For ACCOUNTING roles */}
-          {user && (user.role === 'ACCOUNTING_SUPERVISOR' || user.role === 'ACCOUNTING_ASSOCIATE') && (
+          {/* Payables Aging - dashboard only */}
+          {mode === 'dashboard' && user && (user.role === 'ACCOUNTING_SUPERVISOR' || user.role === 'ACCOUNTING_ASSOCIATE') && (
             <div className="mt-6 rounded-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.25)]" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
               <div className="px-6 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
                 <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Payables aging</h2>
@@ -2572,8 +2703,8 @@ ${dataRows}
             </div>
           )}
 
-          {/* Processing Time per Stage - For ACCOUNTING and PURCHASING_MANAGER roles */}
-          {user && (user.role === 'ACCOUNTING_SUPERVISOR' || user.role === 'ACCOUNTING_ASSOCIATE' || user.role === 'PURCHASING_MANAGER') && (
+          {/* Processing Time per Stage - dashboard only */}
+          {mode === 'dashboard' && user && (user.role === 'ACCOUNTING_SUPERVISOR' || user.role === 'ACCOUNTING_ASSOCIATE' || user.role === 'PURCHASING_MANAGER') && (
             <div className="mt-6 rounded-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.25)]" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
               <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
                 <div>

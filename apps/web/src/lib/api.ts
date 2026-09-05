@@ -128,7 +128,13 @@ export const invoiceApi = {
   approve: (id: string, signerName: string) => api.post(`/api/invoices/${id}/approve`, { signerName }),
   reject: (id: string, reason: string) => api.post(`/api/invoices/${id}/reject`, { reason }),
   returnForCorrection: (id: string, reason: string, targetRole?: string) => api.post(`/api/invoices/${id}/return`, { reason, targetRole }),
-  post: (id: string, bypassVarianceCheck: boolean = false) => api.post(`/.netlify/functions/proxy-api/invoices/${id}/post`, { bypassVarianceCheck }, { timeout: 300000 }),
+  post: (id: string, bypassVarianceCheck: boolean = false) => {
+    // Posting can take a while (auto-batch + notifications). In local dev the
+    // Vite proxy serves /api; on Netlify the long-running call goes through the
+    // proxy-api function directly so it is not cut off.
+    const postBase = (import.meta as any).env.DEV ? '/api' : '/.netlify/functions/proxy-api';
+    return api.post(`${postBase}/invoices/${id}/post`, { bypassVarianceCheck }, { timeout: 300000 });
+  },
   releaseHold: (id: string) => api.post(`/api/invoices/${id}/release-hold`),
   holdForBatchThreshold: (id: string, reason?: string) => api.post(`/api/invoices/${id}/hold`, { reason }),
   checkNextGenSync: async (id: string) => {

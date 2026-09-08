@@ -2,6 +2,7 @@ import PDFParser from 'pdf2json';
 import { SignatoryRole, SignatureType } from '@ap-invoice/shared';
 import { matchSignerToRole } from '@ap-invoice/shared';
 import { logger } from '../utils/logger';
+import { detectSupplierInvoiceType } from './supplierTemplateDetector';
 import { InvoiceTruthGraphBuilder, InvoiceTruthResolver } from './dsrs/truth/InvoiceTruthGraph';
 import { executeInvoiceExtraction, detectCurrency, detectInvoiceCurrency, detectSettlementCurrency, assertZeroLeak } from './dsrs/ast/InvoiceASTKernel';
 import {
@@ -3896,7 +3897,7 @@ export async function extractMadisonInvoiceFields(fileBuffer: Buffer): Promise<M
   const ship_to = extractShipTo(normalizedText);
   const sold_to = extractSoldTo(normalizedText);
   const { text: bill_to_text, confirmed: bill_to_confirmed_madison88 } = extractBillTo(normalizedText);
-  const document_type = extractDocumentType(normalizedText);
+  const document_type = detectSupplierInvoiceType(vendor_name, extractDocumentType(normalizedText));
   const { material_code: extractedMaterialCode, material_name: extractedMaterialName } = extractMaterialName(normalizedText);
   
   // DEBUG: Line items only (no amount/quantity OCR scans in zero-leak mode)

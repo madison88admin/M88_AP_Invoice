@@ -415,6 +415,7 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
   // Pagination: show 4 invoices per page on the dashboard. The Invoice
   // Repository page lists every filtered invoice in one scroll instead.
   const [currentPage, setCurrentPage] = useState(1);
+  const [pageInput, setPageInput] = useState('1');
   const invoicesPerPage = 4;
   const repositoryOneScroll = mode === 'repository';
   const totalPages = repositoryOneScroll ? 1 : Math.max(1, Math.ceil(sortedInvoices.length / invoicesPerPage));
@@ -454,6 +455,9 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
 
   // Clamp the current page so it can never exceed the available pages.
   const safePage = repositoryOneScroll ? 1 : Math.min(currentPage, totalPages);
+  useEffect(() => {
+    setPageInput(String(safePage));
+  }, [safePage]);
   const startIndex = (safePage - 1) * invoicesPerPage;
   const endIndex = repositoryOneScroll ? sortedInvoices.length : startIndex + invoicesPerPage;
   const displayedInvoices = repositoryOneScroll ? sortedInvoices : sortedInvoices.slice(startIndex, endIndex);
@@ -2593,9 +2597,27 @@ ${dataRows}
                   >
                     Previous
                   </button>
-                  <span className="text-sm px-2" style={{ color: 'var(--text-muted)' }}>
-                    Page {safePage} of {totalPages}
-                  </span>
+                  <label className="flex items-center gap-1.5 text-sm px-2" style={{ color: 'var(--text-muted)' }}>
+                    Page
+                    <input
+                      type="number"
+                      min={1}
+                      max={totalPages}
+                      value={pageInput}
+                      aria-label="Page number"
+                      onChange={(e) => setPageInput(e.target.value.replace(/[^0-9]/g, ''))}
+                      onBlur={() => {
+                        const requested = Number(pageInput);
+                        const next = Number.isFinite(requested) && requested >= 1 ? Math.min(requested, totalPages) : safePage;
+                        setCurrentPage(next);
+                        setPageInput(String(next));
+                      }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur(); }}
+                      className="w-14 h-8 rounded-lg text-center focus:outline-none"
+                      style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
+                    />
+                    of {totalPages}
+                  </label>
                   <button
                     onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
                     disabled={safePage >= totalPages}

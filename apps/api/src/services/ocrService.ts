@@ -92,6 +92,8 @@ export interface OCRResult {
   currency: string;
   invoice_currency_original?: string;
   exchange_rate_to_usd?: number;
+  /** Explicit settlement/conversion amount when the invoice shows a USD equivalent. */
+  usd_equivalent?: number;
   payment_terms: PaymentTerms;
   incoterm?: string;
   bank_charges: number;
@@ -605,6 +607,16 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
     if (m) { exchange_rate = parseFloat(m[1]); break; }
   }
 
+  // Some suppliers show the payable amount in local currency and a separate
+  // USD conversion line (for example, `IDR 30,323` followed by `USD Amount:
+  // 30.67`). Preserve both values instead of treating the USD figure as the
+  // invoice's original amount.
+  let usd_equivalent: number | undefined;
+  if ((currencyMatch?.[1] || '').toUpperCase() !== 'USD') {
+    const usdEquivalentMatch = text.match(/(?:amount\s+in\s+usd|usd\s+(?:amount|equivalent|value)|us\$\s+(?:amount|equivalent|value))\s*[:=\-]?\s*([\d,]+(?:\.\d{1,2})?)/i);
+    if (usdEquivalentMatch) usd_equivalent = Number(usdEquivalentMatch[1].replace(/,/g, ''));
+  }
+
   // is_handwritten — low text density detection
   const is_handwritten = text.length < 200;
 
@@ -630,6 +642,7 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
     company_reg: company_reg,
     incoterm: incoterm || undefined,
     exchange_rate: exchange_rate,
+    usd_equivalent,
     is_handwritten: is_handwritten || undefined,
     is_statement: is_statement || undefined,
   };
@@ -1411,7 +1424,8 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
      // routes blank/unknown currencies to manual review instead.
      currency: extracted.currency || '',
      invoice_currency_original: extracted.currency || '',
-    exchange_rate_to_usd: undefined,
+    exchange_rate_to_usd: (extracted as any).exchange_rate || undefined,
+    usd_equivalent: (extracted as any).usd_equivalent || undefined,
     date_range_start: undefined,
     date_range_end: undefined,
     payment_terms: extracted.payment_terms || PaymentTerms.NET_30,

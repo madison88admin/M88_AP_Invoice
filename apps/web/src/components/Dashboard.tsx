@@ -2529,8 +2529,8 @@ ${dataRows}
               // Direct row actions are accounting-side only. Other roles keep the
               // classic buttons that open the detail panel, so this change never
               // surfaces extra actions to approvers, IT admin, or other users.
-              onApprove={mode === 'repository' && user && (user.role === 'ACCOUNTING_ASSOCIATE' || user.role === 'ACCOUNTING_SUPERVISOR') ? handleRowApprove : undefined}
-              onPost={mode === 'repository' && user && (user.role === 'ACCOUNTING_ASSOCIATE' || user.role === 'ACCOUNTING_SUPERVISOR') ? handleRowPost : undefined}
+              onApprove={mode === 'repository' && user?.role === 'ACCOUNTING_SUPERVISOR' ? handleRowApprove : undefined}
+              onPost={mode === 'repository' && user?.role === 'ACCOUNTING_ASSOCIATE' ? handleRowPost : undefined}
               stickyHeader={mode === 'repository'}
               loading={loading}
               emptyHint={activeFilterCount > 0 ? 'filters' : 'default'}
@@ -3499,7 +3499,7 @@ ${dataRows}
               {/* Posting Actions */}
               {(selectedInvoice.status === InvoiceStatus.APPROVED || selectedInvoice.status === InvoiceStatus.PENDING_ACCOUNTING) && user && hasPermission(user.role, 'canPost') && (
                 <>
-                  {(user.role === 'ACCOUNTING_SUPERVISOR' || user.role === 'ACCOUNTING_ASSOCIATE') && (
+                  {user.role === 'ACCOUNTING_ASSOCIATE' && (
                     <label className="flex items-center gap-2 px-4 py-2 text-xs cursor-pointer" style={{ color: 'var(--text-muted)' }}>
                       <input
                         type="checkbox"
@@ -3523,7 +3523,7 @@ ${dataRows}
               )}
 
               {/* Release Hold — for invoices held at pre-post check (have signatures, held during posting) */}
-              {selectedInvoice.status === (InvoiceStatus.ON_HOLD as any) && user && hasPermission(user.role, 'canPost') && selectedInvoice.signatures && selectedInvoice.signatures.some(s => s.signed_at) && (
+              {selectedInvoice.status === (InvoiceStatus.ON_HOLD as any) && user?.role === 'ACCOUNTING_SUPERVISOR' && selectedInvoice.signatures && selectedInvoice.signatures.some(s => s.signed_at) && (
                 <button
                   onClick={handleReleaseHold}
                   disabled={posting}

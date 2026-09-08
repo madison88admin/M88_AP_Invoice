@@ -1646,7 +1646,8 @@ export async function cancelPaymentBatch(
  * - Updates batch total_amount and payment_count
  * - If all payments are returned, the batch is cancelled
  *
- * Can be called by either ACCOUNTING_SUPERVISOR (during review) or ACCOUNTING_ASSOCIATE (on returned batch).
+ * Supervisor-only control: the Associate corrects and resubmits returned work,
+ * but cannot remove invoices from a submitted/review batch.
  */
 export async function returnInvoicesFromBatch(
   batchId: string,

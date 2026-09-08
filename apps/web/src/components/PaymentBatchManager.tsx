@@ -289,9 +289,8 @@ export default function PaymentBatchManager() {
 
   const isAssociate = user?.role === 'ACCOUNTING_ASSOCIATE';
   const isSupervisor = user?.role === 'ACCOUNTING_SUPERVISOR';
-  // Both accounting roles can release sub-$100 (HELD_BELOW_100) payments so the
-  // queue never stalls while waiting on the supervisor.
-  const canReleaseHeld = isSupervisor || isAssociate;
+  // Financial-control holds require Accounting Supervisor approval.
+  const canReleaseHeld = isSupervisor;
   const isBatchable = (p: ScheduledPayment) => ['SCHEDULED', 'APPROVED_FOR_PAYMENT', 'AWAITING_POSTING'].includes(p.status);
 
   const handleBulkConfirmationImport = async (file: File) => {
@@ -1789,7 +1788,7 @@ export default function PaymentBatchManager() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                  {selectedAwaitingCount > 0 && (
+                  {isAssociate && selectedAwaitingCount > 0 && (
                     <button
                       onClick={handlePostSelected}
                       disabled={bulkActionBusy !== null}
@@ -2010,7 +2009,7 @@ export default function PaymentBatchManager() {
                                     </button>
                                   </>
                                 )}
-                                {payment.status === 'AWAITING_POSTING' && (
+                                {isAssociate && payment.status === 'AWAITING_POSTING' && (
                                   <button
                                     onClick={(e) => { e.stopPropagation(); handlePostFromList(payment); }}
                                     disabled={postingInvoiceId === payment.invoice?.id}

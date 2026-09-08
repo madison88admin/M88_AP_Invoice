@@ -46,11 +46,13 @@ router.get('/:id/document', invoiceController.viewInvoiceDocument);
 router.post('/:id/validate', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), validationController.validateInvoiceAsyncController);
 router.post('/:id/validate-sync', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), validationController.validateInvoiceController);
 router.post('/:id/request-approval', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN, UserRole.SUPERADMIN), approvalController.requestApproval);
-router.post('/:id/approve', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.PURCHASING_MANAGER, UserRole.MLO_ACCOUNT_HOLDER, UserRole.PLANNING_MANAGER, UserRole.SR_MANAGER_GLOBAL_PRODUCTION, UserRole.MS_POLLY, UserRole.PRESIDENT, UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE), approvalController.approveInvoiceController);
+router.post('/:id/approve', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.PURCHASING_MANAGER, UserRole.MLO_ACCOUNT_HOLDER, UserRole.PLANNING_MANAGER, UserRole.SR_MANAGER_GLOBAL_PRODUCTION, UserRole.MS_POLLY, UserRole.PRESIDENT, UserRole.ACCOUNTING_SUPERVISOR), approvalController.approveInvoiceController);
 router.post('/:id/reject', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.PURCHASING_MANAGER, UserRole.MLO_ACCOUNT_HOLDER, UserRole.PLANNING_MANAGER, UserRole.SR_MANAGER_GLOBAL_PRODUCTION, UserRole.MS_POLLY, UserRole.PRESIDENT, UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE), approvalController.rejectInvoiceController);
 router.post('/:id/return', authorize(UserRole.PURCHASING_MANAGER, UserRole.MLO_ACCOUNT_HOLDER, UserRole.PLANNING_MANAGER, UserRole.SR_MANAGER_GLOBAL_PRODUCTION, UserRole.MS_POLLY, UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), approvalController.returnInvoiceController);
-router.post('/:id/post', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), postingController.postInvoiceController);
-router.post('/:id/release-hold', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), postingController.releaseFromHoldController);
+// Segregation of duties: the Associate posts/prepares; the Supervisor approves
+// and releases financial-control holds. Neither role can perform both duties.
+router.post('/:id/post', authorize(UserRole.ACCOUNTING_ASSOCIATE), postingController.postInvoiceController);
+router.post('/:id/release-hold', authorize(UserRole.ACCOUNTING_SUPERVISOR), postingController.releaseFromHoldController);
 router.post('/:id/hold', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN, UserRole.SUPERADMIN), postingController.holdInvoiceController);
 router.post('/:id/schedule-payment', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), postingController.schedulePaymentController);
 router.post('/:id/send-payment-confirmation', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), postingController.sendPaymentConfirmationController);

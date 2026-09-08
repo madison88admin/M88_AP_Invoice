@@ -25,9 +25,10 @@ export const postInvoiceController = async (
     const { id } = req.params;
     const { bypassVarianceCheck } = req.body || {};
     
-    // Both ACCOUNTING_ASSOCIATE and ACCOUNTING_SUPERVISOR can bypass all validation
-    // blocks (variance, exceptions, pre-post checks) to proceed with posting.
-    const canBypass = (req.user!.role === 'ACCOUNTING_SUPERVISOR' || req.user!.role === 'ACCOUNTING_ASSOCIATE') && bypassVarianceCheck === true;
+    // Posting belongs exclusively to the Accounting Associate. The route-level
+    // authorization enforces that separation; this check keeps the bypass
+    // permission explicit at the controller boundary as well.
+    const canBypass = req.user!.role === 'ACCOUNTING_ASSOCIATE' && bypassVarianceCheck === true;
     
     const result = await postInvoice(id, req.user!.id, canBypass);
     await logAudit({

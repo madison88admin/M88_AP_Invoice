@@ -45,7 +45,7 @@ export const ROLE_PERMISSIONS = {
   ACCOUNTING_SUPERVISOR: {
     canApprove: true,
     canReject: true,
-    canPost: true,
+    canPost: false,
     canSchedulePayment: true,
     canManagePaymentBatches: false,
     canViewPaymentBatches: true,

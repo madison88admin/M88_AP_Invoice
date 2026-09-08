@@ -4,9 +4,11 @@ import { InvoiceStatus } from '@ap-invoice/shared';
 import { useMockData } from '../contexts/MockDataContext';
 import { MockInvoice } from '../lib/mockData';
 import { invoiceApi } from '../lib/api';
+import { useAuth } from '../contexts/AuthContext';
 import { FileText, Search, Filter, Download, Eye, CheckCircle, XCircle, Calendar, FileSearch, AlertTriangle, Landmark, Clock, User, Paperclip, Check, X as XIcon, Loader2, Send } from 'lucide-react';
 export default function AccountingReview() {
   const { invoices } = useMockData();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [selectedInvoice, setSelectedInvoice] = useState<MockInvoice | null>(null);
@@ -485,7 +487,7 @@ ${dataRows}
                       <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--text-secondary)' }}>{invoice.updated_at ? new Date(invoice.updated_at).toLocaleDateString() : 'N/A'}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                         <div className="flex items-center gap-2">
-                          {isPostable(invoice) && (
+                          {user?.role === 'ACCOUNTING_ASSOCIATE' && isPostable(invoice) && (
                             <button
                               onClick={() => handlePostAndCreateBatch(invoice)}
                               disabled={postingInvoiceId === invoice.id}

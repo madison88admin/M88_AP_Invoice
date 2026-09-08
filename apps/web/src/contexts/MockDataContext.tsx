@@ -283,12 +283,12 @@ export const MockDataProvider = ({ children }: MockDataProviderProps) => {
       const results = await Promise.all(fetches);
       if (!skipInvoiceFetch) {
         const [invoiceRes, vendorRes] = results;
-        if (Array.isArray(invoiceRes?.data)) setInvoices(invoiceRes.data.map(apiInvoiceToMock));
-        if (Array.isArray(vendorRes?.data)) setVendors(vendorRes.data.map(apiVendorToMock));
+        if (Array.isArray(invoiceRes?.data) && (invoiceRes.data.length > 0 || invoices.length === 0)) setInvoices(invoiceRes.data.map(apiInvoiceToMock));
+        if (Array.isArray(vendorRes?.data) && (vendorRes.data.length > 0 || vendors.length === 0)) setVendors(vendorRes.data.map(apiVendorToMock));
       }
       if (canFetchPaymentBatches) {
         const batchRes = skipInvoiceFetch ? results[0] : results[2];
-        if (Array.isArray(batchRes?.data)) setPaymentBatches(batchRes.data.map(apiBatchToMock));
+        if (Array.isArray(batchRes?.data) && (batchRes.data.length > 0 || paymentBatches.length === 0)) setPaymentBatches(batchRes.data.map(apiBatchToMock));
       }
     } catch (err: any) {
       setError(err.message || 'Failed to load data');

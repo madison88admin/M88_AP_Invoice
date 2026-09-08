@@ -23,6 +23,27 @@ let emailPollerStarted = false;
 let emailPollInProgress = false;
 const processedMessageIds = new Set<string>();
 
+const SUPPORTED_CURRENCIES = new Set(['USD', 'HKD', 'IDR', 'EUR', 'GBP', 'JPY', 'CNY', 'RMB', 'SGD', 'AUD', 'CAD']);
+const NON_INVOICE_HINTS = /\b(statement|packing\s*list|delivery\s*note|purchase\s*order|quotation|quote|remittance|receipt|shipping\s*document)\b/i;
+
+function intakeReviewReason(ocrResult: any, fileName: string, subject = ''): string | null {
+  const type = String(ocrResult?.invoice_type || '').toUpperCase();
+  if (type === 'STATEMENT' || NON_INVOICE_HINTS.test(`${fileName} ${subject}`)) {
+    return `Attachment appears to be a non-invoice document (${type || 'unclassified'}).`;
+  }
+  const amount = Number(ocrResult?.total_amount);
+  if (!Number.isFinite(amount) || amount <= 0) return 'A valid positive total amount was not extracted.';
+  if (ocrResult?.invoice_date_extracted === false) return 'Invoice date was not confidently extracted from a labeled date field.';
+  const confidence = Number(ocrResult?.ocr_confidence_score);
+  const threshold = Number(process.env.OCR_CONFIDENCE_THRESHOLD || 0.60);
+  if (Number.isFinite(confidence) && confidence < threshold) return `OCR confidence is below the review threshold (${confidence.toFixed(2)} < ${threshold.toFixed(2)}).`;
+  const currency = String(ocrResult?.currency || '').trim().toUpperCase();
+  if (!SUPPORTED_CURRENCIES.has(currency)) return `Currency was not confidently extracted (received: ${currency || 'blank'}).`;
+  if (!String(ocrResult?.invoice_number || '').trim()) return 'Invoice or debit-note number was not extracted.';
+  if (!String(ocrResult?.vendor_name || '').trim()) return 'Vendor name was not extracted.';
+  return null;
+}
+
 export function isEmailPollerConfigured(): boolean {
   return Boolean(clientId && clientSecret && tenantId && mailboxAddress);
 }
@@ -265,6 +286,21 @@ async function processSingleInvoiceAttachment(
       source: 'GRAPH', stage: 'EXTRACTED', mailbox: mailboxAddress, messageId: message.id,
       attachmentId, fileName, metadata: { invoice_number: ocrResult.invoice_number, confidence: ocrResult.ocr_confidence_score },
     });
+
+    // Do not create invoice rows for non-invoice attachments or incomplete
+    // extraction results. Keep the file and route it to manual review instead.
+    const reviewReason = intakeReviewReason(ocrResult, fileName, message.subject || '');
+    if (reviewReason) {
+      await recordEmailIntakeEvent({
+        source: 'GRAPH', stage: 'REVIEW_REQUIRED', status: 'FAILED', mailbox: mailboxAddress,
+        messageId: message.id, attachmentId, fileName,
+        error: reviewReason,
+        metadata: { invoice_type: ocrResult.invoice_type, amount: ocrResult.total_amount, currency: ocrResult.currency },
+      });
+      await alertEmailIntakeFailure({ source: 'Invoice intake review required', fileName, error: reviewReason });
+      logger.warn(`[Email Intake] ${fileName} routed to review: ${reviewReason}`);
+      return;
+    }
 
     // OCR confidence threshold check — flag low confidence for manual review
     const OCR_CONFIDENCE_THRESHOLD = parseFloat(process.env.OCR_CONFIDENCE_THRESHOLD || '0.60');
@@ -565,6 +601,14 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
     const ocrResult = await analyzeInvoice(buffer, 'application/pdf');
     await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'EXTRACTED', messageId: intakeKey, fileName: data.fileName, metadata: { invoice_number: ocrResult.invoice_number, confidence: ocrResult.ocr_confidence_score } });
 
+    const reviewReason = intakeReviewReason(ocrResult, data.fileName, data.emailSubject || '');
+    if (reviewReason) {
+      await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'REVIEW_REQUIRED', status: 'FAILED', messageId: intakeKey, fileName: data.fileName, error: reviewReason });
+      await alertEmailIntakeFailure({ source: 'SharePoint invoice intake review required', fileName: data.fileName, error: reviewReason });
+      logger.warn(`[SharePoint Intake] ${data.fileName} routed to review: ${reviewReason}`);
+      return { success: false, status: 'REVIEW_REQUIRED', error: reviewReason };
+    }
+
     // OCR confidence threshold check
     const OCR_CONFIDENCE_THRESHOLD = parseFloat(process.env.OCR_CONFIDENCE_THRESHOLD || '0.60');
     const ocrConfidence = ocrResult.ocr_confidence_score ?? 0;
@@ -797,6 +841,14 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
     // Analyze invoice using OCR
     const ocrResult = await analyzeInvoice(buffer, data.contentType);
     await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'EXTRACTED', messageId: intakeKey, fileName: data.fileName, metadata: { invoice_number: ocrResult.invoice_number, confidence: ocrResult.ocr_confidence_score } });
+
+    const reviewReason = intakeReviewReason(ocrResult, data.fileName, data.emailSubject || '');
+    if (reviewReason) {
+      await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'FAILED', messageId: intakeKey, fileName: data.fileName, error: reviewReason });
+      await alertEmailIntakeFailure({ source: 'Power Automate invoice intake review required', fileName: data.fileName, error: reviewReason });
+      logger.warn(`[Power Automate] ${data.fileName} routed to review: ${reviewReason}`);
+      return { success: false, status: 'REVIEW_REQUIRED', error: reviewReason };
+    }
 
     // OCR confidence threshold check
     const OCR_CONFIDENCE_THRESHOLD = parseFloat(process.env.OCR_CONFIDENCE_THRESHOLD || '0.60');

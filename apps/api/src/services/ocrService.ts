@@ -80,6 +80,8 @@ export interface SignatureInfo {
 export interface OCRResult {
   invoice_number: string;
   invoice_date: Date;
+  /** True only when a labeled/validated invoice date was extracted. */
+  invoice_date_extracted?: boolean;
   due_date?: Date;
   invoice_received_date?: Date;
   date_range_start?: Date;
@@ -1398,14 +1400,17 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
   return {
     invoice_number: extracted.invoice_number || '',
     invoice_date: extracted.invoice_date ? new Date(extracted.invoice_date) : new Date(),
+    invoice_date_extracted: Boolean(extracted.invoice_date),
     due_date: extracted.due_date ? new Date(extracted.due_date) : undefined,
     invoice_received_date: new Date(),
     vendor_name: extracted.vendor_name || '',
     total_amount: extracted.amount || 0,
     grand_total: extracted.grand_total || undefined,
     subtotal: (extracted as any).subtotal || undefined,
-    currency: extracted.currency || 'USD',
-    invoice_currency_original: extracted.currency || 'USD',
+     // Do not silently default a missing currency to USD. Intake validation
+     // routes blank/unknown currencies to manual review instead.
+     currency: extracted.currency || '',
+     invoice_currency_original: extracted.currency || '',
     exchange_rate_to_usd: undefined,
     date_range_start: undefined,
     date_range_end: undefined,

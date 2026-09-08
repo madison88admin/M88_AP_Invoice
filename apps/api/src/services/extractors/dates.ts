@@ -149,7 +149,12 @@ export function extractInvoiceDate(text: string, preferUS: boolean = false): str
   console.log('[extractInvoiceDate] Text length:', text.length);
   console.log('[extractInvoiceDate] First 200 chars:', text.substring(0, 200));
 
-  const labels = ['Invoice Date', 'INVOICE DATE:', 'Date:', 'Date', 'Issued Date', 'Billing Date'];
+  // Prefer document-specific labels before generic dates. This prevents due,
+  // received, posting, or payment dates from being selected as the invoice date.
+  const labels = [
+    'Invoice Date', 'Document Date', 'Debit Note Date', 'Debit\s+Note\s+Date',
+    'INVOICE DATE:', 'Date:', 'Date', 'Issued Date', 'Billing Date',
+  ];
 
   for (const label of labels) {
     const regex = new RegExp(`${label.replace('.', '\\.')}[:\\s]*(${DATE_CAPTURE_PATTERN})`, 'i');

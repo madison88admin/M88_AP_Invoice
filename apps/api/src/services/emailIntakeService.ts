@@ -23,7 +23,6 @@ let emailPollerStarted = false;
 let emailPollInProgress = false;
 const processedMessageIds = new Set<string>();
 
-const SUPPORTED_CURRENCIES = new Set(['USD', 'HKD', 'IDR', 'EUR', 'GBP', 'JPY', 'CNY', 'RMB', 'SGD', 'AUD', 'CAD']);
 const NON_INVOICE_HINTS = /\b(statement|packing\s*list|delivery\s*note|purchase\s*order|quotation|quote|remittance|receipt|shipping\s*document)\b/i;
 
 function intakeReviewReason(ocrResult: any, fileName: string, subject = ''): string | null {
@@ -38,7 +37,7 @@ function intakeReviewReason(ocrResult: any, fileName: string, subject = ''): str
   const threshold = Number(process.env.OCR_CONFIDENCE_THRESHOLD || 0.60);
   if (Number.isFinite(confidence) && confidence < threshold) return `OCR confidence is below the review threshold (${confidence.toFixed(2)} < ${threshold.toFixed(2)}).`;
   const currency = String(ocrResult?.currency || '').trim().toUpperCase();
-  if (!SUPPORTED_CURRENCIES.has(currency)) return `Currency was not confidently extracted (received: ${currency || 'blank'}).`;
+  if (currency !== 'USD') return `Only USD invoices are eligible for automatic capture (received: ${currency || 'blank'}).`;
   if (!String(ocrResult?.invoice_number || '').trim()) return 'Invoice or debit-note number was not extracted.';
   if (!String(ocrResult?.vendor_name || '').trim()) return 'Vendor name was not extracted.';
   return null;

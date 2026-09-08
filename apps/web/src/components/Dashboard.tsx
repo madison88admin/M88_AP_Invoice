@@ -182,6 +182,9 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
     search: undefined as string | undefined,
     dateFrom: undefined as string | undefined,
     dateTo: undefined as string | undefined,
+    receivedFrom: undefined as string | undefined,
+    receivedTo: undefined as string | undefined,
+    receivedOrder: undefined as 'oldest' | 'newest' | undefined,
     agingBucket: undefined as 'current' | '1-30' | '31-60' | '60+' | undefined,
     urgentDue: undefined as boolean | undefined,
   });
@@ -311,6 +314,21 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
       if (filters.dateFrom && invDate < new Date(filters.dateFrom)) return false;
       if (filters.dateTo && invDate > new Date(filters.dateTo)) return false;
     }
+    // Purchasing can triage by when the invoice entered the system, rather
+    // than by the supplier's invoice date.
+    if (user?.role === 'PURCHASING_COORDINATOR' || user?.role === 'PURCHASING_MANAGER') {
+      const receivedAt = new Date(inv.created_at || inv.invoice_received_date || inv.invoice_date);
+      if (filters.receivedFrom) {
+        const from = new Date(filters.receivedFrom);
+        from.setHours(0, 0, 0, 0);
+        if (receivedAt < from) return false;
+      }
+      if (filters.receivedTo) {
+        const to = new Date(filters.receivedTo);
+        to.setHours(23, 59, 59, 999);
+        if (receivedAt > to) return false;
+      }
+    }
     if (filters.agingBucket) {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -388,6 +406,9 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
   const sortedInvoices = [...quickFilteredInvoices].sort((a, b) => {
     const dateA = new Date(a.created_at || a.invoice_received_date || a.invoice_date);
     const dateB = new Date(b.created_at || b.invoice_received_date || b.invoice_date);
+    if ((user?.role === 'PURCHASING_COORDINATOR' || user?.role === 'PURCHASING_MANAGER') && filters.receivedOrder === 'oldest') {
+      return dateA.getTime() - dateB.getTime();
+    }
     return dateB.getTime() - dateA.getTime(); // Descending order (newest first)
   });
 
@@ -2347,7 +2368,7 @@ ${dataRows}
                   Advanced
                 </button>
                 <button
-                  onClick={() => setFilters({ status: undefined, category: undefined, type: undefined, brand: undefined, brand_code: undefined, vendorId: undefined, search: undefined, dateFrom: undefined, dateTo: undefined, agingBucket: undefined, urgentDue: undefined })}
+                  onClick={() => setFilters({ status: undefined, category: undefined, type: undefined, brand: undefined, brand_code: undefined, vendorId: undefined, search: undefined, dateFrom: undefined, dateTo: undefined, receivedFrom: undefined, receivedTo: undefined, receivedOrder: undefined, agingBucket: undefined, urgentDue: undefined })}
                   disabled={activeFilterCount === 0}
                   className="h-9 w-full md:w-auto px-4 rounded-full transition-colors text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed"
                   style={activeFilterCount > 0
@@ -2374,6 +2395,25 @@ ${dataRows}
               {/* Advanced filters — collapsible */}
               {showAdvancedFilters && (
                 <div className="flex flex-col md:flex-row items-start md:items-center gap-3 mt-3 pt-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                  {(user?.role === 'PURCHASING_COORDINATOR' || user?.role === 'PURCHASING_MANAGER') && (
+                    <>
+                      <select
+                        value={filters.receivedOrder || ''}
+                        onChange={(e) => setFilters({ ...filters, receivedOrder: (e.target.value || undefined) as 'oldest' | 'newest' | undefined })}
+                        className="h-9 w-full md:w-auto px-4 rounded-full focus:outline-none text-sm appearance-none cursor-pointer"
+                        style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
+                      >
+                        <option value="">Received order</option>
+                        <option value="oldest">Earliest received first</option>
+                        <option value="newest">Latest received first</option>
+                      </select>
+                      <div className="flex items-center gap-2 w-full md:w-auto" title="Filter by the date the invoice entered the system">
+                        <input type="date" value={filters.receivedFrom || ''} onChange={(e) => setFilters({ ...filters, receivedFrom: e.target.value || undefined })} className="h-9 px-3 rounded-full text-sm focus:outline-none" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }} aria-label="Received from" />
+                        <span style={{ color: 'var(--text-subtle)' }}>-</span>
+                        <input type="date" value={filters.receivedTo || ''} onChange={(e) => setFilters({ ...filters, receivedTo: e.target.value || undefined })} className="h-9 px-3 rounded-full text-sm focus:outline-none" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }} aria-label="Received to" />
+                      </div>
+                    </>
+                  )}
                   <select
                     value={filters.category || ''}
                     onChange={(e) => setFilters({ ...filters, category: e.target.value as InvoiceCategory | undefined })}

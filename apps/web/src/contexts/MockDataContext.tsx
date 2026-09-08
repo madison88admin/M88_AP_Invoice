@@ -272,21 +272,23 @@ export const MockDataProvider = ({ children }: MockDataProviderProps) => {
       setError(null);
       const fetches: Promise<any>[] = [];
       if (!skipInvoiceFetch) {
-        fetches.push(invoiceApi.getAll().catch(() => ({ data: [] })));
-        fetches.push(vendorApi.getAll().catch(() => ({ data: [] })));
+        // Preserve the last known good data when a background refresh fails.
+        // Replacing it with [] makes the dashboard briefly show zero records.
+        fetches.push(invoiceApi.getAll().catch(() => ({ data: null, _failed: true })));
+        fetches.push(vendorApi.getAll().catch(() => ({ data: null, _failed: true })));
       }
       if (canFetchPaymentBatches) {
-        fetches.push(paymentBatchApi.getAll().catch(() => ({ data: [] })));
+        fetches.push(paymentBatchApi.getAll().catch(() => ({ data: null, _failed: true })));
       }
       const results = await Promise.all(fetches);
       if (!skipInvoiceFetch) {
         const [invoiceRes, vendorRes] = results;
-        setInvoices((invoiceRes.data || []).map(apiInvoiceToMock));
-        setVendors((vendorRes.data || []).map(apiVendorToMock));
+        if (Array.isArray(invoiceRes?.data)) setInvoices(invoiceRes.data.map(apiInvoiceToMock));
+        if (Array.isArray(vendorRes?.data)) setVendors(vendorRes.data.map(apiVendorToMock));
       }
       if (canFetchPaymentBatches) {
         const batchRes = skipInvoiceFetch ? results[0] : results[2];
-        setPaymentBatches((batchRes?.data || []).map(apiBatchToMock));
+        if (Array.isArray(batchRes?.data)) setPaymentBatches(batchRes.data.map(apiBatchToMock));
       }
     } catch (err: any) {
       setError(err.message || 'Failed to load data');

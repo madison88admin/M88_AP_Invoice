@@ -72,7 +72,10 @@ function rateLimitIdentity(req: express.Request): string {
 // General rate limiting: applies to all non-upload routes
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 1000,
+  // Dashboard pages fan out across several read endpoints and refresh in the
+  // background. Keep abuse protection while preventing normal multi-widget
+  // sessions (or a few open tabs) from being mistaken for an attack.
+  max: Number(process.env.GENERAL_RATE_LIMIT_MAX || 5000),
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: rateLimitIdentity,

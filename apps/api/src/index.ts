@@ -5,6 +5,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import { createHash } from 'crypto';
 import invoiceRoutes from './routes/invoices';
 import vendorRoutes from './routes/vendors';
 import emailIntakeRoutes from './routes/emailIntake';
@@ -60,14 +61,38 @@ import { checkEmailPollHealth } from './services/emailIntakeMonitoringService';
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+function rateLimitIdentity(req: express.Request): string {
+  const authorization = req.get('authorization');
+  if (authorization) {
+    return `session:${createHash('sha256').update(authorization).digest('hex')}`;
+  }
+  return `ip:${req.ip}`;
+}
+
 // General rate limiting: applies to all non-upload routes
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 1000,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: rateLimitIdentity,
   skip: (req) => process.env.NODE_ENV === 'development' || req.path === '/api/health',
   message: { error: { message: 'Too many requests, please try again later.', status: 429 } },
+});
+
+// Login has a separate bucket so dashboard/API traffic can never lock all
+// users out. Keying by account plus connection IP also limits brute-force
+// attempts without treating every Netlify user as one identity.
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : 'unknown';
+    return `login:${createHash('sha256').update(`${email}|${req.ip}`).digest('hex')}`;
+  },
+  message: { error: { message: 'Too many login attempts. Please wait 15 minutes and try again.', status: 429 } },
 });
 
 // Upload rate limiting: slower, allows larger bursts of file uploads
@@ -87,9 +112,11 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use('/api/auth/login', loginLimiter);
 
 // Apply general rate limiter to all routes except uploads (which have their own limiter)
 app.use((req, res, next) => {
+  if (req.path === '/api/auth/login') return next();
   if (req.method === 'POST' && (req.path === '/api/invoices/upload' || req.path === '/api/invoices/upload-madison' || req.path === '/api/email/invoice' || req.path === '/api/email/manual-invoice' || req.path === '/api/payment-confirmations/upload')) {
     return uploadLimiter(req, res, next);
   }

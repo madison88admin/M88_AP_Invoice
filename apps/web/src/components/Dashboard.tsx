@@ -150,6 +150,9 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuth();
+  // Accounting roles manage invoices from the dedicated /repository page;
+  // the dashboard's duplicate invoice list stays hidden from them.
+  const isAccountingRole = user?.role === 'ACCOUNTING_SUPERVISOR' || user?.role === 'ACCOUNTING_ASSOCIATE';
   const { invoices, vendors, paymentBatches, refresh, loading: ctxLoading } = useMockData();
   const [selectedInvoice, setSelectedInvoice] = useState<MockInvoice | null>(null);
   const [validating, setValidating] = useState(false);
@@ -533,6 +536,23 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
       }
     }
   }, [location.state, location.search, invoices, navigate, mode]);
+
+  // Honor status/urgentDue query params on /repository (KPI clicks from the
+  // dashboard hand their filters off here).
+  useEffect(() => {
+    if (mode !== 'repository') return;
+    const params = new URLSearchParams(location.search);
+    const statusParam = params.get('status') as InvoiceStatus | null;
+    const urgentParam = params.get('urgentDue');
+    if (!statusParam && !urgentParam) return;
+    if (statusParam && !Object.values(InvoiceStatus).includes(statusParam)) return;
+    setFilters((f) => ({
+      ...f,
+      status: statusParam ?? undefined,
+      urgentDue: urgentParam ? true : undefined,
+    }));
+    navigate('/repository', { replace: true, state: {} });
+  }, [location.search, mode, navigate]);
 
   // Keep an open invoice detail panel synchronized with background refreshes.
   useEffect(() => {
@@ -2082,30 +2102,44 @@ ${dataRows}
   const handleKpiClick = (kpiLabel: string) => {
     const label = kpiLabel.toLowerCase();
     // Map KPI labels to status filters
+    let nextStatus: InvoiceStatus | undefined;
+    let nextUrgentDue: boolean | undefined;
     if (label.includes('validation')) {
-      setFilters({ ...filters, status: InvoiceStatus.VALIDATION_PENDING });
+      nextStatus = InvoiceStatus.VALIDATION_PENDING;
     } else if (label.includes('awaiting approval') || label.includes('pending my approval')) {
       // Pending approvals — clear status filter to show all pending stages
-      setFilters({ ...filters, status: undefined });
+      nextStatus = undefined;
     } else if (label.includes('exception')) {
-      setFilters({ ...filters, status: InvoiceStatus.EXCEPTION_FLAGGED });
+      nextStatus = InvoiceStatus.EXCEPTION_FLAGGED;
     } else if (label.includes('scheduled payment')) {
-      setFilters({ ...filters, status: InvoiceStatus.PAYMENT_SCHEDULED });
+      nextStatus = InvoiceStatus.PAYMENT_SCHEDULED;
     } else if (label.includes('pending accounting') || label.includes('accounting review')) {
-      setFilters({ ...filters, status: InvoiceStatus.PENDING_ACCOUNTING });
+      nextStatus = InvoiceStatus.PENDING_ACCOUNTING;
     } else if (label.includes('approved')) {
-      setFilters({ ...filters, status: InvoiceStatus.APPROVED });
+      nextStatus = InvoiceStatus.APPROVED;
     } else if (label.includes('on-hold') || label.includes('hold') || label.includes('escalated')) {
-      setFilters({ ...filters, status: InvoiceStatus.ON_HOLD });
+      nextStatus = InvoiceStatus.ON_HOLD;
     } else if (label.includes('paid')) {
-      setFilters({ ...filters, status: InvoiceStatus.PAID });
+      nextStatus = InvoiceStatus.PAID;
     } else if (label.includes('posted')) {
-      setFilters({ ...filters, status: InvoiceStatus.POSTED_TO_QB });
+      nextStatus = InvoiceStatus.POSTED_TO_QB;
     } else if (label.includes('urgent')) {
-      setFilters({ ...filters, status: undefined, urgentDue: true });
+      nextStatus = undefined;
+      nextUrgentDue = true;
     } else {
-      setFilters({ ...filters, status: undefined });
+      nextStatus = undefined;
     }
+    // Accounting roles no longer see the dashboard invoice list — carry the
+    // filter to the dedicated /repository page instead.
+    if (mode === 'dashboard' && isAccountingRole) {
+      const params = new URLSearchParams();
+      if (nextStatus) params.set('status', nextStatus);
+      if (nextUrgentDue) params.set('urgentDue', '1');
+      const qs = params.toString();
+      navigate(qs ? `/repository?${qs}` : '/repository');
+      return;
+    }
+    setFilters({ ...filters, status: nextStatus, urgentDue: nextUrgentDue });
     // Scroll to invoice table
     setTimeout(() => {
       const section = document.getElementById('invoice-list-section');
@@ -2273,8 +2307,8 @@ ${dataRows}
             </div>
           )}
 
-          {/* Filters — pill selectors */}
-          {user && user.role !== 'MS_POLLY' && user.role !== 'IT_ADMIN' && user.role !== 'SUPERADMIN' && (
+          {/* Filters — pill selectors (drive the dashboard invoice list only) */}
+          {user && !(mode === 'dashboard' && isAccountingRole) && user.role !== 'MS_POLLY' && user.role !== 'IT_ADMIN' && user.role !== 'SUPERADMIN' && (
             <div className="p-4 mb-6 rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Filter Invoices</h3>
@@ -2511,8 +2545,10 @@ ${dataRows}
             </div>
           )}
 
-          {/* Invoice Table — hidden from SUPERADMIN (system maintenance only) */}
-          {user?.role !== 'SUPERADMIN' && (
+          {/* Invoice Table — hidden from SUPERADMIN (system maintenance only).
+              On the dashboard, accounting roles are sent to the dedicated
+              /repository page instead of seeing a duplicate list here. */}
+          {user?.role !== 'SUPERADMIN' && !(mode === 'dashboard' && isAccountingRole) && (
           <div id="invoice-list-section" className="rounded-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.25)]" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
             <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
               <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>

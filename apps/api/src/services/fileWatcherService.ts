@@ -25,6 +25,7 @@ import { inAppNotificationService } from './inAppNotificationService';
 import { detectMultiInvoice, splitPdfByPageRanges } from './multiInvoiceDetector';
 import { sanitizeInvoiceType, sanitizeCategory } from '../utils/enumSanitizer';
 import { parseMPOReference } from '../utils/mpoReference';
+import { alertEmailIntakeFailure, recordEmailIntakeEvent } from './emailIntakeMonitoringService';
 
 const INCOMING_DIR = process.env.WATCHER_INCOMING_DIR || '/incoming-invoices';
 const PROCESSING_DIR = process.env.WATCHER_PROCESSING_DIR || '/incoming-invoices/processing';
@@ -36,6 +37,35 @@ const FAILED_DIR = process.env.WATCHER_FAILED_DIR || '/incoming-invoices/failed'
 let watcherInterval: NodeJS.Timeout | null = null;
 let isProcessing = false;
 const processedFiles = new Set<string>();
+
+function safeInvoiceDate(value: unknown): Date | null {
+  if (!value) return null;
+  const parsed = value instanceof Date ? value : new Date(String(value));
+  if (Number.isNaN(parsed.getTime())) return null;
+  const year = parsed.getUTCFullYear();
+  const maxYear = new Date().getUTCFullYear() + 5;
+  return year >= 2000 && year <= maxYear ? parsed : null;
+}
+
+/**
+ * Power Automate deliberately sends every non-inline PDF here.  The backend,
+ * not the mail-flow filename, decides whether it is safe to create as an AP
+ * invoice.  Ambiguous documents stay available in manual-review.
+ */
+function intakeReviewReason(ocrResult: any): string | null {
+  const type = String(ocrResult?.document_type || '').toUpperCase();
+  const amount = Number(ocrResult?.total_amount ?? ocrResult?.amount);
+  const currency = String(ocrResult?.currency || '').toUpperCase();
+
+  if (type === 'STATEMENT' || type === 'OTHER' || type === 'UNKNOWN') {
+    return `Document type ${type || 'unknown'} is not eligible for automatic invoice creation`;
+  }
+  if (!ocrResult?.invoice_number) return 'Invoice number could not be extracted';
+  if (!Number.isFinite(amount) || amount <= 0) return 'A valid non-zero invoice amount could not be extracted';
+  if (!ocrResult?.invoice_date) return 'Invoice date could not be extracted';
+  if (currency && currency !== 'USD') return `Currency ${currency} requires manual review before invoice creation`;
+  return null;
+}
 
 /**
  * Ensure all watcher directories exist.
@@ -196,6 +226,7 @@ function extractInvoiceNumberFromFilename(fileName: string): string | null {
  */
 async function processFile(filePath: string, fileName: string): Promise<void> {
   logger.info(`[File Watcher] Processing: ${fileName}`);
+  await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'ATTACHMENT_DETECTED', fileName, metadata: { channel: 'SFTP' } });
 
   // Step 1: Move to Processing
   const processingPath = path.join(PROCESSING_DIR, fileName);
@@ -210,9 +241,12 @@ async function processFile(filePath: string, fileName: string): Promise<void> {
   let fileBuffer: Buffer;
   try {
     fileBuffer = fs.readFileSync(processingPath);
+    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'UPLOADED', fileName, metadata: { bytes: fileBuffer.length, channel: 'SFTP' } });
   } catch (err) {
     logger.error(`[File Watcher] Failed to read ${fileName}:`, err);
     safeMove(processingPath, FAILED_DIR);
+    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'FAILED', fileName, error: 'File could not be read from incoming folder' });
+    await alertEmailIntakeFailure({ source: 'Power Automate SFTP intake', fileName, error: 'File could not be read from incoming folder' });
     return;
   }
 
@@ -232,6 +266,18 @@ async function processFile(filePath: string, fileName: string): Promise<void> {
         return;
       }
     }
+  }
+
+  // Power Automate can expose attachment metadata without actual ContentBytes.
+  // Never send an empty/non-PDF payload into OCR; retain it in failed and alert.
+  if (fileBuffer.length < 100 || fileBuffer.subarray(0, 5).toString('ascii') !== '%PDF-') {
+    const error = `Invalid or empty PDF payload (${fileBuffer.length} bytes). Use Outlook Get attachment content before SFTP Create file.`;
+    logger.error(`[File Watcher] ${fileName}: ${error}`);
+    safeMove(processingPath, FAILED_DIR);
+    await createAuditLog(null, 'WATCHER_INVALID_PDF', `${fileName}: ${error}`);
+    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'FAILED', fileName, error, metadata: { bytes: fileBuffer.length } });
+    await alertEmailIntakeFailure({ source: 'Power Automate SFTP intake', fileName, error });
+    return;
   }
 
   // Step 2b: Multi-invoice detection
@@ -281,10 +327,32 @@ async function processSingleInvoiceBuffer(
   let ocrResult: any;
   try {
     ocrResult = await analyzeInvoice(fileBuffer, 'application/pdf');
+    const extractedInvoiceDate = safeInvoiceDate(ocrResult?.invoice_date);
+    const extractedDueDate = safeInvoiceDate(ocrResult?.due_date);
+    const extractedPriorityDate = safeInvoiceDate(ocrResult?.priority_pay_date);
+    const extractedRangeStart = safeInvoiceDate(ocrResult?.date_range_start);
+    const extractedRangeEnd = safeInvoiceDate(ocrResult?.date_range_end);
+    ocrResult.invoice_date = extractedInvoiceDate?.toISOString() || null;
+    ocrResult.due_date = extractedDueDate?.toISOString() || null;
+    ocrResult.priority_pay_date = extractedPriorityDate?.toISOString() || null;
+    ocrResult.date_range_start = extractedRangeStart?.toISOString() || null;
+    ocrResult.date_range_end = extractedRangeEnd?.toISOString() || null;
+    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'EXTRACTED', fileName, metadata: { documentType: ocrResult?.document_type, currency: ocrResult?.currency } });
   } catch (err) {
     logger.error(`[File Watcher] OCR failed for ${fileName}${partLabel}:`, err);
     if (splitIndex === undefined) safeMove(processingPath, FAILED_DIR);
     await createAuditLog(null, 'WATCHER_OCR_FAILED', `OCR extraction failed for ${fileName}${partLabel}: ${err}`);
+    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'FAILED', fileName, error: `OCR extraction failed: ${String(err)}` });
+    await alertEmailIntakeFailure({ source: 'Power Automate SFTP intake', fileName, error: 'OCR extraction failed' });
+    return;
+  }
+
+  const reviewReason = intakeReviewReason(ocrResult);
+  if (reviewReason) {
+    logger.info(`[File Watcher] ${fileName}${partLabel} → ManualReview: ${reviewReason}`);
+    if (splitIndex === undefined) safeMove(processingPath, MANUAL_REVIEW_DIR);
+    await createAuditLog(null, 'WATCHER_REVIEW_REQUIRED', `${fileName}${partLabel}: ${reviewReason}`);
+    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'FAILED', fileName, error: reviewReason });
     return;
   }
 
@@ -541,6 +609,13 @@ async function processSingleInvoiceBuffer(
     invoiceId = invoice.id;
 
     logger.info(`[File Watcher] Saved invoice ${invoice.invoice_number} with ${invoice.invoice_lines?.length || 0} line items`);
+    await recordEmailIntakeEvent({
+      source: 'POWER_AUTOMATE',
+      stage: 'CREATED',
+      fileName,
+      invoiceId: invoice.id,
+      metadata: { invoiceNumber: invoice.invoice_number, documentType: ocrResult.document_type, currency: ocrResult.currency },
+    });
 
     // If multiple MPOs in one invoice, add a MULTI_PO_CONSOLIDATED exception for manual review
     if (hasMultipleMpos) {
@@ -734,6 +809,11 @@ async function pollIncomingDirectory(): Promise<void> {
         await processFile(filePath, fileName);
       } catch (err) {
         logger.error(`[File Watcher] Unhandled error for ${fileName}:`, err);
+      } finally {
+        // The file is normally moved out of incoming during processing. Remove
+        // the transient guard so a later email using the same supplier filename
+        // is not skipped forever. If moving failed, the next poll may retry it.
+        processedFiles.delete(fileName);
       }
     }
 

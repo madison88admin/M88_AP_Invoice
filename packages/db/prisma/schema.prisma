@@ -9,7 +9,7 @@ datasource db {
 
 model Vendor {
   id                      String   @id @default(uuid())
-  name                    String
+  name                    String   @unique
   name_aliases            String[]
   beneficiary_name        String?
   supplier_location       String?

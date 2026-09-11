@@ -134,6 +134,14 @@ const statusMap: Record<string, { label: string; styleObj: React.CSSProperties }
       borderColor: 'color-mix(in srgb, var(--accent-green) 30%, transparent)',
     },
   },
+  CANCELLED: {
+    label: 'Cancelled',
+    styleObj: {
+      background: 'color-mix(in srgb, var(--text-muted) 10%, transparent)',
+      color: 'var(--text-secondary)',
+      borderColor: 'color-mix(in srgb, var(--text-muted) 25%, transparent)',
+    },
+  },
   REJECTED: {
     label: 'Rejected',
     styleObj: {

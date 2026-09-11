@@ -338,7 +338,7 @@ export async function downloadInvoicePdf(invoice: any): Promise<Buffer> {
  * (Madison extractor + AI engines + field decision engine), update the invoice with
  * new extracted data, then re-run validation.
  *
- * Allowed from any status except PAYMENT_CONFIRMATION_SENT.
+ * Allowed from any status except completed payment confirmation or cancellation.
  */
 export async function reExtractInvoice(
   invoiceId: string,
@@ -353,8 +353,8 @@ export async function reExtractInvoice(
     throw new AppError('Invoice not found', 404);
   }
 
-  if (invoice.status === 'PAYMENT_CONFIRMATION_SENT') {
-    throw new AppError('Cannot re-extract invoice in PAYMENT_CONFIRMATION_SENT status', 400);
+  if (invoice.status === 'PAYMENT_CONFIRMATION_SENT' || invoice.status === 'CANCELLED') {
+    throw new AppError(`Cannot re-extract invoice in ${invoice.status} status`, 400);
   }
 
   // 1. Download the original PDF

@@ -224,6 +224,46 @@ export const deleteInvoice = async (
   }
 };
 
+export const requestInvoiceCancellation = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const invoice = await invoiceService.requestInvoiceCancellation(
+      req.params.id,
+      req.user!.id,
+      req.user!.role,
+      req.user!.name,
+      req.body?.reason,
+    );
+    res.json(invoice);
+    eventBroadcaster.broadcast({ type: 'INVOICE_UPDATED', invoiceId: req.params.id, timestamp: Date.now() });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const cancelInvoice = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const invoice = await invoiceService.cancelInvoice(
+      req.params.id,
+      req.user!.id,
+      req.user!.role,
+      req.user!.name,
+      req.body?.reason,
+    );
+    res.json(invoice);
+    eventBroadcaster.broadcast({ type: 'INVOICE_STATUS_CHANGED', invoiceId: req.params.id, timestamp: Date.now() });
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const requestBankDetailsChange = async (
   req: AuthRequest,
   res: Response,

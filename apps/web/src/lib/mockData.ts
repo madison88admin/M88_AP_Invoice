@@ -30,6 +30,12 @@ export interface MockInvoice {
   material_name?: string;
   qty_shipped?: number;
   status: InvoiceStatus;
+  cancellation_requested_by?: string;
+  cancellation_requested_at?: string;
+  cancellation_request_reason?: string;
+  cancelled_by?: string;
+  cancelled_at?: string;
+  cancellation_reason?: string;
   current_stage?: string;
   bank_name?: string;
   account_number?: string;

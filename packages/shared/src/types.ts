@@ -59,6 +59,7 @@ export enum InvoiceStatus {
   PAYMENT_SCHEDULED = 'PAYMENT_SCHEDULED',
   PAID = 'PAID',
   PAYMENT_CONFIRMATION_SENT = 'PAYMENT_CONFIRMATION_SENT',
+  CANCELLED = 'CANCELLED',
   REJECTED = 'REJECTED',
   ON_HOLD = 'ON_HOLD',
 }
@@ -226,6 +227,12 @@ export interface Invoice {
   source: InvoiceSource;
   raw_file_url?: string;
   status: InvoiceStatus;
+  cancellation_requested_by?: string;
+  cancellation_requested_at?: Date;
+  cancellation_request_reason?: string;
+  cancelled_by?: string;
+  cancelled_at?: Date;
+  cancellation_reason?: string;
   signatures?: Signature[];
   audit_logs?: AuditLog[];
   exceptions?: Exception[];

@@ -56,6 +56,10 @@ router.post('/:id/release-hold', authorize(UserRole.ACCOUNTING_SUPERVISOR), post
 router.post('/:id/hold', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN, UserRole.SUPERADMIN), postingController.holdInvoiceController);
 router.post('/:id/schedule-payment', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), postingController.schedulePaymentController);
 router.post('/:id/send-payment-confirmation', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), postingController.sendPaymentConfirmationController);
+// Cancellation is a two-step, auditable control. Requesters cannot finalize;
+// only the Accounting Supervisor (or system administration) can do so.
+router.post('/:id/request-cancellation', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.PURCHASING_MANAGER, UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN, UserRole.SUPERADMIN, UserRole.ADMIN), invoiceController.requestInvoiceCancellation);
+router.post('/:id/cancel', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN, UserRole.SUPERADMIN, UserRole.ADMIN), invoiceController.cancelInvoice);
 router.post('/:id/check-nextgen', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), validationController.checkNextGenAsyncController);
 router.post('/:id/check-nextgen-sync', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN, UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), validationController.checkNextGenChangesController);
 router.get('/jobs/:jobId', validationController.getJobStatusController);

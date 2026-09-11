@@ -30,6 +30,7 @@ const PM_FORWARD_STATUSES: string[] = [
   InvoiceStatus.PAYMENT_CONFIRMATION_SENT,
   InvoiceStatus.PAID,
   InvoiceStatus.ON_HOLD,
+  InvoiceStatus.CANCELLED,
   InvoiceStatus.REJECTED,
 ];
 

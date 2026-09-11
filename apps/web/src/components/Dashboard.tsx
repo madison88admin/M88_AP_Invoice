@@ -165,6 +165,9 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
   const [showReturnModal, setShowReturnModal] = useState(false);
   const [returnReason, setReturnReason] = useState('');
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showCancellationModal, setShowCancellationModal] = useState(false);
+  const [cancellationReason, setCancellationReason] = useState('');
+  const [finalizingCancellation, setFinalizingCancellation] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editFormData, setEditFormData] = useState<any>({});
   const [savingEdit, setSavingEdit] = useState(false);
@@ -1159,6 +1162,30 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
       showToast(msg, 'error');
     } finally {
       setShowDeleteModal(false);
+    }
+  };
+
+  const handleCancellation = async () => {
+    if (!selectedInvoice || !cancellationReason.trim()) return;
+    const canFinalize = ['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN', 'ADMIN'].includes(user?.role || '')
+      && Boolean(selectedInvoice.cancellation_requested_at);
+    try {
+      if (canFinalize) {
+        setFinalizingCancellation(true);
+        await invoiceApi.cancel(selectedInvoice.id, cancellationReason.trim());
+        showToast(`Invoice ${selectedInvoice.invoice_number} was cancelled and retained in the audit trail`, 'success');
+      } else {
+        await invoiceApi.requestCancellation(selectedInvoice.id, cancellationReason.trim());
+        showToast('Cancellation request submitted for authorized review', 'success');
+      }
+      await refresh();
+      setSelectedInvoice(null);
+      setShowCancellationModal(false);
+      setCancellationReason('');
+    } catch (error: any) {
+      showToast(error?.response?.data?.error?.message || 'Failed to process cancellation request', 'error');
+    } finally {
+      setFinalizingCancellation(false);
     }
   };
 
@@ -3663,12 +3690,13 @@ ${dataRows}
                 </button>
               )}
 
-              {/* Delete Invoice — Purchasing Coordinator/Manager/IT can remove early-stage invoices (never once paid/posted or inside a live batch) */}
-              {user && ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN', 'SUPERADMIN', 'ADMIN'].includes(user.role) && (
+              {/* Cancellation preserves the source document, approvals and accounting history. */}
+              {user && selectedInvoice.status !== InvoiceStatus.CANCELLED && ![InvoiceStatus.PAID, InvoiceStatus.PAYMENT_CONFIRMATION_SENT].includes(selectedInvoice.status as InvoiceStatus) &&
+                ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN', 'ADMIN'].includes(user.role) && (
                 <>
                   <div style={{ borderTop: '1px solid var(--border-subtle)' }} className="pt-3">
                     <button
-                      onClick={() => setShowDeleteModal(true)}
+                      onClick={() => setShowCancellationModal(true)}
                       className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm"
                       style={{
                         background: 'color-mix(in srgb, var(--accent-red) 8%, transparent)',
@@ -3677,16 +3705,31 @@ ${dataRows}
                       }}
                       onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'color-mix(in srgb, var(--accent-red) 18%, transparent)'; }}
                       onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'color-mix(in srgb, var(--accent-red) 8%, transparent)'; }}
-                      title="Only invoices that are not yet paid, posted to QB, or inside a live batch can be deleted"
+                      title="Request a documented cancellation; the invoice remains in the repository and audit trail"
                     >
-                      <Trash2 className="h-4 w-4 mr-2" strokeWidth={1.75} />
-                      Delete Invoice
+                      <AlertTriangle className="h-4 w-4 mr-2" strokeWidth={1.75} />
+                      {['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN', 'ADMIN'].includes(user.role) && selectedInvoice.cancellation_requested_at
+                        ? 'Approve Cancellation'
+                        : 'Request Cancellation'}
                     </button>
                     <p className="text-[11px] text-center mt-1.5" style={{ color: 'var(--text-muted)' }}>
-                      Only early-stage invoices (not posted / paid / inside a live batch) can be deleted
+                      Cancellation retains the invoice, PDF, approvals, QuickBooks reference, and audit history
                     </p>
                   </div>
                 </>
+              )}
+
+              {/* Hard deletion remains limited to intake/OCR mistakes that never entered workflow. */}
+              {user && ['RECEIVED', 'OCR_PROCESSING', 'VALIDATION_PENDING', 'EXCEPTION_FLAGGED'].includes(selectedInvoice.status as string) &&
+                ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN', 'SUPERADMIN', 'ADMIN'].includes(user.role) && (
+                <button
+                  onClick={() => setShowDeleteModal(true)}
+                  className="w-full flex items-center justify-center px-4 py-2 rounded-xl transition-all font-medium text-xs mt-2"
+                  style={{ color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}
+                  title="Only unsubmitted intake/OCR mistakes may be permanently removed"
+                >
+                  <Trash2 className="h-3.5 w-3.5 mr-2" strokeWidth={1.75} /> Remove intake draft
+                </button>
               )}
 
               {/* No actions available */}
@@ -4072,6 +4115,54 @@ ${dataRows}
                   style={!returnReason.trim() ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--accent-amber)', color: 'var(--bg-base)' }}
                 >
                   Return Invoice
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Auditable cancellation modal */}
+      {mode === 'repository' && showCancellationModal && selectedInvoice && (
+        <div className="fixed inset-0 flex items-center justify-center z-50 animate-backdrop" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
+          <div className="max-w-md w-full mx-2 sm:mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+            <div className="p-6">
+              <div className="flex items-start gap-3 mb-4">
+                <div className="p-2.5 rounded-xl flex-shrink-0" style={{ background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)' }}>
+                  <AlertTriangle className="h-5 w-5" style={{ color: 'var(--accent-red)' }} strokeWidth={1.75} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    {['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN', 'ADMIN'].includes(user?.role || '') && selectedInvoice.cancellation_requested_at ? 'Approve Invoice Cancellation' : 'Request Invoice Cancellation'}
+                  </h3>
+                  <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>
+                    Invoice <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.invoice_number}</span> will remain visible with its original PDF, approvals, QuickBooks reference, and full audit history.
+                  </p>
+                </div>
+              </div>
+              {selectedInvoice.cancellation_request_reason && (
+                <p className="text-xs rounded-lg p-3 mb-3" style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}>
+                  Request reason: {selectedInvoice.cancellation_request_reason}
+                </p>
+              )}
+              <textarea
+                value={cancellationReason}
+                onChange={(e) => setCancellationReason(e.target.value)}
+                placeholder="Supplier cancellation reason / approval reference..."
+                className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                rows={4}
+                autoFocus
+              />
+              <div className="mt-4 flex justify-end space-x-3">
+                <button onClick={() => { setShowCancellationModal(false); setCancellationReason(''); }} className="px-4 py-2 transition-colors text-sm" style={{ color: 'var(--text-secondary)' }}>Back</button>
+                <button
+                  onClick={handleCancellation}
+                  disabled={!cancellationReason.trim() || finalizingCancellation}
+                  className="px-4 py-2 rounded-xl transition-colors text-sm font-medium"
+                  style={!cancellationReason.trim() || finalizingCancellation ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--accent-red)', color: 'white' }}
+                >
+                  {finalizingCancellation ? 'Saving...' : (['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN', 'ADMIN'].includes(user?.role || '') && selectedInvoice.cancellation_requested_at ? 'Approve Cancellation' : 'Submit Request')}
                 </button>
               </div>
             </div>

@@ -22,6 +22,7 @@ const statusGuide: Record<InvoiceStatus, { label: string; description: string; n
   [InvoiceStatus.PAYMENT_SCHEDULED]: { label: 'Payment Scheduled', description: 'Payment date set.', nextSteps: 'Payment will be released on the scheduled date.', color: 'bg-blue-500' },
   [InvoiceStatus.PAID]: { label: 'Paid', description: 'Payment completed.', nextSteps: 'Accounting sends payment confirmation to supplier.', color: 'bg-green-500' },
   [InvoiceStatus.PAYMENT_CONFIRMATION_SENT]: { label: 'Confirmation Sent', description: 'Payment confirmation email sent to supplier.', nextSteps: 'Process complete — no further action needed.', color: 'bg-green-600' },
+  [InvoiceStatus.CANCELLED]: { label: 'Cancelled', description: 'Supplier cancellation was approved and retained for audit.', nextSteps: 'Record remains available; use a credit note/reversal for any paid transaction.', color: 'bg-gray-500' },
   [InvoiceStatus.REJECTED]: { label: 'Rejected', description: 'Invoice was rejected.', nextSteps: 'Coordinator reviews and corrects or discards.', color: 'bg-gray-500' },
 };
 

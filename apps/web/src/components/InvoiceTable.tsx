@@ -38,6 +38,7 @@ const statusColors: Partial<Record<InvoiceStatus, { bg: string; color: string }>
   [InvoiceStatus.PAYMENT_SCHEDULED]: { bg: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', color: 'var(--accent-blue)' },
   [InvoiceStatus.PAID]: { bg: 'color-mix(in srgb, var(--accent-lime) 10%, transparent)', color: 'var(--accent-lime)' },
   [InvoiceStatus.PAYMENT_CONFIRMATION_SENT]: { bg: 'color-mix(in srgb, var(--accent-green) 12%, transparent)', color: 'var(--accent-green)' },
+  [InvoiceStatus.CANCELLED]: { bg: 'color-mix(in srgb, var(--text-muted) 10%, transparent)', color: 'var(--text-secondary)' },
   [InvoiceStatus.REJECTED]: { bg: 'color-mix(in srgb, var(--text-muted) 10%, transparent)', color: 'var(--text-secondary)' },
   [InvoiceStatus.ON_HOLD]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' },
 };
@@ -64,7 +65,7 @@ function getSLAStatus(invoice: MockInvoice): { label: string; bg: string; color:
 
 function getDueDateStatus(invoice: MockInvoice): { isOverdue: boolean; isNear: boolean; daysRemaining: number } {
   if (!invoice.due_date) return { isOverdue: false, isNear: false, daysRemaining: 0 };
-  const paidStatuses: InvoiceStatus[] = [InvoiceStatus.PAID, InvoiceStatus.PAYMENT_CONFIRMATION_SENT, InvoiceStatus.REJECTED];
+  const paidStatuses: InvoiceStatus[] = [InvoiceStatus.PAID, InvoiceStatus.PAYMENT_CONFIRMATION_SENT, InvoiceStatus.CANCELLED, InvoiceStatus.REJECTED];
   if (paidStatuses.includes(invoice.status as InvoiceStatus)) return { isOverdue: false, isNear: false, daysRemaining: 0 };
   const dueDate = new Date(invoice.due_date);
   dueDate.setHours(0, 0, 0, 0);

@@ -119,6 +119,14 @@ model Invoice {
   
   // Status & routing
   status                InvoiceStatus @default(RECEIVED)
+  // Cancellation is an auditable state, never a hard-delete substitute.  The
+  // original document, approvals and QuickBooks history remain attached.
+  cancellation_requested_by String?
+  cancellation_requested_at DateTime?
+  cancellation_request_reason String?
+  cancelled_by              String?
+  cancelled_at              DateTime?
+  cancellation_reason       String?
   approval_tier         Int?
   current_approver_role String?
   priority_flag         Boolean       @default(false)
@@ -662,6 +670,7 @@ enum InvoiceStatus {
   PAYMENT_SCHEDULED
   PAID
   PAYMENT_CONFIRMATION_SENT
+  CANCELLED
   REJECTED
   ON_HOLD
 }

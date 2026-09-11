@@ -371,13 +371,13 @@ const ALL_STAGES = [
   'PENDING_MLO_PLANNING_MANAGER', 'PENDING_SR_MANAGER', 'PENDING_POLLY',
   'PENDING_PRESIDENT',
   'APPROVED', 'PENDING_ACCOUNTING', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED',
-  'PAID', 'PAYMENT_CONFIRMATION_SENT', 'REJECTED',
+  'PAID', 'PAYMENT_CONFIRMATION_SENT', 'CANCELLED', 'REJECTED',
 ];
 
 const ROLE_STAGE_ACCESS: Record<string, string[]> = {
   SUPERADMIN: [],
-  ACCOUNTING_ASSOCIATE: ['APPROVED', 'PENDING_ACCOUNTING', 'ON_HOLD', ...PAYMENT_STAGES],
-  ACCOUNTING_SUPERVISOR: ['PENDING_ACCOUNTING', 'APPROVED', 'ON_HOLD', ...PAYMENT_STAGES],
+  ACCOUNTING_ASSOCIATE: ['APPROVED', 'PENDING_ACCOUNTING', 'ON_HOLD', 'CANCELLED', ...PAYMENT_STAGES],
+  ACCOUNTING_SUPERVISOR: ['PENDING_ACCOUNTING', 'APPROVED', 'ON_HOLD', 'CANCELLED', ...PAYMENT_STAGES],
   PURCHASING_COORDINATOR: ALL_STAGES,
   PURCHASING_MANAGER: ALL_STAGES,
   MLO_ACCOUNT_HOLDER: ['PENDING_MLO_ACCOUNT_HOLDER', 'PENDING_MLO_PLANNING_MANAGER', ...PAYMENT_STAGES],
@@ -534,6 +534,12 @@ export const getInvoiceById = async (id: string) => {
 
 export const updateInvoiceStatus = async (id: string, status: InvoiceStatus, userId: string) => {
   const existing = await prisma.invoice.findUnique({ where: { id } });
+  if (!existing) throw new AppError('Invoice not found', 404);
+  // A cancellation must always pass through request-cancellation → cancel so
+  // the actor, reason, related payment handling and audit history are present.
+  if (status === InvoiceStatus.CANCELLED || existing.status === InvoiceStatus.CANCELLED) {
+    throw new AppError('Cancelled status can only be changed through the controlled cancellation workflow', 400);
+  }
   const oldStatus = existing?.status;
 
   const invoice = await prisma.invoice.update({
@@ -605,7 +611,7 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
 
   // Prevent editing invoices that are already posted or paid
   // Rejected invoices remain editable so Purchasing can correct them and restart approval.
-  const lockedStatuses = ['POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID', 'PAYMENT_CONFIRMATION_SENT'];
+  const lockedStatuses = ['POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID', 'PAYMENT_CONFIRMATION_SENT', 'CANCELLED'];
   if (lockedStatuses.includes(existing.status)) {
     throw new AppError(`Cannot edit invoice in ${existing.status} status`, 400);
   }
@@ -1131,9 +1137,12 @@ export const deleteInvoice = async (id: string, userId: string, userRole: string
     throw new AppError('Invoice not found', 404);
   }
 
-  const lockedStatuses = ['POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID', 'PAYMENT_CONFIRMATION_SENT'];
-  if (lockedStatuses.includes(existing.status)) {
-    throw new AppError(`Cannot delete invoice in ${existing.status} status`, 400);
+  // Deletion is only for OCR/intake mistakes which have never entered the AP
+  // workflow. Once an invoice is submitted, it must be cancelled so the source
+  // document, approvals, QuickBooks reference and audit history are retained.
+  const deletableStatuses = ['RECEIVED', 'OCR_PROCESSING', 'VALIDATION_PENDING', 'EXCEPTION_FLAGGED'];
+  if (!deletableStatuses.includes(existing.status)) {
+    throw new AppError(`Cannot delete invoice in ${existing.status} status. Submit a cancellation request instead.`, 400);
   }
 
   // Never delete an invoice whose payment already sits inside a live batch —
@@ -1166,6 +1175,177 @@ export const deleteInvoice = async (id: string, userId: string, userRole: string
   });
 
   return { id, deleted: true, invoice_number: existing.invoice_number };
+};
+
+const CANCELLATION_FINALIZER_ROLES = new Set([
+  'ACCOUNTING_SUPERVISOR',
+  'IT_ADMIN',
+  'SUPERADMIN',
+  'ADMIN',
+]);
+
+const CANCELLATION_BLOCKED_STATUSES = new Set(['PAID', 'PAYMENT_CONFIRMATION_SENT', 'CANCELLED']);
+const ACTIVE_BATCH_STATUSES = new Set([
+  'PENDING_SUPERVISOR_REVIEW', 'REVIEWED', 'EXPORTED_TO_BANK',
+  'PROCESSING', 'PROCESSED', 'PARTIALLY_PAID',
+]);
+
+/**
+ * Records a supplier/business cancellation request without changing the
+ * financial status. A finalizer must approve it through cancelInvoice.
+ */
+export const requestInvoiceCancellation = async (
+  id: string,
+  userId: string,
+  userRole: string,
+  userName: string,
+  reason: string,
+) => {
+  const trimmedReason = String(reason || '').trim();
+  if (!trimmedReason) throw new AppError('A cancellation reason is required', 400);
+
+  const existing = await prisma.invoice.findUnique({
+    where: { id },
+    select: { id: true, invoice_number: true, status: true, revision: true },
+  });
+  if (!existing) throw new AppError('Invoice not found', 404);
+  if (CANCELLATION_BLOCKED_STATUSES.has(existing.status)) {
+    throw new AppError(existing.status === 'CANCELLED' ? 'Invoice is already cancelled' : `A paid invoice cannot be cancelled. Process a payment reversal/credit note instead.`, 400);
+  }
+
+  const requestedAt = new Date();
+  const updated = await prisma.invoice.update({
+    where: { id },
+    data: {
+      cancellation_requested_by: userId,
+      cancellation_requested_at: requestedAt,
+      cancellation_request_reason: trimmedReason,
+    },
+  });
+
+  await prisma.invoiceWorkflowAction.create({
+    data: {
+      invoice_id: id,
+      invoice_revision: existing.revision,
+      action: 'CANCELLATION_REQUESTED',
+      from_stage: existing.status,
+      to_stage: existing.status,
+      reason: trimmedReason,
+      performed_by: userId,
+      performed_by_role: userRole,
+    },
+  });
+  await logAudit({
+    invoice_id: id,
+    performed_by: userId,
+    actor_name: userName,
+    actor_role: userRole,
+    action: 'INVOICE_CANCELLATION_REQUESTED',
+    note: `Cancellation requested for invoice ${existing.invoice_number}: ${trimmedReason}`,
+    metadata: { invoice_number: existing.invoice_number, status: existing.status },
+  });
+  return updated;
+};
+
+/**
+ * Finalizes a previously requested invoice cancellation. The invoice is kept
+ * in the repository, while draft/returned payment entries are cancelled and
+ * detached so it can no longer be selected for a payment batch.
+ */
+export const cancelInvoice = async (
+  id: string,
+  userId: string,
+  userRole: string,
+  userName: string,
+  reason: string,
+) => {
+  if (!CANCELLATION_FINALIZER_ROLES.has(userRole)) {
+    throw new AppError('Only an Accounting Supervisor or system administrator can finalize a cancellation', 403);
+  }
+  const trimmedReason = String(reason || '').trim();
+  if (!trimmedReason) throw new AppError('A final cancellation reason is required', 400);
+
+  const existing = await prisma.invoice.findUnique({
+    where: { id },
+    include: {
+      payments: { include: { batch: { select: { id: true, batch_number: true, status: true } } } },
+    },
+  });
+  if (!existing) throw new AppError('Invoice not found', 404);
+  if (CANCELLATION_BLOCKED_STATUSES.has(existing.status)) {
+    throw new AppError(existing.status === 'CANCELLED' ? 'Invoice is already cancelled' : `A paid invoice cannot be cancelled. Process a payment reversal/credit note instead.`, 400);
+  }
+  if (!existing.cancellation_requested_at) {
+    throw new AppError('A cancellation request is required before final cancellation', 400);
+  }
+
+  const activeBatch = existing.payments.find((payment) => payment.batch && ACTIVE_BATCH_STATUSES.has(payment.batch.status));
+  if (activeBatch?.batch) {
+    throw new AppError(`Cannot cancel invoice while payment is in active batch ${activeBatch.batch.batch_number}. Return or cancel the batch first.`, 400);
+  }
+
+  const affectedDraftBatchIds = [...new Set(existing.payments
+    .map((payment) => payment.batch)
+    .filter((batch): batch is NonNullable<typeof batch> => Boolean(batch && ['DRAFT', 'RETURNED_FOR_CORRECTION'].includes(batch.status)))
+    .map((batch) => batch.id))];
+  const cancelledAt = new Date();
+
+  const cancelled = await prisma.$transaction(async (tx) => {
+    await tx.payment.updateMany({
+      where: { invoice_id: id, status: { not: 'CANCELLED' } },
+      data: { status: 'CANCELLED', selected_for_batch: false, batch_id: null },
+    });
+
+    for (const batchId of affectedDraftBatchIds) {
+      const totals = await tx.payment.aggregate({
+        where: { batch_id: batchId, status: { not: 'CANCELLED' } },
+        _sum: { amount: true },
+        _count: { id: true },
+      });
+      await tx.paymentBatch.update({
+        where: { id: batchId },
+        data: { total_amount: totals._sum.amount || 0, payment_count: totals._count.id },
+      });
+    }
+
+    return tx.invoice.update({
+      where: { id },
+      data: {
+        status: 'CANCELLED' as any,
+        cancelled_by: userId,
+        cancelled_at: cancelledAt,
+        cancellation_reason: trimmedReason,
+      },
+    });
+  });
+
+  await prisma.invoiceWorkflowAction.create({
+    data: {
+      invoice_id: id,
+      invoice_revision: existing.revision,
+      action: 'CANCELLED',
+      from_stage: existing.status,
+      to_stage: 'CANCELLED',
+      reason: trimmedReason,
+      performed_by: userId,
+      performed_by_role: userRole,
+    },
+  });
+  await logAudit({
+    invoice_id: id,
+    performed_by: userId,
+    actor_name: userName,
+    actor_role: userRole,
+    action: 'INVOICE_CANCELLED',
+    note: `Invoice ${existing.invoice_number} cancelled by authorized finalizer: ${trimmedReason}`,
+    metadata: {
+      invoice_number: existing.invoice_number,
+      prior_status: existing.status,
+      cancellation_requested_by: existing.cancellation_requested_by,
+      cancellation_requested_at: existing.cancellation_requested_at?.toISOString(),
+    },
+  });
+  return cancelled;
 };
 
 /**

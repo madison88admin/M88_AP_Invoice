@@ -160,6 +160,8 @@ export const invoiceApi = {
     return res;
   },
   reExtractBulk: (invoiceIds: string[]) => api.post('/api/reprocess/bulk-re-extract', { invoiceIds }, { timeout: 600000 }),
+  requestCancellation: (id: string, reason: string) => api.post(`/api/invoices/${id}/request-cancellation`, { reason }),
+  cancel: (id: string, reason: string) => api.post(`/api/invoices/${id}/cancel`, { reason }),
   delete: (id: string) => api.delete(`/api/invoices/${id}`),
 };
 

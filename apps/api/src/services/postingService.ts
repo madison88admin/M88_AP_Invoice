@@ -526,33 +526,19 @@ export async function postInvoice(invoiceId: string, userId: string, bypassVaria
     });
   }
 
-  // The posted invoice must immediately surface in Payment Batches as a batch
-  // — the Accounting Associate processes it there (submit → supervisor review
-  // → export → endorse → payment confirmation) instead of manually selecting
-  // payments and creating a batch. Sub-$100 HELD payments are skipped until
-  // Accounting releases them. A batch failure never fails the post.
-  let batch: any = null;
+  // Posting makes the payment visible in the Accounting Payment Queue, but
+  // deliberately does not create a batch. Creating/submitting a batch is an
+  // explicit Associate action and is the control point for deciding which
+  // scheduled invoices belong in the same payment run.
   if (payment) {
-    try {
-      // Dynamic import avoids a module-load cycle with paymentBatchService
-      // (which itself imports processPayment from this module).
-      const { autoBatchPaymentOnPost } = await import('./paymentBatchService');
-      batch = await autoBatchPaymentOnPost(payment, userId, {
-        invoice_number: invoice.invoice_number,
-        vendor_name: invoice.vendor?.name || 'Unknown',
-      });
-    } catch (err) {
-      const batchError = err instanceof Error ? err.message : String(err);
-      logger.warn(`Auto-batch failed for invoice ${invoiceId}: ${batchError}`);
-      await prisma.auditLog.create({
-        data: {
-          invoice_id: invoiceId,
-          action: 'PAYMENT_BATCH_AUTO_CREATE_FAILED',
-          performed_by: userId,
-          note: `Invoice posted and payment scheduled, but automatic batch creation failed: ${batchError}`,
-        },
-      });
-    }
+    await prisma.auditLog.create({
+      data: {
+        invoice_id: invoiceId,
+        action: 'PAYMENT_READY_FOR_BATCH_SELECTION',
+        performed_by: userId,
+        note: `Invoice posted and payment scheduled. It is awaiting Accounting Associate selection for a payment batch.`,
+      },
+    });
   }
 
   return {
@@ -560,7 +546,8 @@ export async function postInvoice(invoiceId: string, userId: string, bypassVaria
     payment_scheduled: !!payment,
     payment_schedule_error: paymentScheduleError,
     payment,
-    batch,
+    batch: null,
+    batch_creation: payment ? 'ASSOCIATE_SELECTION_REQUIRED' : null,
   };
 }
 

@@ -429,11 +429,8 @@ export default function PaymentBatchManager() {
       if (response.data?.payment_scheduled === false) {
         showToast(response.data?.payment_schedule_error || `Invoice posted, but payment scheduling needs attention.`, 'error');
       } else {
-        const batchInfo = response.data?.batch;
         showToast(
-          batchInfo?.batched
-            ? `Invoice ${payment.invoice?.invoice_number} posted — added to batch ${batchInfo.batch_number}. Open the batch to process it.`
-            : `Invoice ${payment.invoice?.invoice_number} posted and added to the payment queue.`,
+          `Invoice ${payment.invoice?.invoice_number} posted and added to the Accounting Payment Queue. Select it to create a batch.`,
           'success'
         );
       }

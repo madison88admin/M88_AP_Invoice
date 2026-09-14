@@ -1216,11 +1216,8 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
           throw new Error(postResponse.data?.payment_schedule_error || 'Invoice was posted, but its payment record could not be created. Open Payment Batches to complete payment setup.');
         }
       }
-      const batchInfo = postResponse?.data?.batch;
       showToast(
-        batchInfo?.batched
-          ? `Invoice posted to accounting — added to batch ${batchInfo.batch_number}. Open Payment Batches to submit and process it.`
-          : 'Invoice posted to accounting successfully',
+        'Invoice posted to accounting and added to the Accounting Payment Queue. Select it in Payment Batches to create a batch.',
         'success'
       );
       await refresh();
@@ -1241,11 +1238,8 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
       if (postResponse.data?.payment_scheduled === false) {
         throw new Error(postResponse.data?.payment_schedule_error || 'Invoice was posted, but its payment record could not be created. Open Payment Batches to complete payment setup.');
       }
-      const batchInfo = postResponse?.data?.batch;
       showToast(
-        batchInfo?.batched
-          ? `Invoice ${invoice.invoice_number} posted — added to batch ${batchInfo.batch_number}. Open Payment Batches to submit and process it.`
-          : 'Invoice posted to accounting successfully',
+        `Invoice ${invoice.invoice_number} posted and added to the Accounting Payment Queue. Select it in Payment Batches to create a batch.`,
         'success'
       );
       await refresh();

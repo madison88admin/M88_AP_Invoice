@@ -158,12 +158,13 @@ ${dataRows}
     URL.revokeObjectURL(url);
   };
 
-  // Invoices that can still be posted to accounting (posting auto-creates the batch)
+  // Invoices that can still be posted to accounting. Posting creates a
+  // scheduled payment; the Associate explicitly selects it to create a batch.
   const isPostable = (invoice: MockInvoice) =>
     invoice.status === InvoiceStatus.PENDING_ACCOUNTING || invoice.status === InvoiceStatus.APPROVED;
 
-  // Post the invoice to accounting (which auto-creates a payment batch) and
-  // jump straight to Payment Batches with the resulting batch opened.
+  // Post the invoice to accounting, then open the queue so the Associate can
+  // select it before creating/submitting a batch.
   const handlePostAndCreateBatch = async (invoice: MockInvoice) => {
     setPostingInvoiceId(invoice.id);
     try {
@@ -172,15 +173,11 @@ ${dataRows}
         showToast(response.data?.payment_schedule_error || 'Invoice was posted, but its payment could not be scheduled.', 'error');
         return;
       }
-      const batchId = response.data?.batch?.batch_id;
-      const batchNumber = response.data?.batch?.batch_number;
       showToast(
-        batchId
-          ? `Invoice ${invoice.invoice_number} posted — opening batch ${batchNumber}`
-          : `Invoice ${invoice.invoice_number} posted to accounting`,
+        `Invoice ${invoice.invoice_number} posted and added to the Accounting Payment Queue`,
         'success'
       );
-      navigate(batchId ? `/payment-batches?batch=${batchId}` : '/payment-batches');
+      navigate('/payment-batches');
     } catch (err: any) {
       const msg = err?.response?.data?.error?.message || err?.response?.data?.message || 'Failed to post invoice';
       showToast(msg, 'error');

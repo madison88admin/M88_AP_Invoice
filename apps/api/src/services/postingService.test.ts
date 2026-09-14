@@ -276,6 +276,30 @@ describe('postInvoice — the sub-$100 hold lives at scheduling, not posting', (
     expect(result.success).toBe(true);
   });
 
+  it('leaves a scheduled payment unbatched until an Associate explicitly selects it', async () => {
+    const invoice = makePostableInvoice({ total_amount: 150 });
+    invoiceFindUnique
+      .mockResolvedValueOnce(invoice)
+      .mockResolvedValueOnce({ ...invoice, status: 'POSTED_TO_QB' });
+    invoiceUpdate.mockResolvedValue({});
+    auditLogCreate.mockResolvedValue({});
+    stageTimestampCreate.mockResolvedValue({});
+    paymentCreate.mockResolvedValue({ id: 'pay-queue', status: 'SCHEDULED' });
+
+    const result = (await postInvoice('inv-post', 'assoc-1')) as {
+      payment_scheduled: boolean;
+      batch: unknown;
+      batch_creation: string | null;
+    };
+
+    expect(result.payment_scheduled).toBe(true);
+    expect(result.batch).toBeNull();
+    expect(result.batch_creation).toBe('ASSOCIATE_SELECTION_REQUIRED');
+    expect(auditLogCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ action: 'PAYMENT_READY_FOR_BATCH_SELECTION' }),
+    }));
+  });
+
   it('rejects a legacy OCR-only invoice whose OCR signatures are not all signed', async () => {
     const ocrOnly = makePostableInvoice({
       signatures: [

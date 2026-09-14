@@ -57,7 +57,11 @@ class InAppNotificationService {
       PENDING_ACCOUNTING: { title: 'Awaiting Accounting', message: `Invoice ${invoiceNumber} is ready for accounting review and QuickBooks posting.`, type: 'info' },
       APPROVED: { title: 'Invoice Approved', message: `Invoice ${invoiceNumber} has been fully approved.`, type: 'success' },
       POSTED_TO_QB: { title: 'Posted to QuickBooks', message: `Invoice ${invoiceNumber} has been posted to QuickBooks.`, type: 'success' },
-      PAYMENT_SCHEDULED: { title: 'Payment Scheduled', message: `Payment for invoice ${invoiceNumber} has been scheduled.`, type: 'success' },
+      PAYMENT_SCHEDULED: {
+        title: 'Payment ready for batch selection',
+        message: `Invoice ${invoiceNumber} has been posted and its payment is ready in the Accounting Payment Queue. Select it to create a payment batch.`,
+        type: 'success',
+      },
       PAID: { title: 'Invoice Paid', message: `Invoice ${invoiceNumber} has been paid.`, type: 'success' },
       PAYMENT_CONFIRMATION_SENT: { title: 'Payment Confirmation Sent', message: `Payment confirmation for invoice ${invoiceNumber} has been sent to the vendor.`, type: 'success' },
       REJECTED: { title: 'Invoice Rejected', message: `Invoice ${invoiceNumber} has been rejected.`, type: 'error' },
@@ -86,7 +90,10 @@ class InAppNotificationService {
       PENDING_ACCOUNTING: UserRole.ACCOUNTING_SUPERVISOR,
       APPROVED: UserRole.ACCOUNTING_SUPERVISOR,
       POSTED_TO_QB: UserRole.ACCOUNTING_ASSOCIATE,
-      PAYMENT_SCHEDULED: UserRole.ACCOUNTING_SUPERVISOR,
+      // The Associate selects scheduled payments and creates/submits the
+      // batch. The Supervisor is notified later, when that batch is submitted
+      // for review; a scheduled payment alone needs no Supervisor action.
+      PAYMENT_SCHEDULED: UserRole.ACCOUNTING_ASSOCIATE,
       PAID: null, // everyone
       PAYMENT_CONFIRMATION_SENT: null, // everyone
       REJECTED: UserRole.PURCHASING_COORDINATOR,

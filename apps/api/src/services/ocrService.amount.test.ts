@@ -61,6 +61,20 @@ describe('extractInvoiceFields amount extraction (BSN column layout)', () => {
     expect(result.amount).toBe(1.81);
   });
 
+  it('extracts 175.18 when the currency token sits on its own line after AMOUNT: (Combine RapidOCR layout)', async () => {
+    vi.mocked((await import('./openDataLoaderService')).extractTextWithOpenDataLoader)
+      .mockResolvedValueOnce([
+        'COMMERCIAL INVOICE',
+        'DATE:11 SEPT,2026 INVOICE NO.: S-27841',
+        'MELINSALTYDOGBEANIECLIPLABEL 360pcs USD0.3300/pc USD118.80',
+        'F.O.C.',
+        'AMOUNT:',
+        'USD175.18',
+      ].join('\n'));
+    const result = await extractInvoiceFields(Buffer.from('fake-pdf'));
+    expect(result.amount).toBe(175.18);
+  });
+
   it('skips the date fragment even when no stray duplicate exists (old code picked 2026.09 here)', async () => {
     // Same invoice but WITHOUT the stray "2026.09" column value: the only
     // 2026.09-shaped match is the date itself. Pre-fix, indexOf resolved it

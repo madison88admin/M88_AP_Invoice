@@ -80,6 +80,18 @@ describe('extractInvoiceFields date extraction — parked-manual-review regressi
     expect(result.due_date).toBe('14 Oct 2026');
   });
 
+  it('captures the RapidOCR-squashed "DATE:11 SEPT,2026" (no space after colon/comma)', async () => {
+    // Exact RapidOCR token lines from S-27841M: one token per line, spaces
+    // after ':' and ',' swallowed by OCR.
+    state.text = ['COMMERCIAL INVOICE', 'DATE:11 SEPT,2026', 'INVOICE NO.: S-27841', 'AMOUNT:', 'USD175.18'].join('\n');
+    const result = await extractInvoiceFields(Buffer.from('fake'));
+    expect(result.invoice_date).toBe('11 SEPT,2026');
+    const d = new Date(result.invoice_date as string);
+    expect(d.getFullYear()).toBe(2026);
+    expect(d.getMonth()).toBe(8);
+    expect(d.getDate()).toBe(11);
+  });
+
   it('errors on scanned (image-only) text instead of fabricating a date', async () => {
     // A scanned PDF yields no text layer: OpenDataLoader returns <20 chars,
     // pdf2json cannot parse the raw buffer, and the regex engine fails —

@@ -317,14 +317,16 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
     /INVOICE\s*DATE[:\s]*(\d{4}\.\d{2}\.\d{2})/i,
     /INVOICE\s*DATE[:\s]*(\d{2}\.\d{2}\.\d{4})/i,
     /INVOICE\s*DATE[:\s]*([A-Z][a-z]+\s+\d{1,2},?\s*\d{2,4})/i, // Month DD,YY
-    /INVOICE\s*DATE[:\s]*(\d{1,2}\s+[A-Z][a-z]{2,8}\s+\d{2,4})/i, // DD Mon YYYY (e.g. "Invoice Date 11 Sep 2026")
-    /DATE[:\s]*(\d{1,2}(?:ST|ND|RD|TH)?\s+[A-Z]+\.?,?\s+\d{2,4})/i, // "DATE: 11 SEPT, 2026" (Combine Products S-27xxx)
-    /(?:MONDAY|TUESDAY|WEDNESDAY|THURSDAY|FRIDAY|SATURDAY|SUNDAY),?\s+([A-Z][a-z]+\s+\d{1,2},?\s+\d{2,4})/i, // "Tuesday, September 8, 2026" (FineLine)
+    /INVOICE\s*DATE[:\s]*(\d{1,2}\s+[A-Z][a-z]{2,8}[,.]?\s*\d{2,4})/i, // DD Mon YYYY (e.g. "Invoice Date 11 Sep 2026")
+    /DATE[:\s]*(\d{1,2}(?:ST|ND|RD|TH)?\s+[A-Z]+[,.]?\s*\d{2,4})/i, // "DATE: 11 SEPT,2026" (Combine Products S-27xxx, RapidOCR squashes space after colon/comma)
+    /(?:ORDER|SHIP)\s*DATE[:\s]*(\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4})/i, // FineLine-style "Ship Date: 09/08/2026"
+    /(?:ORDER|SHIP)\s*DATE[:\s]*([A-Z][a-z]+\s+\d{1,2}[,.]?\s*\d{2,4})/i, // FineLine-style "Ship Date: September 8, 2026"
+    /(?:MONDAY|TUESDAY|WEDNESDAY|THURSDAY|FRIDAY|SATURDAY|SUNDAY),?\s*([A-Z][a-z]+\s+\d{1,2}[,.]?\s*\d{2,4})/i, // "Tuesday, September 8, 2026" (FineLine; value may sit on its own line)
     /Date[:\s]*(\d{2}-[A-Z]{3}-\d{4})/i,
     /Date[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
     /Date[:\s]*(\d{4}-\d{2}-\d{2})/i,
     /Date[:\s]*(\d{4}\.\d{2}\.\d{2})/i,
-    /\b(\d{1,2}\s+[A-Z][a-z]{2,8}\.?,?\s+\d{4})\b/, // Unlabeled "14 Sep 2026" (Paxar column layout) — ahead of numeric fallbacks
+    /\b(\d{1,2}\s+[A-Z][a-z]{2,8}[.,]?\s*\d{4})\b/, // Unlabeled "14 Sep 2026" (Paxar column layout) — ahead of numeric fallbacks
     /Issued\s*Date[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
     /Billing\s*Date[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
     /(\d{6})\b/, // YYMMDD format (260114 → 2026-01-14)
@@ -370,6 +372,7 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
     /Net\s*Amount[:\s]*([\d,]+\.\d{2,4})/i,
     /Net\s*Total[:\s]*([\d,]+\.\d{2,4})/i,
     /Amount[:\s]*([\d,]+\.\d{2,4})/i,
+    /AMOUNT[:\s]*(?:USD|HKD|EUR|PHP|IDR)?\s*([\d,]+\.\d{2,4})/i, // "AMOUNT:\nUSD175.18" — currency token on its own line (Combine commercial invoices)
     /Balance\s*Due[:\s]*([\d,]+\.\d{2,4})/i,
     /Subtotal[:\s]*([\d,]+\.\d{2,4})/i,
     /Total[:\s]*([\d,]+\.\d{2,4})/i,

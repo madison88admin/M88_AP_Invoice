@@ -137,6 +137,22 @@ describe('extractInvoiceFields amount extraction (BSN column layout)', () => {
     expect(result.invoice_number).toBe('PCI-26028447');
   });
 
+  it('reads INOICE NO. (OCR drops the V entirely — PCI-26029197 live failure)', async () => {
+    vi.mocked((await import('./openDataLoaderService')).extractTextWithOpenDataLoader)
+      .mockResolvedValueOnce([
+        'Invoice',
+        'INOICE NO.',
+        'PCI-26029197',
+        'INOICE DATE',
+        '28 Jul 2026',
+        'AMOUNT',
+        '171.90',
+        PAXAR_BODY_FILLER,
+      ].join('\n'));
+    const result = await extractInvoiceFields(Buffer.from('fake-pdf'));
+    expect(result.invoice_number).toBe('PCI-26029197');
+  });
+
   it('extracts 3348.00 instead of the 0.03 unit price when the labeled USD pattern hits "USD0.027/pc" (per-PC pricing)', async () => {
     // SIC260900016 leaked 0.03 because the generic /USD\s*(…)/ labeled pattern
     // matched the unit price "USD0.027/pc" (124,000 pcs × 0.027/pc = 3,348.00)

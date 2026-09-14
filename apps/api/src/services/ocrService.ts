@@ -258,9 +258,9 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
   // invoice_number — multiple patterns, prioritized by specificity
   // Must contain at least one digit to avoid matching words like "signature"
   const invoiceNumberPatterns = [
-    /IN[VW]OICE\s*NO[:\s#]*([A-Z0-9\-\/*]+)/i, // OCR reads V as W on Paxar/PCI forms ("INWOICE NO.")
-    /IN[VW]OICE\s*NO[.]*[:\s#]*([A-Z0-9\-\/*]+)/i,
-    /IN[VW]OICE\s*NUMBER[:\s#]*([A-Z0-9\-\/*]+)/i,
+    /IN[VW]?OICE\s*NO[:\s#]*([A-Z0-9\-\/*]+)/i, // OCR reads V as W ("INWOICE") or drops it ("INOICE") on Paxar/PCI forms
+    /IN[VW]?OICE\s*NO[.]*[:\s#]*([A-Z0-9\-\/*]+)/i,
+    /IN[VW]?OICE\s*NUMBER[:\s#]*([A-Z0-9\-\/*]+)/i,
     /INV(?:OICE)?\s*#[:\s]*([A-Z0-9\-\/*]+)/i,
     /Invoice\s*#[:\s]*([A-Z0-9\-\/*]+)/i,
     /I\/V\s*NO[.]*[:\s]*([A-Z0-9\-\/*]+)/i,

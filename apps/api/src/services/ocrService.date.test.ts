@@ -86,6 +86,22 @@ describe('extractInvoiceFields date extraction — parked-manual-review regressi
     expect(result.invoice_date).toBe('2026-09-11');
   });
 
+  it('captures DD-Mon-YY "Invoice Date 11-Sep-26" (Super Dry Marine PI, 2-digit year) as ISO 2026-09-11', async () => {
+    // Exact RapidOCR token lines from "PI MADISON 88 TO UWU ARCTERYX DS 2 62 BOX.pdf".
+    state.text = [
+      'SUPERDRY PTSUPERDRYMARINE',
+      'Sales Invoice',
+      'Invoice No : SlC260900016',
+      'Invoice Date 11-Sep-26',
+      'Ship Date',
+      '11-Sep-26',
+      'Terms',
+      'Net 30',
+    ].join('\n');
+    const result = await extractInvoiceFields(Buffer.from('fake'));
+    expect(result.invoice_date).toBe('2026-09-11');
+  });
+
   it('errors on scanned (image-only) text instead of fabricating a date', async () => {
     // A scanned PDF yields no text layer: OpenDataLoader returns <20 chars,
     // pdf2json cannot parse the raw buffer, and the regex engine fails —

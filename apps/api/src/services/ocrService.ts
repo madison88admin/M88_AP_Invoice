@@ -183,7 +183,7 @@ const MONTH_LOOKUP: Record<string, number> = {
 
 function toISODateFromMonthName(raw: string): string {
   if (!raw) return '';
-  const s = raw.trim().replace(/[,.]/g, ' ').replace(/\s+/g, ' ');
+  const s = raw.trim().replace(/[,.\-]/g, ' ').replace(/\s+/g, ' ');
   const pick = (monthToken: string, day: number, year: number): string | null => {
     const month = MONTH_LOOKUP[monthToken.toUpperCase()];
     if (!month || !day || !year) return null;
@@ -343,7 +343,7 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
 
   // invoice_date — multiple date formats
   const datePatterns = [
-    /INVOICE\s*DATE[:\s]*(\d{2}-[A-Z]{3}-\d{4})/i,
+    /INVOICE\s*DATE[:\s]*(\d{1,2}-[A-Z]{3}-\d{2,4})/i, // DD-Mon-YYYY and DD-Mon-YY (e.g. "Invoice Date 11-Sep-26" — Super Dry Marine)
     /INVOICE\s*DATE[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
     /INVOICE\s*DATE[:\s]*(\d{4}-\d{2}-\d{2})/i,
     /INVOICE\s*DATE[:\s]*(\d{4}\.\d{2}\.\d{2})/i,
@@ -353,7 +353,7 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
     /DATE[:\s]*(\d{1,2}\s*[A-Z]+[,.]?\s*\d{2,4})/i, // "DATE: 11 SEPT,2026" (Combine S-27xxx; RapidOCR may squash the day-month space too)
     /(?:ORDER|SHIP)\s*DATE[:\s]*([A-Z][a-z]+\s*\d{1,2}[,.]?\s*\d{2,4})/i, // FineLine-style "Ship Date: September 8, 2026"
     /(?:MONDAY|TUESDAY|WEDNESDAY|THURSDAY|FRIDAY|SATURDAY|SUNDAY),?\s*([A-Z][a-z]+\s*\d{1,2}[,.]?\s*\d{2,4})/i, // "Tuesday, September 8, 2026" (FineLine; value may sit on its own line)
-    /Date[:\s]*(\d{2}-[A-Z]{3}-\d{4})/i,
+    /Date[:\s]*(\d{1,2}-[A-Z]{3}-\d{2,4})/i, // DD-Mon-YYYY / DD-Mon-YY (also matches inside "Invoice Date …")
     /Date[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
     /Date[:\s]*(\d{4}-\d{2}-\d{2})/i,
     /Date[:\s]*(\d{4}\.\d{2}\.\d{2})/i,
@@ -361,7 +361,7 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
     /Issued\s*Date[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
     /Billing\s*Date[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
     /(\d{6})\b/, // YYMMDD format (260114 → 2026-01-14)
-    /(\d{2}-[A-Z]{3}-\d{4})/, // Fallback: find any DD-MMM-YYYY
+    /(\d{1,2}-[A-Z]{3}-\d{2,4})/, // Fallback: any DD-MMM-YYYY or DD-MMM-YY
     /(\d{1,2}\/\d{1,2}\/\d{2,4})/, // Fallback: find any DD/MM/YYYY
     /(\d{4}\.\d{2}\.\d{2})/, // Fallback: find any YYYY.MM.DD (e.g. BSN "Invoice No. Date / : NUM : 2026.09.11")
   ];

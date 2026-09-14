@@ -1064,6 +1064,16 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
         date_range_end: canEditAll ? parseString(editFormData.date_range_end) : undefined,
       };
       const response = await invoiceApi.update(selectedInvoice.id, payload);
+      // API dates are returned as ISO timestamps while the form submits
+      // YYYY-MM-DD. Treat all date controls consistently; otherwise a saved
+      // Date Range Start/End is incorrectly reported as a failed update.
+      const dateFields = new Set([
+        'invoice_date',
+        'due_date',
+        'priority_pay_date',
+        'date_range_start',
+        'date_range_end',
+      ]);
       const mismatches = Object.entries(payload).filter(([field, expected]) => {
         if (expected === undefined || field === 'edit_reason') return false;
         if ((field === 'vendor_name_raw' || field === 'new_vendor_name') && (payload as any).vendor_id) return false;
@@ -1071,7 +1081,7 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
         const actual = persistedValues[field];
         if (expected === null) return actual !== null && actual !== undefined;
         if (typeof expected === 'number') return Number(actual) !== expected;
-        if (field.endsWith('_date') || field === 'invoice_date' || field === 'due_date') {
+        if (dateFields.has(field)) {
           return !String(actual || '').startsWith(String(expected));
         }
         return String(actual ?? '') !== String(expected);
@@ -1085,7 +1095,13 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
       showToast('Invoice updated successfully', 'success');
     } catch (error: any) {
       console.error('Failed to update invoice:', error);
-      showToast(error?.response?.data?.message || error?.response?.data?.error?.message || 'Failed to update invoice', 'error');
+      showToast(
+        error?.response?.data?.message ||
+        error?.response?.data?.error?.message ||
+        error?.message ||
+        'Failed to update invoice',
+        'error'
+      );
     } finally {
       setSavingEdit(false);
     }

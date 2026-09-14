@@ -282,6 +282,41 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
     }
   }
 
+  // Proforma-invoice column layouts (e.g. Combine Products "P/I NO." /
+  // "ORDER NO.") detach the number from its label: the flattened text reads
+  // "... P/I NO. UNIT PRICE DENVER CO, 80205 ... A40319 DATE ...". No
+  // label-adjacent pattern can match, so scan a window around the labels for
+  // a letter-leading number token instead.
+  if (!invoice_number && /PROFORMA\s+INVOICE/i.test(text)) {
+    const tokenRe = /\b([A-Z]{1,4}\d[A-Z0-9\-]{2,})\b/g;
+    // Other numbered namespaces that must never be taken as the invoice no.
+    const notInvoice = /(?:MPO|PO|SO|S\/O|BOM|CAT|PF|OCT|VNS|HS|CL|PL|SI#)\s*[:#]?\s*$/i;
+    for (const labelRe of [/P\/I\s*NO/gi, /ORDER\s*NO/gi]) {
+      let lm: RegExpExecArray | null;
+      while ((lm = labelRe.exec(text)) !== null) {
+        const windowStart = Math.max(0, lm.index - 40);
+        const windowEnd = Math.min(text.length, lm.index + lm[0].length + 140);
+        const window = `${text.substring(windowStart, lm.index)} ${text.substring(lm.index + lm[0].length, windowEnd)}`;
+        let tm: RegExpExecArray | null;
+        tokenRe.lastIndex = 0;
+        while ((tm = tokenRe.exec(window)) !== null) {
+          // Context guard: skip tokens belonging to other namespaces
+          // (e.g. "MPO015937", "PO03036_MPO015937").
+          const tokenCtx = window.substring(Math.max(0, tm.index - 12), tm.index);
+          if (notInvoice.test(tokenCtx)) continue;
+          // Bare digit-leading tokens and pure dates were already excluded by
+          // the letter-leading requirement; skip obvious date values.
+          if (/^19|20\d{2}/.test(tm[1]) && /^[A-Z]{2}\d{2}$/.test(tm[1])) continue;
+          invoice_number = tm[1];
+          logger.info(`[OCR] Invoice number from proforma layout (${labelRe.source}): ${invoice_number}`);
+          break;
+        }
+        if (invoice_number) break;
+      }
+      if (invoice_number) break;
+    }
+  }
+
   // invoice_date — multiple date formats
   const datePatterns = [
     /INVOICE\s*DATE[:\s]*(\d{2}-[A-Z]{3}-\d{4})/i,

@@ -427,10 +427,23 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
     if (allAmounts && allAmounts.length > 0) {
       const amountCandidates: Array<{ value: number; score: number }> = [];
 
+      // Score each occurrence's own context. Identical strings can appear
+      // multiple times (e.g. "2026.09" as both a date fragment and a stray
+      // column value); a plain indexOf always resolved to the FIRST occurrence,
+      // so the real "TOTAL AMOUNT" context was never evaluated.
+      let searchFrom = 0;
       for (const match of allAmounts) {
-        const index = text.indexOf(match);
+        let index = text.indexOf(match, searchFrom);
+        if (index === -1) index = text.indexOf(match);
+        if (index === -1) continue;
+        searchFrom = index + match.length;
         const before = text.substring(Math.max(0, index - 100), index);
         const numValue = parseFloat(match.replace(/,/g, ''));
+
+        // Skip date fragments: dotted sequences like "2026.09.11" yield
+        // "2026.09"-shaped matches that are dates, not amounts.
+        const after = text.substring(index + match.length, index + match.length + 4);
+        if (/^(19|20)\d{2}\.\d{2}/.test(match) || /^\.\d{2}/.test(after)) continue;
 
         // Calculate confidence score based on surrounding text
         let score = 0;

@@ -166,6 +166,38 @@ async function extractTextFromPDF(fileBuffer: Buffer): Promise<string> {
   });
 }
 
+/**
+ * Normalize captured month-name dates ("11 SEPT,2026", "14 Sep 2026",
+ * "September 8, 2026" — with arbitrary OCR spacing) to ISO YYYY-MM-DD.
+ * Downstream new Date(...) parsing of glued tokens is unreliable and
+ * timezone-sensitive (e.g. "010911" once parsed as year 2001), so month-name
+ * dates are converted at capture time; numeric-only strings pass through
+ * untouched for the existing consensus/date-normalizer paths.
+ */
+const MONTH_LOOKUP: Record<string, number> = {
+  JAN: 1, JANUARY: 1, FEB: 2, FEBRUARY: 2, MAR: 3, MARCH: 3,
+  APR: 4, APRIL: 4, MAY: 5, JUN: 6, JUNE: 6, JUL: 7, JULY: 7,
+  AUG: 8, AUGUST: 8, SEP: 9, SEPT: 9, SEPTEMBER: 9, OCT: 10, OCTOBER: 10,
+  NOV: 11, NOVEMBER: 11, DEC: 12, DECEMBER: 12,
+};
+
+function toISODateFromMonthName(raw: string): string {
+  if (!raw) return '';
+  const s = raw.trim().replace(/[,.]/g, ' ').replace(/\s+/g, ' ');
+  const pick = (monthToken: string, day: number, year: number): string | null => {
+    const month = MONTH_LOOKUP[monthToken.toUpperCase()];
+    if (!month || !day || !year) return null;
+    const fullYear = year < 100 ? 2000 + year : year;
+    if (fullYear < 2010 || fullYear > 2030) return null;
+    return `${fullYear}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  };
+  const dmy = s.match(/^(\d{1,2})\s*([A-Za-z]+)\s*(\d{2,4})$/); // 11 SEPT 2026 / 11SEPT2026 (RapidOCR may glue everything)
+  if (dmy) { const iso = pick(dmy[2], Number(dmy[1]), Number(dmy[3])); if (iso) return iso; }
+  const mdy = s.match(/^([A-Za-z]+)\s*(\d{1,2})\s*(\d{2,4})$/); // September 8 2026 / September8,2026
+  if (mdy) { const iso = pick(mdy[1], Number(mdy[2]), Number(mdy[3])); if (iso) return iso; }
+  return '';
+}
+
 export async function extractInvoiceFields(fileBuffer: Buffer) {
   const text = await extractTextFromPDF(fileBuffer);
   return extractInvoiceFieldsFromText(text, fileBuffer);
@@ -318,10 +350,9 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
     /INVOICE\s*DATE[:\s]*(\d{2}\.\d{2}\.\d{4})/i,
     /INVOICE\s*DATE[:\s]*([A-Z][a-z]+\s+\d{1,2},?\s*\d{2,4})/i, // Month DD,YY
     /INVOICE\s*DATE[:\s]*(\d{1,2}\s+[A-Z][a-z]{2,8}[,.]?\s*\d{2,4})/i, // DD Mon YYYY (e.g. "Invoice Date 11 Sep 2026")
-    /DATE[:\s]*(\d{1,2}(?:ST|ND|RD|TH)?\s+[A-Z]+[,.]?\s*\d{2,4})/i, // "DATE: 11 SEPT,2026" (Combine Products S-27xxx, RapidOCR squashes space after colon/comma)
-    /(?:ORDER|SHIP)\s*DATE[:\s]*(\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4})/i, // FineLine-style "Ship Date: 09/08/2026"
-    /(?:ORDER|SHIP)\s*DATE[:\s]*([A-Z][a-z]+\s+\d{1,2}[,.]?\s*\d{2,4})/i, // FineLine-style "Ship Date: September 8, 2026"
-    /(?:MONDAY|TUESDAY|WEDNESDAY|THURSDAY|FRIDAY|SATURDAY|SUNDAY),?\s*([A-Z][a-z]+\s+\d{1,2}[,.]?\s*\d{2,4})/i, // "Tuesday, September 8, 2026" (FineLine; value may sit on its own line)
+    /DATE[:\s]*(\d{1,2}\s*[A-Z]+[,.]?\s*\d{2,4})/i, // "DATE: 11 SEPT,2026" (Combine S-27xxx; RapidOCR may squash the day-month space too)
+    /(?:ORDER|SHIP)\s*DATE[:\s]*([A-Z][a-z]+\s*\d{1,2}[,.]?\s*\d{2,4})/i, // FineLine-style "Ship Date: September 8, 2026"
+    /(?:MONDAY|TUESDAY|WEDNESDAY|THURSDAY|FRIDAY|SATURDAY|SUNDAY),?\s*([A-Z][a-z]+\s*\d{1,2}[,.]?\s*\d{2,4})/i, // "Tuesday, September 8, 2026" (FineLine; value may sit on its own line)
     /Date[:\s]*(\d{2}-[A-Z]{3}-\d{4})/i,
     /Date[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
     /Date[:\s]*(\d{4}-\d{2}-\d{2})/i,
@@ -676,8 +707,8 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
   const result = {
     vendor_name: vendor_name,
     invoice_number: invoice_number,
-    invoice_date: invoice_date,
-    due_date: due_date,
+    invoice_date: toISODateFromMonthName(invoice_date) || invoice_date,
+    due_date: toISODateFromMonthName(due_date) || due_date,
     amount: amount,
     grand_total: grand_total,
     currency: currencyMatch?.[1] || 'USD',

@@ -47,49 +47,43 @@ const PAXAR = [
 const SCANNED = '';
 
 describe('extractInvoiceFields date extraction — parked-manual-review regression batch', () => {
-  // NOTE: extractInvoiceFields returns invoice_date/due_date as the raw OCR
-  // string; Date conversion happens downstream (consensus layer). These tests
-  // assert the string contract plus JS-parseability, which is what the
-  // downstream new Date(...) + isValidDate gate needs.
-  it('captures "DATE: 11 SEPT, 2026" (Combine S-27841M) as a parseable date', async () => {
+  // NOTE: extractInvoiceFields returns invoice_date/due_date. Month-name
+  // dates are normalized to ISO YYYY-MM-DD at capture time (glued OCR tokens
+  // like "010911" once parsed downstream as year 2001); numeric-only strings
+  // pass through for the consensus normalizers.
+  it('captures "DATE: 11 SEPT, 2026" (Combine S-27841M) as ISO 2026-09-11', async () => {
     state.text = S27841M;
     const result = await extractInvoiceFields(Buffer.from('fake'));
-    expect(result.invoice_date).toBe('11 SEPT, 2026');
-    const d = new Date(result.invoice_date as string);
-    expect(d.getFullYear()).toBe(2026);
-    expect(d.getMonth()).toBe(8); // September
-    expect(d.getDate()).toBe(11);
+    expect(result.invoice_date).toBe('2026-09-11');
   });
 
   it('prefers the labeled "DATE: 11 SEPT, 2026" over a later unlabeled "14 Sep 2026"', async () => {
     state.text = S27841M + ' CAD 200.00 issued 14 Sep 2026 for reference';
     const result = await extractInvoiceFields(Buffer.from('fake'));
-    expect(result.invoice_date).toBe('11 SEPT, 2026');
+    expect(result.invoice_date).toBe('2026-09-11');
   });
 
-  it('captures weekday-prefixed "Tuesday, September 8, 2026" (FineLine)', async () => {
+  it('captures weekday-prefixed "Tuesday, September 8, 2026" (FineLine) as ISO 2026-09-08', async () => {
     state.text = FINELINE;
     const result = await extractInvoiceFields(Buffer.from('fake'));
-    expect(result.invoice_date).toBe('September 8, 2026');
+    expect(result.invoice_date).toBe('2026-09-08');
   });
 
   it('uses the unlabeled "14 Sep 2026" (Paxar) — not the 6-digit YYMMDD fallback on PCI-26036057', async () => {
     state.text = PAXAR;
     const result = await extractInvoiceFields(Buffer.from('fake'));
-    expect(result.invoice_date).toBe('14 Sep 2026');
-    expect(result.due_date).toBe('14 Oct 2026');
+    expect(result.invoice_date).toBe('2026-09-14');
+    expect(result.due_date).toBe('2026-10-14');
   });
 
-  it('captures the RapidOCR-squashed "DATE:11 SEPT,2026" (no space after colon/comma)', async () => {
+  it('captures the RapidOCR-squashed "DATE:11SEPT,2026" (no space after colon/comma, or day-month)', async () => {
     // Exact RapidOCR token lines from S-27841M: one token per line, spaces
-    // after ':' and ',' swallowed by OCR.
-    state.text = ['COMMERCIAL INVOICE', 'DATE:11 SEPT,2026', 'INVOICE NO.: S-27841', 'AMOUNT:', 'USD175.18'].join('\n');
+    // after ':' and ',' swallowed by OCR — and across runs the day-month
+    // space is swallowed too ("11SEPT"), which once let the 6-digit fallback
+    // capture "010911" and parse it as year 2001.
+    state.text = ['COMMERCIAL INVOICE', 'DATE:11SEPT,2026', 'INVOICE NO.: S-27841', 'AMOUNT:', 'USD175.18'].join('\n');
     const result = await extractInvoiceFields(Buffer.from('fake'));
-    expect(result.invoice_date).toBe('11 SEPT,2026');
-    const d = new Date(result.invoice_date as string);
-    expect(d.getFullYear()).toBe(2026);
-    expect(d.getMonth()).toBe(8);
-    expect(d.getDate()).toBe(11);
+    expect(result.invoice_date).toBe('2026-09-11');
   });
 
   it('errors on scanned (image-only) text instead of fabricating a date', async () => {

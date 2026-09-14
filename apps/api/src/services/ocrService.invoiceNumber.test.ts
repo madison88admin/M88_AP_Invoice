@@ -4,6 +4,14 @@ process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || 'test-key';
 
 const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
+// Mutable text holder so each test can swap the OCR text; vi.mock factories
+// are hoisted above module scope, so they must read through this reference.
+const state = vi.hoisted(() => ({ text: '' }));
+
+vi.mock('./openDataLoaderService', () => ({
+  extractTextWithOpenDataLoader: vi.fn(() => Promise.resolve(state.text)),
+}));
+
 import { extractInvoiceFields } from './ocrService';
 
 // Combine Products International proforma invoices flatten (pdf2json) with
@@ -34,29 +42,39 @@ const COMBINE_A40428M = [
   'Bank Account No.: 012-561-9-201456-0 Combine Products International Ltd BURTON PO02992_MPO016046 HS_INDO INVOICE RECEIVED DATE: 09/09/26',
 ].join(' ');
 
-const mockText = (t: string) => {
-  vi.doMock('./openDataLoaderService', () => ({
-    extractTextWithOpenDataLoader: vi.fn().mockResolvedValue(t),
-  }));
-};
-
 describe('extractInvoiceFields invoice-number extraction (proforma layout)', () => {
-  beforeEach(() => {
-    vi.resetModules();
-  });
-
   it('finds A40319 in the detached Combine proforma layout', async () => {
-    mockText(COMBINE_A40319T);
-    const { extractInvoiceFields: run } = await import('./ocrService');
-    const result = await run(Buffer.from('fake'));
+    state.text = COMBINE_A40319T;
+    const result = await extractInvoiceFields(Buffer.from('fake'));
     expect(result.invoice_number).toBe('A40319');
   });
 
   it('finds A40428 and never picks PO/MPO tokens', async () => {
-    mockText(COMBINE_A40428M);
-    const { extractInvoiceFields: run } = await import('./ocrService');
-    const result = await run(Buffer.from('fake'));
+    state.text = COMBINE_A40428M;
+    const result = await extractInvoiceFields(Buffer.from('fake'));
     expect(result.invoice_number).toBe('A40428');
     expect(result.invoice_number).not.toMatch(/MPO|PO0/);
+  });
+
+  it('extracts A40319 from one-token-per-line RapidOCR-style text', async () => {
+    // Production consensus runs on RapidOCR output: one token per line,
+    // no spaces, labels far from values.
+    state.text = [
+      'Combine Products International Ltd',
+      'PROFORMAINVOICE',
+      'BILL TO:',
+      'P/I NO.',
+      'ORDER NO.',
+      'PAYMENT TERMS',
+      'MARMOT',
+      'A40319',
+      '15/7/2026',
+      'PO03036_MPO015937',
+      'NET 30 DAYS',
+      'INVOICERECEIVEDDATE:09/11/2026',
+      'USD2.80',
+    ].join('\n');
+    const result = await extractInvoiceFields(Buffer.from('fake'));
+    expect(result.invoice_number).toBe('A40319');
   });
 });

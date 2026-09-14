@@ -171,7 +171,7 @@ describe('getScheduledPaymentsForBatch', () => {
     await getScheduledPaymentsForBatch({});
     const options = lastFindManyCall();
     expect(options.where.status).toEqual({
-      in: ['PENDING_ACCOUNTING', 'APPROVED', 'POSTED_TO_QB'],
+      in: ['PENDING_ACCOUNTING', 'APPROVED', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED'],
     });
   });
 

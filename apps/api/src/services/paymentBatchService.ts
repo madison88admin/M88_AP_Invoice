@@ -114,10 +114,11 @@ export async function getScheduledPaymentsForBatch(filters: ScheduledPaymentFilt
   if (filters.approvalFrom) approvalRange.gte = new Date(filters.approvalFrom);
   if (filters.approvalTo) approvalRange.lte = new Date(`${filters.approvalTo}T23:59:59.999Z`);
 
-  // The Accounting Payment Queue shows invoices pending accounting action:
-  // PENDING_ACCOUNTING, APPROVED, POSTED_TO_QB — but NOT payments already in a batch.
+  // The Accounting Payment Queue shows invoices pending accounting action,
+  // including payments created after posting. PAYMENT_SCHEDULED must remain
+  // visible until an Associate explicitly selects it for a batch.
   const defaultInvoiceStatuses = {
-    in: ['PENDING_ACCOUNTING', 'APPROVED', 'POSTED_TO_QB'],
+    in: ['PENDING_ACCOUNTING', 'APPROVED', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED'],
   };
 
   const invoiceBaseWhere: any = {

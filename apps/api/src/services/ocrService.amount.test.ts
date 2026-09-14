@@ -85,4 +85,52 @@ describe('extractInvoiceFields amount extraction (BSN column layout)', () => {
     expect(result.amount).toBe(1.81);
     expect(result.amount).not.toBe(2026.09);
   });
+
+  // Paxar/PCI per-1000 pricing, as RapidOCR actually reads it: total labels
+  // are mangled ("SALE AMDUNT", "TOTALQTY", "TOTAL SHPPING"), the unit price
+  // (per 1000 PCS) prints before the extended total, and the total appears
+  // twice (SALE AMOUNT block + extended-price column). Pre-fix, every labeled
+  // pattern missed and the fallback scored ALL candidates 0, so text order
+  // picked the unit price: PCI-26036057 came out 32.61 instead of 210.01.
+  const PAXAR_TEXT = [
+    'Invoice',
+    'INWOICE NO.',
+    'PCI-26036057',
+    'INWOICE DATE',
+    '14 Sep 2026',
+    'Unit Price calam 1000 Pcs',
+    'UNTPRICE QTY SHPPED ITEMCODE DESCRIPTIONA UOM EXTENDED PRICE',
+    '(PER1000PCS)',
+    '6,440 MUA8 WHT F25 P/0#: PCS 32.61 210.01',
+    'TOTALQTY:6,440 PCS',
+    'SALE AMDUNT',
+    '210.01',
+    'TOTAL SHPPING',
+    '0.00',
+  ].join('\n');
+
+  it('extracts 210.01 on per-1000 pricing even when every total label is OCR-mangled (Paxar/PCI)', async () => {
+    vi.mocked((await import('./openDataLoaderService')).extractTextWithOpenDataLoader)
+      .mockResolvedValueOnce(PAXAR_TEXT);
+    const result = await extractInvoiceFields(Buffer.from('fake-pdf'));
+    expect(result.amount).toBe(210.01);
+  });
+
+  it('extracts 3348.00 instead of the 0.03 unit price when the labeled USD pattern hits "USD0.027/pc" (per-PC pricing)', async () => {
+    // SIC260900016 leaked 0.03 because the generic /USD\s*(…)/ labeled pattern
+    // matched the unit price "USD0.027/pc" (124,000 pcs × 0.027/pc = 3,348.00)
+    // before any fallback ran. Labeled patterns must skip per-unit prices.
+    vi.mocked((await import('./openDataLoaderService')).extractTextWithOpenDataLoader)
+      .mockResolvedValueOnce([
+        'Invoice',
+        'INVOICE NO. SIC260900016',
+        'Unit Price: USD0.027/pc',
+        '124,000 PCS 0.027 3,348.00',
+        'TOTALQTY:124,000 PCS',
+        'SALE AMOUNT',
+        '3,348.00',
+      ].join('\n'));
+    const result = await extractInvoiceFields(Buffer.from('fake-pdf'));
+    expect(result.amount).toBe(3348);
+  });
 });

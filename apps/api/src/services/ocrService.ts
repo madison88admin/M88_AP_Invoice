@@ -440,6 +440,51 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
   let amount = 0;
   let grand_total = 0;
 
+  // Per-1000 pricing documents (Paxar/PCI, Avery fastener labels): unit
+  // price prints as X.XX per 1000 PCS next to the quantity, and the
+  // extended total (qty × unit ÷ 1000) is the invoice amount. OCR mangles
+  // the total labels ("SALE AMDUNT", "TOTL") and the generic USD pattern
+  // catches the unit price ("USD0.027/pc"), so both paths used to return
+  // the UNIT price (210.01 → 32.61, 3348.00 → 0.03). Detect the per-1000
+  // marker, read qty + unit price, and accept the printed value that
+  // satisfies the document's own arithmetic — gated on an exact printed
+  // match so normal documents are unaffected.
+  const per1000Pricing = /PER\s*1000\s*PCS/i.test(text) || /Unit\s*Price[^\n]{0,40}1000\s*Pcs/i.test(text);
+  let per1000UnitPrice = 0;
+  let per1000ExpectedTotal = 0;
+  if (per1000Pricing) {
+    const qtyMatch = text.match(/TOTAL\s*QTY\s*[:\s]*\s*([\d,]+)\s*PCS/i);
+    const unitMatch = text.match(/\bPCS\b[\s:,]*(\d{1,3}(?:,\d{3})*\.\d{2,4})[\s\n]+([\d,]+\.\d{2,4})/i);
+    const qty = qtyMatch ? parseFloat(qtyMatch[1].replace(/,/g, '')) : 0;
+    const unit = unitMatch ? parseFloat(unitMatch[1].replace(/,/g, '')) : 0;
+    if (qty > 0 && unit > 0) {
+      const expected = (qty * unit) / 1000;
+      if (expected > 0 && expected < 10000000) {
+        per1000UnitPrice = unit;
+        per1000ExpectedTotal = expected;
+        logger.info(`[OCR] Per-1000 pricing detected: qty=${qty}, unit=${unit} → expected total ≈ ${expected.toFixed(2)}`);
+      }
+    }
+  }
+  if (per1000ExpectedTotal > 0) {
+    const per1000Candidates = text.match(/[\d,]+\.\d{2,4}/g) || [];
+    let p1000SearchFrom = 0;
+    for (const candidate of per1000Candidates) {
+      let cIdx = text.indexOf(candidate, p1000SearchFrom);
+      if (cIdx === -1) cIdx = text.indexOf(candidate);
+      if (cIdx === -1) continue;
+      p1000SearchFrom = cIdx + candidate.length;
+      const cAfter = text.substring(cIdx + candidate.length, cIdx + candidate.length + 4);
+      if (/^(19|20)\d{2}\.\d{2}/.test(candidate) || /^\.\d{2}/.test(cAfter)) continue; // date fragments
+      const candidateValue = parseFloat(candidate.replace(/,/g, ''));
+      if (Math.abs(candidateValue - per1000ExpectedTotal) <= Math.max(0.02, per1000ExpectedTotal * 0.01)) {
+        amount = candidateValue;
+        logger.info(`[OCR] Per-1000 total matched: ${amount} (qty × unit ÷ 1000 ≈ ${per1000ExpectedTotal.toFixed(2)})`);
+        break;
+      }
+    }
+  }
+
   // Prose-based currency extraction (e.g., "settle in USD 96.68")
   const prosePatterns = [
     /settle\s+in\s+(?:USD|HKD|EUR|GBP|PHP|JPY|IDR|VND|CNY|SGD|AUD|CAD|CHF|MYR|THB|KRW|TWD)\s+([\d,]+\.\d{2,4})/i,
@@ -448,16 +493,23 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
     /please\s+settle\s+in\s+(?:USD|HKD|EUR|GBP|PHP|JPY|IDR|VND|CNY|SGD|AUD|CAD|CHF|MYR|THB|KRW|TWD)\s+([\d,]+\.\d{2,4})/i,
   ];
 
-  // Try standard patterns first
-  for (const pattern of amountPatterns) {
-    const m = text.match(pattern);
-    if (m) {
-      if (m[1]) {
-        const extractedAmount = parseFloat(m[1].replace(/,/g, ''));
-        if (extractedAmount > 0) {
-          amount = extractedAmount;
-          logger.info(`[OCR] Amount extracted from pattern: ${amount}`);
-          break;
+  // Try standard patterns first (skipped when per-1000 arithmetic already
+  // identified the total — the generic USD patterns would grab unit prices)
+  if (amount === 0) {
+    for (const pattern of amountPatterns) {
+      const m = text.match(pattern);
+      if (m) {
+        if (m[1]) {
+          // Skip per-unit prices: "USD0.027/pc" is a unit price, never the
+          // invoice total (SIC260900016 leaked 0.03 this way).
+          const afterMatch = text.slice((m.index ?? 0) + m[0].length, (m.index ?? 0) + m[0].length + 10);
+          if (/^\s*\/\s*(pc|pcs|1000|ea|each|unit)\b/i.test(afterMatch)) continue;
+          const extractedAmount = parseFloat(m[1].replace(/,/g, ''));
+          if (extractedAmount > 0) {
+            amount = extractedAmount;
+            logger.info(`[OCR] Amount extracted from pattern: ${amount}`);
+            break;
+          }
         }
       }
     }
@@ -508,7 +560,7 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
   if (amount === 0) {
     const allAmounts = text.match(/[\d,]+\.\d{2,4}/g);
     logger.info(`[OCR] All decimal amounts found: ${JSON.stringify(allAmounts)}`);
-    
+
     if (allAmounts && allAmounts.length > 0) {
       const amountCandidates: Array<{ value: number; score: number }> = [];
 
@@ -543,6 +595,23 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
         if (numValue < 1) score -= 100;
         // Penalize very large amounts (likely not single invoice)
         if (numValue > 1000000) score -= 50;
+
+        // Per-1000 pricing: the unit price itself is never the invoice total,
+        // and qty × unit ÷ 1000 is the extended total even when its label is
+        // OCR-mangled.
+        if (per1000ExpectedTotal > 0 && per1000UnitPrice > 0) {
+          if (Math.abs(numValue - per1000UnitPrice) <= Math.max(0.01, per1000UnitPrice * 0.005)) score -= 200;
+          if (Math.abs(numValue - per1000ExpectedTotal) <= Math.max(0.02, per1000ExpectedTotal * 0.01)) score += 250;
+        }
+
+        // Fuzzy total-label bonus: totals usually repeat near the bottom of
+        // the document (summary + remittance block). If this same value shows
+        // up again well past the 60% mark, treat it as total-shaped even when
+        // every label is OCR-mangled.
+        if (numValue >= 1 && numValue < 1000000) {
+          const laterIdx = text.indexOf(match, Math.floor(text.length * 0.6));
+          if (laterIdx !== -1 && Math.abs(laterIdx - index) > 40) score += 30;
+        }
 
         amountCandidates.push({ value: numValue, score });
       }

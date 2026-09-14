@@ -290,14 +290,17 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
     /INVOICE\s*DATE[:\s]*(\d{4}\.\d{2}\.\d{2})/i,
     /INVOICE\s*DATE[:\s]*(\d{2}\.\d{2}\.\d{4})/i,
     /INVOICE\s*DATE[:\s]*([A-Z][a-z]+\s+\d{1,2},?\s*\d{2,4})/i, // Month DD,YY
+    /INVOICE\s*DATE[:\s]*(\d{1,2}\s+[A-Z][a-z]{2,8}\s+\d{2,4})/i, // DD Mon YYYY (e.g. "Invoice Date 11 Sep 2026")
     /Date[:\s]*(\d{2}-[A-Z]{3}-\d{4})/i,
     /Date[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
     /Date[:\s]*(\d{4}-\d{2}-\d{2})/i,
+    /Date[:\s]*(\d{4}\.\d{2}\.\d{2})/i,
     /Issued\s*Date[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
     /Billing\s*Date[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
     /(\d{6})\b/, // YYMMDD format (260114 → 2026-01-14)
     /(\d{2}-[A-Z]{3}-\d{4})/, // Fallback: find any DD-MMM-YYYY
     /(\d{1,2}\/\d{1,2}\/\d{2,4})/, // Fallback: find any DD/MM/YYYY
+    /(\d{4}\.\d{2}\.\d{2})/, // Fallback: find any YYYY.MM.DD (e.g. BSN "Invoice No. Date / : NUM : 2026.09.11")
   ];
   let invoice_date = '';
   for (const pattern of datePatterns) {

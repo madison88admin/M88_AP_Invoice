@@ -109,11 +109,32 @@ describe('extractInvoiceFields amount extraction (BSN column layout)', () => {
     '0.00',
   ].join('\n');
 
+  // Realistic body filler — the header scan window is the first 30% of the
+  // text, so short toy texts would truncate the INWOICE NO. block mid-token
+  // (real Paxar pages are ~3750 chars).
+  const PAXAR_BODY_FILLER = Array.from({ length: 60 }, (_, i) => `LINE ITEM DETAIL ROW ${i + 1} 6,440 PCS`).join('\n');
+
   it('extracts 210.01 on per-1000 pricing even when every total label is OCR-mangled (Paxar/PCI)', async () => {
     vi.mocked((await import('./openDataLoaderService')).extractTextWithOpenDataLoader)
-      .mockResolvedValueOnce(PAXAR_TEXT);
+      .mockResolvedValueOnce(PAXAR_TEXT + '\n' + PAXAR_BODY_FILLER);
     const result = await extractInvoiceFields(Buffer.from('fake-pdf'));
     expect(result.amount).toBe(210.01);
+    expect(result.invoice_number).toBe('PCI-26036057');
+  });
+
+  it('reads INWOICE NO. (OCR V→W) and strips trailing OCR-noise letters from the number', async () => {
+    vi.mocked((await import('./openDataLoaderService')).extractTextWithOpenDataLoader)
+      .mockResolvedValueOnce([
+        'Invoice',
+        'INWOICE NO.',
+        'PCI-26028447V',
+        'Invoicereceiveddate:7/22/26',
+        'AMOUNT',
+        '36.84',
+        PAXAR_BODY_FILLER,
+      ].join('\n'));
+    const result = await extractInvoiceFields(Buffer.from('fake-pdf'));
+    expect(result.invoice_number).toBe('PCI-26028447');
   });
 
   it('extracts 3348.00 instead of the 0.03 unit price when the labeled USD pattern hits "USD0.027/pc" (per-PC pricing)', async () => {

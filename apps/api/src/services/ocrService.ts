@@ -110,6 +110,8 @@ export interface OCRResult {
   customer_po_number?: string;
   bill_to_entity?: BillToEntity;
   is_handwritten: boolean;
+  /** Deterministic shipping-document detection (DHL airwaybills etc.) — intake parks these instead of creating invoices. */
+  is_non_invoice_document?: boolean;
   is_urgent: boolean;
   priority_pay_date?: Date;
   ocr_confidence_score?: number;
@@ -256,9 +258,9 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
   // invoice_number — multiple patterns, prioritized by specificity
   // Must contain at least one digit to avoid matching words like "signature"
   const invoiceNumberPatterns = [
-    /INVOICE\s*NO[:\s#]*([A-Z0-9\-\/*]+)/i,
-    /INVOICE\s*NO[.]*[:\s#]*([A-Z0-9\-\/*]+)/i,
-    /INVOICE\s*NUMBER[:\s#]*([A-Z0-9\-\/*]+)/i,
+    /IN[VW]OICE\s*NO[:\s#]*([A-Z0-9\-\/*]+)/i, // OCR reads V as W on Paxar/PCI forms ("INWOICE NO.")
+    /IN[VW]OICE\s*NO[.]*[:\s#]*([A-Z0-9\-\/*]+)/i,
+    /IN[VW]OICE\s*NUMBER[:\s#]*([A-Z0-9\-\/*]+)/i,
     /INV(?:OICE)?\s*#[:\s]*([A-Z0-9\-\/*]+)/i,
     /Invoice\s*#[:\s]*([A-Z0-9\-\/*]+)/i,
     /I\/V\s*NO[.]*[:\s]*([A-Z0-9\-\/*]+)/i,
@@ -284,7 +286,11 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
     if (m) { 
       // Validate: must contain at least one digit
       if (/\d/.test(m[1])) {
-        invoice_number = m[1]; 
+        // Strip trailing OCR-noise letters glued after a long digit run
+        // (RapidOCR column bleed: "PCI-26028447V" → "PCI-26028447").
+        const stripped = m[1].replace(/(\d{6,})[A-Z]{1,2}$/i, '$1');
+        if (stripped !== m[1]) logger.info(`[OCR] Invoice number trailing-noise stripped: "${m[1]}" -> "${stripped}"`);
+        invoice_number = stripped; 
         break;
       }
     }
@@ -1574,6 +1580,14 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
   }
 
   logger.info(`[OCR] Final extraction — engine: ${ocrEngine}, vendor: "${extracted.vendor_name}", invoice#: "${extracted.invoice_number}", amount: ${extracted.amount}`);
+  // Deterministic non-invoice detection from the raw OCR text: DHL-style
+  // "Shipment Airwaybill" paperwork carries declared values and airwaybill
+  // numbers that superficially resemble invoice totals/numbers — it must be
+  // parked by intake, never created as an invoice.
+  const isNonInvoiceDocument = /SHIPMENT\s+AIRWAYBILL|AIR\s*WAYBILL/i.test(rapidOcrText || '');
+  if (isNonInvoiceDocument) {
+    logger.info('[OCR] Non-invoice shipping document detected (airwaybill) — intake will park this file');
+  }
 
   const poParsed = extracted.po_reference ? parsePOReference(extracted.po_reference) : {};
 
@@ -1628,6 +1642,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
     })(),
     bill_to_entity: BillToEntity.MADISON_88_LTD,
     is_handwritten: (extracted as any).is_handwritten || false,
+    is_non_invoice_document: isNonInvoiceDocument || undefined,
     is_urgent: false,
     priority_pay_date: undefined,
     ocr_confidence_score: calculatedConfidence,

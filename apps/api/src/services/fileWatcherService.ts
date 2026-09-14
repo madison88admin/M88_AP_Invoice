@@ -57,6 +57,9 @@ function intakeReviewReason(ocrResult: any): string | null {
   const amount = Number(ocrResult?.total_amount ?? ocrResult?.amount);
   const currency = String(ocrResult?.currency || '').toUpperCase();
 
+  if (ocrResult?.is_non_invoice_document) {
+    return 'Document is a shipping/non-invoice document (airwaybill detected) — not eligible for invoice creation';
+  }
   if (type === 'STATEMENT' || type === 'OTHER' || type === 'UNKNOWN') {
     return `Document type ${type || 'unknown'} is not eligible for automatic invoice creation`;
   }

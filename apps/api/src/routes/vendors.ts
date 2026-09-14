@@ -240,6 +240,16 @@ router.patch('/:id', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTI
       BANK_FIELDS.forEach(f => delete updateData[f]);
     }
 
+    // Guard against accidental alias erasure: a client that round-trips the
+    // vendor object with an empty name_aliases field (e.g. a form that does
+    // not display aliases) would otherwise wipe the OCR alias set and push
+    // every subsequent intake back into VENDOR_NOT_FOUND. Clearing aliases
+    // deliberately requires sending a non-empty replacement array.
+    if (Array.isArray(updateData.name_aliases) && updateData.name_aliases.length === 0
+        && Array.isArray(currentVendor.name_aliases) && currentVendor.name_aliases.length > 0) {
+      delete updateData.name_aliases;
+    }
+
     const vendor = await prisma.vendor.update({
       where: { id: req.params.id },
       data: {

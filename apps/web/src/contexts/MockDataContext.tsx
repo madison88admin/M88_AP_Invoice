@@ -48,6 +48,33 @@ interface ExceptionActionResult {
 
 const MockDataContext = createContext<MockDataContextType | undefined>(undefined);
 
+const liveDataCacheKey = (userId: string) => `ap-invoice:live-data:${userId}`;
+
+type LiveDataCache = {
+  invoices?: MockInvoice[];
+  vendors?: MockVendor[];
+  paymentBatches?: MockPaymentBatch[];
+};
+
+const readLiveDataCache = (userId?: string): LiveDataCache | null => {
+  if (!userId || typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(liveDataCacheKey(userId));
+    return raw ? JSON.parse(raw) as LiveDataCache : null;
+  } catch {
+    return null;
+  }
+};
+
+const writeLiveDataCache = (userId: string | undefined, data: LiveDataCache) => {
+  if (!userId || typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(liveDataCacheKey(userId), JSON.stringify(data));
+  } catch {
+    // Storage can be unavailable/private; live fetching still works normally.
+  }
+};
+
 export const useMockData = () => {
   const context = useContext(MockDataContext);
   if (context === undefined) {
@@ -258,6 +285,17 @@ export const MockDataProvider = ({ children }: MockDataProviderProps) => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const refreshInFlight = useRef(false);
 
+  // Restore the last successfully retrieved data immediately after a browser
+  // reload. This prevents transient proxy/API errors from presenting an empty
+  // dashboard as real zero workload.
+  useEffect(() => {
+    const cached = readLiveDataCache(user?.id);
+    if (!cached) return;
+    if (Array.isArray(cached.invoices)) setInvoices(cached.invoices);
+    if (Array.isArray(cached.vendors)) setVendors(cached.vendors);
+    if (Array.isArray(cached.paymentBatches)) setPaymentBatches(cached.paymentBatches);
+  }, [user?.id]);
+
   // Only fetch payment batches for roles that have permission
   const canFetchPaymentBatches = user && ['ACCOUNTING_SUPERVISOR', 'IT_ADMIN'].includes(user.role);
   // SUPERADMIN: no invoice/vendor data needed (system maintenance only)
@@ -281,14 +319,41 @@ export const MockDataProvider = ({ children }: MockDataProviderProps) => {
         fetches.push(paymentBatchApi.getAll().catch(() => ({ data: null, _failed: true })));
       }
       const results = await Promise.all(fetches);
+      let hadFailure = false;
+      let nextInvoices: MockInvoice[] | undefined;
+      let nextVendors: MockVendor[] | undefined;
+      let nextBatches: MockPaymentBatch[] | undefined;
       if (!skipInvoiceFetch) {
         const [invoiceRes, vendorRes] = results;
-        if (Array.isArray(invoiceRes?.data) && (invoiceRes.data.length > 0 || invoices.length === 0)) setInvoices(invoiceRes.data.map(apiInvoiceToMock));
-        if (Array.isArray(vendorRes?.data) && (vendorRes.data.length > 0 || vendors.length === 0)) setVendors(vendorRes.data.map(apiVendorToMock));
+        hadFailure ||= Boolean(invoiceRes?._failed || vendorRes?._failed);
+        if (Array.isArray(invoiceRes?.data)) {
+          const mappedInvoices = invoiceRes.data.map(apiInvoiceToMock);
+          nextInvoices = mappedInvoices;
+          setInvoices(mappedInvoices);
+        }
+        if (Array.isArray(vendorRes?.data)) {
+          const mappedVendors = vendorRes.data.map(apiVendorToMock);
+          nextVendors = mappedVendors;
+          setVendors(mappedVendors);
+        }
       }
       if (canFetchPaymentBatches) {
         const batchRes = skipInvoiceFetch ? results[0] : results[2];
-        if (Array.isArray(batchRes?.data) && (batchRes.data.length > 0 || paymentBatches.length === 0)) setPaymentBatches(batchRes.data.map(apiBatchToMock));
+        hadFailure ||= Boolean(batchRes?._failed);
+        if (Array.isArray(batchRes?.data)) {
+          const mappedBatches = batchRes.data.map(apiBatchToMock);
+          nextBatches = mappedBatches;
+          setPaymentBatches(mappedBatches);
+        }
+      }
+      if (hadFailure) {
+        setError('Live data could not be refreshed. Showing the last successfully loaded data.');
+      } else {
+        writeLiveDataCache(user?.id, {
+          invoices: nextInvoices,
+          vendors: nextVendors,
+          paymentBatches: nextBatches,
+        });
       }
     } catch (err: any) {
       setError(err.message || 'Failed to load data');
@@ -297,7 +362,7 @@ export const MockDataProvider = ({ children }: MockDataProviderProps) => {
       setIsRefreshing(false);
       refreshInFlight.current = false;
     }
-  }, [isAuthenticated, canFetchPaymentBatches, skipInvoiceFetch]);
+  }, [isAuthenticated, canFetchPaymentBatches, skipInvoiceFetch, user?.id]);
 
   useEffect(() => {
     if (!isAuthenticated) return;

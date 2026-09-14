@@ -81,6 +81,7 @@ describe('runOcrDateSanityCheck', () => {
     expect(exceptionCreate).not.toHaveBeenCalled();
     expect(notificationCreate).not.toHaveBeenCalled();
     expect(result.flagged).toBe(0);
+    expect(result.already_flagged).toBe(1);
     expect(result.scanned).toBe(1);
   });
 

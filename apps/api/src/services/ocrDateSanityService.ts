@@ -34,6 +34,7 @@ function yearOutOfRange(date: Date | null | undefined): boolean {
 export interface DateSanityResult {
   scanned: number;
   flagged: number;
+  already_flagged: number;
   auto_resolved: number;
   flagged_invoices: { invoice_id: string; invoice_number: string; invoice_date: string | null }[];
 }
@@ -45,6 +46,7 @@ export async function runOcrDateSanityCheck(initiatedBy = 'scheduler'): Promise<
   });
 
   const flaggedInvoices: DateSanityResult['flagged_invoices'] = [];
+  let alreadyFlagged = 0;
   let autoResolved = 0;
 
   for (const invoice of invoices) {
@@ -57,7 +59,7 @@ export async function runOcrDateSanityCheck(initiatedBy = 'scheduler'): Promise<
     });
 
     if (insane) {
-      if (pendingExceptions.length > 0) continue; // already flagged — dedupe
+      if (pendingExceptions.length > 0) { alreadyFlagged += 1; continue; } // already flagged — dedupe
       await prisma.exception.create({
         data: {
           invoice_id: invoice.id,
@@ -108,12 +110,15 @@ export async function runOcrDateSanityCheck(initiatedBy = 'scheduler'): Promise<
   const result: DateSanityResult = {
     scanned: invoices.length,
     flagged: flaggedInvoices.length,
+    already_flagged: alreadyFlagged,
     auto_resolved: autoResolved,
     flagged_invoices: flaggedInvoices,
   };
 
   if (flaggedInvoices.length > 0 || autoResolved > 0) {
-    logger.warn(`[OCR Date Sanity] Scanned ${invoices.length} invoice(s): ${flaggedInvoices.length} flagged, ${autoResolved} auto-resolved (by ${initiatedBy})`);
+    logger.warn(`[OCR Date Sanity] Scanned ${invoices.length} invoice(s): ${flaggedInvoices.length} newly flagged, ${alreadyFlagged} already flagged (deduped), ${autoResolved} auto-resolved (by ${initiatedBy})`);
+  } else if (alreadyFlagged > 0) {
+    logger.info(`[OCR Date Sanity] Scanned ${invoices.length} invoice(s): 0 new flags — ${alreadyFlagged} still outside sane range ${MIN_YEAR}-${MAX_YEAR} but already flagged (deduped)`);
   } else {
     logger.info(`[OCR Date Sanity] Scanned ${invoices.length} invoice(s): all dates within sane range ${MIN_YEAR}-${MAX_YEAR}`);
   }

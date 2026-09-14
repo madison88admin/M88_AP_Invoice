@@ -360,15 +360,35 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
     /\b(\d{1,2}\s+[A-Z][a-z]{2,8}[.,]?\s*\d{4})\b/, // Unlabeled "14 Sep 2026" (Paxar column layout) — ahead of numeric fallbacks
     /Issued\s*Date[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
     /Billing\s*Date[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
+    /(\d{4}\.\d{2}\.\d{2})/, // Fallback: any YYYY.MM.DD — Combine digital-signature stamps (2026.07.20); must outrank the 6-digit fallback below
     /(\d{6})\b/, // YYMMDD format (260114 → 2026-01-14)
     /(\d{1,2}-[A-Z]{3}-\d{2,4})/, // Fallback: any DD-MMM-YYYY or DD-MMM-YY
     /(\d{1,2}\/\d{1,2}\/\d{2,4})/, // Fallback: find any DD/MM/YYYY
     /(\d{4}\.\d{2}\.\d{2})/, // Fallback: find any YYYY.MM.DD (e.g. BSN "Invoice No. Date / : NUM : 2026.09.11")
   ];
   let invoice_date = '';
+  const isPlausibleDateCapture = (value: string): boolean => {
+    // Numeric-only fallbacks are dangerous: they match bank-account segments
+    // (012-561-9-201456-0 → "201456"), phone numbers, and PO fragments. A
+    // capture that parses to a nonsensical year must be skipped so the next
+    // pattern gets a chance, instead of poisoning the whole extraction.
+    if (/^\d+$/.test(value)) {
+      if (value.length === 6) {
+        // YYMMDD: the month and day must also be in range, otherwise fragments
+        // like the bank-account segment 201456 (month 14) sneak through.
+        const year = 2000 + Number(value.slice(0, 2));
+        const month = Number(value.slice(2, 4));
+        const day = Number(value.slice(4, 6));
+        return year >= 2010 && year <= 2030 && month >= 1 && month <= 12 && day >= 1 && day <= 31;
+      }
+      if (value.length === 8) return Number(value.slice(-4)) >= 2010 && Number(value.slice(-4)) <= 2030;
+      return false;
+    }
+    return true;
+  };
   for (const pattern of datePatterns) {
     const m = text.match(pattern);
-    if (m) { invoice_date = m[1]; break; }
+    if (m && isPlausibleDateCapture(m[1])) { invoice_date = m[1]; break; }
   }
 
   // due_date — multiple patterns

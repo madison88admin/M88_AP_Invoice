@@ -102,6 +102,50 @@ describe('extractInvoiceFields date extraction — parked-manual-review regressi
     expect(result.invoice_date).toBe('2026-09-11');
   });
 
+  it('skips the bank-account 6-digit fragment and captures the signature stamp 2026.07.20 (A40274/A40355 layout)', async () => {
+    // Real RapidOCR shape of the no-printed-date Combine proformas: the only
+    // dates are the digital-signature stamp and the bank account whose middle
+    // segment (201456) the old 6-digit fallback captured, poisoning the date.
+    state.text = [
+      'PROFORMA INVOICE',
+      'P/I NO.',
+      'DATE',
+      'ORDER NO.',
+      'A40274',
+      'USD465.50',
+      'BANKCHARGES',
+      'USD30.00',
+      'ETD-8/10/26',
+      'Invoice Received: 7/23/26',
+      'Bank Account No.:012-561-9-201456-0',
+      '2026.07.20',
+      'AMOUNT:',
+      'USD2,359.60',
+    ].join('\n');
+    const result = await extractInvoiceFields(Buffer.from('fake'));
+    expect(result.invoice_date).toBe('2026.07.20');
+    const d = new Date(result.invoice_date as string);
+    expect(d.getFullYear()).toBe(2026);
+    expect(d.getMonth()).toBe(6);
+  });
+
+  it('skips the bank-account fragment and captures the slash date (A40285 layout)', async () => {
+    state.text = [
+      'PROFORMAINVOICE',
+      'P/I NO.',
+      'DATE',
+      'ORDER NO.',
+      'A40285',
+      '9/7/2026',
+      'Bank Account No.:012-561-9-201456-0',
+      'RECEIVED:07/09/26',
+      'AMOUNT:',
+      'USD55.00',
+    ].join('\n');
+    const result = await extractInvoiceFields(Buffer.from('fake'));
+    expect(result.invoice_date).toBe('9/7/2026');
+  });
+
   it('errors on scanned (image-only) text instead of fabricating a date', async () => {
     // A scanned PDF yields no text layer: OpenDataLoader returns <20 chars,
     // pdf2json cannot parse the raw buffer, and the regex engine fails —

@@ -714,6 +714,7 @@ enum ExceptionReason {
   VENDOR_THRESHOLD_EXCEEDED
   BATCH_THRESHOLD_NOT_MET
   PO_NOT_FOUND
+  OCR_DATE_OUT_OF_RANGE
 }
 
 enum BillToEntity {

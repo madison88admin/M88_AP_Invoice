@@ -54,6 +54,7 @@ import { startSharePointWatcher, stopSharePointWatcher } from './services/shareP
 import { startFileWatcher, stopFileWatcher } from './services/fileWatcherService';
 import { invoiceUploadQueue } from './services/invoiceUploadQueue';
 import { runAnomalyScan, runFourWayReconciliation } from './services/financeControlRunService';
+import { runOcrDateSanityCheck } from './services/ocrDateSanityService';
 import { startDurableJobWorker, stopDurableJobWorker } from './services/durableJobWorker';
 import { isEmailPollerConfigured, startEmailPoller, stopEmailPoller } from './services/emailIntakeService';
 import { checkEmailPollHealth } from './services/emailIntakeMonitoringService';
@@ -389,6 +390,25 @@ const startServer = async () => {
       }
     }, 30000) : undefined;
 
+    // OCR date-sanity check — runs hourly (plus once shortly after startup) so
+    // OCR-corrupted invoice dates (e.g. year-2001 bugs) are flagged before they
+    // can reach accounting. Flagged invoices get a PENDING
+    // OCR_DATE_OUT_OF_RANGE exception, an audit entry, and an in-app
+    // notification to the Accounting Associate. Runs are deduped per invoice.
+    const OCR_DATE_SANITY_INTERVAL_MS = Number(process.env.OCR_DATE_SANITY_INTERVAL_MS || 60 * 60 * 1000);
+    const ocrDateSanityInterval = sideEffectsEnabled ? setInterval(async () => {
+      try {
+        await runOcrDateSanityCheck('scheduler');
+      } catch (err) {
+        logger.error('OCR date-sanity scheduler error:', err);
+      }
+    }, OCR_DATE_SANITY_INTERVAL_MS) : undefined;
+    ocrDateSanityInterval?.unref();
+    const initialDateSanityTimer = sideEffectsEnabled ? setTimeout(() => {
+      runOcrDateSanityCheck('startup').catch((err) => logger.error('Initial OCR date-sanity check failed:', err));
+    }, 45000) : undefined;
+    initialDateSanityTimer?.unref();
+
     // Graceful shutdown
     const shutdown = async () => {
       logger.info('Shutting down server...');
@@ -399,6 +419,8 @@ const startServer = async () => {
       if (slaInterval) clearInterval(slaInterval);
       if (mpoCacheSyncInterval) clearInterval(mpoCacheSyncInterval);
       if (initialSlaTimer) clearTimeout(initialSlaTimer);
+      if (ocrDateSanityInterval) clearInterval(ocrDateSanityInterval);
+      if (initialDateSanityTimer) clearTimeout(initialDateSanityTimer);
       clearInterval(financeControlInterval);
       stopDurableJobWorker();
       server.close();

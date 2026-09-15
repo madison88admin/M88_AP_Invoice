@@ -54,11 +54,11 @@ class InAppNotificationService {
       PENDING_MLO_PLANNING_MANAGER: { title: 'Awaiting Planning Manager', message: `Invoice ${invoiceNumber} requires Planning Manager approval.`, type: 'info' },
       PENDING_SR_MANAGER: { title: 'Awaiting Sr. Manager', message: `Invoice ${invoiceNumber} requires Sr. Manager Global Production approval.`, type: 'info' },
       PENDING_POLLY: { title: 'Awaiting Ms. Polly', message: `Invoice ${invoiceNumber} requires Ms. Polly's approval.`, type: 'info' },
-      PENDING_ACCOUNTING: { title: 'Awaiting Accounting', message: `Invoice ${invoiceNumber} is ready for accounting review and QuickBooks posting.`, type: 'info' },
+      PENDING_ACCOUNTING: { title: 'Ready for Accounting Posting', message: `Invoice ${invoiceNumber} is ready for Accounting Associate review and QuickBooks posting.`, type: 'info' },
       APPROVED: { title: 'Invoice Approved', message: `Invoice ${invoiceNumber} has been fully approved.`, type: 'success' },
       POSTED_TO_QB: { title: 'Posted to QuickBooks', message: `Invoice ${invoiceNumber} has been posted to QuickBooks.`, type: 'success' },
       PAYMENT_SCHEDULED: {
-        title: 'Payment ready for batch selection',
+        title: 'Ready for Batch Selection',
         message: `Invoice ${invoiceNumber} has been posted and its payment is ready in the Accounting Payment Queue. Select it to create a payment batch.`,
         type: 'success',
       },
@@ -66,7 +66,7 @@ class InAppNotificationService {
       PAYMENT_CONFIRMATION_SENT: { title: 'Payment Confirmation Sent', message: `Payment confirmation for invoice ${invoiceNumber} has been sent to the vendor.`, type: 'success' },
       REJECTED: { title: 'Invoice Rejected', message: `Invoice ${invoiceNumber} has been rejected.`, type: 'error' },
       EXCEPTION_FLAGGED: { title: 'Exception Raised', message: `Invoice ${invoiceNumber} has exceptions requiring review.`, type: 'warning' },
-      ON_HOLD: { title: 'Invoice On Hold', message: `Invoice ${invoiceNumber} has been put on hold.`, type: 'warning' },
+      ON_HOLD: { title: 'Invoice On Hold', message: `Invoice ${invoiceNumber} has been put on hold and requires Accounting Supervisor review.`, type: 'warning' },
     };
 
     const stageInfo = stageMessages[newStatus] || {
@@ -87,7 +87,7 @@ class InAppNotificationService {
       PENDING_MLO_PLANNING_MANAGER: UserRole.PLANNING_MANAGER,
       PENDING_SR_MANAGER: UserRole.SR_MANAGER_GLOBAL_PRODUCTION,
       PENDING_POLLY: UserRole.MS_POLLY,
-      PENDING_ACCOUNTING: UserRole.ACCOUNTING_SUPERVISOR,
+      PENDING_ACCOUNTING: UserRole.ACCOUNTING_ASSOCIATE,
       APPROVED: UserRole.ACCOUNTING_SUPERVISOR,
       POSTED_TO_QB: UserRole.ACCOUNTING_ASSOCIATE,
       // The Associate selects scheduled payments and creates/submits the

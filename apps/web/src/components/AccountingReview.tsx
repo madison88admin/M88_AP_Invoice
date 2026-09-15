@@ -489,7 +489,7 @@ ${dataRows}
                               onClick={() => handlePostAndCreateBatch(invoice)}
                               disabled={postingInvoiceId === invoice.id}
                               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                              title="Post to accounting (auto-creates a payment batch) and open the batch to process it"
+                              title="Post to QuickBooks, then select the scheduled payment in the Accounting Payment Queue"
                               style={{ background: 'color-mix(in srgb, var(--accent-purple) 12%, transparent)', color: 'var(--accent-purple)', border: '1px solid color-mix(in srgb, var(--accent-purple) 20%, transparent)' }}
                               onMouseEnter={(e) => { if (postingInvoiceId !== invoice.id) e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-purple) 22%, transparent)'; }}
                               onMouseLeave={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-purple) 12%, transparent)'; }}
@@ -497,7 +497,7 @@ ${dataRows}
                               {postingInvoiceId === invoice.id
                                 ? <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2.5} />
                                 : <Send className="h-3.5 w-3.5" strokeWidth={2} />}
-                              {postingInvoiceId === invoice.id ? 'Posting...' : 'Post & Create Batch'}
+                              {postingInvoiceId === invoice.id ? 'Posting...' : 'Post to Accounting'}
                             </button>
                           )}
                           <button onClick={() => setSelectedInvoice(invoice)} className="transition-colors" style={{ color: 'var(--accent-purple)' }}

@@ -1102,6 +1102,29 @@ function isValidDate(dateStr: string | undefined): boolean {
 }
 
 /**
+ * Normalise AI-returned dates without allowing a malformed value to abort an
+ * entire invoice extraction. AI engines commonly return dd/mm/yyyy strings,
+ * which JavaScript does not parse consistently.
+ */
+function safeISODate(value: unknown): string {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+
+  const dmy = raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+  if (dmy) {
+    const [, day, month, year] = dmy;
+    const parsed = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+    if (parsed.getUTCFullYear() === Number(year) && parsed.getUTCMonth() === Number(month) - 1 && parsed.getUTCDate() === Number(day)) {
+      return parsed.toISOString().slice(0, 10);
+    }
+    return '';
+  }
+
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString().slice(0, 10);
+}
+
+/**
  * Calculate realistic OCR confidence based on actual field quality.
  * Returns a value between 0 and 1.
  *
@@ -1277,8 +1300,8 @@ function mapEngineShapeToExtracted(mergedData: any, primary: any): any {
   const out: any = {
     vendor_name: d.vendor_name || primary.vendor_name || '',
     invoice_number: d.invoice_number || primary.invoice_number || '',
-    invoice_date: d.invoice_date ? new Date(d.invoice_date).toISOString().split('T')[0] : (primary.invoice_date || ''),
-    due_date: d.due_date ? new Date(d.due_date).toISOString().split('T')[0] : (primary.due_date || ''),
+    invoice_date: safeISODate(d.invoice_date) || primary.invoice_date || '',
+    due_date: safeISODate(d.due_date) || primary.due_date || '',
     amount: d.total_amount || primary.amount || 0,
     grand_total: 0,
     currency: d.currency || primary.currency || 'USD',
@@ -1451,8 +1474,8 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
       extracted = {
         vendor_name: sanitizeSingleValue(aiResult.vendor_name) || '',
         invoice_number: sanitizeSingleValue(aiResult.invoice_number) || '',
-        invoice_date: aiResult.invoice_date ? new Date(sanitizeSingleValue(aiResult.invoice_date) || '').toISOString().split('T')[0] : '',
-        due_date: aiResult.due_date ? new Date(sanitizeSingleValue(aiResult.due_date) || '').toISOString().split('T')[0] : '',
+        invoice_date: safeISODate(sanitizeSingleValue(aiResult.invoice_date)),
+        due_date: safeISODate(sanitizeSingleValue(aiResult.due_date)),
         amount: aiResult.total_amount || 0,
         grand_total: 0,
         currency: aiResult.currency || 'USD',

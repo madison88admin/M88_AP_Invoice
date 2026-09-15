@@ -3,6 +3,7 @@ import {
   detectVendor,
   extractVendorName,
   extractInvoiceNumber,
+  extractUsingGenericLayer,
   extractAmount,
   extractPaymentTerms,
   extractBankDetails,
@@ -187,6 +188,16 @@ describe('Paxar invoice sample', () => {
     expect(result.bank_name).toMatch(/Bank Central Asia/i);
     expect(result.swift_code).toBe('CENAIDJA');
     expect(result.account_number).toBe('1122334455');
+  });
+});
+
+describe('Generic invoice-number boundary', () => {
+  it('does not consume the next labelled field after a Nilorn invoice number', () => {
+    const text = `Nilorn East Asia Limited
+Invoice No INVP0264777 Invoice Date 14/09/2026
+Bill To Madison 88 Limited`;
+
+    expect(extractUsingGenericLayer(text).invoice_number.value).toBe('INVP0264777');
   });
 });
 

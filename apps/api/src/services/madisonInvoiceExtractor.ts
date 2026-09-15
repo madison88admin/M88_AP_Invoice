@@ -2134,7 +2134,7 @@ export function extractBankDetails(text: string): { beneficiary_name: string | n
  * Generic extraction layer for unknown vendors
  * Uses alias dictionary and fallback patterns when vendor-specific rules fail
  */
-function extractUsingGenericLayer(text: string, preferUS: boolean = false): {
+export function extractUsingGenericLayer(text: string, preferUS: boolean = false): {
   invoice_number: { value: string | null; confidence: number };
   invoice_date: { value: string | null; confidence: number };
   due_date: { value: string | null; confidence: number };
@@ -2158,10 +2158,15 @@ function extractUsingGenericLayer(text: string, preferUS: boolean = false): {
 
   // Extract invoice number using aliases
   for (const alias of FIELD_ALIASES.invoice_number) {
-    const regex = new RegExp(`${alias.replace(/\s+/g, '\\s+')}[:\\s#]*([A-Z0-9\\s\\-\\/*]+)`, 'i');
+    // Invoice numbers are token-like identifiers.  Do not let a whitespace
+    // capture consume the following labelled field (for example,
+    // "Invoice No INVP0264777 Invoice Date ...").  That previously produced
+    // an invalid concatenated number and prevented an otherwise valid PDF
+    // from being created.
+    const regex = new RegExp(`${alias.replace(/\s+/g, '\\s+')}[:\\s#]*([A-Z0-9][A-Z0-9\\-\\/*]*)`, 'i');
     const match = normalized.match(regex);
     if (match) {
-      const value = match[1].replace(/[*#]/g, '').replace(/\s*([\-\\/])\s*/g, '$1').replace(/\s+/g, '').trim();
+      const value = match[1].replace(/[*#]/g, '').replace(/\s*([\-\\/])\s*/g, '$1').trim();
       if (/\d/.test(value)) {
         result.invoice_number.value = value;
         result.invoice_number.confidence = 0.70;

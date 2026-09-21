@@ -7,6 +7,7 @@ export type SourceDocumentType =
   | 'DEBIT_NOTE'
   | 'PURCHASE_ORDER'
   | 'PACKING_LIST'
+  | 'AIRWAY_BILL'
   | 'DELIVERY_RECEIPT'
   | 'STATEMENT'
   | 'PAYMENT_ADVICE'
@@ -55,7 +56,9 @@ export function classifyInvoiceDocument(input: { fileName?: string; mimeType?: s
     { type: 'DEBIT_NOTE', patterns: [/DEBIT\s+(?:NOTE|MEMO)/, /<DEBITNOTE\b/], payable: true },
     { type: 'PROFORMA_INVOICE', patterns: [/PRO[ -]?FORMA\s+INVOICE/], payable: false },
     { type: 'PACKING_LIST', patterns: [/PACKING\s+LIST/, /PACKING\s+SLIP/], payable: false },
+    { type: 'AIRWAY_BILL', patterns: [/AIR\s*WAY\s*BILL/, /SHIPMENT\s+AIRWAYBILL/, /\bAWB\s*(?:NO\.?|#|NUMBER)?\b/], payable: false },
     { type: 'DELIVERY_RECEIPT', patterns: [/DELIVERY\s+(?:RECEIPT|NOTE)/, /GOODS\s+RECEIPT/], payable: false },
+    { type: 'DELIVERY_RECEIPT', patterns: [/BILL\s+OF\s+LADING/, /CARGO\s+MANIFEST/, /SHIPPING\s+DOCUMENT/, /SHIPMENT\s+DOCUMENT/], payable: false },
     { type: 'PURCHASE_ORDER', patterns: [/PURCHASE\s+ORDER/, /<ORDER\b/], payable: false },
     { type: 'PAYMENT_ADVICE', patterns: [/PAYMENT\s+ADVICE/, /REMITTANCE\s+ADVICE/], payable: false },
     { type: 'STATEMENT', patterns: [/STATEMENT\s+OF\s+ACCOUNT/, /ACCOUNT\s+STATEMENT/], payable: false },

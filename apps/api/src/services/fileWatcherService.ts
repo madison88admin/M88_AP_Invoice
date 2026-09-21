@@ -56,9 +56,11 @@ function intakeReviewReason(ocrResult: any): string | null {
   const type = String(ocrResult?.document_type || '').toUpperCase();
   const amount = Number(ocrResult?.total_amount ?? ocrResult?.amount);
   const currency = String(ocrResult?.currency || '').toUpperCase();
+  const rawText = String(ocrResult?.raw_text || ocrResult?.raw_data?.raw_text || '');
+  const shipmentDocument = /(?:PACKING\s+(?:LIST|SLIP)|AIR\s*WAY\s*BILL|SHIPMENT\s+AIRWAYBILL|\bAWB\s*(?:NO\.?|#|NUMBER)?\b|BILL\s+OF\s+LADING|CARGO\s+MANIFEST|SHIPPING\s+DOCUMENT|SHIPMENT\s+DOCUMENT|DELIVERY\s+(?:NOTE|RECEIPT))/i.test(rawText);
 
-  if (ocrResult?.is_non_invoice_document) {
-    return 'Document is a shipping/non-invoice document (airwaybill detected) — not eligible for invoice creation';
+  if (ocrResult?.is_non_invoice_document || type === 'AIRWAY_BILL' || shipmentDocument) {
+    return 'Document is a shipping/non-invoice document (packing list, AWB, delivery or shipment document) — not eligible for invoice creation';
   }
   if (type === 'STATEMENT' || type === 'OTHER' || type === 'UNKNOWN') {
     return `Document type ${type || 'unknown'} is not eligible for automatic invoice creation`;

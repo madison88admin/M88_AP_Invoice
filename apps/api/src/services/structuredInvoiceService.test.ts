@@ -8,6 +8,22 @@ describe('structuredInvoiceService', () => {
     expect(result.payable_candidate).toBe(false);
   });
 
+  it.each([
+    ['airway-bill.pdf', 'AIR WAYBILL AWB NO 123-456'],
+    ['shipment.pdf', 'SHIPMENT DOCUMENT CARGO MANIFEST'],
+    ['delivery.pdf', 'BILL OF LADING delivery details'],
+  ])('parks shipment documents (%s) as non-payable', (fileName, text) => {
+    const result = classifyInvoiceDocument({ fileName, text });
+    expect(result.payable_candidate).toBe(false);
+    expect(['AIRWAY_BILL', 'DELIVERY_RECEIPT']).toContain(result.document_type);
+  });
+
+  it('keeps a commercial invoice eligible for payable review', () => {
+    const result = classifyInvoiceDocument({ fileName: 'commercial-invoice.pdf', text: 'COMMERCIAL INVOICE INV-42 TOTAL USD 100.00' });
+    expect(result.document_type).toBe('INVOICE');
+    expect(result.payable_candidate).toBe(true);
+  });
+
   it('parses UBL header and line values without OCR', () => {
     const xml = `<?xml version="1.0"?>
       <Invoice xmlns:cac="urn:cac" xmlns:cbc="urn:cbc">

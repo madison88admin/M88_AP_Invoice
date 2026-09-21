@@ -23,12 +23,12 @@ let emailPollerStarted = false;
 let emailPollInProgress = false;
 const processedMessageIds = new Set<string>();
 
-const NON_INVOICE_HINTS = /\b(statement|packing\s*list|delivery\s*note|purchase\s*order|quotation|quote|remittance|receipt|shipping\s*document|airway\s*bill|awb)\b/i;
+const NON_INVOICE_HINTS = /\b(statement|packing\s*(?:list|slip)|delivery\s*(?:note|receipt)|purchase\s*order|quotation|quote|remittance|receipt|shipping\s*document|shipment\s*document|air\s*way\s*bill|airway\s*bill|shipment\s*airwaybill|awb|bill\s*of\s*lading|cargo\s*manifest)\b/i;
 
 function intakeReviewReason(ocrResult: any, fileName: string, subject = ''): string | null {
   const type = String(ocrResult?.invoice_type || '').toUpperCase();
-  if (ocrResult?.is_non_invoice_document) {
-    return 'Document is a shipping/non-invoice document (airwaybill detected) — not eligible for invoice creation.';
+  if (ocrResult?.is_non_invoice_document || ['AIRWAY_BILL', 'PACKING_LIST', 'DELIVERY_RECEIPT'].includes(type)) {
+    return 'Document is a shipping/non-invoice document (packing list, AWB, delivery or shipment document) — not eligible for invoice creation.';
   }
   if (type === 'STATEMENT' || NON_INVOICE_HINTS.test(`${fileName} ${subject}`)) {
     return `Attachment appears to be a non-invoice document (${type || 'unclassified'}).`;

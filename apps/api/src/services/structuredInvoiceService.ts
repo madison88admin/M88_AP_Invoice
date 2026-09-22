@@ -56,7 +56,7 @@ export function classifyInvoiceDocument(input: { fileName?: string; mimeType?: s
     { type: 'DEBIT_NOTE', patterns: [/DEBIT\s+(?:NOTE|MEMO)/, /<DEBITNOTE\b/], payable: true },
     { type: 'PROFORMA_INVOICE', patterns: [/PRO[ -]?FORMA\s+INVOICE/], payable: false },
     { type: 'PACKING_LIST', patterns: [/PACKING\s+LIST/, /PACKING\s+SLIP/], payable: false },
-    { type: 'AIRWAY_BILL', patterns: [/AIR\s*WAY\s*BILL/, /SHIPMENT\s+AIRWAYBILL/, /\bAWB\s*(?:NO\.?|#|NUMBER)?\b/], payable: false },
+    { type: 'AIRWAY_BILL', patterns: [/AIR\s*WAY\s*BILL/, /SHIPMENT\s+AIRWAYBILL/], payable: false },
     { type: 'DELIVERY_RECEIPT', patterns: [/DELIVERY\s+(?:RECEIPT|NOTE)/, /GOODS\s+RECEIPT/], payable: false },
     { type: 'DELIVERY_RECEIPT', patterns: [/BILL\s+OF\s+LADING/, /CARGO\s+MANIFEST/, /SHIPPING\s+DOCUMENT/, /SHIPMENT\s+DOCUMENT/], payable: false },
     { type: 'PURCHASE_ORDER', patterns: [/PURCHASE\s+ORDER/, /<ORDER\b/], payable: false },

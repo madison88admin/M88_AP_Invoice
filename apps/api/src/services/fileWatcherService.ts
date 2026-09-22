@@ -193,6 +193,7 @@ function extractInvoiceNumberFromFilename(fileName: string): string | null {
   // Note: underscores are word characters, so we anchor with an explicit
   // non-letter/non-digit boundary instead of \b ("INV_PCI-..." would otherwise fail).
   const labeledPatterns = [
+    /(?:^|[^A-Za-z0-9])((?:BSNINVUJI)\d{9})(?![0-9])/i,
     /(?:^|[^A-Za-z0-9])(PCI[-_. ]?\d{4,10})(?![0-9])/i,
     /(?:^|[^A-Za-z0-9])((?:INV|INVOICE|IV|I\/V)[-_. ]?\d{3,12})(?![0-9])/i,
     /(?:^|[^A-Za-z0-9])(NO[-_. ]?\d{4,10})(?![0-9])/i,

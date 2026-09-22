@@ -353,6 +353,17 @@ async function processSingleInvoiceBuffer(
     return;
   }
 
+  // Recover invoice identifiers embedded in SFTP filenames before applying
+  // review gates. Some valid PDFs have unreadable invoice-number fields but
+  // arrive with the supplier number in the filename (for example BSN files).
+  if (!ocrResult.invoice_number) {
+    const filenameNumber = extractInvoiceNumberFromFilename(fileName);
+    if (filenameNumber) {
+      logger.info(`[File Watcher] Recovered invoice number "${filenameNumber}" from filename "${fileName}" before review`);
+      ocrResult.invoice_number = filenameNumber;
+    }
+  }
+
   const reviewReason = intakeReviewReason(ocrResult);
   if (reviewReason) {
     logger.info(`[File Watcher] ${fileName}${partLabel} → ManualReview: ${reviewReason}`);

@@ -352,6 +352,7 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
     /INVOICE\s*DATE[:\s]*(\d{1,2}-[A-Z]{3}-\d{2,4})/i, // DD-Mon-YYYY and DD-Mon-YY (e.g. "Invoice Date 11-Sep-26" — Super Dry Marine)
     /INVOICE\s*DATE[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
     /INVOICE\s*DATE[:\s]*(\d{4}-\d{2}-\d{2})/i,
+    /INVOICE\s*DATE[:\s]*(\d{4}\/\d{1,2}\/\d{1,2})/i,
     /INVOICE\s*DATE[:\s]*(\d{4}\.\d{2}\.\d{2})/i,
     /INVOICE\s*DATE[:\s]*(\d{2}\.\d{2}\.\d{4})/i,
     /INVOICE\s*DATE[:\s]*([A-Z][a-z]+\s+\d{1,2},?\s*\d{2,4})/i, // Month DD,YY
@@ -362,11 +363,13 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
     /Date[:\s]*(\d{1,2}-[A-Z]{3}-\d{2,4})/i, // DD-Mon-YYYY / DD-Mon-YY (also matches inside "Invoice Date …")
     /Date[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
     /Date[:\s]*(\d{4}-\d{2}-\d{2})/i,
+    /Date[:\s]*(\d{4}\/\d{1,2}\/\d{1,2})/i,
     /Date[:\s]*(\d{4}\.\d{2}\.\d{2})/i,
     /\b(\d{1,2}\s+[A-Z][a-z]{2,8}[.,]?\s*\d{4})\b/, // Unlabeled "14 Sep 2026" (Paxar column layout) — ahead of numeric fallbacks
     /Issued\s*Date[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
     /Billing\s*Date[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
     /(\d{4}\.\d{2}\.\d{2})/, // Fallback: any YYYY.MM.DD — Combine digital-signature stamps (2026.07.20); must outrank the 6-digit fallback below
+    /(\d{4}\/\d{1,2}\/\d{1,2})/, // Fallback: YYYY/M/D (e.g. Debit Note DATE: 2026/9/22)
     /(\d{6})\b/, // YYMMDD format (260114 → 2026-01-14)
     /(\d{1,2}-[A-Z]{3}-\d{2,4})/, // Fallback: any DD-MMM-YYYY or DD-MMM-YY
     /(\d{1,2}\/\d{1,2}\/\d{2,4})/, // Fallback: find any DD/MM/YYYY

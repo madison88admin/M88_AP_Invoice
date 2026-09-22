@@ -638,7 +638,13 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
     }
   }
 
-  const currencyMatch = text.match(/\b(USD|HKD|EUR|GBP|PHP|JPY|IDR|VND|CNY|SGD|AUD|CAD|CHF|MYR|THB|KRW|TWD)\b/);
+  // Prefer the currency attached to the payable total over an earlier
+  // reference currency in the header (for example HKD followed by
+  // `Total USD 379.90` on Nilorn invoices).
+  const explicitTotalUsd = /TOTAL\s*(?:\(\s*USD\s*\)|USD)\b/i.test(text);
+  const currencyMatch = explicitTotalUsd
+    ? ['USD', 'USD']
+    : text.match(/\b(USD|HKD|EUR|GBP|PHP|JPY|IDR|VND|CNY|SGD|AUD|CAD|CHF|MYR|THB|KRW|TWD)\b/);
 
   // mpo_number — multiple patterns
   const mpoPatterns = [

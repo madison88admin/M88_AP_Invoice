@@ -234,6 +234,20 @@ function extractDateFromFilename(fileName: string): Date | null {
     : null;
 }
 
+/** Recover an explicitly labelled YYYY/M/D date from OCR text when date parsing missed it. */
+function extractLabeledDateFromOcr(ocrResult: any): Date | null {
+  const text = String(ocrResult?.raw_text || ocrResult?.rawText || ocrResult?.raw_data?.raw_text || '');
+  const match = text.match(/(?:^|\n)\s*(?:INVOICE\s+DATE|DEBIT\s+NOTE\s+DATE|DOCUMENT\s+DATE|DATE)\s*[:#-]?\s*(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})/im);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const candidate = new Date(Date.UTC(year, month - 1, day));
+  return candidate.getUTCFullYear() === year && candidate.getUTCMonth() === month - 1 && candidate.getUTCDate() === day
+    ? candidate
+    : null;
+}
+
 /**
  * Process a single PDF file:
  * 1. Move to Processing
@@ -358,6 +372,13 @@ async function processSingleInvoiceBuffer(
     ocrResult.priority_pay_date = extractedPriorityDate?.toISOString() || null;
     ocrResult.date_range_start = extractedRangeStart?.toISOString() || null;
     ocrResult.date_range_end = extractedRangeEnd?.toISOString() || null;
+    if (!ocrResult.invoice_date) {
+      const labeledDate = extractLabeledDateFromOcr(ocrResult);
+      if (labeledDate) {
+        ocrResult.invoice_date = labeledDate.toISOString();
+        logger.info(`[File Watcher] Recovered labelled invoice date "${ocrResult.invoice_date}" from OCR text for "${fileName}"`);
+      }
+    }
     if (!ocrResult.invoice_date) {
       const filenameDate = extractDateFromFilename(fileName);
       if (filenameDate) {

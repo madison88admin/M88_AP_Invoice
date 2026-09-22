@@ -1613,7 +1613,8 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
   // "Shipment Airwaybill" paperwork carries declared values and airwaybill
   // numbers that superficially resemble invoice totals/numbers — it must be
   // parked by intake, never created as an invoice.
-  const isNonInvoiceDocument = /(?:^|\n)\s*(?:PACKING\s+(?:LIST|SLIP)|SHIPMENT\s+AIRWAYBILL|AIR\s*WAY\s*BILL|BILL\s+OF\s+LADING|CARGO\s+MANIFEST|SHIPPING\s+DOCUMENT|SHIPMENT\s+DOCUMENT|DELIVERY\s+(?:NOTE|RECEIPT))\b/im.test(rapidOcrText || '');
+  const hasPayableHeading = /\b(?:INVOICE|DEBIT\s+NOTE|CREDIT\s+NOTE)\b/i.test(rapidOcrText || '');
+  const isNonInvoiceDocument = !hasPayableHeading && /(?:^|\n)\s*(?:PACKING\s+(?:LIST|SLIP)|SHIPMENT\s+AIRWAYBILL|AIR\s*WAY\s*BILL|BILL\s+OF\s+LADING|CARGO\s+MANIFEST|SHIPPING\s+DOCUMENT|SHIPMENT\s+DOCUMENT|DELIVERY\s+(?:NOTE|RECEIPT))\b/im.test(rapidOcrText || '');
   if (isNonInvoiceDocument) {
     logger.info('[OCR] Non-invoice shipping document detected (airwaybill) — intake will park this file');
   }

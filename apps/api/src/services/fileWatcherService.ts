@@ -194,6 +194,7 @@ function extractInvoiceNumberFromFilename(fileName: string): string | null {
   // non-letter/non-digit boundary instead of \b ("INV_PCI-..." would otherwise fail).
   const labeledPatterns = [
     /(?:^|[^A-Za-z0-9])((?:BSNINVUJI)\d{9})(?![0-9])/i,
+    /(?:^|[^A-Za-z0-9])((?:UJDB|UJCR)[-_. ]?\d{2,10})(?![0-9])/i,
     /(?:^|[^A-Za-z0-9])(PCI[-_. ]?\d{4,10})(?![0-9])/i,
     /(?:^|[^A-Za-z0-9])((?:INV|INVOICE|IV|I\/V)[-_. ]?\d{3,12})(?![0-9])/i,
     /(?:^|[^A-Za-z0-9])(NO[-_. ]?\d{4,10})(?![0-9])/i,
@@ -218,6 +219,19 @@ function extractInvoiceNumberFromFilename(fileName: string): string | null {
   }
 
   return null;
+}
+
+/** Recover a YYMMDD date embedded in filenames such as PI260915-INDONESIA. */
+function extractDateFromFilename(fileName: string): Date | null {
+  const match = path.basename(fileName).match(/(?:^|[^A-Za-z0-9])PI(\d{2})(\d{2})(\d{2})(?:[^0-9]|$)/i);
+  if (!match) return null;
+  const year = 2000 + Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const candidate = new Date(Date.UTC(year, month - 1, day));
+  return candidate.getUTCFullYear() === year && candidate.getUTCMonth() === month - 1 && candidate.getUTCDate() === day
+    ? candidate
+    : null;
 }
 
 /**
@@ -344,6 +358,13 @@ async function processSingleInvoiceBuffer(
     ocrResult.priority_pay_date = extractedPriorityDate?.toISOString() || null;
     ocrResult.date_range_start = extractedRangeStart?.toISOString() || null;
     ocrResult.date_range_end = extractedRangeEnd?.toISOString() || null;
+    if (!ocrResult.invoice_date) {
+      const filenameDate = extractDateFromFilename(fileName);
+      if (filenameDate) {
+        ocrResult.invoice_date = filenameDate.toISOString();
+        logger.info(`[File Watcher] Recovered invoice date "${ocrResult.invoice_date}" from filename "${fileName}"`);
+      }
+    }
     await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'EXTRACTED', fileName, metadata: { documentType: ocrResult?.document_type, currency: ocrResult?.currency } });
   } catch (err) {
     logger.error(`[File Watcher] OCR failed for ${fileName}${partLabel}:`, err);

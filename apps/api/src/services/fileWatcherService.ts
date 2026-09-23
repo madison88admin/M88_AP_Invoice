@@ -851,7 +851,9 @@ function isRetryableQueueReason(reason: string): boolean {
 }
 
 function isLikelyInvoiceFilename(fileName: string): boolean {
-  if (NON_INVOICE_HINTS.test(fileName) || /\b(?:PL|AWB|BL|DO|ML)\b/i.test(fileName)) return false;
+  if (NON_INVOICE_HINTS.test(fileName)
+    || /\b(?:PL|AWB|BL|DO|ML)\b/i.test(fileName)
+    || /artwork|care\s*label|hangtag|barcode|tech\s*pack|trim\s*(?:received|sample)/i.test(fileName)) return false;
   return /invoice|\binv\b|debit|credit|commercial|proforma|sales\s*invoice|\bpi\b|\bci\b|\bsi\b|\bpci\b|bsninv|sic\d|ujdb|ujcr|invp\d|hkws[o0]\d+|ia\d{4,}|sc[-_ ]?\d{4,}/i.test(fileName);
 }
 

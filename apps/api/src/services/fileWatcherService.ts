@@ -34,7 +34,7 @@ const PROCESSED_DIR = process.env.WATCHER_PROCESSED_DIR || '/incoming-invoices/p
 const DUPLICATES_DIR = process.env.WATCHER_DUPLICATES_DIR || '/incoming-invoices/duplicates';
 const MANUAL_REVIEW_DIR = process.env.WATCHER_MANUAL_REVIEW_DIR || '/incoming-invoices/manual-review';
 const FAILED_DIR = process.env.WATCHER_FAILED_DIR || '/incoming-invoices/failed';
-const NON_INVOICE_HINTS = /\b(statement|packing\s*(?:list|slip)|delivery\s*(?:note|receipt)|purchase\s*order|quotation|quote|remittance|receipt|shipping\s*document|shipment\s*document|air\s*way\s*bill|airway\s*bill|awb|bill\s*of\s*lading|cargo\s*manifest)\b/i;
+const NON_INVOICE_HINTS = /\b(statement|packing\s*(?:list|slip)|delivery\s*(?:note|receipt)|purchase\s*order|sales\s*order|order\s*confirmation|quotation|quote|remittance|receipt|shipping\s*document|shipment\s*document|air\s*way\s*bill|airway\s*bill|awb|bill\s*of\s*lading|cargo\s*manifest|waybill|layout|tech\s*pack|bill\s*stub|account\s*information)\b/i;
 
 let watcherInterval: NodeJS.Timeout | null = null;
 let isProcessing = false;
@@ -850,6 +850,11 @@ function isRetryableQueueReason(reason: string): boolean {
   return /ocr|confidence|could not be extracted|valid .* amount|provider|timeout|rate limit|429|5\d\d|network|connection|temporary|quota/i.test(reason);
 }
 
+function isLikelyInvoiceFilename(fileName: string): boolean {
+  if (NON_INVOICE_HINTS.test(fileName) || /\b(?:PL|AWB|BL|DO|ML)\b/i.test(fileName)) return false;
+  return /invoice|\binv\b|debit|credit|commercial|proforma|sales\s*invoice|\bpi\b|\bci\b|\bsi\b|\bpci\b|bsninv|sic\d|ujdb|ujcr|invp\d|hkws[o0]\d+|ia\d{4,}|sc[-_ ]?\d{4,}/i.test(fileName);
+}
+
 /**
  * Retry only failed/ambiguous files that may recover with another OCR/AI pass.
  * Non-invoice documents and non-USD documents stay parked permanently for
@@ -875,12 +880,15 @@ async function queueRetryableFiles(): Promise<void> {
       try { stat = fs.statSync(filePath); } catch { continue; }
       if (!stat.isFile() || Date.now() - stat.mtimeMs < AUTO_REVIEW_RETRY_DELAY_MS) continue;
 
+      if (!isLikelyInvoiceFilename(fileName)) continue;
+
       const latest = await prisma.emailIntakeEvent.findFirst({
-        where: { source: 'POWER_AUTOMATE', file_name: fileName, stage: { in: queue.stages as any } },
+        where: { source: 'POWER_AUTOMATE', file_name: fileName },
         orderBy: { created_at: 'desc' },
-        select: { error: true, created_at: true },
+        select: { stage: true, error: true, created_at: true },
       });
-      if (!latest || !isRetryableQueueReason(latest.error || '')) continue;
+      if (latest?.stage === 'CREATED') continue;
+      if (latest?.error && !isRetryableQueueReason(latest.error)) continue;
 
       const retryCount = await prisma.emailIntakeEvent.count({
         where: { source: 'POWER_AUTOMATE', file_name: fileName, stage: 'RETRY_QUEUED' as any },
@@ -891,9 +899,10 @@ async function queueRetryableFiles(): Promise<void> {
       if (fs.existsSync(targetPath)) continue;
       try {
         fs.renameSync(filePath, targetPath);
+        const retryReason = latest?.error || 'Legacy invoice-like queue file without a completed intake event';
         await recordEmailIntakeEvent({
           source: 'POWER_AUTOMATE', stage: 'RETRY_QUEUED', fileName,
-          metadata: { retry_count: retryCount + 1, reason: latest.error, from: queue.directory },
+          metadata: { retry_count: retryCount + 1, reason: retryReason, from: queue.directory },
         });
         await createAuditLog(null, 'WATCHER_RETRY_QUEUED', `${fileName}: queued for OCR/AI retry ${retryCount + 1}/${MAX_AUTO_REVIEW_RETRIES}`);
         queued += 1;

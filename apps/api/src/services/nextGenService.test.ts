@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mapNextGenMPOLine, nextGenService } from './nextGenService';
+import { mapNextGenMPOLine, nextGenService, normalizeKendoFormBody } from './nextGenService';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -121,5 +121,22 @@ describe('mapNextGenMPOLine', () => {
     expect(() => service.assertReadOnly('/MaterialPurchaseOrder/EditSave')).toThrow(/READ-ONLY/);
     expect(() => service.assertReadOnly('/MaterialPurchaseOrder/Delete')).toThrow(/READ-ONLY/);
     expect(() => service.assertReadOnly('/MaterialPurchaseOrder/GetById?id=18544')).not.toThrow();
+  });
+});
+
+describe('normalizeKendoFormBody', () => {
+  it('omits empty Kendo filters so VisionPLM does not parse filter=', () => {
+    const body = new URLSearchParams({ page: '1', filter: '', sort: '' });
+
+    expect(normalizeKendoFormBody(body).toString()).toBe('page=1&sort=');
+  });
+
+  it('preserves non-empty filters exactly', () => {
+    const body = new URLSearchParams({
+      filter: 'Name~eq~MPO015781',
+      page: '1',
+    });
+
+    expect(normalizeKendoFormBody(body).get('filter')).toBe('Name~eq~MPO015781');
   });
 });

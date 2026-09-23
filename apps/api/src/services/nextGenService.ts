@@ -326,6 +326,19 @@ interface KendoGridRequest {
   filter?: any;
 }
 
+/**
+ * VisionPLM's Kendo MVC binder rejects an empty `filter=` form parameter with
+ * "FilterParserException: Expected token".  Omitting the optional parameter
+ * is the valid unfiltered request and preserves all non-empty filters.
+ */
+export function normalizeKendoFormBody(body: URLSearchParams): URLSearchParams {
+  const normalized = new URLSearchParams(body);
+  if (normalized.has('filter') && !normalized.get('filter')?.trim()) {
+    normalized.delete('filter');
+  }
+  return normalized;
+}
+
 function defaultGridRequest(overrides?: Partial<KendoGridRequest>): KendoGridRequest {
   return {
     page: 1,
@@ -851,13 +864,14 @@ export class NextGenService {
       if (!loggedIn) return null;
     }
 
+    const normalizedBody = normalizeKendoFormBody(body);
     const execute = () => fetchWithTimeout(`${this.baseUrl}${path}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Cookie': this.sessionCookie!,
       },
-      body: body.toString(),
+      body: normalizedBody.toString(),
     });
 
     const parseResponse = async (response: Response): Promise<T | null> => {

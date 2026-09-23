@@ -26,6 +26,7 @@ import { detectMultiInvoice, splitPdfByPageRanges } from './multiInvoiceDetector
 import { sanitizeInvoiceType, sanitizeCategory } from '../utils/enumSanitizer';
 import { parseMPOReference } from '../utils/mpoReference';
 import { alertEmailIntakeFailure, recordEmailIntakeEvent } from './emailIntakeMonitoringService';
+import { analyzeWithRetry } from './intakeRetryService';
 
 const INCOMING_DIR = process.env.WATCHER_INCOMING_DIR || '/incoming-invoices';
 const PROCESSING_DIR = process.env.WATCHER_PROCESSING_DIR || '/incoming-invoices/processing';
@@ -33,6 +34,7 @@ const PROCESSED_DIR = process.env.WATCHER_PROCESSED_DIR || '/incoming-invoices/p
 const DUPLICATES_DIR = process.env.WATCHER_DUPLICATES_DIR || '/incoming-invoices/duplicates';
 const MANUAL_REVIEW_DIR = process.env.WATCHER_MANUAL_REVIEW_DIR || '/incoming-invoices/manual-review';
 const FAILED_DIR = process.env.WATCHER_FAILED_DIR || '/incoming-invoices/failed';
+const NON_INVOICE_HINTS = /\b(statement|packing\s*(?:list|slip)|delivery\s*(?:note|receipt)|purchase\s*order|quotation|quote|remittance|receipt|shipping\s*document|shipment\s*document|air\s*way\s*bill|airway\s*bill|awb|bill\s*of\s*lading|cargo\s*manifest)\b/i;
 
 let watcherInterval: NodeJS.Timeout | null = null;
 let isProcessing = false;
@@ -52,8 +54,8 @@ function safeInvoiceDate(value: unknown): Date | null {
  * not the mail-flow filename, decides whether it is safe to create as an AP
  * invoice.  Ambiguous documents stay available in manual-review.
  */
-function intakeReviewReason(ocrResult: any): string | null {
-  const type = String(ocrResult?.document_type || '').toUpperCase();
+function intakeReviewReason(ocrResult: any, fileName = ''): string | null {
+  const type = String(ocrResult?.invoice_type || ocrResult?.document_type || '').toUpperCase();
   const amount = Number(ocrResult?.total_amount ?? ocrResult?.amount);
   const currency = String(ocrResult?.currency || '').toUpperCase();
   const rawText = String(ocrResult?.raw_text || ocrResult?.raw_data?.raw_text || '');
@@ -63,13 +65,13 @@ function intakeReviewReason(ocrResult: any): string | null {
   if (ocrResult?.is_non_invoice_document || type === 'AIRWAY_BILL' || shipmentDocument) {
     return 'Document is a shipping/non-invoice document (packing list, AWB, delivery or shipment document) — not eligible for invoice creation';
   }
-  if (type === 'STATEMENT' || type === 'OTHER' || type === 'UNKNOWN') {
+  if (type === 'STATEMENT' || type === 'OTHER' || type === 'UNKNOWN' || NON_INVOICE_HINTS.test(fileName)) {
     return `Document type ${type || 'unknown'} is not eligible for automatic invoice creation`;
   }
   if (!ocrResult?.invoice_number) return 'Invoice number could not be extracted';
   if (!Number.isFinite(amount) || amount <= 0) return 'A valid non-zero invoice amount could not be extracted';
   if (!ocrResult?.invoice_date) return 'Invoice date could not be extracted';
-  if (currency && currency !== 'USD') return `Currency ${currency} requires manual review before invoice creation`;
+  if (currency !== 'USD') return `Currency ${currency || 'blank'} requires manual review before invoice creation`;
   return null;
 }
 
@@ -361,7 +363,19 @@ async function processSingleInvoiceBuffer(
   // Step 3: OCR extraction
   let ocrResult: any;
   try {
-    ocrResult = await analyzeInvoice(fileBuffer, 'application/pdf');
+    const retryOutcome = await analyzeWithRetry(
+      () => analyzeInvoice(fileBuffer, 'application/pdf'),
+      {
+        label: `OCR ${fileName}`,
+        onRetry: (attempt, reason) => recordEmailIntakeEvent({
+          source: 'POWER_AUTOMATE',
+          stage: 'RETRY_ATTEMPT',
+          fileName,
+          metadata: { attempt, reason },
+        }),
+      },
+    );
+    ocrResult = retryOutcome.result;
     const extractedInvoiceDate = safeInvoiceDate(ocrResult?.invoice_date);
     const extractedDueDate = safeInvoiceDate(ocrResult?.due_date);
     const extractedPriorityDate = safeInvoiceDate(ocrResult?.priority_pay_date);
@@ -407,7 +421,7 @@ async function processSingleInvoiceBuffer(
     }
   }
 
-  const reviewReason = intakeReviewReason(ocrResult);
+  const reviewReason = intakeReviewReason(ocrResult, fileName);
   if (reviewReason) {
     logger.info(`[File Watcher] ${fileName}${partLabel} → ManualReview: ${reviewReason}`);
     if (splitIndex === undefined) safeMove(processingPath, MANUAL_REVIEW_DIR);
@@ -827,6 +841,70 @@ async function processSingleInvoiceBuffer(
   }
 }
 
+const AUTO_REVIEW_RETRY_DELAY_MS = Math.max(60_000, Number(process.env.INTAKE_REVIEW_RETRY_DELAY_MINUTES || 60) * 60_000);
+const MAX_AUTO_REVIEW_RETRIES = Math.max(0, Math.min(3, Number(process.env.INTAKE_REVIEW_RETRY_MAX_ATTEMPTS || 2)));
+
+function isRetryableQueueReason(reason: string): boolean {
+  if (!reason) return false;
+  if (/shipping|non[- ]invoice|packing|airway|air\s*way\s*bill|delivery|document type .*not eligible|currency .*requires manual review|currency blank requires/i.test(reason)) return false;
+  return /ocr|confidence|could not be extracted|valid .* amount|provider|timeout|rate limit|429|5\d\d|network|connection|temporary|quota/i.test(reason);
+}
+
+/**
+ * Retry only failed/ambiguous files that may recover with another OCR/AI pass.
+ * Non-invoice documents and non-USD documents stay parked permanently for
+ * Accounting review and are never churned through the AI providers.
+ */
+async function queueRetryableFiles(): Promise<void> {
+  if (MAX_AUTO_REVIEW_RETRIES <= 0) return;
+  const queues = [
+    { directory: MANUAL_REVIEW_DIR, stages: ['REVIEW_REQUIRED'] },
+    { directory: FAILED_DIR, stages: ['FAILED'] },
+  ];
+  let queued = 0;
+
+  for (const queue of queues) {
+    if (queued >= 10 || !fs.existsSync(queue.directory)) continue;
+    let files: string[];
+    try { files = fs.readdirSync(queue.directory).filter(f => f.toLowerCase().endsWith('.pdf')); } catch { continue; }
+
+    for (const fileName of files) {
+      if (queued >= 10) break;
+      const filePath = path.join(queue.directory, fileName);
+      let stat: fs.Stats;
+      try { stat = fs.statSync(filePath); } catch { continue; }
+      if (!stat.isFile() || Date.now() - stat.mtimeMs < AUTO_REVIEW_RETRY_DELAY_MS) continue;
+
+      const latest = await prisma.emailIntakeEvent.findFirst({
+        where: { source: 'POWER_AUTOMATE', file_name: fileName, stage: { in: queue.stages as any } },
+        orderBy: { created_at: 'desc' },
+        select: { error: true, created_at: true },
+      });
+      if (!latest || !isRetryableQueueReason(latest.error || '')) continue;
+
+      const retryCount = await prisma.emailIntakeEvent.count({
+        where: { source: 'POWER_AUTOMATE', file_name: fileName, stage: 'RETRY_QUEUED' as any },
+      });
+      if (retryCount >= MAX_AUTO_REVIEW_RETRIES) continue;
+
+      const targetPath = path.join(INCOMING_DIR, fileName);
+      if (fs.existsSync(targetPath)) continue;
+      try {
+        fs.renameSync(filePath, targetPath);
+        await recordEmailIntakeEvent({
+          source: 'POWER_AUTOMATE', stage: 'RETRY_QUEUED', fileName,
+          metadata: { retry_count: retryCount + 1, reason: latest.error, from: queue.directory },
+        });
+        await createAuditLog(null, 'WATCHER_RETRY_QUEUED', `${fileName}: queued for OCR/AI retry ${retryCount + 1}/${MAX_AUTO_REVIEW_RETRIES}`);
+        queued += 1;
+        logger.info(`[File Watcher] Queued ${fileName} for OCR/AI retry ${retryCount + 1}/${MAX_AUTO_REVIEW_RETRIES}`);
+      } catch (error) {
+        logger.warn(`[File Watcher] Could not queue ${fileName} for retry:`, error);
+      }
+    }
+  }
+}
+
 /**
  * Poll cycle: scan incoming directory for new PDFs.
  */
@@ -837,6 +915,7 @@ async function pollIncomingDirectory(): Promise<void> {
   try {
     // Recover stuck files from processing/ (files older than 10 minutes)
     recoverStuckFilesPeriodic();
+    await queueRetryableFiles();
 
     if (!fs.existsSync(INCOMING_DIR)) {
       return;

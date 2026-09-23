@@ -10,6 +10,8 @@ export type EmailIntakeStage =
   | 'ATTACHMENT_DETECTED'
   | 'UPLOADED'
   | 'EXTRACTED'
+  | 'RETRY_ATTEMPT'
+  | 'RETRY_QUEUED'
   | 'REVIEW_REQUIRED'
   | 'CREATED'
   | 'FAILED';

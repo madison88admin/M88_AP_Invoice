@@ -13,6 +13,7 @@ import prisma from '../config/database';
 import { logger } from '../utils/logger';
 import { AppError } from '../middleware/errorHandler';
 import { alertEmailIntakeFailure, recordEmailIntakeEvent } from './emailIntakeMonitoringService';
+import { analyzeWithRetry } from './intakeRetryService';
 
 const clientId = process.env.GRAPH_API_CLIENT_ID || '';
 const clientSecret = process.env.GRAPH_API_CLIENT_SECRET || '';
@@ -44,6 +45,31 @@ function intakeReviewReason(ocrResult: any, fileName: string, subject = ''): str
   if (!String(ocrResult?.invoice_number || '').trim()) return 'Invoice or debit-note number was not extracted.';
   if (!String(ocrResult?.vendor_name || '').trim()) return 'Vendor name was not extracted.';
   return null;
+}
+
+async function analyzeIntakeWithRetry(
+  buffer: Buffer,
+  contentType: string,
+  fileName: string,
+  source: 'GRAPH' | 'POWER_AUTOMATE' | 'SHAREPOINT',
+  context: { mailbox?: string; messageId?: string; attachmentId?: string; intakeKey?: string } = {},
+): Promise<any> {
+  const outcome = await analyzeWithRetry(
+    () => analyzeInvoice(buffer, contentType),
+    {
+      label: `OCR ${fileName}`,
+      onRetry: (attempt, reason) => recordEmailIntakeEvent({
+        source,
+        stage: 'RETRY_ATTEMPT',
+        mailbox: context.mailbox,
+        messageId: context.messageId || context.intakeKey,
+        attachmentId: context.attachmentId,
+        fileName,
+        metadata: { attempt, reason },
+      }),
+    },
+  );
+  return outcome.result;
 }
 
 export function isEmailPollerConfigured(): boolean {
@@ -191,6 +217,12 @@ async function processEmailMessage(message: any): Promise<void> {
     }
   } catch (error) {
     logger.error(`Error processing email message ${message.id}:`, error);
+    const detail = error instanceof Error ? error.message : String(error);
+    await recordEmailIntakeEvent({
+      source: 'GRAPH', stage: 'FAILED', status: 'FAILED', mailbox: mailboxAddress,
+      messageId: message.id, error: `Attachment processing failed: ${detail}`,
+    });
+    await alertEmailIntakeFailure({ source: 'Microsoft Graph attachment processing', error: detail });
   }
 }
 
@@ -250,6 +282,13 @@ async function processAttachment(attachment: any, message: any): Promise<void> {
     
   } catch (error) {
     logger.error(`Error processing attachment ${attachment.name}:`, error);
+    const detail = error instanceof Error ? error.message : String(error);
+    await recordEmailIntakeEvent({
+      source: 'GRAPH', stage: 'FAILED', status: 'FAILED', mailbox: mailboxAddress,
+      messageId: message.id, attachmentId: attachment.id, fileName: attachment.name,
+      error: `Attachment processing failed: ${detail}`,
+    });
+    await alertEmailIntakeFailure({ source: 'Microsoft Graph attachment processing', fileName: attachment.name, error: detail });
   }
 }
 
@@ -283,7 +322,9 @@ async function processSingleInvoiceAttachment(
     }
 
     // Analyze invoice using OCR
-    const ocrResult = await analyzeInvoice(buffer, contentType);
+    const ocrResult = await analyzeIntakeWithRetry(buffer, contentType, fileName, 'GRAPH', {
+      mailbox: mailboxAddress, messageId: message.id, attachmentId,
+    });
     await recordEmailIntakeEvent({
       source: 'GRAPH', stage: 'EXTRACTED', mailbox: mailboxAddress, messageId: message.id,
       attachmentId, fileName, metadata: { invoice_number: ocrResult.invoice_number, confidence: ocrResult.ocr_confidence_score },
@@ -600,7 +641,7 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
     }
 
     // Analyze invoice using OCR
-    const ocrResult = await analyzeInvoice(buffer, 'application/pdf');
+    const ocrResult = await analyzeIntakeWithRetry(buffer, 'application/pdf', data.fileName, 'SHAREPOINT', { intakeKey });
     await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'EXTRACTED', messageId: intakeKey, fileName: data.fileName, metadata: { invoice_number: ocrResult.invoice_number, confidence: ocrResult.ocr_confidence_score } });
 
     const reviewReason = intakeReviewReason(ocrResult, data.fileName, data.emailSubject || '');
@@ -841,7 +882,7 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
     }
 
     // Analyze invoice using OCR
-    const ocrResult = await analyzeInvoice(buffer, data.contentType);
+    const ocrResult = await analyzeIntakeWithRetry(buffer, data.contentType, data.fileName, 'POWER_AUTOMATE', { intakeKey });
     await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'EXTRACTED', messageId: intakeKey, fileName: data.fileName, metadata: { invoice_number: ocrResult.invoice_number, confidence: ocrResult.ocr_confidence_score } });
 
     const reviewReason = intakeReviewReason(ocrResult, data.fileName, data.emailSubject || '');

@@ -51,6 +51,13 @@ function safeInvoiceDate(value: unknown): Date | null {
   return year >= 2000 && year <= maxYear ? parsed : null;
 }
 
+function normalizeVendorKey(value: unknown): string {
+  return String(value || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '')
+    .replace(/(?:LIMITED|LTD|INCORPORATED|INC|CORPORATION|CORP|COMPANY|CO)$/g, '');
+}
+
 /**
  * Power Automate deliberately sends every non-inline PDF here.  The backend,
  * not the mail-flow filename, decides whether it is safe to create as an AP
@@ -508,14 +515,36 @@ async function processSingleInvoiceBuffer(
     }
   }
 
-  // Step 4: Duplicate detection
+  // Step 4: Duplicate detection / revision detection
   const fileHash = generateFileHash(fileBuffer);
-  const dupResult = await checkEmailDuplicate(fileBuffer, undefined, {
-    vendorName: ocrResult.vendor_name,
-    invoiceNumber: ocrResult.invoice_number,
-    amount: ocrResult.total_amount,
-    invoiceDate: ocrResult.invoice_date,
-  });
+  let revisionParent: any = null;
+  if (ocrResult.invoice_number) {
+    const revisionHint = /\b(?:updated|revised|revision|corrected|replacement|final)\b/i.test(fileName);
+    const incomingVendorKey = normalizeVendorKey(ocrResult.vendor_name);
+    const sameNumber = await prisma.invoice.findMany({
+      where: { invoice_number: ocrResult.invoice_number },
+      orderBy: { revision: 'desc' },
+      select: { id: true, revision: true, status: true, vendor_name_raw: true, total_amount: true, invoice_date: true, invoice_hash: true },
+    });
+    revisionParent = sameNumber.find((existing) => {
+      const sameVendor = incomingVendorKey && normalizeVendorKey(existing.vendor_name_raw) === incomingVendorKey;
+      const amountChanged = Math.abs(Number(existing.total_amount || 0) - Number(ocrResult.total_amount || 0)) > 0.01;
+      const dateChanged = Boolean(existing.invoice_date && ocrResult.invoice_date && new Date(existing.invoice_date).toISOString().slice(0, 10) !== new Date(ocrResult.invoice_date).toISOString().slice(0, 10));
+      const activeForReplacement = ![InvoiceStatus.POSTED_TO_QB, InvoiceStatus.PAYMENT_SCHEDULED, InvoiceStatus.PAID, InvoiceStatus.CANCELLED].includes(existing.status as any);
+      return Boolean(sameVendor && existing.invoice_hash && existing.invoice_hash !== fileHash && activeForReplacement && (amountChanged || dateChanged || revisionHint));
+    }) || null;
+    if (revisionParent) {
+      logger.info(`[File Watcher] Treating ${fileName} as revision ${revisionParent.revision + 1} of ${ocrResult.invoice_number}`);
+    }
+  }
+  const dupResult: any = revisionParent
+    ? { isDuplicate: false, level: 'REVISION', detail: 'New invoice revision detected' }
+    : await checkEmailDuplicate(fileBuffer, undefined, {
+      vendorName: ocrResult.vendor_name,
+      invoiceNumber: ocrResult.invoice_number,
+      amount: ocrResult.total_amount,
+      invoiceDate: ocrResult.invoice_date,
+    });
 
   if (dupResult.isDuplicate) {
     logger.info(`[File Watcher] Duplicate: ${fileName}${partLabel} → ${dupResult.existingInvoiceNumber} (${dupResult.level})`);
@@ -534,7 +563,7 @@ async function processSingleInvoiceBuffer(
       where: { invoice_number: ocrResult.invoice_number },
       select: { id: true },
     });
-    if (existing) {
+    if (existing && !revisionParent) {
       logger.info(`[File Watcher] Duplicate invoice_number "${ocrResult.invoice_number}" already in DB: ${fileName}${partLabel}`);
       if (splitIndex === undefined) safeMove(processingPath, DUPLICATES_DIR);
       await createAuditLog(existing.id, 'WATCHER_DUPLICATE', `Duplicate invoice_number ${ocrResult.invoice_number} for ${fileName}`);
@@ -629,6 +658,8 @@ async function processSingleInvoiceBuffer(
     const headerParsedMpo = ocrResult.mpo_number ? parseMPOReference(ocrResult.mpo_number) : { baseMpo: null, orderSequence: null, materialCode: null };
     const baseData: any = {
         invoice_number: effectiveInvoiceNumber,
+        revision: revisionParent ? revisionParent.revision + 1 : 1,
+        ...(revisionParent ? { parent_invoice_id: revisionParent.id } : {}),
         invoice_date: ocrResult.invoice_date,
         due_date: ocrResult.due_date ? new Date(ocrResult.due_date) : null,
         invoice_received_date: new Date(),
@@ -729,6 +760,26 @@ async function processSingleInvoiceBuffer(
       include: { vendor: true, invoice_lines: true },
     });
     invoiceId = invoice.id;
+
+    if (revisionParent) {
+      await prisma.invoice.update({
+        where: { id: revisionParent.id },
+        data: {
+          status: InvoiceStatus.CANCELLED,
+          cancelled_by: 'file_watcher',
+          cancelled_at: new Date(),
+          cancellation_reason: `Superseded by invoice revision ${invoice.revision}`,
+        },
+      });
+      await prisma.auditLog.create({
+        data: {
+          invoice_id: revisionParent.id,
+          action: 'INVOICE_SUPERSEDED',
+          performed_by: 'file_watcher',
+          note: `Invoice revision ${invoice.revision} replaced this record; new invoice id ${invoice.id}.`,
+        },
+      });
+    }
 
     logger.info(`[File Watcher] Saved invoice ${invoice.invoice_number} with ${invoice.invoice_lines?.length || 0} line items`);
     await recordEmailIntakeEvent({

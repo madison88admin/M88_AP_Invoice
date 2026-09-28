@@ -762,13 +762,25 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
     if (m) { company_reg = m[1]; break; }
   }
 
+  // Some genuine invoices contain a separate "Statement No" reference.
+  // Treat an explicit invoice number/date plus payable total as stronger
+  // evidence than that line-item reference.
+  const explicitInvoicePayable = /\binvoice\s*(?:no\.?|number|date)\b/i.test(text)
+    && /\btotal\s+(?:amount\s*)?(?:usd|hkd|idr|eur|gbp|sgd)\b/i.test(text);
+
   let invoiceType = 'INVOICE';
   if (/proforma|pro-forma|pro\s*forma/i.test(text)) invoiceType = 'PROFORMA';
   else if (/commercial\s*invoice/i.test(text)) invoiceType = 'COMMERCIAL';
   else if (/sales\s*invoice/i.test(text)) invoiceType = 'SALES';
   else if (/debit\s*note/i.test(text)) invoiceType = 'DEBIT_NOTE';
   else if (/credit\s*note/i.test(text)) invoiceType = 'CREDIT_NOTE';
-  else if (/account\s*statement|statement|aging|aged\s*balance/i.test(text)) invoiceType = 'STATEMENT';
+  else if (
+    /account\s*statement|statement|aging|aged\s*balance/i.test(text)
+    // Invoice documents can contain a separate "Statement No" reference
+    // (for example Nilorn invoices). An explicit invoice header/date and
+    // payable total must take precedence over that line-item reference.
+    && !explicitInvoicePayable
+  ) invoiceType = 'STATEMENT';
 
   // incoterm — multiple patterns
   const incotermPatterns = [
@@ -809,7 +821,8 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
   const is_handwritten = text.length < 200;
 
   // is_statement — statement/aging detection
-  const is_statement = /account\s*statement|aging|aged\s*balance|outstanding\s*balance|current\s*charges/i.test(text);
+  const is_statement = /account\s*statement|aging|aged\s*balance|outstanding\s*balance|current\s*charges/i.test(text)
+    || (/\bstatement\b/i.test(text) && !explicitInvoicePayable);
 
   const result = {
     vendor_name: vendor_name,

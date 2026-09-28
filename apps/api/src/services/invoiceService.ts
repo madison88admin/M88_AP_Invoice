@@ -1,5 +1,5 @@
 import prisma from '../config/database';
-import { InvoiceStatus, InvoiceType, InvoiceCategory, BrandTier, InvoiceSource, OrderType, BillToEntity } from '@ap-invoice/shared';
+import { InvoiceStatus, InvoiceType, InvoiceCategory, BrandTier, InvoiceSource, OrderType, BillToEntity, UserRole } from '@ap-invoice/shared';
 import { AppError } from '../middleware/errorHandler';
 import { isTop10Brand, TOP_10_BRANDS } from '@ap-invoice/shared';
 import { logAudit, resolveAuditActorNames } from './auditLogService';
@@ -1187,12 +1187,54 @@ export const deleteInvoice = async (id: string, userId: string, userRole: string
   return { id, deleted: true, invoice_number: existing.invoice_number };
 };
 
-const CANCELLATION_FINALIZER_ROLES = new Set([
-  'ACCOUNTING_SUPERVISOR',
-  'IT_ADMIN',
-  'SUPERADMIN',
-  'ADMIN',
+// A coordinator may cancel directly only while the invoice is still under
+// coordinator ownership. Once it has been endorsed, the current approver
+// must decide on a cancellation request.
+const COORDINATOR_OWNED_STATUSES = new Set([
+  'RECEIVED',
+  'VALIDATION_PENDING',
+  'EXCEPTION_FLAGGED',
+  'PENDING_COORDINATOR',
 ]);
+
+const STATUS_TO_SIGNATORY: Record<string, string> = {
+  PENDING_COORDINATOR: 'COORDINATOR',
+  PENDING_MANAGER: 'PURCHASING_MANAGER',
+  PENDING_MLO_ACCOUNT_HOLDER: 'MLO_ACCOUNT_HOLDER',
+  PENDING_MLO_PLANNING_MANAGER: 'MLO_PLANNING_MANAGER',
+  PENDING_SR_MANAGER: 'SR_MANAGER_GLOBAL_PRODUCTION',
+  PENDING_POLLY: 'MS_POLLY',
+  PENDING_PRESIDENT: 'PRESIDENT',
+  PENDING_ACCOUNTING: 'ACCOUNTING_REVIEWER',
+};
+
+const USER_ROLE_TO_SIGNATORY: Record<string, string> = {
+  PURCHASING_COORDINATOR: 'COORDINATOR',
+  PURCHASING_MANAGER: 'PURCHASING_MANAGER',
+  MLO_ACCOUNT_HOLDER: 'MLO_ACCOUNT_HOLDER',
+  PLANNING_MANAGER: 'MLO_PLANNING_MANAGER',
+  SR_MANAGER_GLOBAL_PRODUCTION: 'SR_MANAGER_GLOBAL_PRODUCTION',
+  MS_POLLY: 'MS_POLLY',
+  PRESIDENT: 'PRESIDENT',
+  // Accounting Supervisor is the final financial-control reviewer. The
+  // existing supervisor override is retained for invoices already posted.
+  ACCOUNTING_SUPERVISOR: 'ACCOUNTING_REVIEWER',
+};
+
+const SIGNATORY_TO_TARGET_ROLE: Record<string, UserRole> = {
+  COORDINATOR: UserRole.PURCHASING_COORDINATOR,
+  PURCHASING_MANAGER: UserRole.PURCHASING_MANAGER,
+  MLO_ACCOUNT_HOLDER: UserRole.MLO_ACCOUNT_HOLDER,
+  MLO_PLANNING_MANAGER: UserRole.PLANNING_MANAGER,
+  SR_MANAGER_GLOBAL_PRODUCTION: UserRole.SR_MANAGER_GLOBAL_PRODUCTION,
+  MS_POLLY: UserRole.MS_POLLY,
+  PRESIDENT: UserRole.PRESIDENT,
+  ACCOUNTING_REVIEWER: UserRole.ACCOUNTING_SUPERVISOR,
+};
+
+function currentInvoiceApproverSignatory(invoice: { status: string; current_approver_role?: string | null }) {
+  return invoice.current_approver_role || STATUS_TO_SIGNATORY[invoice.status] || null;
+}
 
 const CANCELLATION_BLOCKED_STATUSES = new Set(['PAID', 'PAYMENT_CONFIRMATION_SENT', 'CANCELLED']);
 const ACTIVE_BATCH_STATUSES = new Set([
@@ -1216,7 +1258,14 @@ export const requestInvoiceCancellation = async (
 
   const existing = await prisma.invoice.findUnique({
     where: { id },
-    select: { id: true, invoice_number: true, status: true, revision: true },
+    select: {
+      id: true,
+      invoice_number: true,
+      vendor_name_raw: true,
+      status: true,
+      revision: true,
+      current_approver_role: true,
+    },
   });
   if (!existing) throw new AppError('Invoice not found', 404);
   if (CANCELLATION_BLOCKED_STATUSES.has(existing.status)) {
@@ -1254,6 +1303,19 @@ export const requestInvoiceCancellation = async (
     note: `Cancellation requested for invoice ${existing.invoice_number}: ${trimmedReason}`,
     metadata: { invoice_number: existing.invoice_number, status: existing.status },
   });
+  const targetRole = SIGNATORY_TO_TARGET_ROLE[currentInvoiceApproverSignatory(existing) || ''];
+  if (targetRole) {
+    await inAppNotificationService.create({
+      invoice_id: id,
+      invoice_number: existing.invoice_number,
+      vendor_name: existing.vendor_name_raw || undefined,
+      title: 'Cancellation Request',
+      message: `Cancellation requested for invoice ${existing.invoice_number}. Please review and approve or reject the request.`,
+      type: 'warning',
+      category: 'approval',
+      target_role: targetRole,
+    });
+  }
   return updated;
 };
 
@@ -1269,15 +1331,20 @@ export const cancelInvoice = async (
   userName: string,
   reason: string,
 ) => {
-  if (!CANCELLATION_FINALIZER_ROLES.has(userRole)) {
-    throw new AppError('Only an Accounting Supervisor or system administrator can finalize a cancellation', 403);
-  }
   const trimmedReason = String(reason || '').trim();
   if (!trimmedReason) throw new AppError('A final cancellation reason is required', 400);
 
   const existing = await prisma.invoice.findUnique({
     where: { id },
-    include: {
+    select: {
+      id: true,
+      invoice_number: true,
+      vendor_name_raw: true,
+      status: true,
+      revision: true,
+      current_approver_role: true,
+      cancellation_requested_by: true,
+      cancellation_requested_at: true,
       payments: { include: { batch: { select: { id: true, batch_number: true, status: true } } } },
     },
   });
@@ -1285,8 +1352,26 @@ export const cancelInvoice = async (
   if (CANCELLATION_BLOCKED_STATUSES.has(existing.status)) {
     throw new AppError(existing.status === 'CANCELLED' ? 'Invoice is already cancelled' : `A paid invoice cannot be cancelled. Process a payment reversal/credit note instead.`, 400);
   }
-  if (!existing.cancellation_requested_at) {
+
+  const coordinatorDirectCancellation = userRole === UserRole.PURCHASING_COORDINATOR
+    && COORDINATOR_OWNED_STATUSES.has(existing.status);
+  const isSystemOverride = ['IT_ADMIN', 'SUPERADMIN', 'ADMIN'].includes(userRole);
+  const currentApprover = currentInvoiceApproverSignatory(existing);
+  const isCurrentApprover = USER_ROLE_TO_SIGNATORY[userRole] === currentApprover;
+
+  if (!coordinatorDirectCancellation && !existing.cancellation_requested_at) {
     throw new AppError('A cancellation request is required before final cancellation', 400);
+  }
+  if (!coordinatorDirectCancellation && existing.cancellation_requested_by === userId && !isSystemOverride) {
+    throw new AppError('The person who requested cancellation cannot finalize the same request', 403);
+  }
+  // Keep the existing Accounting Supervisor override for already-posted
+  // invoices, while requiring the actual current approver for workflow-stage
+  // cancellations. System administrators remain an explicit override.
+  const postedAccountingOverride = userRole === UserRole.ACCOUNTING_SUPERVISOR
+    && ['APPROVED', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'ON_HOLD'].includes(existing.status);
+  if (!coordinatorDirectCancellation && !isSystemOverride && !postedAccountingOverride && !isCurrentApprover) {
+    throw new AppError('Only the current approver can finalize this cancellation request', 403);
   }
 
   const activeBatch = existing.payments.find((payment) => payment.batch && ACTIVE_BATCH_STATUSES.has(payment.batch.status));

@@ -20,6 +20,49 @@ import { getAuditActorDisplay } from '../lib/auditActor';
 import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, ChevronRight, LogOut, Edit, Unlock, Pause, Users, Loader2, Menu, X, Trash2, Landmark, Paperclip, Upload, Download, Eye, Copy, Info } from 'lucide-react';
 import { Skeleton, SkeletonBar } from './ui/Skeleton';
 
+const CANCELLATION_APPROVER_BY_USER_ROLE: Record<string, string> = {
+  PURCHASING_COORDINATOR: 'COORDINATOR',
+  PURCHASING_MANAGER: 'PURCHASING_MANAGER',
+  MLO_ACCOUNT_HOLDER: 'MLO_ACCOUNT_HOLDER',
+  PLANNING_MANAGER: 'MLO_PLANNING_MANAGER',
+  SR_MANAGER_GLOBAL_PRODUCTION: 'SR_MANAGER_GLOBAL_PRODUCTION',
+  MS_POLLY: 'MS_POLLY',
+  PRESIDENT: 'PRESIDENT',
+  ACCOUNTING_SUPERVISOR: 'ACCOUNTING_REVIEWER',
+};
+
+const CANCELLATION_APPROVER_BY_STATUS: Record<string, string> = {
+  PENDING_COORDINATOR: 'COORDINATOR',
+  PENDING_MANAGER: 'PURCHASING_MANAGER',
+  PENDING_MLO_ACCOUNT_HOLDER: 'MLO_ACCOUNT_HOLDER',
+  PENDING_MLO_PLANNING_MANAGER: 'MLO_PLANNING_MANAGER',
+  PENDING_SR_MANAGER: 'SR_MANAGER_GLOBAL_PRODUCTION',
+  PENDING_POLLY: 'MS_POLLY',
+  PENDING_PRESIDENT: 'PRESIDENT',
+  PENDING_ACCOUNTING: 'ACCOUNTING_REVIEWER',
+};
+
+const COORDINATOR_CANCELLATION_STATUSES = new Set([
+  'RECEIVED',
+  'VALIDATION_PENDING',
+  'EXCEPTION_FLAGGED',
+  'PENDING_COORDINATOR',
+]);
+
+function canFinalizeInvoiceCancellation(invoice: any, user: any) {
+  if (!invoice || !user || invoice.status === InvoiceStatus.CANCELLED) return false;
+  const isAdmin = ['IT_ADMIN', 'SUPERADMIN', 'ADMIN'].includes(user.role)
+    && Boolean(invoice.cancellation_requested_at);
+  const isCoordinatorDirect = user.role === 'PURCHASING_COORDINATOR'
+    && COORDINATOR_CANCELLATION_STATUSES.has(invoice.status);
+  const currentApprover = invoice.current_approver_role || CANCELLATION_APPROVER_BY_STATUS[invoice.status];
+  const isCurrentApprover = CANCELLATION_APPROVER_BY_USER_ROLE[user.role] === currentApprover;
+  const postedAccountingOverride = user.role === 'ACCOUNTING_SUPERVISOR'
+    && ['APPROVED', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'ON_HOLD'].includes(invoice.status);
+  const isSelfRequester = Boolean(invoice.cancellation_requested_by && invoice.cancellation_requested_by === user.id);
+  return isAdmin || isCoordinatorDirect || (!isSelfRequester && (isCurrentApprover || postedAccountingOverride) && Boolean(invoice.cancellation_requested_at));
+}
+
 // Custom hook for number count-up animation
 function useCountUp(end: number, duration: number = 1200, start: boolean = true) {
   const [count, setCount] = useState(0);
@@ -1183,8 +1226,7 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
 
   const handleCancellation = async () => {
     if (!selectedInvoice || !cancellationReason.trim()) return;
-    const canFinalize = ['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN', 'ADMIN'].includes(user?.role || '')
-      && Boolean(selectedInvoice.cancellation_requested_at);
+    const canFinalize = canFinalizeInvoiceCancellation(selectedInvoice, user);
     try {
       if (canFinalize) {
         setFinalizingCancellation(true);
@@ -3702,7 +3744,7 @@ ${dataRows}
 
               {/* Cancellation preserves the source document, approvals and accounting history. */}
               {user && selectedInvoice.status !== InvoiceStatus.CANCELLED && ![InvoiceStatus.PAID, InvoiceStatus.PAYMENT_CONFIRMATION_SENT].includes(selectedInvoice.status as InvoiceStatus) &&
-                ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN', 'ADMIN'].includes(user.role) && (
+                ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'MLO_ACCOUNT_HOLDER', 'PLANNING_MANAGER', 'SR_MANAGER_GLOBAL_PRODUCTION', 'MS_POLLY', 'PRESIDENT', 'ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN', 'ADMIN'].includes(user.role) && (
                 <>
                   <div style={{ borderTop: '1px solid var(--border-subtle)' }} className="pt-3">
                     <button
@@ -3718,7 +3760,7 @@ ${dataRows}
                       title="Request a documented cancellation; the invoice remains in the repository and audit trail"
                     >
                       <AlertTriangle className="h-4 w-4 mr-2" strokeWidth={1.75} />
-                      {['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN', 'ADMIN'].includes(user.role) && selectedInvoice.cancellation_requested_at
+                      {canFinalizeInvoiceCancellation(selectedInvoice, user)
                         ? 'Approve Cancellation'
                         : 'Request Cancellation'}
                     </button>
@@ -4143,7 +4185,7 @@ ${dataRows}
                 </div>
                 <div>
                   <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
-                    {['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN', 'ADMIN'].includes(user?.role || '') && selectedInvoice.cancellation_requested_at ? 'Approve Invoice Cancellation' : 'Request Invoice Cancellation'}
+                    {canFinalizeInvoiceCancellation(selectedInvoice, user) ? 'Approve Invoice Cancellation' : 'Request Invoice Cancellation'}
                   </h3>
                   <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>
                     Invoice <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.invoice_number}</span> will remain visible with its original PDF, approvals, QuickBooks reference, and full audit history.
@@ -4172,7 +4214,7 @@ ${dataRows}
                   className="px-4 py-2 rounded-xl transition-colors text-sm font-medium"
                   style={!cancellationReason.trim() || finalizingCancellation ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--accent-red)', color: 'white' }}
                 >
-                  {finalizingCancellation ? 'Saving...' : (['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN', 'ADMIN'].includes(user?.role || '') && selectedInvoice.cancellation_requested_at ? 'Approve Cancellation' : 'Submit Request')}
+                  {finalizingCancellation ? 'Saving...' : (canFinalizeInvoiceCancellation(selectedInvoice, user) ? 'Approve Cancellation' : 'Submit Request')}
                 </button>
               </div>
             </div>

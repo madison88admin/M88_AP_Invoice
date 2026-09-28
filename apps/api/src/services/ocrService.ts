@@ -644,7 +644,10 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
   // Prefer the currency attached to the payable total over an earlier
   // reference currency in the header (for example HKD followed by
   // `Total USD 379.90` on Nilorn invoices).
-  const explicitTotalUsd = /TOTAL\s*(?:\(\s*USD\s*\)|USD)\b/i.test(text);
+  // Prefer an explicitly labelled payable total over currencies mentioned in
+  // bank-account options or item descriptions (for example, a USD invoice
+  // whose remittance section also lists EUR and HKD accounts).
+  const explicitTotalUsd = /(?:TOTAL|SUBTOTAL|GRAND\s+TOTAL|TOTAL\s+AMOUNT)\s*[:(\-]?\s*(?:AMOUNT\s*[:\-]?\s*)?(?:\(\s*USD\s*\)|USD)\b/i.test(text);
   const currencyMatch = explicitTotalUsd
     ? ['USD', 'USD']
     : text.match(/\b(USD|HKD|EUR|GBP|PHP|JPY|IDR|VND|CNY|SGD|AUD|CAD|CHF|MYR|THB|KRW|TWD)\b/);

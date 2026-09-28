@@ -1,6 +1,7 @@
 import { Client } from '@microsoft/microsoft-graph-client';
 import { ClientSecretCredential } from '@azure/identity';
 import { analyzeInvoice } from './ocrService';
+import { evaluateCurrencyPolicy } from './currencyPolicyService';
 import { matchVendor, matchOrCreateVendor } from './vendorMatchingService';
 import { validateInvoice } from './validationService';
 import { uploadInvoiceToStructuredFolder } from './sharePointService';
@@ -14,6 +15,7 @@ import { logger } from '../utils/logger';
 import { AppError } from '../middleware/errorHandler';
 import { alertEmailIntakeFailure, recordEmailIntakeEvent } from './emailIntakeMonitoringService';
 import { analyzeWithRetry } from './intakeRetryService';
+import { isObviouslyNonInvoiceFilename, nonInvoiceSuppressionReason } from './nonInvoiceSuppression';
 
 const clientId = process.env.GRAPH_API_CLIENT_ID || '';
 const clientSecret = process.env.GRAPH_API_CLIENT_SECRET || '';
@@ -26,12 +28,24 @@ const processedMessageIds = new Set<string>();
 
 const NON_INVOICE_HINTS = /\b(statement|packing\s*(?:list|slip)|delivery\s*(?:note|receipt)|purchase\s*order|quotation|quote|remittance|receipt|shipping\s*document|shipment\s*document|air\s*way\s*bill|airway\s*bill|shipment\s*airwaybill|awb|bill\s*of\s*lading|cargo\s*manifest)\b/i;
 
-function intakeReviewReason(ocrResult: any, fileName: string, subject = ''): string | null {
+export function intakeReviewReason(ocrResult: any, fileName: string, subject = ''): string | null {
   const type = String(ocrResult?.invoice_type || '').toUpperCase();
   if (ocrResult?.is_non_invoice_document || ['AIRWAY_BILL', 'PACKING_LIST', 'DELIVERY_RECEIPT'].includes(type)) {
     return 'Document is a shipping/non-invoice document (packing list, AWB, delivery or shipment document) — not eligible for invoice creation.';
   }
-  if (type === 'STATEMENT' || NON_INVOICE_HINTS.test(`${fileName} ${subject}`)) {
+  // Body classification wins over filename: only apply filename/subject hints
+  // when the extracted type is not clearly payable. Previously a valid
+  // INVOICE with "quote"/"receipt"/"layout" in the filename was parked.
+  const typeLooksPayable =
+    type.startsWith('INVOICE') ||
+    type === 'PROFORMA' ||
+    type === 'PROFORMA_INVOICE' ||
+    type === 'COMMERCIAL' ||
+    type === 'SALES' ||
+    type === 'DEBIT_NOTE' ||
+    type === 'CREDIT_NOTE';
+  const normalizedHaystack = `${fileName} ${subject}`.replace(/[_-]+/g, ' ');
+  if (type === 'STATEMENT' || (!typeLooksPayable && NON_INVOICE_HINTS.test(normalizedHaystack))) {
     return `Attachment appears to be a non-invoice document (${type || 'unclassified'}).`;
   }
   const amount = Number(ocrResult?.total_amount);
@@ -41,10 +55,53 @@ function intakeReviewReason(ocrResult: any, fileName: string, subject = ''): str
   const threshold = Number(process.env.OCR_CONFIDENCE_THRESHOLD || 0.60);
   if (Number.isFinite(confidence) && confidence < threshold) return `OCR confidence is below the review threshold (${confidence.toFixed(2)} < ${threshold.toFixed(2)}).`;
   const currency = String(ocrResult?.currency || '').trim().toUpperCase();
-  if (currency !== 'USD') return `Only USD invoices are eligible for automatic capture (received: ${currency || 'blank'}).`;
+  // Non-USD handling is policy-driven (INTAKE_CURRENCY_MODE / vendor allowlists).
+  // 'park' keeps the old behavior; 'exception'/'auto' create the invoice with a
+  // currency exception so accounting reviews it before posting.
+  if (currency && currency !== 'USD') {
+    const policy = evaluateCurrencyPolicy(currency, ocrResult?.vendor_name, {
+      needsCurrencyConfirmation: !!ocrResult?.needs_currency_confirmation,
+      hasUsdEquivalent: Number(ocrResult?.usd_equivalent || 0) > 0,
+    });
+    if (policy.park) return `Only USD invoices are eligible for automatic capture (received: ${currency}).`;
+    (ocrResult as any)._currencyPolicy = policy;
+  } else if (!currency) {
+    return 'Only USD invoices are eligible for automatic capture (received: blank).';
+  }
   if (!String(ocrResult?.invoice_number || '').trim()) return 'Invoice or debit-note number was not extracted.';
   if (!String(ocrResult?.vendor_name || '').trim()) return 'Vendor name was not extracted.';
   return null;
+}
+
+/**
+ * Attach the currency-policy exception to a created invoice when the intake
+ * review stored a policy decision that requires one (non-USD under
+ * 'exception'/'auto' mode that was not allowlisted). Also flips the invoice to
+ * EXCEPTION_FLAGGED so accounting sees it. No-op otherwise.
+ */
+async function attachCurrencyPolicyException(
+  invoiceId: string,
+  invoiceNumber: string,
+  ocrResult: any
+): Promise<void> {
+  const policy = ocrResult?._currencyPolicy;
+  if (!policy?.needsException) return;
+  try {
+    await prisma.exception.create({
+      data: {
+        invoice_id: invoiceId,
+        reason: ExceptionReason.AMOUNT_MISMATCH as any,
+        detail: `Non-USD intake (${policy.currency}): ${policy.reason}. Verify the settlement amount before posting.`,
+      },
+    });
+    await prisma.invoice.update({
+      where: { id: invoiceId },
+      data: { status: InvoiceStatus.EXCEPTION_FLAGGED as any },
+    });
+    logger.info(`Non-USD invoice ${invoiceNumber} (${policy.currency}) created with currency exception`);
+  } catch (err) {
+    logger.error(`Failed to attach currency exception to ${invoiceNumber}:`, err);
+  }
 }
 
 async function analyzeIntakeWithRetry(
@@ -302,6 +359,25 @@ async function processSingleInvoiceAttachment(
   attachmentId?: string,
 ): Promise<void> {
   try {
+    // Keep obvious shipment/supporting documents out of storage/OCR. We retain
+    // the intake event for auditability; only ambiguous documents go through
+    // OCR classification.
+    if (isObviouslyNonInvoiceFilename(fileName, message.subject || '')) {
+      const reason = nonInvoiceSuppressionReason(fileName, message.subject || '');
+      await recordEmailIntakeEvent({
+        source: 'GRAPH',
+        stage: 'REVIEW_REQUIRED',
+        status: 'FAILED',
+        mailbox: mailboxAddress,
+        messageId: message.id,
+        attachmentId,
+        fileName,
+        error: reason,
+        metadata: { suppressed_before_ocr: true, suppression_rule: 'obvious_filename_pattern' },
+      });
+      logger.info(`[Email Intake] ${fileName} suppressed before OCR: ${reason}`);
+      return;
+    }
     // Upload to VPS Supabase Storage FIRST (before OCR — ensures file is saved even if OCR fails)
     let storagePath: string | undefined;
     try {
@@ -514,6 +590,8 @@ async function processSingleInvoiceAttachment(
       });
     }
 
+    await attachCurrencyPolicyException(invoice.id, invoice.invoice_number, ocrResult);
+
     // Create exception if OCR confidence is low
     if (isLowConfidence) {
       await prisma.exception.create({
@@ -607,6 +685,21 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
     logger.info(`Processing SharePoint file: ${data.fileName} from ${data.sharepointUrl}`);
     await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'RECEIVED', messageId: intakeKey, fileName: data.fileName, metadata: { from: data.fromAddress } });
     await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'ATTACHMENT_DETECTED', messageId: intakeKey, fileName: data.fileName });
+
+    if (isObviouslyNonInvoiceFilename(data.fileName, data.emailSubject || '')) {
+      const reason = nonInvoiceSuppressionReason(data.fileName, data.emailSubject || '');
+      await recordEmailIntakeEvent({
+        source: 'SHAREPOINT',
+        stage: 'REVIEW_REQUIRED',
+        status: 'FAILED',
+        messageId: intakeKey,
+        fileName: data.fileName,
+        error: reason,
+        metadata: { suppressed_before_ocr: true, suppression_rule: 'obvious_filename_pattern' },
+      });
+      logger.info(`[SharePoint Intake] ${data.fileName} suppressed before OCR: ${reason}`);
+      return { success: false, status: 'REVIEW_REQUIRED', error: reason };
+    }
 
     // Download file from SharePoint
     const client = await getGraphClient();
@@ -788,6 +881,8 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
       exceptions.push('VENDOR_NOT_FOUND');
     }
 
+    await attachCurrencyPolicyException(invoice.id, invoice.invoice_number, ocrResult);
+
     // Create exception if OCR confidence is low
     if (isLowConfidence) {
       await prisma.exception.create({
@@ -861,6 +956,21 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
     logger.info(`Processing Power Automate attachment: ${data.fileName} from ${data.fromAddress}`);
     await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'RECEIVED', messageId: intakeKey, fileName: data.fileName, metadata: { from: data.fromAddress, subject: data.emailSubject } });
     await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'ATTACHMENT_DETECTED', messageId: intakeKey, fileName: data.fileName });
+
+    if (isObviouslyNonInvoiceFilename(data.fileName, data.emailSubject || '')) {
+      const reason = nonInvoiceSuppressionReason(data.fileName, data.emailSubject || '');
+      await recordEmailIntakeEvent({
+        source: 'POWER_AUTOMATE',
+        stage: 'REVIEW_REQUIRED',
+        status: 'FAILED',
+        messageId: intakeKey,
+        fileName: data.fileName,
+        error: reason,
+        metadata: { suppressed_before_ocr: true, suppression_rule: 'obvious_filename_pattern' },
+      });
+      logger.info(`[Power Automate] ${data.fileName} suppressed before OCR: ${reason}`);
+      return { success: false, status: 'REVIEW_REQUIRED', error: reason };
+    }
 
     // Convert base64 to buffer
     const buffer = Buffer.from(data.attachmentBase64, 'base64');
@@ -1047,6 +1157,8 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
       });
       exceptions.push('VENDOR_NOT_FOUND');
     }
+
+    await attachCurrencyPolicyException(invoice.id, invoice.invoice_number, ocrResult);
 
     // Create exception if OCR confidence is low
     if (isLowConfidence) {

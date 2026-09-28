@@ -26,7 +26,9 @@ import { detectMultiInvoice, splitPdfByPageRanges } from './multiInvoiceDetector
 import { sanitizeInvoiceType, sanitizeCategory } from '../utils/enumSanitizer';
 import { parseMPOReference } from '../utils/mpoReference';
 import { alertEmailIntakeFailure, recordEmailIntakeEvent } from './emailIntakeMonitoringService';
+import { evaluateCurrencyPolicy } from './currencyPolicyService';
 import { analyzeWithRetry } from './intakeRetryService';
+import { isObviouslyNonInvoiceFilename, nonInvoiceSuppressionReason } from './nonInvoiceSuppression';
 
 const INCOMING_DIR = process.env.WATCHER_INCOMING_DIR || '/incoming-invoices';
 const PROCESSING_DIR = process.env.WATCHER_PROCESSING_DIR || '/incoming-invoices/processing';
@@ -54,7 +56,7 @@ function safeInvoiceDate(value: unknown): Date | null {
  * not the mail-flow filename, decides whether it is safe to create as an AP
  * invoice.  Ambiguous documents stay available in manual-review.
  */
-function intakeReviewReason(ocrResult: any, fileName = ''): string | null {
+export function intakeReviewReason(ocrResult: any, fileName = ''): string | null {
   const type = String(ocrResult?.invoice_type || ocrResult?.document_type || '').toUpperCase();
   const amount = Number(ocrResult?.total_amount ?? ocrResult?.amount);
   const currency = String(ocrResult?.currency || '').toUpperCase();
@@ -65,13 +67,40 @@ function intakeReviewReason(ocrResult: any, fileName = ''): string | null {
   if (ocrResult?.is_non_invoice_document || type === 'AIRWAY_BILL' || shipmentDocument) {
     return 'Document is a shipping/non-invoice document (packing list, AWB, delivery or shipment document) — not eligible for invoice creation';
   }
-  if (type === 'STATEMENT' || type === 'OTHER' || type === 'UNKNOWN' || NON_INVOICE_HINTS.test(fileName)) {
+  // Filename hints are decisive ONLY when the document body did not yield a
+  // clearly payable type. Previously this check ran unconditionally, so valid
+  // INVOICE-typed extractions with words like "layout" or "quote" in the
+  // filename were parked (30d log: 40x "Document type INVOICE is not
+  // eligible"). Body classification now wins over the filename.
+  const typeLooksPayable =
+    type.startsWith('INVOICE') ||
+    type === 'PROFORMA' ||
+    type === 'PROFORMA_INVOICE' ||
+    type === 'COMMERCIAL' ||
+    type === 'SALES' ||
+    type === 'DEBIT_NOTE' ||
+    type === 'CREDIT_NOTE';
+  const normalizedFileName = fileName.replace(/[_-]+/g, ' ');
+  if (type === 'STATEMENT' || type === 'OTHER' || type === 'UNKNOWN' || (!typeLooksPayable && NON_INVOICE_HINTS.test(normalizedFileName))) {
     return `Document type ${type || 'unknown'} is not eligible for automatic invoice creation`;
   }
   if (!ocrResult?.invoice_number) return 'Invoice number could not be extracted';
   if (!Number.isFinite(amount) || amount <= 0) return 'A valid non-zero invoice amount could not be extracted';
   if (!ocrResult?.invoice_date) return 'Invoice date could not be extracted';
-  if (currency !== 'USD') return `Currency ${currency || 'blank'} requires manual review before invoice creation`;
+  // Non-USD handling is policy-driven (INTAKE_CURRENCY_MODE / vendor allowlists).
+  // 'park' keeps the old behavior; 'exception'/'auto' create the invoice and let
+  // the currency exception route it through accounting review instead.
+  if (currency && currency !== 'USD') {
+    const policy = evaluateCurrencyPolicy(currency, ocrResult?.vendor_name, {
+      needsCurrencyConfirmation: !!(ocrResult as any)?.needs_currency_confirmation,
+      hasUsdEquivalent: Number((ocrResult as any)?.usd_equivalent || 0) > 0,
+    });
+    if (policy.park) {
+      return `Currency ${currency} requires manual review before invoice creation`;
+    }
+    // allowed: store the decision for the creation step to attach as an exception
+    (ocrResult as any)._currencyPolicy = policy;
+  }
   return null;
 }
 
@@ -314,6 +343,25 @@ async function processFile(filePath: string, fileName: string): Promise<void> {
     await createAuditLog(null, 'WATCHER_INVALID_PDF', `${fileName}: ${error}`);
     await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'FAILED', fileName, error, metadata: { bytes: fileBuffer.length } });
     await alertEmailIntakeFailure({ source: 'Power Automate SFTP intake', fileName, error });
+    return;
+  }
+
+  // Do not spend OCR quota on files that are unambiguously shipment/supporting
+  // documents. They remain in manual-review for auditability, but can never
+  // become an invoice record from a filename-only match.
+  if (isObviouslyNonInvoiceFilename(fileName)) {
+    const reason = nonInvoiceSuppressionReason(fileName);
+    logger.info(`[File Watcher] ${fileName} → ManualReview without OCR: ${reason}`);
+    safeMove(processingPath, MANUAL_REVIEW_DIR);
+    await createAuditLog(null, 'WATCHER_NON_INVOICE_SUPPRESSED', reason);
+    await recordEmailIntakeEvent({
+      source: 'POWER_AUTOMATE',
+      stage: 'REVIEW_REQUIRED',
+      status: 'FAILED',
+      fileName,
+      error: reason,
+      metadata: { suppressed_before_ocr: true, suppression_rule: 'obvious_filename_pattern' },
+    });
     return;
   }
 
@@ -774,6 +822,25 @@ async function processSingleInvoiceBuffer(
       });
     }
 
+    // Currency policy: non-USD invoices created under 'exception'/'auto' mode
+    // carry an explicit exception so accounting reviews the settlement currency
+    // before posting. Allowlisted vendors/currencies skip this entirely.
+    const currencyPolicy = (ocrResult as any)._currencyPolicy;
+    if (currencyPolicy?.needsException) {
+      await prisma.exception.create({
+        data: {
+          invoice_id: invoice.id,
+          reason: ExceptionReason.AMOUNT_MISMATCH as any,
+          detail: `Non-USD intake (${currencyPolicy.currency}): ${currencyPolicy.reason}. Verify the settlement amount before posting.`,
+        },
+      });
+      await prisma.invoice.update({
+        where: { id: invoice.id },
+        data: { status: InvoiceStatus.EXCEPTION_FLAGGED as any },
+      });
+      logger.info(`[File Watcher] Non-USD invoice ${invoice.invoice_number} (${currencyPolicy.currency}) created with currency exception`);
+    }
+
     // Notify coordinator about new invoice
     await inAppNotificationService.create({
       invoice_id: invoice.id,
@@ -851,10 +918,12 @@ function isRetryableQueueReason(reason: string): boolean {
 }
 
 function isLikelyInvoiceFilename(fileName: string): boolean {
-  if (NON_INVOICE_HINTS.test(fileName)
-    || /\b(?:PL|AWB|BL|DO|ML)\b/i.test(fileName)
-    || /artwork|care\s*label|hangtag|barcode|tech\s*pack|trim\s*(?:received|sample)/i.test(fileName)) return false;
-  return /invoice|\binv\b|debit|credit|commercial|proforma|sales\s*invoice|\bpi\b|\bci\b|\bsi\b|\bpci\b|bsninv|sic\d|ujdb|ujcr|invp\d|hkws[o0]\d+|ia\d{4,}|sc[-_ ]?\d{4,}/i.test(fileName);
+  // Normalize separators so `Packing_List` / `AWB-123` behave like spaced words.
+  const normalized = fileName.replace(/[_-]+/g, ' ');
+  if (NON_INVOICE_HINTS.test(normalized)
+    || /\b(?:PL|AWB|BL|DO|ML)\b/i.test(normalized)
+    || /artwork|care\s*label|hangtag|barcode|tech\s*pack|trim\s*(?:received|sample)/i.test(normalized)) return false;
+  return /invoice|\binv\b|debit|credit|commercial|proforma|sales\s*invoice|\bpi\b|\bci\b|\bsi\b|\bpci\b|bsninv|sic\d|ujdb|ujcr|invp\d|hkws[o0]\d+|ia\d{4,}|sc[-_ ]?\d{4,}/i.test(normalized);
 }
 
 /**

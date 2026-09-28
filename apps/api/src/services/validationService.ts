@@ -10,6 +10,7 @@ import { matchMPOLines } from '../utils/mpoLineMatching';
 import { getAliasMap, namesEquivalent } from './aliasService';
 import { validateFinanceArithmetic, financeIssueIsBlocking } from './financeControlService';
 import { getFinancePolicy, isNonPOCategory } from './financePolicyService';
+import { validatePayableDocument } from './payableDocumentGuard';
 import { retainValidationSnapshot } from './validationSnapshotService';
 
 // Levenshtein distance for fuzzy string comparison (e.g. SWIFT code OCR typos)
@@ -392,6 +393,35 @@ export async function validateInvoice(
   } else if (vendorThresholdResult.reason) {
     // Warning-only result: create exception for visibility but don't block
     exceptions.push({ reason: vendorThresholdResult.reason, detail: vendorThresholdResult.detail || '' });
+  }
+
+  // RULE 20 — Payable document guard: packing lists, AWBs, statements of
+  // account, payment advices and other non-invoice documents must never enter
+  // the AP workflow. Catches records that leaked in via manual upload or
+  // misclassified intake, regardless of entry path.
+  const payableResult = validatePayableDocument(invoice);
+  results.push(payableResult);
+  if (!payableResult.passed) {
+    // Non-payable documents are not invoices — they must be CANCELLED, not
+    // left as EXCEPTION_FLAGGED clutter. The record + audit trail is kept.
+    exceptions.push({ reason: ExceptionReason.HANDWRITTEN_DOCUMENT, detail: payableResult.detail || payableResult.message });
+    await prisma.invoice.update({
+      where: { id: invoiceId },
+      data: {
+        status: InvoiceStatus.CANCELLED,
+        cancellation_reason: payableResult.detail || payableResult.message,
+        cancelled_at: new Date(),
+        cancelled_by: 'payable_document_guard',
+      },
+    }).catch(err => logger.error('Failed to cancel non-payable document:', err));
+    await prisma.auditLog.create({
+      data: {
+        invoice_id: invoiceId,
+        action: 'NON_PAYABLE_DOCUMENT_CANCELLED',
+        performed_by: 'payable_document_guard',
+        note: payableResult.detail || payableResult.message,
+      },
+    }).catch(err => logger.error('Failed to write payable-guard audit log:', err));
   }
 
   const passed = results.every(r => r.passed);

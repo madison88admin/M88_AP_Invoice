@@ -82,6 +82,17 @@ describe('fileWatcherService.intakeReviewReason — body classification beats fi
     expect(reason).toMatch(/shipping\/non-invoice/);
   });
 
+  it('blocks packing lists whose OCR contains an invoice reference', () => {
+    const reason = intakeReviewReason(
+      {
+        ...baseValidInvoice,
+        raw_text: 'ACME TEXTILES\nPACKING LIST\nInvoice No: INV-123\nQty: 10',
+      },
+      'invoice.pdf'
+    );
+    expect(reason).toMatch(/shipping\/non-invoice/);
+  });
+
   it('keeps blocking non-USD currency after the filename fix', () => {
     const reason = intakeReviewReason(
       { ...baseValidInvoice, currency: 'HKD' },

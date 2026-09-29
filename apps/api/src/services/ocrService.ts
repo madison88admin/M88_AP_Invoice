@@ -8,6 +8,7 @@ import { doclingService } from './doclingService';
 import { extractTextWithOpenDataLoader } from './openDataLoaderService';
 import { rapidOCRService } from './rapidOCRService';
 import { upstageOCRService } from './upstageOCRService';
+import { hasStrongNonInvoiceHeading } from './nonInvoiceSuppression';
 
 export interface BankInfo {
   beneficiary_name?: string;
@@ -1438,10 +1439,12 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
   // ─── RAPIDOCR-FIRST APPROACH ───
   // 1. Try RapidOCR (fast, 5-9s, 97% confidence, free, local)
   let rapidOcrText = '';
+  let classificationText = '';
   try {
     const rapidOcrResult = await rapidOCRService.extractText(fileBuffer);
     if (rapidOcrResult && rapidOcrResult.text && rapidOcrResult.text.length > 20) {
       rapidOcrText = rapidOcrResult.text;
+      classificationText = rapidOcrText;
       rapidOcrConfidence = rapidOcrResult.confidence;
       logger.info(`[OCR] RapidOCR extraction succeeded — ${rapidOcrText.length} chars, confidence: ${(rapidOcrConfidence * 100).toFixed(1)}%, ${rapidOcrResult.elapsed_ms}ms`);
     }
@@ -1480,6 +1483,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
         // pdf2json text extraction failed — Gemini Vision can still read the PDF directly
       }
     }
+    classificationText = rawText || classificationText;
 
     if (rapidOcrText && rapidOcrConfidence < CONFIDENCE_THRESHOLD) {
       logger.info(`[OCR] RapidOCR confidence ${(rapidOcrConfidence * 100).toFixed(1)}% < ${CONFIDENCE_THRESHOLD * 100}% — using AI fallback for better accuracy`);
@@ -1633,8 +1637,8 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
   // "Shipment Airwaybill" paperwork carries declared values and airwaybill
   // numbers that superficially resemble invoice totals/numbers — it must be
   // parked by intake, never created as an invoice.
-  const hasPayableHeading = /\b(?:INVOICE|DEBIT\s+NOTE|CREDIT\s+NOTE)\b/i.test(rapidOcrText || '');
-  const isNonInvoiceDocument = !hasPayableHeading && /(?:^|\n)\s*(?:PACKING\s+(?:LIST|SLIP)|SHIPMENT\s+AIRWAYBILL|AIR\s*WAY\s*BILL|BILL\s+OF\s+LADING|CARGO\s+MANIFEST|SHIPPING\s+DOCUMENT|SHIPMENT\s+DOCUMENT|DELIVERY\s+(?:NOTE|RECEIPT))\b/im.test(rapidOcrText || '');
+  const hasPayableHeading = /\b(?:INVOICE|DEBIT\s+NOTE|CREDIT\s+NOTE)\b/i.test(classificationText);
+  const isNonInvoiceDocument = hasStrongNonInvoiceHeading(classificationText) || (!hasPayableHeading && /(?:^|\n)\s*(?:PACKING\s+(?:LIST|SLIP)|SHIPMENT\s+AIRWAYBILL|AIR\s*WAY\s*BILL|BILL\s+OF\s+LADING|CARGO\s+MANIFEST|SHIPPING\s+DOCUMENT|SHIPMENT\s+DOCUMENT|DELIVERY\s+(?:NOTE|RECEIPT))\b/im.test(classificationText));
   if (isNonInvoiceDocument) {
     logger.info('[OCR] Non-invoice shipping document detected (airwaybill) — intake will park this file');
   }

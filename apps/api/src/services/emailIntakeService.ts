@@ -15,7 +15,7 @@ import { logger } from '../utils/logger';
 import { AppError } from '../middleware/errorHandler';
 import { alertEmailIntakeFailure, recordEmailIntakeEvent } from './emailIntakeMonitoringService';
 import { analyzeWithRetry } from './intakeRetryService';
-import { isObviouslyNonInvoiceFilename, nonInvoiceSuppressionReason } from './nonInvoiceSuppression';
+import { hasStrongNonInvoiceHeading, isObviouslyNonInvoiceFilename, nonInvoiceSuppressionReason } from './nonInvoiceSuppression';
 import { PDFDocument } from 'pdf-lib';
 import { buildIntakeIdempotencyKey, evaluateIntakeControls } from './intakeControlService';
 import { checkEmailDuplicate, generateFileHash } from './emailDuplicateService';
@@ -64,7 +64,8 @@ export function intakeReviewReason(ocrResult: any, fileName: string, subject = '
   const consensusReviewFields = Array.isArray(ocrResult?.consensus_review_required_fields) ? ocrResult.consensus_review_required_fields : [];
   if (consensusReviewFields.length > 0) return `OCR engines disagreed on: ${consensusReviewFields.join(', ')}.`;
   const type = String(ocrResult?.invoice_type || '').toUpperCase();
-  if (ocrResult?.is_non_invoice_document || ['AIRWAY_BILL', 'PACKING_LIST', 'DELIVERY_RECEIPT'].includes(type)) {
+  const rawText = String(ocrResult?.raw_text || ocrResult?.raw_data?.raw_text || '');
+  if (ocrResult?.is_non_invoice_document || hasStrongNonInvoiceHeading(rawText) || ['AIRWAY_BILL', 'PACKING_LIST', 'DELIVERY_RECEIPT'].includes(type)) {
     return 'Document is a shipping/non-invoice document (packing list, AWB, delivery or shipment document) — not eligible for invoice creation.';
   }
   // Body classification wins over filename: only apply filename/subject hints

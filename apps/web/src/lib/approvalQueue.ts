@@ -30,6 +30,12 @@ export const orderedSignatures = (invoice: MockInvoice) => (invoice.signatures |
     (!signature.invalidated_at || signature.approval_status === 'RECONFIRMATION_REQUIRED'))
   .sort((a, b) => APPROVAL_ROLE_ORDER.indexOf(a.signatory_role) - APPROVAL_ROLE_ORDER.indexOf(b.signatory_role));
 
+/** The timestamp when the coordinator endorsed the invoice to the next stage. */
+export const getCoordinatorSubmissionDate = (invoice: MockInvoice): string | undefined =>
+  orderedSignatures(invoice).find(signature =>
+    signature.signatory_role === 'COORDINATOR' && !!signature.signed_at
+  )?.signed_at;
+
 /**
  * The invoices currently waiting on THIS user's approval — the exact same set
  * the Approval Inbox page renders, so the sidebar badge always matches the page.

@@ -9,6 +9,7 @@ import { invoiceApi } from '../lib/api';
 import { Skeleton } from './ui/Skeleton';
 import {
   orderedSignatures,
+  getCoordinatorSubmissionDate,
   getPendingApprovalsForUser,
 } from '../lib/approvalQueue';
 
@@ -43,6 +44,11 @@ export default function ApprovalInbox() {
       sig.signatory_role === 'COORDINATOR' && !!sig.signatory_name
     );
     return coordinator?.signatory_name || 'Not yet approved';
+  };
+
+  const formatSubmissionDate = (invoice: MockInvoice) => {
+    const submittedAt = getCoordinatorSubmissionDate(invoice);
+    return submittedAt ? new Date(submittedAt).toLocaleString() : 'Not yet submitted';
   };
 
 
@@ -228,9 +234,14 @@ export default function ApprovalInbox() {
                               <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
                                 {invoice.vendor_name}
                               </p>
+                            <p className="text-xs" style={{ color: 'var(--text-subtle)' }}>
+                              Coordinator: {getCoordinatorName(invoice)}
+                            </p>
+                            {user?.role === 'PURCHASING_MANAGER' && (
                               <p className="text-xs" style={{ color: 'var(--text-subtle)' }}>
-                                Coordinator: {getCoordinatorName(invoice)}
+                                Submitted by Coordinator: {formatSubmissionDate(invoice)}
                               </p>
+                            )}
                             </div>
                           </div>
                           <div className="text-right">
@@ -329,6 +340,15 @@ export default function ApprovalInbox() {
                           : 'N/A'}
                       </p>
                     </div>
+
+                    {user?.role === 'PURCHASING_MANAGER' && (
+                      <div>
+                        <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Coordinator Submission Date</p>
+                        <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                          {formatSubmissionDate(selectedInvoice)}
+                        </p>
+                      </div>
+                    )}
 
                     {user?.role === 'PURCHASING_MANAGER' && (
                       <Link

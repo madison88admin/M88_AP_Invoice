@@ -160,6 +160,7 @@ const apiInvoiceToMock = (invoice: any): MockInvoice => {
       id: s.id || '',
       signatory_role: s.signatory_role || '',
       signatory_name: s.signatory_name || '',
+      signatory_user_id: s.signatory_user_id || undefined,
       signed_at: s.signed_at ? dateToString(s.signed_at) : undefined,
       signature_type: s.signature_type || 'DIGITAL',
       approval_status: s.approval_status || 'PENDING',

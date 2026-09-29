@@ -7,6 +7,7 @@ import { POValidationBadge } from './POValidationBadge';
 import { Skeleton } from './ui/Skeleton';
 import { useAuth } from '../contexts/AuthContext';
 import { hasPermission, canUserApproveStatus } from '../lib/roleAccess';
+import { getCoordinatorSubmissionDate } from '../lib/approvalQueue';
 
 interface InvoiceTableProps {
   invoices: MockInvoice[];
@@ -206,6 +207,11 @@ export default function InvoiceTable({ invoices, onInvoiceClick, onApprove, onPo
             <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
               Actual Date Received
             </th>
+            {user?.role === 'PURCHASING_MANAGER' && (
+              <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                Coordinator Submission Date
+              </th>
+            )}
             <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
               Amount
             </th>
@@ -236,6 +242,7 @@ export default function InvoiceTable({ invoices, onInvoiceClick, onApprove, onPo
           {sortedInvoices.map((invoice, index) => {
             const dueStatus = getDueDateStatus(invoice);
             const isUrgentRow = invoice.is_urgent || dueStatus.isOverdue || dueStatus.isNear;
+            const coordinatorSubmissionDate = getCoordinatorSubmissionDate(invoice);
             return (
             <tr
               key={invoice.id}
@@ -347,6 +354,11 @@ export default function InvoiceTable({ invoices, onInvoiceClick, onApprove, onPo
                   {invoice.invoice_received_date ? formatDate(invoice.invoice_received_date) : '—'}
                 </div>
               </td>
+              {user?.role === 'PURCHASING_MANAGER' && (
+                <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--text-muted)' }}>
+                  {coordinatorSubmissionDate ? formatDate(coordinatorSubmissionDate) : '—'}
+                </td>
+              )}
               <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
                 <div className="flex items-center">
                   <DollarSign className="h-4 w-4 mr-1" style={{ color: 'var(--text-muted)' }} strokeWidth={1.75} />

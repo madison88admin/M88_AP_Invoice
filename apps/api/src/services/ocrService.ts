@@ -967,6 +967,7 @@ async function tryAIFallbacks(
         ...merged.data,
         consensus_engines: merged.engines_used,
         consensus_details: merged.per_field,
+        consensus_review_required_fields: merged.review_required_fields,
       } as any;
     }
   }
@@ -1420,7 +1421,7 @@ async function tryDoclingFallback(fileBuffer: Buffer, extracted: any): Promise<{
     if (improved) {
       logger.info(`[OCR] Docling fallback improved extraction — invoice#: "${fallbackExtracted.invoice_number}", vendor: "${fallbackExtracted.vendor_name}", amount: ${fallbackExtracted.amount} (engines: ${merged.engines_used.join(', ')})`);
     }
-    return { improved, extracted: fallbackExtracted };
+    return { improved, extracted: { ...fallbackExtracted, consensus_review_required_fields: merged.review_required_fields } };
   } catch (e) {
     logger.warn(`[OCR] Docling fallback merge failed: ${e instanceof Error ? e.message : String(e)}`);
     return { improved: false, extracted };

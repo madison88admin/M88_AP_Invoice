@@ -4,7 +4,7 @@
  * "commercial invoice" are not included because they can be valid invoice
  * document types. OCR still decides ambiguous files.
  */
-const OBVIOUS_NON_INVOICE_HINTS = /\b(?:statement|packing\s*(?:list|slip)|delivery\s*(?:note|receipt)|purchase\s*order|sales\s*order|order\s*confirmation|quotation|quote|remittance|receipt|shipping\s*document|shipment\s*document|air\s*way\s*bill|airway\s*bill|awb|bill\s*of\s*lading|cargo\s*manifest|waybill|layout|tech\s*pack|bill\s*stub|account\s*information|artwork|care\s*label|hangtag|barcode|trim\s*(?:received|sample))\b/i;
+const OBVIOUS_NON_INVOICE_HINTS = /\b(?:statement|packing\s*(?:list|slip)|delivery\s*(?:note|receipt)|purchase\s*order|sales\s*order|order\s*confirmation|quotation|quote|remittance|receipt|shipping\s*document|shipment\s*document|air\s*way\s*bill|airway\s*bill|awb|bill\s*of\s*lading|cargo\s*manifest|waybill|layout|tech\s*pack|bill\s*stub|account\s*information|artwork|care\s*label|hangtag|barcode|rfid\s*sticker|polybag\s*sticker|shipping\s*label|trim\s*(?:received|sample))\b/i;
 
 export function isObviouslyNonInvoiceFilename(fileName: string, subject = ''): boolean {
   // Treat common filename separators as whitespace so `Packing_List` and

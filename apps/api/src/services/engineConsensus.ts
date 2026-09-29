@@ -27,6 +27,7 @@ export interface ConsensusOutput {
   per_field: Record<string, FieldVerdict>;
   engines_used: string[];
   base_engine: string | null;
+  review_required_fields: string[];
 }
 
 type Normalizer = (value: any) => string | number | null;
@@ -122,6 +123,7 @@ export function mergeEngineResults(results: EngineResult[]): ConsensusOutput {
 
   const data: Record<string, any> = {};
   const perField: Record<string, FieldVerdict> = {};
+  const reviewRequiredFields: string[] = [];
 
   for (const field of VOTED_FIELDS) {
     const normalizer = FIELD_NORMALIZERS[field];
@@ -178,6 +180,7 @@ export function mergeEngineResults(results: EngineResult[]): ConsensusOutput {
       source: winner.engines.join('+'),
       consensus,
     };
+    if (consensus === 'TIE') reviewRequiredFields.push(field);
     if (winner.value !== undefined && winner.value !== null && winner.value !== '') {
       data[field] = winner.value;
     }
@@ -203,5 +206,5 @@ export function mergeEngineResults(results: EngineResult[]): ConsensusOutput {
   logger.info(`[OCR] Consensus merge: engines=[${enginesUsed.join(', ')}], base=${baseEngine?.engine || 'none'}, ` +
     `agreements=${VOTED_FIELDS.filter(f => perField[f]?.consensus === 'MAJORITY').length}/${VOTED_FIELDS.length}`);
 
-  return { data, per_field: perField, engines_used: enginesUsed, base_engine: baseEngine?.engine || null };
+  return { data, per_field: perField, engines_used: enginesUsed, base_engine: baseEngine?.engine || null, review_required_fields: reviewRequiredFields };
 }

@@ -1,7 +1,7 @@
 import { Client } from '@microsoft/microsoft-graph-client';
 import { ClientSecretCredential } from '@azure/identity';
 import { analyzeInvoice } from './ocrService';
-import { evaluateCurrencyPolicy } from './currencyPolicyService';
+import { evaluateCurrencyPolicy, normalizeToUsd } from './currencyPolicyService';
 import { matchVendor, matchOrCreateVendor } from './vendorMatchingService';
 import { validateInvoice } from './validationService';
 import { uploadInvoiceToStructuredFolder } from './sharePointService';
@@ -16,6 +16,9 @@ import { AppError } from '../middleware/errorHandler';
 import { alertEmailIntakeFailure, recordEmailIntakeEvent } from './emailIntakeMonitoringService';
 import { analyzeWithRetry } from './intakeRetryService';
 import { isObviouslyNonInvoiceFilename, nonInvoiceSuppressionReason } from './nonInvoiceSuppression';
+import { PDFDocument } from 'pdf-lib';
+import { buildIntakeIdempotencyKey, evaluateIntakeControls } from './intakeControlService';
+import { checkEmailDuplicate, generateFileHash } from './emailDuplicateService';
 
 const clientId = process.env.GRAPH_API_CLIENT_ID || '';
 const clientSecret = process.env.GRAPH_API_CLIENT_SECRET || '';
@@ -26,9 +29,40 @@ let emailPollerStarted = false;
 let emailPollInProgress = false;
 const processedMessageIds = new Set<string>();
 
+async function countPdfPages(buffer: Buffer): Promise<number | undefined> {
+  try {
+    return (await PDFDocument.load(buffer, { ignoreEncryption: true })).getPageCount();
+  } catch {
+    return undefined;
+  }
+}
+
+async function applyIntakeControls(
+  ocrResult: any,
+  buffer: Buffer,
+): Promise<{ reasons: string[]; metadata: Record<string, unknown> }> {
+  const inputPages = await countPdfPages(buffer);
+  const rawProcessedPages = Number(ocrResult?.processed_pages ?? ocrResult?.pages_processed ?? ocrResult?.raw_data?.processed_pages);
+  const processedPages = Number.isFinite(rawProcessedPages) ? rawProcessedPages : inputPages;
+  ocrResult.input_pages = inputPages;
+  ocrResult.processed_pages = processedPages;
+  const controls = evaluateIntakeControls(ocrResult);
+  return {
+    reasons: controls.reasons,
+    metadata: {
+      intake_controls: controls,
+      input_pages: inputPages,
+      processed_pages: processedPages,
+      page_coverage_complete: inputPages === undefined || inputPages === processedPages,
+    },
+  };
+}
+
 const NON_INVOICE_HINTS = /\b(statement|packing\s*(?:list|slip)|delivery\s*(?:note|receipt)|purchase\s*order|quotation|quote|remittance|receipt|shipping\s*document|shipment\s*document|air\s*way\s*bill|airway\s*bill|shipment\s*airwaybill|awb|bill\s*of\s*lading|cargo\s*manifest)\b/i;
 
 export function intakeReviewReason(ocrResult: any, fileName: string, subject = ''): string | null {
+  const consensusReviewFields = Array.isArray(ocrResult?.consensus_review_required_fields) ? ocrResult.consensus_review_required_fields : [];
+  if (consensusReviewFields.length > 0) return `OCR engines disagreed on: ${consensusReviewFields.join(', ')}.`;
   const type = String(ocrResult?.invoice_type || '').toUpperCase();
   if (ocrResult?.is_non_invoice_document || ['AIRWAY_BILL', 'PACKING_LIST', 'DELIVERY_RECEIPT'].includes(type)) {
     return 'Document is a shipping/non-invoice document (packing list, AWB, delivery or shipment document) — not eligible for invoice creation.';
@@ -64,6 +98,13 @@ export function intakeReviewReason(ocrResult: any, fileName: string, subject = '
       hasUsdEquivalent: Number(ocrResult?.usd_equivalent || 0) > 0,
     });
     if (policy.park) return `Only USD invoices are eligible for automatic capture (received: ${currency}).`;
+    // USD-only amounts: normalize now; park when no conversion basis exists.
+    const usd = normalizeToUsd(currency, Number(ocrResult?.total_amount || 0), {
+      usdEquivalent: (ocrResult as any)?.usd_equivalent ?? null,
+      exchangeRateToUsd: (ocrResult as any)?.exchange_rate_to_usd ?? null,
+    });
+    if (!usd) return `Currency ${currency} has no USD equivalent or exchange rate — cannot store a non-USD amount.`;
+    (ocrResult as any)._usdNormalization = usd;
     (ocrResult as any)._currencyPolicy = policy;
   } else if (!currency) {
     return 'Only USD invoices are eligible for automatic capture (received: blank).';
@@ -79,6 +120,21 @@ export function intakeReviewReason(ocrResult: any, fileName: string, subject = '
  * 'exception'/'auto' mode that was not allowlisted). Also flips the invoice to
  * EXCEPTION_FLAGGED so accounting sees it. No-op otherwise.
  */
+/**
+ * USD-only amounts policy (2026-09-28): stored invoice amounts must be USD.
+ * Applies the computed normalization to the OCR result before record creation —
+ * total_amount/currency become the USD settlement; the original currency, the
+ * original amount, and the rate used are preserved in the reference fields.
+ */
+function applyUsdNormalization(ocrResult: any): void {
+  const usd = ocrResult?._usdNormalization;
+  if (!usd || !ocrResult?.currency || String(ocrResult.currency).toUpperCase() === 'USD') return;
+  ocrResult.invoice_currency_original = usd.originalCurrency;
+  ocrResult.exchange_rate_to_usd = usd.rateUsed;
+  ocrResult.total_amount = usd.usdAmount;
+  ocrResult.currency = usd.usdCurrency;
+}
+
 async function attachCurrencyPolicyException(
   invoiceId: string,
   invoiceNumber: string,
@@ -401,9 +457,12 @@ async function processSingleInvoiceAttachment(
     const ocrResult = await analyzeIntakeWithRetry(buffer, contentType, fileName, 'GRAPH', {
       mailbox: mailboxAddress, messageId: message.id, attachmentId,
     });
+    const graphFileHash = generateFileHash(buffer);
+    const graphIdempotencyKey = buildIntakeIdempotencyKey(message.id, graphFileHash);
+    const graphControls = await applyIntakeControls(ocrResult, buffer);
     await recordEmailIntakeEvent({
       source: 'GRAPH', stage: 'EXTRACTED', mailbox: mailboxAddress, messageId: message.id,
-      attachmentId, fileName, metadata: { invoice_number: ocrResult.invoice_number, confidence: ocrResult.ocr_confidence_score },
+      attachmentId, fileName, metadata: { invoice_number: ocrResult.invoice_number, confidence: ocrResult.ocr_confidence_score, idempotency_key: graphIdempotencyKey, ...graphControls.metadata },
     });
 
     // Do not create invoice rows for non-invoice attachments or incomplete
@@ -418,6 +477,26 @@ async function processSingleInvoiceAttachment(
       });
       await alertEmailIntakeFailure({ source: 'Invoice intake review required', fileName, error: reviewReason });
       logger.warn(`[Email Intake] ${fileName} routed to review: ${reviewReason}`);
+      return;
+    }
+    if (graphControls.reasons.length > 0) {
+      const controlReason = graphControls.reasons.join(' ');
+      await recordEmailIntakeEvent({ source: 'GRAPH', stage: 'REVIEW_REQUIRED', status: 'FAILED', mailbox: mailboxAddress, messageId: message.id, attachmentId, fileName, error: controlReason, metadata: graphControls.metadata });
+      await alertEmailIntakeFailure({ source: 'Invoice intake control', fileName, error: controlReason });
+      logger.warn(`[Email Intake] ${fileName} routed to review: ${controlReason}`);
+      return;
+    }
+
+    const graphDuplicate = await checkEmailDuplicate(buffer, { internetMessageId: message.id }, {
+      vendorName: ocrResult.vendor_name,
+      invoiceNumber: ocrResult.invoice_number,
+      amount: Number(ocrResult.total_amount),
+      invoiceDate: ocrResult.invoice_date || null,
+    });
+    if (graphDuplicate.isDuplicate) {
+      const duplicateReason = `${graphDuplicate.detail}; retained as review-only and no duplicate invoice record was created.`;
+      await recordEmailIntakeEvent({ source: 'GRAPH', stage: 'REVIEW_REQUIRED', status: 'FAILED', mailbox: mailboxAddress, messageId: message.id, attachmentId, fileName, error: duplicateReason, metadata: { duplicate_level: graphDuplicate.level, existing_invoice_id: graphDuplicate.existingInvoiceId } });
+      await alertEmailIntakeFailure({ source: 'Invoice duplicate protection', fileName, error: duplicateReason });
       return;
     }
 
@@ -487,6 +566,7 @@ async function processSingleInvoiceAttachment(
     }
 
     // Create invoice record with BRD v5.0 schema fields
+    applyUsdNormalization(ocrResult);
     const invoice = await prisma.invoice.create({
       data: {
         invoice_number: ocrResult.invoice_number,
@@ -526,7 +606,8 @@ async function processSingleInvoiceAttachment(
         priority_pay_date: ocrResult.priority_pay_date ? new Date(ocrResult.priority_pay_date) : null,
         is_duplicate: false,
         ocr_confidence_score: ocrResult.ocr_confidence_score || undefined,
-        ocr_raw_data: ocrResult as any,
+        ocr_raw_data: { ...ocrResult, email_internet_message_id: message.id, attachment_file_hash: graphFileHash, intake_idempotency_key: graphIdempotencyKey } as any,
+        invoice_hash: graphFileHash,
         beneficiary_name: (ocrResult as any).bank_info?.beneficiary_name || (ocrResult as any).beneficiary_name || undefined,
         bank_name: (ocrResult as any).bank_info?.bank_name || (ocrResult as any).bank_name || undefined,
         swift_code: (ocrResult as any).bank_info?.swift_code || (ocrResult as any).swift_code || undefined,
@@ -735,7 +816,10 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
 
     // Analyze invoice using OCR
     const ocrResult = await analyzeIntakeWithRetry(buffer, 'application/pdf', data.fileName, 'SHAREPOINT', { intakeKey });
-    await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'EXTRACTED', messageId: intakeKey, fileName: data.fileName, metadata: { invoice_number: ocrResult.invoice_number, confidence: ocrResult.ocr_confidence_score } });
+    const sharePointFileHash = generateFileHash(buffer);
+    const sharePointIdempotencyKey = buildIntakeIdempotencyKey(intakeKey, sharePointFileHash);
+    const sharePointControls = await applyIntakeControls(ocrResult, buffer);
+    await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'EXTRACTED', messageId: intakeKey, fileName: data.fileName, metadata: { invoice_number: ocrResult.invoice_number, confidence: ocrResult.ocr_confidence_score, idempotency_key: sharePointIdempotencyKey, ...sharePointControls.metadata } });
 
     const reviewReason = intakeReviewReason(ocrResult, data.fileName, data.emailSubject || '');
     if (reviewReason) {
@@ -743,6 +827,24 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
       await alertEmailIntakeFailure({ source: 'SharePoint invoice intake review required', fileName: data.fileName, error: reviewReason });
       logger.warn(`[SharePoint Intake] ${data.fileName} routed to review: ${reviewReason}`);
       return { success: false, status: 'REVIEW_REQUIRED', error: reviewReason };
+    }
+    if (sharePointControls.reasons.length > 0) {
+      const controlReason = sharePointControls.reasons.join(' ');
+      await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'REVIEW_REQUIRED', status: 'FAILED', messageId: intakeKey, fileName: data.fileName, error: controlReason, metadata: sharePointControls.metadata });
+      await alertEmailIntakeFailure({ source: 'SharePoint invoice intake control', fileName: data.fileName, error: controlReason });
+      logger.warn(`[SharePoint Intake] ${data.fileName} routed to review: ${controlReason}`);
+      return { success: false, status: 'REVIEW_REQUIRED', error: controlReason };
+    }
+    const sharePointDuplicate = await checkEmailDuplicate(buffer, undefined, {
+      vendorName: ocrResult.vendor_name,
+      invoiceNumber: ocrResult.invoice_number,
+      amount: Number(ocrResult.total_amount),
+      invoiceDate: ocrResult.invoice_date || null,
+    });
+    if (sharePointDuplicate.isDuplicate) {
+      const duplicateReason = `${sharePointDuplicate.detail}; no duplicate invoice record was created.`;
+      await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'REVIEW_REQUIRED', status: 'FAILED', messageId: intakeKey, fileName: data.fileName, error: duplicateReason, metadata: { duplicate_level: sharePointDuplicate.level, existing_invoice_id: sharePointDuplicate.existingInvoiceId } });
+      return { success: false, status: 'REVIEW_REQUIRED', error: duplicateReason };
     }
 
     // OCR confidence threshold check
@@ -791,6 +893,7 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
     }
 
     // Create invoice record
+    applyUsdNormalization(ocrResult);
     const invoice = await prisma.invoice.create({
       data: {
         invoice_number: ocrResult.invoice_number,
@@ -820,7 +923,8 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
         priority_pay_date: ocrResult.priority_pay_date ? new Date(ocrResult.priority_pay_date) : null,
         is_duplicate: false,
         ocr_confidence_score: ocrResult.ocr_confidence_score || undefined,
-        ocr_raw_data: ocrResult as any,
+        ocr_raw_data: { ...ocrResult, attachment_file_hash: sharePointFileHash, intake_idempotency_key: sharePointIdempotencyKey } as any,
+        invoice_hash: sharePointFileHash,
         beneficiary_name: (ocrResult as any).bank_info?.beneficiary_name || (ocrResult as any).beneficiary_name || undefined,
         bank_name: (ocrResult as any).bank_info?.bank_name || (ocrResult as any).bank_name || undefined,
         swift_code: (ocrResult as any).bank_info?.swift_code || (ocrResult as any).swift_code || undefined,
@@ -993,7 +1097,10 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
 
     // Analyze invoice using OCR
     const ocrResult = await analyzeIntakeWithRetry(buffer, data.contentType, data.fileName, 'POWER_AUTOMATE', { intakeKey });
-    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'EXTRACTED', messageId: intakeKey, fileName: data.fileName, metadata: { invoice_number: ocrResult.invoice_number, confidence: ocrResult.ocr_confidence_score } });
+    const powerAutomateFileHash = generateFileHash(buffer);
+    const powerAutomateIdempotencyKey = buildIntakeIdempotencyKey(intakeKey, powerAutomateFileHash);
+    const powerAutomateControls = await applyIntakeControls(ocrResult, buffer);
+    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'EXTRACTED', messageId: intakeKey, fileName: data.fileName, metadata: { invoice_number: ocrResult.invoice_number, confidence: ocrResult.ocr_confidence_score, idempotency_key: powerAutomateIdempotencyKey, ...powerAutomateControls.metadata } });
 
     const reviewReason = intakeReviewReason(ocrResult, data.fileName, data.emailSubject || '');
     if (reviewReason) {
@@ -1001,6 +1108,24 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
       await alertEmailIntakeFailure({ source: 'Power Automate invoice intake review required', fileName: data.fileName, error: reviewReason });
       logger.warn(`[Power Automate] ${data.fileName} routed to review: ${reviewReason}`);
       return { success: false, status: 'REVIEW_REQUIRED', error: reviewReason };
+    }
+    if (powerAutomateControls.reasons.length > 0) {
+      const controlReason = powerAutomateControls.reasons.join(' ');
+      await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'FAILED', messageId: intakeKey, fileName: data.fileName, error: controlReason, metadata: powerAutomateControls.metadata });
+      await alertEmailIntakeFailure({ source: 'Power Automate invoice intake control', fileName: data.fileName, error: controlReason });
+      logger.warn(`[Power Automate] ${data.fileName} routed to review: ${controlReason}`);
+      return { success: false, status: 'REVIEW_REQUIRED', error: controlReason };
+    }
+    const powerAutomateDuplicate = await checkEmailDuplicate(buffer, undefined, {
+      vendorName: ocrResult.vendor_name,
+      invoiceNumber: ocrResult.invoice_number,
+      amount: Number(ocrResult.total_amount),
+      invoiceDate: ocrResult.invoice_date || null,
+    });
+    if (powerAutomateDuplicate.isDuplicate) {
+      const duplicateReason = `${powerAutomateDuplicate.detail}; no duplicate invoice record was created.`;
+      await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'FAILED', messageId: intakeKey, fileName: data.fileName, error: duplicateReason, metadata: { duplicate_level: powerAutomateDuplicate.level, existing_invoice_id: powerAutomateDuplicate.existingInvoiceId } });
+      return { success: false, status: 'REVIEW_REQUIRED', error: duplicateReason };
     }
 
     // OCR confidence threshold check
@@ -1068,6 +1193,7 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
     }
 
     // Create invoice record
+    applyUsdNormalization(ocrResult);
     const invoice = await prisma.invoice.create({
       data: {
         invoice_number: ocrResult.invoice_number,
@@ -1097,7 +1223,8 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
         priority_pay_date: ocrResult.priority_pay_date ? new Date(ocrResult.priority_pay_date) : null,
         is_duplicate: false,
         ocr_confidence_score: ocrResult.ocr_confidence_score || undefined,
-        ocr_raw_data: ocrResult as any,
+        ocr_raw_data: { ...ocrResult, attachment_file_hash: powerAutomateFileHash, intake_idempotency_key: powerAutomateIdempotencyKey } as any,
+        invoice_hash: powerAutomateFileHash,
         beneficiary_name: (ocrResult as any).bank_info?.beneficiary_name || (ocrResult as any).beneficiary_name || undefined,
         bank_name: (ocrResult as any).bank_info?.bank_name || (ocrResult as any).bank_name || undefined,
         swift_code: (ocrResult as any).bank_info?.swift_code || (ocrResult as any).swift_code || undefined,

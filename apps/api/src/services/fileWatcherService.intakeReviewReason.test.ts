@@ -13,7 +13,7 @@ vi.mock('./emailIntakeMonitoringService', () => ({ recordEmailIntakeEvent: email
 vi.mock('./duplicateDetectionService', () => ({ checkDuplicateInvoice: vi.fn(), storeInvoiceHashFromStorage: vi.fn() }));
 vi.mock('./ocrDateSanityService', () => ({ runOcrDateSanityCheck: vi.fn() }));
 
-import { intakeReviewReason } from './fileWatcherService';
+import { intakeReviewReason, shouldTreatAsRevision } from './fileWatcherService';
 
 describe('fileWatcherService.intakeReviewReason — body classification beats filename hints', () => {
   beforeEach(() => {
@@ -102,5 +102,30 @@ describe('fileWatcherService.intakeReviewReason — body classification beats fi
     expect(
       intakeReviewReason({ ...baseValidInvoice, total_amount: 0 }, 'plain.pdf')
     ).toMatch(/A valid non-zero invoice amount/);
+  });
+});
+
+describe('fileWatcherService revision replacement policy', () => {
+  it('treats a changed PDF with the same invoice number as a revision while still with the coordinator', () => {
+    expect(shouldTreatAsRevision(
+      { status: 'RECEIVED', vendor_name_raw: 'PT Victoria Label', invoice_hash: null },
+      { vendorName: 'PT.VICTORIA LABEL', fileHash: 'new-pdf-hash' },
+    )).toBe(true);
+  });
+
+  it('does not silently replace an invoice after it has entered approval/accounting', () => {
+    for (const status of ['PENDING_MANAGER', 'PENDING_ACCOUNTING', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED']) {
+      expect(shouldTreatAsRevision(
+        { status, vendor_name_raw: 'PT Victoria Label', invoice_hash: 'old-pdf-hash' },
+        { vendorName: 'PT.VICTORIA LABEL', fileHash: 'new-pdf-hash' },
+      )).toBe(false);
+    }
+  });
+
+  it('does not treat an identical PDF as a replacement', () => {
+    expect(shouldTreatAsRevision(
+      { status: 'EXCEPTION_FLAGGED', vendor_name_raw: 'PT Victoria Label', invoice_hash: 'same-hash' },
+      { vendorName: 'PT Victoria Label', fileHash: 'same-hash' },
+    )).toBe(false);
   });
 });

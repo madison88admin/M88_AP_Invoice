@@ -29,6 +29,91 @@
  * the loop before posting.
  */
 
+/**
+ * USD-only amounts policy (2026-09-28):
+ * Madison88 pays in USD — every stored invoice amount must be USD.
+ * Non-USD intake is allowed to CREATE an invoice, but the amount is immediately
+ * normalized to USD:
+ *   1. `usd_equivalent` stated on the invoice (strongest — printed by the vendor)
+ *   2. `exchange_rate_to_usd` stated on the invoice (e.g. "@7.70", "settle in USD @7.70")
+ *   3. `INTAKE_DEFAULT_FX_RATES` env ("HKD=7.8;IDR=16500;...") as last resort
+ * The original currency/amount/rate are preserved in invoice_currency_original /
+ * exchange_rate_to_usd / ocr_raw_data; only the settlement fields become USD.
+ */
+export const DEFAULT_FX_FALLBACK: Record<string, number> = {
+  HKD: 7.8,
+  EUR: 0.92,
+  PHP: 58,
+  IDR: 16000,
+  CNY: 7.2,
+  VND: 25000,
+  JPY: 150,
+  CAD: 1.37,
+  TWD: 32,
+  RMB: 7.2, // common invoice alias for CNY
+};
+
+export interface UsdNormalization {
+  /** USD amount to store in total_amount. */
+  usdAmount: number;
+  /** USD currency code to store in currency. */
+  usdCurrency: 'USD';
+  /** Original currency code (e.g. HKD) preserved for reference. */
+  originalCurrency: string;
+  /** Original non-USD amount as printed on the invoice. */
+  originalAmount: number;
+  /** Exchange rate used (original currency per 1 USD). */
+  rateUsed: number;
+  /** Where the rate/amount came from: invoice_stated_usd | invoice_stated_rate | env_fallback. */
+  basis: 'invoice_stated_usd' | 'invoice_stated_rate' | 'env_fallback';
+}
+
+/** Parse "HKD=7.8;IDR=16500" → { HKD: 7.8, IDR: 16500 }. */
+export function getDefaultFxRates(): Record<string, number> {
+  const raw = String(process.env.INTAKE_DEFAULT_FX_RATES || '');
+  const out: Record<string, number> = {};
+  for (const part of raw.split(';')) {
+    const [code, rate] = part.split('=');
+    if (!code || !rate) continue;
+    const n = Number(rate);
+    if (/^[A-Z]{3}$/.test(code.trim().toUpperCase()) && Number.isFinite(n) && n > 0) {
+      out[code.trim().toUpperCase()] = n;
+    }
+  }
+  return out;
+}
+
+/**
+ * Convert a non-USD invoice amount to USD. Only call when currency !== 'USD'.
+ * Returns null when no conversion basis exists (caller must park the file).
+ */
+export function normalizeToUsd(
+  currency: string,
+  amount: number,
+  opts?: { usdEquivalent?: number | null; exchangeRateToUsd?: number | null; usdAmountOnInvoice?: number | null }
+): UsdNormalization | null {
+  const code = String(currency || '').trim().toUpperCase();
+  const amt = Number(amount);
+  if (!code || code === 'USD' || !Number.isFinite(amt) || amt <= 0) return null;
+
+  // 1. Invoice itself states a USD settlement amount
+  const statedUsd = Number(opts?.usdEquivalent ?? opts?.usdAmountOnInvoice ?? NaN);
+  if (Number.isFinite(statedUsd) && statedUsd > 0) {
+    return { usdAmount: statedUsd, usdCurrency: 'USD', originalCurrency: code, originalAmount: amt, rateUsed: amt / statedUsd, basis: 'invoice_stated_usd' };
+  }
+  // 2. Invoice states an exchange rate
+  const statedRate = Number(opts?.exchangeRateToUsd ?? NaN);
+  if (Number.isFinite(statedRate) && statedRate > 0) {
+    return { usdAmount: amt / statedRate, usdCurrency: 'USD', originalCurrency: code, originalAmount: amt, rateUsed: statedRate, basis: 'invoice_stated_rate' };
+  }
+  // 3. Env fallback table (per 1 USD), then the built-in defaults
+  const envRate = getDefaultFxRates()[code] || DEFAULT_FX_FALLBACK[code];
+  if (envRate && envRate > 0) {
+    return { usdAmount: amt / envRate, usdCurrency: 'USD', originalCurrency: code, originalAmount: amt, rateUsed: envRate, basis: 'env_fallback' };
+  }
+  return null;
+}
+
 /** Currencies the extractor is known to produce reliably. */
 export const KNOWN_INTAKE_CURRENCIES = ['USD', 'HKD', 'IDR', 'EUR', 'PHP', 'JPY'] as const;
 

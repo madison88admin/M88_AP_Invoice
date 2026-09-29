@@ -7,7 +7,7 @@ export interface DuplicateDetectionResult {
   hash: string;
   existing_invoice_id?: string;
   existing_invoice_number?: string;
-  duplicate_type?: 'EXACT' | 'FUZZY' | 'SAME_NUMBER_DIFFERENT_AMOUNT' | 'SAME_NUMBER_DIFFERENT_VENDOR' | 'SAME_NUMBER_DIFFERENT_MPO';
+  duplicate_type?: 'EXACT' | 'FUZZY' | 'SAME_NUMBER_DIFFERENT_AMOUNT' | 'SAME_NUMBER_DIFFERENT_DATE' | 'SAME_NUMBER_DIFFERENT_VENDOR' | 'SAME_NUMBER_DIFFERENT_MPO';
   fuzzy_match_details?: {
     existing_invoice_number: string;
     existing_amount: number;
@@ -25,6 +25,23 @@ export interface DuplicateDetectionResult {
 export function generateInvoiceHash(invoiceNumber: string, vendorId: string, amount: number, invoiceDate: Date): string {
   const hashInput = `${invoiceNumber}${vendorId}${amount}${invoiceDate.toISOString()}`;
   return crypto.createHash('sha256').update(hashInput).digest('hex');
+}
+
+export function classifySameNumberMatch(input: {
+  existingAmount: number;
+  incomingAmount: number;
+  existingDate: Date | null;
+  incomingDate: Date;
+}): { duplicateType: 'EXACT' | 'SAME_NUMBER_DIFFERENT_AMOUNT' | 'SAME_NUMBER_DIFFERENT_DATE'; amountMismatch: boolean; dateMismatch: boolean } {
+  const amountMismatch = Math.abs(input.existingAmount - input.incomingAmount) > 0.01;
+  const existingDate = input.existingDate ? input.existingDate.toISOString().slice(0, 10) : null;
+  const incomingDate = input.incomingDate.toISOString().slice(0, 10);
+  const dateMismatch = existingDate !== null && existingDate !== incomingDate;
+  return {
+    duplicateType: amountMismatch ? 'SAME_NUMBER_DIFFERENT_AMOUNT' : dateMismatch ? 'SAME_NUMBER_DIFFERENT_DATE' : 'EXACT',
+    amountMismatch,
+    dateMismatch,
+  };
 }
 
 /**
@@ -46,6 +63,9 @@ export async function checkDuplicateInvoice(
     where: {
       invoice_number: invoiceNumber,
       vendor_id: vendorId,
+      // A superseded/cancelled parent is retained for audit and must not
+      // block the replacement revision as a live duplicate.
+      status: { not: 'CANCELLED' as any },
       ...(context?.invoice_type ? { invoice_type: context.invoice_type as any } : {}),
       ...(context?.mpo_base_number ? { mpo_base_number: context.mpo_base_number } : {}),
       ...(context?.mpo_order_sequence ? { mpo_order_sequence: context.mpo_order_sequence } : {}),
@@ -56,6 +76,7 @@ export async function checkDuplicateInvoice(
       id: true,
       invoice_number: true,
       total_amount: true,
+      invoice_date: true,
       mpo_base_number: true,
       mpo_order_sequence: true,
     },
@@ -81,18 +102,27 @@ export async function checkDuplicateInvoice(
       }
     }
 
-    if (amountMismatchRate > 0.01) {
+    const matchClassification = classifySameNumberMatch({
+      existingAmount,
+      incomingAmount: amount,
+      existingDate: (existingInvoice as any).invoice_date || null,
+      incomingDate: invoiceDate,
+    });
+
+    if (matchClassification.amountMismatch || matchClassification.dateMismatch) {
       return {
         is_duplicate: true,
         hash,
         existing_invoice_id: existingInvoice.id,
         existing_invoice_number: existingInvoice.invoice_number,
-        duplicate_type: 'SAME_NUMBER_DIFFERENT_AMOUNT',
+        duplicate_type: matchClassification.duplicateType,
         fuzzy_match_details: {
           existing_invoice_number: existingInvoice.invoice_number,
           existing_amount: existingAmount,
-          existing_date: invoiceDate,
-          match_reason: `Same invoice number and vendor but different amount (existing: $${existingAmount.toFixed(2)}, new: $${amount.toFixed(2)}, diff: ${(amountMismatchRate * 100).toFixed(1)}%)`,
+          existing_date: (existingInvoice as any).invoice_date || invoiceDate,
+          match_reason: matchClassification.amountMismatch
+            ? `Same invoice number and vendor but different amount (existing: $${existingAmount.toFixed(2)}, new: $${amount.toFixed(2)}, diff: ${(amountMismatchRate * 100).toFixed(1)}%)`
+            : `Same invoice number and vendor but different invoice date (existing: ${existingInvoice.invoice_date?.toISOString().slice(0, 10) || 'unknown'}, new: ${invoiceDate.toISOString().slice(0, 10)})`,
         },
         risk_level: 'HIGH',
       };
@@ -113,6 +143,7 @@ export async function checkDuplicateInvoice(
     where: {
       invoice_number: invoiceNumber,
       vendor_id: { not: vendorId },
+      status: { not: 'CANCELLED' as any },
       ...(currentInvoiceId && { id: { not: currentInvoiceId } }),
     },
     select: {
@@ -203,6 +234,7 @@ async function checkFuzzyDuplicate(
   const fuzzyMatches = await prisma.invoice.findMany({
     where: {
       vendor_id: vendorId,
+      status: { not: 'CANCELLED' as any },
       total_amount: amount,
       invoice_date: {
         gte: minDate,
@@ -254,6 +286,7 @@ async function checkNearMissDuplicate(
   const nearMissMatches = await prisma.invoice.findMany({
     where: {
       vendor_id: vendorId,
+      status: { not: 'CANCELLED' as any },
       total_amount: { gte: minAmount, lte: maxAmount },
       invoice_date: { gte: dateDayStart, lt: dateDayEnd },
       ...(invoiceNumber && { invoice_number: { not: invoiceNumber } }),

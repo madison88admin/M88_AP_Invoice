@@ -418,6 +418,17 @@ export const getDistinctBrands = async (): Promise<string[]> => {
 export const getInvoices = async (filters: any, userRole?: string) => {
   const where: any = {};
 
+  // A replaced invoice remains in the database for audit, but the normal
+  // repository should show only the current revision.  Keep cancelled records
+  // visible when the user explicitly filters for CANCELLED; otherwise hide a
+  // cancelled parent that has a live child revision.
+  if (!filters.status) {
+    where.NOT = {
+      status: InvoiceStatus.CANCELLED,
+      child_invoices: { some: { status: { not: InvoiceStatus.CANCELLED } } },
+    };
+  }
+
   if (filters.status) {
     const validStatuses = Object.values(InvoiceStatus);
     if (validStatuses.includes(filters.status)) {
@@ -626,6 +637,32 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     const blockReason = getPayableBlockReason({ document_type: String(invoiceData.invoice_type) }, { skipFilenameHints: true });
     if (blockReason) {
       throw new AppError(`Cannot change invoice type: ${blockReason}`, 422);
+    }
+  }
+
+  // USD-only amounts policy: the settlement amount and currency must stay USD.
+  // SUPERADMIN may override for data-correction cases (amount stays in USD but
+  // this allows fixing exchange-rate reference fields when needed).
+  if (userRole !== 'SUPERADMIN') {
+    const { normalizeToUsd } = await import('./currencyPolicyService');
+    const newCurrency = String(invoiceData.currency ?? existing.currency ?? 'USD').toUpperCase();
+    if (newCurrency !== 'USD') {
+      throw new AppError('Amounts must be stored in USD. Store the USD settlement amount and keep the original currency in invoice_currency_original.', 422);
+    }
+    if (invoiceData.total_amount !== undefined) {
+      const amt = Number(invoiceData.total_amount);
+      if (!Number.isFinite(amt) || amt <= 0) {
+        throw new AppError('Total amount must be a positive USD value.', 422);
+      }
+      // Reference field sanity: if the original currency is non-USD, a rate must be present.
+      const origCur = String(invoiceData.invoice_currency_original ?? existing.invoice_currency_original ?? '').toUpperCase();
+      const rate = invoiceData.exchange_rate_to_usd !== undefined ? Number(invoiceData.exchange_rate_to_usd) : (existing.exchange_rate_to_usd ? Number(existing.exchange_rate_to_usd) : undefined);
+      if (origCur && origCur !== 'USD') {
+        const norm = normalizeToUsd(origCur, amt, { exchangeRateToUsd: rate ?? null });
+        if (!norm) {
+          throw new AppError(`Original currency ${origCur} has no exchange rate — cannot keep a non-USD reference without one.`, 422);
+        }
+      }
     }
   }
 
@@ -1689,7 +1726,7 @@ export async function getDuplicateInvoices() {
   const invoices = await prisma.invoice.findMany({
     where: {
       invoice_number: { not: '' },
-      status: { not: InvoiceStatus.REJECTED },
+      status: { notIn: [InvoiceStatus.CANCELLED, InvoiceStatus.REJECTED] },
     },
     select: {
       id: true,

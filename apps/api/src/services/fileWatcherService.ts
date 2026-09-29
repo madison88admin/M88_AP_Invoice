@@ -26,9 +26,11 @@ import { detectMultiInvoice, splitPdfByPageRanges } from './multiInvoiceDetector
 import { sanitizeInvoiceType, sanitizeCategory } from '../utils/enumSanitizer';
 import { parseMPOReference } from '../utils/mpoReference';
 import { alertEmailIntakeFailure, recordEmailIntakeEvent } from './emailIntakeMonitoringService';
-import { evaluateCurrencyPolicy } from './currencyPolicyService';
+import { evaluateCurrencyPolicy, normalizeToUsd } from './currencyPolicyService';
 import { analyzeWithRetry } from './intakeRetryService';
 import { isObviouslyNonInvoiceFilename, nonInvoiceSuppressionReason } from './nonInvoiceSuppression';
+import { PDFDocument } from 'pdf-lib';
+import { evaluateIntakeControls } from './intakeControlService';
 
 const INCOMING_DIR = process.env.WATCHER_INCOMING_DIR || '/incoming-invoices';
 const PROCESSING_DIR = process.env.WATCHER_PROCESSING_DIR || '/incoming-invoices/processing';
@@ -41,6 +43,14 @@ const NON_INVOICE_HINTS = /\b(statement|packing\s*(?:list|slip)|delivery\s*(?:no
 let watcherInterval: NodeJS.Timeout | null = null;
 let isProcessing = false;
 const processedFiles = new Set<string>();
+
+async function countPdfPages(buffer: Buffer): Promise<number | undefined> {
+  try {
+    return (await PDFDocument.load(buffer, { ignoreEncryption: true })).getPageCount();
+  } catch {
+    return undefined;
+  }
+}
 
 function safeInvoiceDate(value: unknown): Date | null {
   if (!value) return null;
@@ -58,12 +68,38 @@ function normalizeVendorKey(value: unknown): string {
     .replace(/(?:LIMITED|LTD|INCORPORATED|INC|CORPORATION|CORP|COMPANY|CO)$/g, '');
 }
 
+// A corrected/replacement PDF may keep the same invoice number and amount. It
+// is still a new revision when the file content changes, but only while the
+// invoice is still with the coordinator. Once it has been endorsed into an
+// approval or accounting/payment stage, the current cancellation-request
+// workflow must be used instead of silently replacing the record.
+const REVISION_REPLACEMENT_STATUSES = new Set<string>([
+  InvoiceStatus.RECEIVED,
+  InvoiceStatus.OCR_PROCESSING,
+  InvoiceStatus.VALIDATION_PENDING,
+  InvoiceStatus.EXCEPTION_FLAGGED,
+  InvoiceStatus.PENDING_COORDINATOR,
+]);
+
+export function shouldTreatAsRevision(
+  existing: { status: string; vendor_name_raw?: string | null; invoice_hash?: string | null },
+  incoming: { vendorName?: string | null; fileHash: string },
+): boolean {
+  const sameVendor = Boolean(incoming.vendorName)
+    && normalizeVendorKey(existing.vendor_name_raw) === normalizeVendorKey(incoming.vendorName);
+  const changedFile = existing.invoice_hash !== incoming.fileHash;
+  const coordinatorOwned = REVISION_REPLACEMENT_STATUSES.has(String(existing.status));
+  return Boolean(sameVendor && changedFile && coordinatorOwned);
+}
+
 /**
  * Power Automate deliberately sends every non-inline PDF here.  The backend,
  * not the mail-flow filename, decides whether it is safe to create as an AP
  * invoice.  Ambiguous documents stay available in manual-review.
  */
 export function intakeReviewReason(ocrResult: any, fileName = ''): string | null {
+  const consensusReviewFields = Array.isArray(ocrResult?.consensus_review_required_fields) ? ocrResult.consensus_review_required_fields : [];
+  if (consensusReviewFields.length > 0) return `OCR engines disagreed on: ${consensusReviewFields.join(', ')}`;
   const type = String(ocrResult?.invoice_type || ocrResult?.document_type || '').toUpperCase();
   const amount = Number(ocrResult?.total_amount ?? ocrResult?.amount);
   const currency = String(ocrResult?.currency || '').toUpperCase();
@@ -105,6 +141,15 @@ export function intakeReviewReason(ocrResult: any, fileName = ''): string | null
     if (policy.park) {
       return `Currency ${currency} requires manual review before invoice creation`;
     }
+    // USD-only amounts: compute the USD settlement now; park if no basis exists.
+    const usd = normalizeToUsd(currency, Number((ocrResult as any)?.total_amount || 0), {
+      usdEquivalent: (ocrResult as any)?.usd_equivalent ?? null,
+      exchangeRateToUsd: (ocrResult as any)?.exchange_rate_to_usd ?? null,
+    });
+    if (!usd) {
+      return `Currency ${currency} has no USD equivalent or exchange rate — cannot store a non-USD amount`;
+    }
+    (ocrResult as any)._usdNormalization = usd;
     // allowed: store the decision for the creation step to attach as an exception
     (ocrResult as any)._currencyPolicy = policy;
   }
@@ -455,7 +500,12 @@ async function processSingleInvoiceBuffer(
         logger.info(`[File Watcher] Recovered invoice date "${ocrResult.invoice_date}" from filename "${fileName}"`);
       }
     }
-    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'EXTRACTED', fileName, metadata: { documentType: ocrResult?.document_type, currency: ocrResult?.currency } });
+    const inputPages = await countPdfPages(fileBuffer);
+    const rawProcessedPages = Number(ocrResult?.processed_pages ?? ocrResult?.pages_processed ?? ocrResult?.raw_data?.processed_pages);
+    const processedPages = Number.isFinite(rawProcessedPages) ? rawProcessedPages : inputPages;
+    ocrResult.input_pages = inputPages;
+    ocrResult.processed_pages = processedPages;
+    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'EXTRACTED', fileName, metadata: { documentType: ocrResult?.document_type, currency: ocrResult?.currency, input_pages: inputPages, processed_pages: processedPages, page_coverage_complete: inputPages === undefined || inputPages === processedPages } });
   } catch (err) {
     logger.error(`[File Watcher] OCR failed for ${fileName}${partLabel}:`, err);
     if (splitIndex === undefined) safeMove(processingPath, FAILED_DIR);
@@ -482,6 +532,17 @@ async function processSingleInvoiceBuffer(
     if (splitIndex === undefined) safeMove(processingPath, MANUAL_REVIEW_DIR);
     await createAuditLog(null, 'WATCHER_REVIEW_REQUIRED', `${fileName}${partLabel}: ${reviewReason}`);
     await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'FAILED', fileName, error: reviewReason });
+    return;
+  }
+
+  const intakeControls = evaluateIntakeControls(ocrResult);
+  if (intakeControls.reasons.length > 0) {
+    const reason = intakeControls.reasons.join(' ');
+    logger.info(`[File Watcher] ${fileName}${partLabel} → ManualReview: ${reason}`);
+    if (splitIndex === undefined) safeMove(processingPath, MANUAL_REVIEW_DIR);
+    await createAuditLog(null, 'WATCHER_INTAKE_CONTROL_REVIEW', `${fileName}${partLabel}: ${reason}`);
+    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'FAILED', fileName, error: reason, metadata: { intake_controls: intakeControls } });
+    await alertEmailIntakeFailure({ source: 'Power Automate intake control', fileName, error: reason });
     return;
   }
 
@@ -519,7 +580,6 @@ async function processSingleInvoiceBuffer(
   const fileHash = generateFileHash(fileBuffer);
   let revisionParent: any = null;
   if (ocrResult.invoice_number) {
-    const revisionHint = /\b(?:updated|revised|revision|corrected|replacement|final)\b/i.test(fileName);
     const incomingVendorKey = normalizeVendorKey(ocrResult.vendor_name);
     const sameNumber = await prisma.invoice.findMany({
       where: { invoice_number: ocrResult.invoice_number },
@@ -527,11 +587,7 @@ async function processSingleInvoiceBuffer(
       select: { id: true, revision: true, status: true, vendor_name_raw: true, total_amount: true, invoice_date: true, invoice_hash: true },
     });
     revisionParent = sameNumber.find((existing) => {
-      const sameVendor = incomingVendorKey && normalizeVendorKey(existing.vendor_name_raw) === incomingVendorKey;
-      const amountChanged = Math.abs(Number(existing.total_amount || 0) - Number(ocrResult.total_amount || 0)) > 0.01;
-      const dateChanged = Boolean(existing.invoice_date && ocrResult.invoice_date && new Date(existing.invoice_date).toISOString().slice(0, 10) !== new Date(ocrResult.invoice_date).toISOString().slice(0, 10));
-      const activeForReplacement = ![InvoiceStatus.POSTED_TO_QB, InvoiceStatus.PAYMENT_SCHEDULED, InvoiceStatus.PAID, InvoiceStatus.CANCELLED].includes(existing.status as any);
-      return Boolean(sameVendor && existing.invoice_hash && existing.invoice_hash !== fileHash && activeForReplacement && (amountChanged || dateChanged || revisionHint));
+      return shouldTreatAsRevision(existing, { vendorName: incomingVendorKey, fileHash });
     }) || null;
     if (revisionParent) {
       logger.info(`[File Watcher] Treating ${fileName} as revision ${revisionParent.revision + 1} of ${ocrResult.invoice_number}`);
@@ -656,6 +712,15 @@ async function processSingleInvoiceBuffer(
   try {
     // Parse MPO reference for base MPO, order sequence, and material code
     const headerParsedMpo = ocrResult.mpo_number ? parseMPOReference(ocrResult.mpo_number) : { baseMpo: null, orderSequence: null, materialCode: null };
+    // USD-only amounts policy: store the USD settlement in total_amount/currency and
+    // keep the original currency/amount/rate in the reference fields.
+    const usdNorm = (ocrResult as any)._usdNormalization;
+    if (usdNorm && ocrResult.currency && String(ocrResult.currency).toUpperCase() !== 'USD') {
+      ocrResult.invoice_currency_original = usdNorm.originalCurrency;
+      ocrResult.exchange_rate_to_usd = usdNorm.rateUsed;
+      ocrResult.total_amount = usdNorm.usdAmount;
+      ocrResult.currency = usdNorm.usdCurrency;
+    }
     const baseData: any = {
         invoice_number: effectiveInvoiceNumber,
         revision: revisionParent ? revisionParent.revision + 1 : 1,
@@ -971,6 +1036,7 @@ function isRetryableQueueReason(reason: string): boolean {
 function isLikelyInvoiceFilename(fileName: string): boolean {
   // Normalize separators so `Packing_List` / `AWB-123` behave like spaced words.
   const normalized = fileName.replace(/[_-]+/g, ' ');
+  if (isObviouslyNonInvoiceFilename(fileName)) return false;
   if (NON_INVOICE_HINTS.test(normalized)
     || /\b(?:PL|AWB|BL|DO|ML)\b/i.test(normalized)
     || /artwork|care\s*label|hangtag|barcode|tech\s*pack|trim\s*(?:received|sample)/i.test(normalized)) return false;

@@ -78,13 +78,13 @@ describe('getDuplicateInvoices', () => {
     expect(result).toHaveLength(0);
   });
 
-  it('queries only non-empty numbers and excludes REJECTED at the DB level', async () => {
+  it('queries only non-empty numbers and excludes cancelled/rejected records at the DB level', async () => {
     invoiceFindMany.mockResolvedValue([]);
 
     await getDuplicateInvoices();
 
     const where = invoiceFindMany.mock.calls[0][0].where;
     expect(where.invoice_number).toEqual({ not: '' });
-    expect(where.status).toEqual({ not: 'REJECTED' });
+    expect(where.status).toEqual({ notIn: ['CANCELLED', 'REJECTED'] });
   });
 });

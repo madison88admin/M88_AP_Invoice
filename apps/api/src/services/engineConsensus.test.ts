@@ -28,6 +28,7 @@ describe('mergeEngineResults', () => {
     expect(out.data.invoice_number).toBe('INV-1');
     expect(out.data.total_amount).toBe(100);
     expect(out.per_field.total_amount.consensus).toBe('TIE');
+    expect(out.review_required_fields).toContain('total_amount');
     expect(out.base_engine).toBe('groq');
   });
 

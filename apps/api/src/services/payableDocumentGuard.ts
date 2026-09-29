@@ -67,6 +67,19 @@ export const NON_INVOICE_FILENAME_HINTS =
   /(?:^|[^a-z0-9]|packinglist)(statement(?:\s*of\s*account)?|account\s*statement|packing\s*(?:list|slip)|packinglist|p_?list|delivery\s*(?:note|receipt)|goods\s*received?|purchase\s*order|sales\s*order|order\s*confirmation|remittance|payment\s*advice|shipping\s*document|shipment\s*document|air\s*way\s*bill|airway\s*bill|awb|waybill|bill\s*of\s*lading|cargo\s*manifest|do\s*madison|transport\s*label|bill\s*stub|account\s*information|shipment\s*receipt|commercial\s*invoice|faktur\s*pajak|tech\s*pack|trim\s*(?:received|receipt|sample))/i;
 
 /**
+ * The customer-specified exclusions are hard blocks even when an OCR engine
+ * incorrectly labels the attachment as a normal INVOICE. This separate check
+ * is intentionally narrower than NON_INVOICE_FILENAME_HINTS so generic
+ * filename hints can retain their existing payable-document safeguards.
+ */
+const HARD_EXCLUDED_FILENAME_HINTS =
+  /(?:air\s*way\s*bill|airway\s*bill|\bawb\b|waybill|packing\s*(?:list|slip)|packinglist|p_?list|commercial\s*invoice|faktur\s*pajak|tech\s*pack|techpack|trim\s*(?:received|receipt|sample)|trimreceived|trimreceipt)/i;
+
+export function filenameIsHardExcluded(fileName: string): boolean {
+  return HARD_EXCLUDED_FILENAME_HINTS.test(String(fileName || '').replace(/[_-]+/g, ' '));
+}
+
+/**
  * Substring-level test used by the guard. Compromise between the strict word-
  * boundary regex above (avoids false positives like "recipient") and the need
  * to catch concatenated names like "ATXFreightPackingList_THK.pdf".
@@ -136,6 +149,9 @@ export function getPayableBlockReason(
   //    Underscores/hyphens are normalized to spaces (same as
   //    nonInvoiceSuppression.ts) so `AWB_543505` and `PackingList_THK` match.
   const fileName = String(doc.fileName || '');
+  if (fileName && filenameIsHardExcluded(fileName)) {
+    return `Filename identifies an excluded non-invoice document (${fileName}) — not eligible for invoice creation`;
+  }
   if (fileName && !options?.skipFilenameHints) {
     const typeLooksPayable =
       docType.startsWith('INVOICE') ||

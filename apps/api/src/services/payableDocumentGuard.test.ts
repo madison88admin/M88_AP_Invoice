@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  filenameIsHardExcluded,
   getPayableBlockReason,
   validatePayableDocument,
 } from './payableDocumentGuard';
@@ -40,16 +41,16 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
     expect(reason).toMatch(/statement-of-account/);
   });
 
-  it('filename hint blocks only when document type is NOT clearly payable', () => {
+  it('hard-excluded filename blocks even when document type is clearly payable', () => {
     // Type unknown + AWB filename → blocked
     expect(
       getPayableBlockReason({ document_type: '', fileName: 'HKWSO1233291_DHL_AWB.pdf' })
     ).toMatch(/non-invoice document/);
 
-    // Same AWB filename but the body clearly says INVOICE → allowed (trust the body)
+    // The customer-specified AWB exclusion remains blocked even if OCR says INVOICE.
     expect(
       getPayableBlockReason({ document_type: 'INVOICE', fileName: 'HKWSO1233291_DHL_AWB.pdf' })
-    ).toBeNull();
+    ).toMatch(/excluded non-invoice/);
   });
 
   it('does not re-park valid invoices whose filename merely contains hint words', () => {
@@ -70,6 +71,21 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
     expect(getPayableBlockReason({ fileName: 'Faktur_Pajak_E832798169.pdf' })).toMatch(/non-invoice/);
     expect(getPayableBlockReason({ fileName: 'TechPack_SS27.pdf' })).toMatch(/non-invoice/);
     expect(getPayableBlockReason({ fileName: 'Trim_Receipt_PO-123.pdf' })).toMatch(/non-invoice/);
+  });
+
+  it('hard-blocks all customer-specified filenames even when OCR says INVOICE', () => {
+    const fileNames = [
+      'Air_Way_Bill_123.pdf',
+      'Packing_List_123.pdf',
+      'Commercial_Invoice_2026-01.pdf',
+      'TechPack_SS27.pdf',
+      'Trim_Receipt_PO-123.pdf',
+      'FAKTUR_PAJAK_E832798169.pdf',
+    ];
+    for (const fileName of fileNames) {
+      expect(filenameIsHardExcluded(fileName)).toBe(true);
+      expect(getPayableBlockReason({ document_type: 'INVOICE', fileName }, { skipFilenameHints: true })).toMatch(/excluded non-invoice/);
+    }
   });
 });
 

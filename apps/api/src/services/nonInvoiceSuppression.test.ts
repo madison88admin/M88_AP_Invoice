@@ -13,6 +13,7 @@ describe('non-invoice filename suppression', () => {
     expect(isObviouslyNonInvoiceFilename('FAKTUR PAJAK E832798169.pdf')).toBe(true);
     expect(isObviouslyNonInvoiceFilename('Tech Pack SS27.pdf')).toBe(true);
     expect(isObviouslyNonInvoiceFilename('Trim Receipt PO-123.pdf')).toBe(true);
+    expect(isObviouslyNonInvoiceFilename("Forwarder's Billing Invoice Expeditors.pdf")).toBe(true);
     expect(isObviouslyNonInvoiceFilename('Invoice INV-123.pdf')).toBe(false);
     expect(isObviouslyNonInvoiceFilename('Debit Note UJDB26-921.pdf')).toBe(false);
   });
@@ -25,5 +26,6 @@ describe('non-invoice filename suppression', () => {
     expect(hasStrongNonInvoiceHeading('COMMERCIAL INVOICE\nInvoice No: INV-123\nPacking List No: PL-456')).toBe(true);
     expect(hasStrongNonInvoiceHeading('Invoice No: INV-123\nPacking List No: PL-456')).toBe(false);
     expect(hasStrongNonInvoiceHeading('FAKTUR PAJAK\nKode dan Nomor Seri Faktur Pajak')).toBe(true);
+    expect(hasStrongNonInvoiceHeading("FORWARDER'S BILLING INVOICE\nInvoice No: FWD-123")).toBe(true);
   });
 });

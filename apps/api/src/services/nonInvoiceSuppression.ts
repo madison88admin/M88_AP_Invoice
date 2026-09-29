@@ -3,7 +3,7 @@
  * the AP invoice intake. OCR still decides ambiguous files that only contain
  * generic invoice-like wording.
  */
-const OBVIOUS_NON_INVOICE_HINTS = /\b(?:statement|packing\s*(?:list|slip)|delivery\s*(?:note|receipt)|purchase\s*order|sales\s*order|order\s*confirmation|quotation|quote|remittance|receipt|shipping\s*document|shipment\s*document|air\s*way\s*bill|airway\s*bill|awb|bill\s*of\s*lading|cargo\s*manifest|waybill|layout|tech\s*pack|bill\s*stub|account\s*information|artwork|care\s*label|hangtag|barcode|rfid\s*sticker|polybag\s*sticker|shipping\s*label|trim\s*(?:received|receipt|sample)|commercial\s*invoice|faktur\s*pajak)\b/i;
+const OBVIOUS_NON_INVOICE_HINTS = /\b(?:statement|packing\s*(?:list|slip)|delivery\s*(?:note|receipt)|purchase\s*order|sales\s*order|order\s*confirmation|quotation|quote|remittance|receipt|shipping\s*document|shipment\s*document|air\s*way\s*bill|airway\s*bill|awb|bill\s*of\s*lading|cargo\s*manifest|waybill|layout|tech\s*pack|bill\s*stub|account\s*information|artwork|care\s*label|hangtag|barcode|rfid\s*sticker|polybag\s*sticker|shipping\s*label|trim\s*(?:received|receipt|sample)|commercial\s*invoice|faktur\s*pajak|forwarder(?:['’]s|s)?\s+billing\s+invoice|expeditors?\s+billing\s+invoice|forwarder(?:['’]s|s)?\s+invoice|expeditors?\s+invoice)\b/i;
 
 /**
  * Detect a document title in OCR text before trusting an invoice-like field.
@@ -15,7 +15,7 @@ export function hasStrongNonInvoiceHeading(text: unknown): boolean {
   if (!normalized) return false;
 
   const firstPage = normalized.slice(0, 1200);
-  const marker = firstPage.search(/\b(?:packing\s+(?:list|slip)|shipment\s+airwaybill|air\s*way\s*bill|bill\s+of\s+lading|cargo\s+manifest|shipping\s+document|shipment\s+document|delivery\s+(?:note|receipt)|commercial\s+invoice|faktur\s+pajak|tech\s+pack|trim\s+(?:received|receipt|sample))\b/i);
+  const marker = firstPage.search(/\b(?:packing\s+(?:list|slip)|shipment\s+airwaybill|air\s*way\s*bill|bill\s+of\s+lading|cargo\s+manifest|shipping\s+document|shipment\s+document|delivery\s+(?:note|receipt)|commercial\s+invoice|faktur\s+pajak|tech\s+pack|trim\s+(?:received|receipt|sample)|forwarder(?:['’]s|s)?\s+billing\s+invoice|expeditors?\s+billing\s+invoice|forwarder(?:['’]s|s)?\s+invoice|expeditors?\s+invoice)\b/i);
   if (marker < 0) return false;
 
   // A payable heading before the supporting-document title indicates an

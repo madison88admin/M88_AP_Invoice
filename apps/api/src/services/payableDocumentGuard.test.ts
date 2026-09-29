@@ -18,6 +18,8 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
     expect(getPayableBlockReason({ document_type: 'TECH_PACK' })).toMatch(/TECH_PACK/);
     expect(getPayableBlockReason({ document_type: 'TRIM_RECEIPT' })).toMatch(/TRIM_RECEIPT/);
     expect(getPayableBlockReason({ document_type: 'FAKTUR_PAJAK' })).toMatch(/FAKTUR_PAJAK/);
+    expect(getPayableBlockReason({ document_type: 'FORWARDER_BILLING_INVOICE' })).toMatch(/FORWARDER_BILLING_INVOICE/);
+    expect(getPayableBlockReason({ document_type: 'EXPEDITORS_BILLING_INVOICE' })).toMatch(/EXPEDITORS_BILLING_INVOICE/);
   });
 
   it('blocks packing lists, AWBs, statements, payment advices', () => {
@@ -81,11 +83,33 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
       'TechPack_SS27.pdf',
       'Trim_Receipt_PO-123.pdf',
       'FAKTUR_PAJAK_E832798169.pdf',
+      "Forwarder's_Billing_Invoice_Expeditors_123.pdf",
+      'EXPEDITORS_BILLING_INVOICE_123.pdf',
     ];
     for (const fileName of fileNames) {
       expect(filenameIsHardExcluded(fileName)).toBe(true);
       expect(getPayableBlockReason({ document_type: 'INVOICE', fileName }, { skipFilenameHints: true })).toMatch(/excluded non-invoice/);
     }
+  });
+
+  it('hard-blocks forwarder billing invoices even when OCR says INVOICE', () => {
+    const fileNames = [
+      "Forwarder's Billing Invoice.pdf",
+      'Forwarders_Billing_Invoice_Expeditors.pdf',
+      'EXPEDITOR_BILLING_INVOICE_123.pdf',
+    ];
+    for (const fileName of fileNames) {
+      expect(filenameIsHardExcluded(fileName)).toBe(true);
+      expect(getPayableBlockReason({ document_type: 'INVOICE', fileName }, { skipFilenameHints: true })).toMatch(/excluded non-invoice/);
+    }
+  });
+
+  it('blocks forwarder billing invoice headings even when OCR labels the type as invoice', () => {
+    const reason = getPayableBlockReason({
+      document_type: 'INVOICE',
+      raw_text: "FORWARDER'S BILLING INVOICE\nInvoice No: FWD-123\nTOTAL USD 100.00",
+    });
+    expect(reason).toMatch(/excluded non-invoice/);
   });
 });
 

@@ -51,6 +51,13 @@ export const NON_PAYABLE_DOCUMENT_TYPES = new Set<string>([
   'TECH_PACK',
   'TRIM_RECEIPT',
   'FAKTUR_PAJAK',
+  'FORWARDER_BILLING_INVOICE',
+  'FORWARDERS_BILLING_INVOICE',
+  'EXPEDITOR_BILLING_INVOICE',
+  'EXPEDITORS_BILLING_INVOICE',
+  'FORWARDER_INVOICE',
+  'EXPEDITOR_INVOICE',
+  'EXPEDITORS_INVOICE',
 ]);
 
 /**
@@ -64,7 +71,7 @@ export const NON_PAYABLE_DOCUMENT_TYPES = new Set<string>([
  * names below are blocked before they can create an AP invoice record.
  */
 export const NON_INVOICE_FILENAME_HINTS =
-  /(?:^|[^a-z0-9]|packinglist)(statement(?:\s*of\s*account)?|account\s*statement|packing\s*(?:list|slip)|packinglist|p_?list|delivery\s*(?:note|receipt)|goods\s*received?|purchase\s*order|sales\s*order|order\s*confirmation|remittance|payment\s*advice|shipping\s*document|shipment\s*document|air\s*way\s*bill|airway\s*bill|awb|waybill|bill\s*of\s*lading|cargo\s*manifest|do\s*madison|transport\s*label|bill\s*stub|account\s*information|shipment\s*receipt|commercial\s*invoice|faktur\s*pajak|tech\s*pack|trim\s*(?:received|receipt|sample))/i;
+  /(?:^|[^a-z0-9]|packinglist)(statement(?:\s*of\s*account)?|account\s*statement|packing\s*(?:list|slip)|packinglist|p_?list|delivery\s*(?:note|receipt)|goods\s*received?|purchase\s*order|sales\s*order|order\s*confirmation|remittance|payment\s*advice|shipping\s*document|shipment\s*document|air\s*way\s*bill|airway\s*bill|awb|waybill|bill\s*of\s*lading|cargo\s*manifest|do\s*madison|transport\s*label|bill\s*stub|account\s*information|shipment\s*receipt|commercial\s*invoice|faktur\s*pajak|tech\s*pack|trim\s*(?:received|receipt|sample)|forwarder(?:['’]s|s)?\s+billing\s+invoice|expeditors?\s+billing\s+invoice|forwarder(?:['’]s|s)?\s+invoice|expeditors?\s+invoice)/i;
 
 /**
  * The customer-specified exclusions are hard blocks even when an OCR engine
@@ -73,7 +80,7 @@ export const NON_INVOICE_FILENAME_HINTS =
  * filename hints can retain their existing payable-document safeguards.
  */
 const HARD_EXCLUDED_FILENAME_HINTS =
-  /(?:air\s*way\s*bill|airway\s*bill|\bawb\b|waybill|packing\s*(?:list|slip)|packinglist|p_?list|commercial\s*invoice|faktur\s*pajak|tech\s*pack|techpack|trim\s*(?:received|receipt|sample)|trimreceived|trimreceipt)/i;
+  /(?:air\s*way\s*bill|airway\s*bill|\bawb\b|waybill|packing\s*(?:list|slip)|packinglist|p_?list|commercial\s*invoice|faktur\s*pajak|tech\s*pack|techpack|trim\s*(?:received|receipt|sample)|trimreceived|trimreceipt|forwarder(?:['’]s|s)?\s+billing\s+invoice|forwarders?billinginvoice|expeditors?\s+billing\s+invoice|expeditors?billinginvoice|forwarder(?:['’]s|s)?\s+invoice|forwarders?invoice|expeditors?\s+invoice|expeditors?invoice)/i;
 
 export function filenameIsHardExcluded(fileName: string): boolean {
   return HARD_EXCLUDED_FILENAME_HINTS.test(String(fileName || '').replace(/[_-]+/g, ' '));
@@ -87,7 +94,7 @@ export function filenameIsHardExcluded(fileName: string): boolean {
 export function filenameLooksNonInvoice(fileName: string): boolean {
   const normalized = String(fileName || '').replace(/[_-]+/g, ' ');
   // Fast path: concatenated forms (PackingList, AirwayBill, StatementOfAccount)
-  if (/(packinglist|airwaybill|statementofaccount|deliverynote|waybillcopy|commercialinvoice|fakturpajak|techpack|trimreceived|trimreceipt)/i.test(normalized)) return true;
+  if (/(packinglist|airwaybill|statementofaccount|deliverynote|waybillcopy|commercialinvoice|fakturpajak|techpack|trimreceived|trimreceipt|forwarders?billinginvoice|expeditors?billinginvoice|forwarders?invoice|expeditors?invoice)/i.test(normalized)) return true;
   return NON_INVOICE_FILENAME_HINTS.test(normalized);
 }
 

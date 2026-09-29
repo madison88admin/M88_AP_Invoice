@@ -107,7 +107,7 @@ export function intakeReviewReason(ocrResult: any, fileName = ''): string | null
   const hasPayableHeading = /\b(?:INVOICE|DEBIT\s+NOTE|CREDIT\s+NOTE)\b/i.test(rawText);
   const shipmentDocument = hasStrongNonInvoiceHeading(rawText) || (!hasPayableHeading && /(?:^|\n)\s*(?:PACKING\s+(?:LIST|SLIP)|AIR\s*WAY\s*BILL|SHIPMENT\s+AIRWAYBILL|BILL\s+OF\s+LADING|CARGO\s+MANIFEST|SHIPPING\s+DOCUMENT|SHIPMENT\s+DOCUMENT|DELIVERY\s+(?:NOTE|RECEIPT))\b/im.test(rawText));
 
-  if (ocrResult?.is_non_invoice_document || type === 'AIRWAY_BILL' || shipmentDocument) {
+  if (ocrResult?.is_non_invoice_document || ['AIRWAY_BILL', 'PACKING_LIST', 'COMMERCIAL', 'COMMERCIAL_INVOICE', 'TECH_PACK', 'TRIM_RECEIPT', 'FAKTUR_PAJAK'].includes(type) || shipmentDocument) {
     return 'Document is a shipping/non-invoice document (packing list, AWB, delivery or shipment document) — not eligible for invoice creation';
   }
   // Filename hints are decisive ONLY when the document body did not yield a

@@ -65,7 +65,7 @@ export function intakeReviewReason(ocrResult: any, fileName: string, subject = '
   if (consensusReviewFields.length > 0) return `OCR engines disagreed on: ${consensusReviewFields.join(', ')}.`;
   const type = String(ocrResult?.invoice_type || '').toUpperCase();
   const rawText = String(ocrResult?.raw_text || ocrResult?.raw_data?.raw_text || '');
-  if (ocrResult?.is_non_invoice_document || hasStrongNonInvoiceHeading(rawText) || ['AIRWAY_BILL', 'PACKING_LIST', 'DELIVERY_RECEIPT'].includes(type)) {
+  if (ocrResult?.is_non_invoice_document || hasStrongNonInvoiceHeading(rawText) || ['AIRWAY_BILL', 'PACKING_LIST', 'DELIVERY_RECEIPT', 'COMMERCIAL', 'COMMERCIAL_INVOICE', 'TECH_PACK', 'TRIM_RECEIPT', 'FAKTUR_PAJAK'].includes(type)) {
     return 'Document is a shipping/non-invoice document (packing list, AWB, delivery or shipment document) — not eligible for invoice creation.';
   }
   // Body classification wins over filename: only apply filename/subject hints

@@ -9,11 +9,14 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
     expect(getPayableBlockReason({ document_type: 'INVOICE' })).toBeNull();
   });
 
-  it('allows PROFORMA / COMMERCIAL / SALES / DEBIT_NOTE', () => {
+  it('allows PROFORMA / SALES / DEBIT_NOTE', () => {
     expect(getPayableBlockReason({ document_type: 'PROFORMA_INVOICE' })).toBeNull();
-    expect(getPayableBlockReason({ document_type: 'COMMERCIAL' })).toBeNull();
     expect(getPayableBlockReason({ document_type: 'SALES' })).toBeNull();
     expect(getPayableBlockReason({ document_type: 'DEBIT_NOTE' })).toBeNull();
+    expect(getPayableBlockReason({ document_type: 'COMMERCIAL' })).toMatch(/COMMERCIAL/);
+    expect(getPayableBlockReason({ document_type: 'TECH_PACK' })).toMatch(/TECH_PACK/);
+    expect(getPayableBlockReason({ document_type: 'TRIM_RECEIPT' })).toMatch(/TRIM_RECEIPT/);
+    expect(getPayableBlockReason({ document_type: 'FAKTUR_PAJAK' })).toMatch(/FAKTUR_PAJAK/);
   });
 
   it('blocks packing lists, AWBs, statements, payment advices', () => {
@@ -63,6 +66,10 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
     expect(getPayableBlockReason({ fileName: 'ATXFreightPackingList_THK-164107.pdf' })).toMatch(/non-invoice/);
     expect(getPayableBlockReason({ fileName: 'statement_of_account_sep.pdf' })).toMatch(/non-invoice/);
     expect(getPayableBlockReason({ fileName: 'WAYBILL_18_8168_2423.pdf' })).toMatch(/non-invoice/);
+    expect(getPayableBlockReason({ fileName: 'Commercial_Invoice_2026-01.pdf' })).toMatch(/non-invoice/);
+    expect(getPayableBlockReason({ fileName: 'Faktur_Pajak_E832798169.pdf' })).toMatch(/non-invoice/);
+    expect(getPayableBlockReason({ fileName: 'TechPack_SS27.pdf' })).toMatch(/non-invoice/);
+    expect(getPayableBlockReason({ fileName: 'Trim_Receipt_PO-123.pdf' })).toMatch(/non-invoice/);
   });
 });
 
@@ -105,5 +112,14 @@ describe('payableDocumentGuard — validatePayableDocument (RULE 20 input shape)
     });
     expect(result.passed).toBe(false);
     expect(result.detail).toMatch(/STATEMENT/);
+  });
+
+  it('blocks excluded headings even when OCR calls the document an invoice', () => {
+    const result = validatePayableDocument({
+      invoice_type: 'INVOICE',
+      raw_file_url: 'invoices/2026/09/commercial-invoice.pdf',
+      ocr_raw_data: { raw_text: 'COMMERCIAL INVOICE\nInvoice No: CI-123\nTOTAL 10.00' },
+    });
+    expect(result.passed).toBe(false);
   });
 });

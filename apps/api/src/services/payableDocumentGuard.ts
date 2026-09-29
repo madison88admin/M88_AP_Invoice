@@ -23,6 +23,7 @@
  */
 
 import { InvoiceType, InvoiceSource } from '@ap-invoice/shared';
+import { hasStrongNonInvoiceHeading } from './nonInvoiceSuppression';
 
 /** Document types that can never become an AP invoice record. */
 export const NON_PAYABLE_DOCUMENT_TYPES = new Set<string>([
@@ -45,6 +46,11 @@ export const NON_PAYABLE_DOCUMENT_TYPES = new Set<string>([
   'STATEMENT_OF_ACCOUNT',
   'OTHER',
   'UNKNOWN',
+  'COMMERCIAL',
+  'COMMERCIAL_INVOICE',
+  'TECH_PACK',
+  'TRIM_RECEIPT',
+  'FAKTUR_PAJAK',
 ]);
 
 /**
@@ -54,13 +60,11 @@ export const NON_PAYABLE_DOCUMENT_TYPES = new Set<string>([
  * "invoice number could not be extracted", many were LAYOUT files that are
  * genuinely non-invoices, but the same rule also caught valid invoices).
  *
- * Deliberately NOT here: layout, quote, ci, commercial — those can be valid
- * invoice filenames ("LAYOUT Fox Racing PO Label.pdf" is non-invoice, but
- * "HANGTAG layout for PO 123" vs "Layout approval sheet INV-1" is ambiguous;
- * OCR + text classification decide those instead of the filename).
+ * Generic invoice filenames remain allowed; the explicit excluded document
+ * names below are blocked before they can create an AP invoice record.
  */
 export const NON_INVOICE_FILENAME_HINTS =
-  /(?:^|[^a-z0-9]|packinglist)(statement(?:\s*of\s*account)?|account\s*statement|packing\s*(?:list|slip)|packinglist|p_?list|delivery\s*(?:note|receipt)|goods\s*received?|purchase\s*order|sales\s*order|order\s*confirmation|remittance|payment\s*advice|shipping\s*document|shipment\s*document|air\s*way\s*bill|airway\s*bill|awb|waybill|bill\s*of\s*lading|cargo\s*manifest|do\s*madison|transport\s*label|bill\s*stub|account\s*information|shipment\s*receipt)/i;
+  /(?:^|[^a-z0-9]|packinglist)(statement(?:\s*of\s*account)?|account\s*statement|packing\s*(?:list|slip)|packinglist|p_?list|delivery\s*(?:note|receipt)|goods\s*received?|purchase\s*order|sales\s*order|order\s*confirmation|remittance|payment\s*advice|shipping\s*document|shipment\s*document|air\s*way\s*bill|airway\s*bill|awb|waybill|bill\s*of\s*lading|cargo\s*manifest|do\s*madison|transport\s*label|bill\s*stub|account\s*information|shipment\s*receipt|commercial\s*invoice|faktur\s*pajak|tech\s*pack|trim\s*(?:received|receipt|sample))/i;
 
 /**
  * Substring-level test used by the guard. Compromise between the strict word-
@@ -70,7 +74,7 @@ export const NON_INVOICE_FILENAME_HINTS =
 export function filenameLooksNonInvoice(fileName: string): boolean {
   const normalized = String(fileName || '').replace(/[_-]+/g, ' ');
   // Fast path: concatenated forms (PackingList, AirwayBill, StatementOfAccount)
-  if (/(packinglist|airwaybill|statementofaccount|deliverynote|waybillcopy)/i.test(normalized)) return true;
+  if (/(packinglist|airwaybill|statementofaccount|deliverynote|waybillcopy|commercialinvoice|fakturpajak|techpack|trimreceived|trimreceipt)/i.test(normalized)) return true;
   return NON_INVOICE_FILENAME_HINTS.test(normalized);
 }
 
@@ -118,6 +122,9 @@ export function getPayableBlockReason(
 
   // 3. Statement-of-account text signals (even if type extraction failed)
   const text = String(doc.raw_text || '');
+  if (text && hasStrongNonInvoiceHeading(text)) {
+    return 'Document heading identifies an excluded non-invoice document';
+  }
   if (text && STATEMENT_TEXT_HINTS.test(text)) {
     return 'Document contains statement-of-account markers (opening/closing balance) — not eligible for invoice creation';
   }
@@ -134,7 +141,6 @@ export function getPayableBlockReason(
       docType.startsWith('INVOICE') ||
       docType === 'PROFORMA' ||
       docType === 'PROFORMA_INVOICE' ||
-      docType === 'COMMERCIAL' ||
       docType === 'SALES' ||
       docType === 'DEBIT_NOTE' ||
       docType === 'CREDIT_NOTE';

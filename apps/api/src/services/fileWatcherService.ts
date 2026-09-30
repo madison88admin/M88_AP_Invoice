@@ -31,6 +31,7 @@ import { analyzeWithRetry } from './intakeRetryService';
 import { hasStrongNonInvoiceHeading, isObviouslyNonInvoiceFilename, nonInvoiceSuppressionReason } from './nonInvoiceSuppression';
 import { PDFDocument } from 'pdf-lib';
 import { evaluateIntakeControls } from './intakeControlService';
+import { getShipmentBillBlockReason } from './payableDocumentGuard';
 
 const INCOMING_DIR = process.env.WATCHER_INCOMING_DIR || '/incoming-invoices';
 const PROCESSING_DIR = process.env.WATCHER_PROCESSING_DIR || '/incoming-invoices/processing';
@@ -104,6 +105,15 @@ export function intakeReviewReason(ocrResult: any, fileName = ''): string | null
   const amount = Number(ocrResult?.total_amount ?? ocrResult?.amount);
   const currency = String(ocrResult?.currency || '').toUpperCase();
   const rawText = String(ocrResult?.raw_text || ocrResult?.raw_data?.raw_text || '');
+  const payableBlockReason = getShipmentBillBlockReason({
+    document_type: ocrResult?.document_type,
+    invoice_type: ocrResult?.invoice_type,
+    source_document_type: ocrResult?.source_document_type,
+    is_non_invoice_document: ocrResult?.is_non_invoice_document,
+    raw_text: rawText,
+    fileName,
+  });
+  if (payableBlockReason) return payableBlockReason;
   const hasPayableHeading = /\b(?:INVOICE|DEBIT\s+NOTE|CREDIT\s+NOTE)\b/i.test(rawText);
   const shipmentDocument = hasStrongNonInvoiceHeading(rawText) || (!hasPayableHeading && /(?:^|\n)\s*(?:PACKING\s+(?:LIST|SLIP)|AIR\s*WAY\s*BILL|SHIPMENT\s+AIRWAYBILL|BILL\s+OF\s+LADING|CARGO\s+MANIFEST|SHIPPING\s+DOCUMENT|SHIPMENT\s+DOCUMENT|DELIVERY\s+(?:NOTE|RECEIPT))\b/im.test(rawText));
 

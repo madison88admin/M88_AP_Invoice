@@ -33,6 +33,7 @@ export const NON_PAYABLE_DOCUMENT_TYPES = new Set<string>([
   'AWB',
   'DELIVERY_RECEIPT',
   'DELIVERY_NOTE',
+  'SHIPMENT_RECEIPT',
   'GOODS_RECEIPT',
   'BILL_OF_LADING',
   'CARGO_MANIFEST',
@@ -40,6 +41,9 @@ export const NON_PAYABLE_DOCUMENT_TYPES = new Set<string>([
   'SHIPMENT_DOCUMENT',
   'PURCHASE_ORDER',
   'PAYMENT_ADVICE',
+  'BILL_PAYMENT',
+  'PAYMENT_BILL',
+  'PAYMENT_RECEIPT',
   'REMITTANCE_ADVICE',
   'RECEIPT',
   'STATEMENT',
@@ -80,7 +84,28 @@ export const NON_INVOICE_FILENAME_HINTS =
  * filename hints can retain their existing payable-document safeguards.
  */
 const HARD_EXCLUDED_FILENAME_HINTS =
-  /(?:air\s*way\s*bill|airway\s*bill|\bawb\b|waybill|packing\s*(?:list|slip)|packinglist|p_?list|commercial\s*invoice|faktur\s*pajak|tech\s*pack|techpack|trim\s*(?:received|receipt|sample)|trimreceived|trimreceipt|forwarder(?:['’]s|s)?\s+billing\s+invoice|forwarders?billinginvoice|expeditors?\s+billing\s+invoice|expeditors?billinginvoice|forwarder(?:['’]s|s)?\s+invoice|forwarders?invoice|expeditors?\s+invoice|expeditors?invoice)/i;
+  /(?:air\s*way\s*bill|airway\s*bill|\bawb\b|waybill|packing\s*(?:list|slip)|packinglist|shipment\s+receipt|shipmentreceipt|bill\s+payment|billpayment|payment\s+bill|paymentbill|payment\s+receipt|paymentreceipt|commercial\s*invoice|faktur\s+pajak|tech\s*pack|techpack|trim\s*(?:received|receipt|sample)|trimreceived|trimreceipt|forwarder(?:['’]s|s)?\s+billing\s+invoice|forwarders?billinginvoice|expeditors?\s+billing\s+invoice|expeditors?billinginvoice|forwarder(?:['’]s|s)?\s+invoice|forwarders?invoice|expeditors?\s+invoice|expeditors?invoice)/i;
+
+/** Strong headings for payment/shipment paperwork, even when OCR labels it INVOICE. */
+const NON_PAYABLE_TEXT_HINTS =
+  /\b(?:shipment\s+receipt|bill\s+payment|payment\s+bill|payment\s+receipt)\b/i;
+
+/** Focused guard used by legacy intake review paths for the newly requested exclusions. */
+export function getShipmentBillBlockReason(doc: PayableCheckInput): string | null {
+  const docType = String(doc.document_type || doc.source_document_type || doc.invoice_type || '').toUpperCase();
+  if (docType === 'SHIPMENT_RECEIPT' || docType === 'BILL_PAYMENT' || docType === 'PAYMENT_BILL' || docType === 'PAYMENT_RECEIPT') {
+    return `Document type ${docType} is not eligible for invoice creation`;
+  }
+  const text = String(doc.raw_text || '');
+  if (NON_PAYABLE_TEXT_HINTS.test(text)) {
+    return 'Document heading identifies a shipment receipt or bill payment document — not eligible for invoice creation';
+  }
+  const fileName = String(doc.fileName || '').replace(/[_-]+/g, ' ');
+  if (fileName && /\b(?:shipment\s+receipt|bill\s+payment|payment\s+bill|payment\s+receipt)\b/i.test(fileName)) {
+    return `Filename identifies a shipment receipt or bill payment document (${doc.fileName}) — not eligible for invoice creation`;
+  }
+  return null;
+}
 
 export function filenameIsHardExcluded(fileName: string): boolean {
   return HARD_EXCLUDED_FILENAME_HINTS.test(String(fileName || '').replace(/[_-]+/g, ' '));
@@ -148,6 +173,8 @@ export function getPayableBlockReason(
   if (text && STATEMENT_TEXT_HINTS.test(text)) {
     return 'Document contains statement-of-account markers (opening/closing balance) — not eligible for invoice creation';
   }
+  const shipmentBillReason = getShipmentBillBlockReason(doc);
+  if (shipmentBillReason) return shipmentBillReason;
 
   // 4. Filename hints — decisive ONLY when the extracted document type is
   //    missing/unknown (avoid re-parking valid invoices whose filename merely

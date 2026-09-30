@@ -27,6 +27,8 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
     expect(getPayableBlockReason({ document_type: 'AIRWAY_BILL' })).toMatch(/AIRWAY_BILL/);
     expect(getPayableBlockReason({ document_type: 'STATEMENT' })).toMatch(/STATEMENT/);
     expect(getPayableBlockReason({ document_type: 'PAYMENT_ADVICE' })).toMatch(/PAYMENT_ADVICE/);
+    expect(getPayableBlockReason({ document_type: 'SHIPMENT_RECEIPT' })).toMatch(/SHIPMENT_RECEIPT/);
+    expect(getPayableBlockReason({ document_type: 'BILL_PAYMENT' })).toMatch(/BILL_PAYMENT/);
     expect(getPayableBlockReason({ document_type: 'UNKNOWN' })).toMatch(/UNKNOWN/);
   });
 
@@ -110,6 +112,13 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
       raw_text: "FORWARDER'S BILLING INVOICE\nInvoice No: FWD-123\nTOTAL USD 100.00",
     });
     expect(reason).toMatch(/excluded non-invoice/);
+  });
+
+  it('blocks shipment receipt and bill payment headings even when OCR labels them as invoices', () => {
+    expect(getPayableBlockReason({ document_type: 'INVOICE', raw_text: 'SHIPMENT RECEIPT\nOrder: PO-123' })).toMatch(/shipment receipt/i);
+    expect(getPayableBlockReason({ document_type: 'INVOICE', raw_text: 'BILL PAYMENT\nPayment Reference: BP-123' })).toMatch(/bill payment/i);
+    expect(getPayableBlockReason({ document_type: 'INVOICE', fileName: 'Shipment_Receipt_123.pdf' }, { skipFilenameHints: true })).toMatch(/shipment receipt/i);
+    expect(getPayableBlockReason({ document_type: 'INVOICE', fileName: 'Bill_Payment_123.pdf' }, { skipFilenameHints: true })).toMatch(/bill payment/i);
   });
 });
 

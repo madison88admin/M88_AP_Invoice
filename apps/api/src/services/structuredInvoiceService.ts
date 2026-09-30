@@ -9,6 +9,8 @@ export type SourceDocumentType =
   | 'PACKING_LIST'
   | 'AIRWAY_BILL'
   | 'DELIVERY_RECEIPT'
+  | 'SHIPMENT_RECEIPT'
+  | 'BILL_PAYMENT'
   | 'STATEMENT'
   | 'PAYMENT_ADVICE'
   | 'UNKNOWN';
@@ -58,6 +60,8 @@ export function classifyInvoiceDocument(input: { fileName?: string; mimeType?: s
     { type: 'PACKING_LIST', patterns: [/PACKING\s+LIST/, /PACKING\s+SLIP/], payable: false },
     { type: 'AIRWAY_BILL', patterns: [/AIR\s*WAY\s*BILL/, /SHIPMENT\s+AIRWAYBILL/], payable: false },
     { type: 'DELIVERY_RECEIPT', patterns: [/DELIVERY\s+(?:RECEIPT|NOTE)/, /GOODS\s+RECEIPT/], payable: false },
+    { type: 'SHIPMENT_RECEIPT', patterns: [/SHIPMENT\s+RECEIPT/], payable: false },
+    { type: 'BILL_PAYMENT', patterns: [/BILL\s+PAYMENT/, /PAYMENT\s+BILL/, /PAYMENT\s+RECEIPT/], payable: false },
     { type: 'DELIVERY_RECEIPT', patterns: [/BILL\s+OF\s+LADING/, /CARGO\s+MANIFEST/, /SHIPPING\s+DOCUMENT/, /SHIPMENT\s+DOCUMENT/], payable: false },
     { type: 'PURCHASE_ORDER', patterns: [/PURCHASE\s+ORDER/, /<ORDER\b/], payable: false },
     { type: 'PAYMENT_ADVICE', patterns: [/PAYMENT\s+ADVICE/, /REMITTANCE\s+ADVICE/], payable: false },

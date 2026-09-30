@@ -19,6 +19,7 @@ import { hasStrongNonInvoiceHeading, isObviouslyNonInvoiceFilename, nonInvoiceSu
 import { PDFDocument } from 'pdf-lib';
 import { buildIntakeIdempotencyKey, evaluateIntakeControls } from './intakeControlService';
 import { checkEmailDuplicate, generateFileHash } from './emailDuplicateService';
+import { getShipmentBillBlockReason } from './payableDocumentGuard';
 
 const clientId = process.env.GRAPH_API_CLIENT_ID || '';
 const clientSecret = process.env.GRAPH_API_CLIENT_SECRET || '';
@@ -65,6 +66,15 @@ export function intakeReviewReason(ocrResult: any, fileName: string, subject = '
   if (consensusReviewFields.length > 0) return `OCR engines disagreed on: ${consensusReviewFields.join(', ')}.`;
   const type = String(ocrResult?.invoice_type || '').toUpperCase();
   const rawText = String(ocrResult?.raw_text || ocrResult?.raw_data?.raw_text || '');
+  const payableBlockReason = getShipmentBillBlockReason({
+    document_type: ocrResult?.document_type,
+    invoice_type: ocrResult?.invoice_type,
+    source_document_type: ocrResult?.source_document_type,
+    is_non_invoice_document: ocrResult?.is_non_invoice_document,
+    raw_text: rawText,
+    fileName,
+  });
+  if (payableBlockReason) return payableBlockReason;
   if (ocrResult?.is_non_invoice_document || hasStrongNonInvoiceHeading(rawText) || ['AIRWAY_BILL', 'PACKING_LIST', 'DELIVERY_RECEIPT', 'COMMERCIAL', 'COMMERCIAL_INVOICE', 'TECH_PACK', 'TRIM_RECEIPT', 'FAKTUR_PAJAK', 'FORWARDER_BILLING_INVOICE', 'FORWARDERS_BILLING_INVOICE', 'EXPEDITOR_BILLING_INVOICE', 'EXPEDITORS_BILLING_INVOICE', 'FORWARDER_INVOICE', 'EXPEDITOR_INVOICE', 'EXPEDITORS_INVOICE'].includes(type)) {
     return 'Document is a shipping/non-invoice document (packing list, AWB, delivery or shipment document) — not eligible for invoice creation.';
   }

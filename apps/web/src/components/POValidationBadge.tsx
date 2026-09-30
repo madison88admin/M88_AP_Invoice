@@ -55,7 +55,7 @@ const STATUS_CONFIG: Record<POValidationStatus, { color: string; icon: React.Rea
 
 const FINAL_STATUSES: POValidationStatus[] = ['MATCHED', 'WARNING', 'MISMATCH', 'NOT_FOUND', 'SKIPPED', 'ERROR'];
 
-export function POValidationBadge({ invoiceId, initialStatus = 'PENDING', pollInterval = 30000 }: POValidationBadgeProps) {
+export function POValidationBadge({ invoiceId, initialStatus = 'PENDING', pollInterval = 120000 }: POValidationBadgeProps) {
   const [status, setStatus] = useState<POValidationStatus>(initialStatus);
   const [details, setDetails] = useState<POAuditResult | null>(null);
   const [showDetails, setShowDetails] = useState(false);
@@ -63,28 +63,47 @@ export function POValidationBadge({ invoiceId, initialStatus = 'PENDING', pollIn
   const buttonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    if (FINAL_STATUSES.includes(status)) return;
+    if (FINAL_STATUSES.includes(initialStatus)) return;
 
     let mounted = true;
-    const poll = async () => {
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+
+    // The invoice table can render hundreds of badges at once. Stagger the
+    // first request and poll with a single timeout so a dashboard refresh does
+    // not fire hundreds of simultaneous requests (which caused 429 responses).
+    const hash = Array.from(invoiceId).reduce((value, char) => ((value * 31) + char.charCodeAt(0)) >>> 0, 0);
+    const initialDelay = hash % Math.min(Math.max(pollInterval, 1), 120_000);
+    const nextDelay = (rateLimited: boolean) => rateLimited
+      ? Math.min(Math.max(pollInterval, 1) * 4, 10 * 60 * 1000)
+      : Math.max(pollInterval, 1);
+
+    const schedule = (delay: number) => {
+      if (!mounted) return;
+      timeout = setTimeout(poll, delay);
+    };
+
+    async function poll() {
+      if (!mounted) return;
       try {
         const res = await api.get(`/api/invoices/${invoiceId}/po-status`);
         const data: POAuditResult = res.data;
         if (!mounted) return;
         setStatus(data.status);
         setDetails(data);
-      } catch (err) {
-        console.error('PO status poll failed:', err);
+        if (!FINAL_STATUSES.includes(data.status)) schedule(nextDelay(false));
+      } catch (err: any) {
+        const rateLimited = err?.response?.status === 429;
+        if (!rateLimited) console.error('PO status poll failed:', err);
+        schedule(nextDelay(rateLimited));
       }
-    };
+    }
 
-    poll();
-    const interval = setInterval(poll, pollInterval);
+    schedule(initialDelay);
     return () => {
       mounted = false;
-      clearInterval(interval);
+      if (timeout) clearTimeout(timeout);
     };
-  }, [invoiceId, status, pollInterval]);
+  }, [invoiceId, initialStatus, pollInterval]);
 
   // Close popover when clicking outside
   useEffect(() => {

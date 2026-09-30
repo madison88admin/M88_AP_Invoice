@@ -138,7 +138,7 @@ export function intakeReviewReason(ocrResult: any, fileName = ''): string | null
   if (type === 'STATEMENT' || type === 'OTHER' || type === 'UNKNOWN' || (!typeLooksPayable && NON_INVOICE_HINTS.test(normalizedFileName))) {
     return `Document type ${type || 'unknown'} is not eligible for automatic invoice creation`;
   }
-  if (!ocrResult?.invoice_number) return 'Invoice number could not be extracted';
+  if (!String(ocrResult?.invoice_number || '').trim()) return 'Invoice number could not be extracted';
   if (!Number.isFinite(amount) || amount <= 0) return 'A valid non-zero invoice amount could not be extracted';
   if (!ocrResult?.invoice_date) return 'Invoice date could not be extracted';
   // Non-USD handling is policy-driven (INTAKE_CURRENCY_MODE / vendor allowlists).
@@ -529,7 +529,7 @@ async function processSingleInvoiceBuffer(
   // Recover invoice identifiers embedded in SFTP filenames before applying
   // review gates. Some valid PDFs have unreadable invoice-number fields but
   // arrive with the supplier number in the filename (for example BSN files).
-  if (!ocrResult.invoice_number) {
+  if (!String(ocrResult.invoice_number || '').trim()) {
     const filenameNumber = extractInvoiceNumberFromFilename(fileName);
     if (filenameNumber) {
       logger.info(`[File Watcher] Recovered invoice number "${filenameNumber}" from filename "${fileName}" before review`);
@@ -579,13 +579,29 @@ async function processSingleInvoiceBuffer(
   // (e.g. "1786950726377__PT_PAXAR_INV_PCI-26031718..pdf" → PCI-26031718).
   // Doing this before duplicate detection lets the number-based checks catch
   // re-ingested PDFs and avoids creating placeholder numbers like SFTP-<timestamp>.
-  if (!ocrResult.invoice_number) {
+  if (!String(ocrResult.invoice_number || '').trim()) {
     const filenameNumber = extractInvoiceNumberFromFilename(fileName);
     if (filenameNumber) {
       logger.info(`[File Watcher] Recovered invoice number "${filenameNumber}" from filename "${fileName}" (OCR returned none)`);
       ocrResult.invoice_number = filenameNumber;
     }
   }
+
+  // Never manufacture an invoice number for an SFTP file.  Older watcher
+  // builds used SFTP-<timestamp> here, which created records that could not be
+  // reconciled with the supplier invoice (for example SFTP-1785919897931).
+  // If OCR and filename recovery both fail, keep the PDF auditable in
+  // manual-review and wait for a human correction instead of creating AP data.
+  const recoveredInvoiceNumber = String(ocrResult.invoice_number || '').trim();
+  if (!recoveredInvoiceNumber) {
+    const reason = `Invoice number could not be extracted for ${fileName}${partLabel}; placeholder invoice numbers are disabled`;
+    logger.warn(`[File Watcher] ${fileName}${partLabel} → ManualReview: ${reason}`);
+    if (splitIndex === undefined) safeMove(processingPath, MANUAL_REVIEW_DIR);
+    await createAuditLog(null, 'WATCHER_REVIEW_REQUIRED', reason);
+    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'FAILED', fileName, error: reason });
+    return;
+  }
+  ocrResult.invoice_number = recoveredInvoiceNumber;
 
   // Step 4: Duplicate detection / revision detection
   const fileHash = generateFileHash(fileBuffer);
@@ -688,15 +704,7 @@ async function processSingleInvoiceBuffer(
     }
   }
 
-  // Fix: ensure invoice_number is not empty (unique constraint in DB)
-  const effectiveInvoiceNumber = ocrResult.invoice_number || `SFTP-${Date.now()}`;
-  if (!ocrResult.invoice_number) {
-    logger.warn(
-      `[File Watcher] No invoice number found for ${fileName}${partLabel} — using placeholder "${effectiveInvoiceNumber}". ` +
-      `The real invoice number may be visible in the PDF; correct it before posting.`
-    );
-    await createAuditLog(null, 'WATCHER_FALLBACK_INVOICE_NUMBER', `No invoice number extracted for ${fileName}; placeholder ${effectiveInvoiceNumber} used.`);
-  }
+  const effectiveInvoiceNumber = recoveredInvoiceNumber;
 
   // Step 6: Build invoice data
   const tier = determineApprovalTier(ocrResult.total_amount || 0);

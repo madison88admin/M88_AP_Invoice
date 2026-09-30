@@ -189,6 +189,33 @@ function isReturnedSignatureForUser(
   );
 }
 
+type QuickFilter = 'all' | 'returned' | 'urgent' | 'issues';
+
+/** True when a coordinator still needs to resolve a PO or vendor problem. */
+function hasCoordinatorValidationIssue(invoice: MockInvoice): boolean {
+  const validation = invoice.po_validation as any;
+  const hasPoReference = [invoice.po_number, invoice.customer_po_number, invoice.mpo_number]
+    .some(value => String(value || '').trim().length > 0);
+  const checks = validation?.validation_result?.checks || {};
+  const comparison = validation?.comparison || {};
+
+  const poMissing = validation
+    ? validation.po_found === false || checks.mpo_found === false
+    : !hasPoReference;
+  const poMismatch = validation?.is_match === false;
+  const vendorMismatch = comparison.vendor_match === false || checks.vendor_match === false;
+
+  return Boolean(poMissing || poMismatch || vendorMismatch);
+}
+
+/** True when the invoice due date is within the next 24 hours or overdue. */
+function isDueWithin24HoursOrOverdue(invoice: MockInvoice): boolean {
+  if (!invoice.due_date) return false;
+  const dueAt = new Date(invoice.due_date).getTime();
+  if (Number.isNaN(dueAt)) return false;
+  return dueAt <= Date.now() + (24 * 60 * 60 * 1000);
+}
+
 export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' | 'repository' } = {}) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -265,7 +292,7 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [editCollapsed, setEditCollapsed] = useState<Record<string, boolean>>({});
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
-  const [quickFilter, setQuickFilter] = useState<'all' | 'returned' | 'urgent'>('all');
+  const [quickFilter, setQuickFilter] = useState<QuickFilter>('all');
   const [paymentTermsOptions, setPaymentTermsOptions] = useState<string[]>([]);
   const [vendorList, setVendorList] = useState<{ id: string; name: string }[]>([]);
 
@@ -424,11 +451,19 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
       return Boolean(returnedOwner);
     }
     if (quickFilter === 'urgent') {
+      if (user?.role === 'PURCHASING_COORDINATOR') {
+        return inv.status === InvoiceStatus.PENDING_COORDINATOR && isDueWithin24HoursOrOverdue(inv);
+      }
       const timestamps = (inv as any).stage_timestamps || [];
       const current = timestamps.find((t: any) => t.stage === inv.status && !t.exited_at);
       if (!current || !current.sla_hours) return false;
       const elapsed = calcWorkingHoursElapsed(new Date(current.entered_at), new Date());
       return (current.sla_hours - elapsed) <= 24;
+    }
+    if (quickFilter === 'issues') {
+      return user?.role === 'PURCHASING_COORDINATOR'
+        && inv.status === InvoiceStatus.PENDING_COORDINATOR
+        && hasCoordinatorValidationIssue(inv);
     }
     return true;
   });
@@ -439,6 +474,9 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
     );
     return Boolean(returnedOwner);
   }).length;
+  const coordinatorIssuesCount = filteredInvoices.filter(inv =>
+    inv.status === InvoiceStatus.PENDING_COORDINATOR && hasCoordinatorValidationIssue(inv)
+  ).length;
 
   // Count how many filters are currently active (for the "Clear" affordance)
   const activeFilterCount = Object.values(filters).filter(v => v !== undefined && v !== '').length;
@@ -1737,38 +1775,46 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
       }
 
       case 'PURCHASING_COORDINATOR': {
-        const pendCoord = allInvoices.filter(i => i.status === 'PENDING_COORDINATOR');
-        const poFound = allInvoices.filter(i => i.po_validation?.po_found);
-        const vendorMismatch = allInvoices.filter(i => i.po_validation?.comparison?.vendor_match === false);
-        const approvedWk = allInvoices.filter(i => i.status === 'APPROVED');
+        const coordinatorQueue = allInvoices.filter(i => i.status === InvoiceStatus.PENDING_COORDINATOR);
+        const returnedToMe = coordinatorQueue.filter(i =>
+          (i.signatures || []).some(sig =>
+            isReturnedSignatureForUser(sig, i.current_stage, user)
+          )
+        );
+        const poVendorIssues = coordinatorQueue.filter(hasCoordinatorValidationIssue);
+        const urgentReview = coordinatorQueue.filter(isDueWithin24HoursOrOverdue);
         return [
           {
-            label: 'Pending My Approval',
-            value: pendCoord.length,
-            icon: Clock,
+            label: 'For My Review',
+            value: coordinatorQueue.length,
+            icon: FileSearch,
             accent: 'default',
-            ...calcTrend(pendCoord),
+            ...calcTrend(coordinatorQueue),
+            subtitle: 'Invoices awaiting coordinator review',
           },
           {
-            label: 'NextGen Validation Results',
-            value: poFound.length,
-            icon: CheckCircle,
-            accent: 'success',
-            ...calcTrend(poFound),
+            label: 'Returned to Me',
+            value: returnedToMe.length,
+            icon: AlertCircle,
+            accent: 'warning',
+            ...calcTrend(returnedToMe),
+            subtitle: 'Needs correction or missing details',
           },
           {
-            label: 'Vendor Mismatches',
-            value: vendorMismatch.length,
+            label: 'PO / Vendor Issues',
+            value: poVendorIssues.length,
             icon: AlertTriangle,
             accent: 'danger',
-            ...calcTrend(vendorMismatch),
+            ...calcTrend(poVendorIssues),
+            subtitle: 'Missing PO or validation mismatch',
           },
           {
-            label: 'Approved This Week',
-            value: approvedWk.length,
-            icon: CheckSquare,
-            accent: 'success',
-            ...calcTrend(approvedWk),
+            label: 'Urgent Review',
+            value: urgentReview.length,
+            icon: Clock,
+            accent: 'danger',
+            ...calcTrend(urgentReview),
+            subtitle: 'Due within 24 hours or overdue',
           },
         ];
       }
@@ -2167,7 +2213,19 @@ ${dataRows}
     // Map KPI labels to status filters
     let nextStatus: InvoiceStatus | undefined;
     let nextUrgentDue: boolean | undefined;
-    if (label.includes('validation')) {
+    let nextQuickFilter: QuickFilter = 'all';
+    if (label.includes('for my review')) {
+      nextStatus = InvoiceStatus.PENDING_COORDINATOR;
+    } else if (label.includes('returned to me')) {
+      nextStatus = undefined;
+      nextQuickFilter = 'returned';
+    } else if (label.includes('po / vendor issues')) {
+      nextStatus = InvoiceStatus.PENDING_COORDINATOR;
+      nextQuickFilter = 'issues';
+    } else if (label.includes('urgent review')) {
+      nextStatus = InvoiceStatus.PENDING_COORDINATOR;
+      nextQuickFilter = 'urgent';
+    } else if (label.includes('validation')) {
       nextStatus = InvoiceStatus.VALIDATION_PENDING;
     } else if (label.includes('awaiting approval') || label.includes('pending my approval')) {
       // Pending approvals — clear status filter to show all pending stages
@@ -2203,6 +2261,7 @@ ${dataRows}
       return;
     }
     setFilters({ ...filters, status: nextStatus, urgentDue: nextUrgentDue });
+    setQuickFilter(nextQuickFilter);
     // Scroll to invoice table
     setTimeout(() => {
       const section = document.getElementById('invoice-list-section');
@@ -2375,13 +2434,30 @@ ${dataRows}
                     : { background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}
                 >
                   <Clock className="h-3 w-3" strokeWidth={2} />
-                  Urgent (SLA ≤24h)
+                  {user?.role === 'PURCHASING_COORDINATOR' ? 'Urgent Review' : 'Urgent (SLA ≤24h)'}
                   {quickFilteredInvoices.length > 0 && quickFilter === 'urgent' && (
                     <span className="ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: 'rgba(0,0,0,0.2)' }}>
                       {quickFilteredInvoices.length}
                     </span>
                   )}
                 </button>
+                {user?.role === 'PURCHASING_COORDINATOR' && (
+                  <button
+                    onClick={() => setQuickFilter('issues')}
+                    className="px-3 py-1.5 rounded-full text-xs font-medium transition-all inline-flex items-center gap-1.5"
+                    style={quickFilter === 'issues'
+                      ? { background: 'var(--accent-red)', color: 'var(--text-inverse)' }
+                      : { background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', color: 'var(--accent-red)', border: '1px solid color-mix(in srgb, var(--accent-red) 25%, transparent)' }}
+                  >
+                    <AlertTriangle className="h-3 w-3" strokeWidth={2} />
+                    PO / Vendor Issues
+                    {coordinatorIssuesCount > 0 && (
+                      <span className="ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: 'rgba(0,0,0,0.2)' }}>
+                        {coordinatorIssuesCount}
+                      </span>
+                    )}
+                  </button>
+                )}
               </div>
               {/* Primary filters — always visible */}
               <div className="flex flex-col md:flex-row items-start md:items-center gap-3">

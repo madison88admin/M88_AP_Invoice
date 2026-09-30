@@ -111,6 +111,9 @@ describe('fileWatcherService.intakeReviewReason — body classification beats fi
       intakeReviewReason({ ...baseValidInvoice, invoice_number: '   ' }, 'plain.pdf')
     ).toMatch(/Invoice number could not be extracted/);
     expect(
+      intakeReviewReason({ ...baseValidInvoice, invoice_number: 'SFTP-1785919897931' }, 'plain.pdf')
+    ).toMatch(/Invoice number could not be extracted/);
+    expect(
       intakeReviewReason({ ...baseValidInvoice, invoice_date: undefined }, 'plain.pdf')
     ).toMatch(/Invoice date could not be extracted/);
     expect(

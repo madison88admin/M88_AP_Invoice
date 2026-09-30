@@ -40,6 +40,7 @@ const DUPLICATES_DIR = process.env.WATCHER_DUPLICATES_DIR || '/incoming-invoices
 const MANUAL_REVIEW_DIR = process.env.WATCHER_MANUAL_REVIEW_DIR || '/incoming-invoices/manual-review';
 const FAILED_DIR = process.env.WATCHER_FAILED_DIR || '/incoming-invoices/failed';
 const NON_INVOICE_HINTS = /\b(statement|packing\s*(?:list|slip)|delivery\s*(?:note|receipt)|purchase\s*order|sales\s*order|order\s*confirmation|quotation|quote|remittance|receipt|shipping\s*document|shipment\s*document|air\s*way\s*bill|airway\s*bill|awb|bill\s*of\s*lading|cargo\s*manifest|waybill|layout|tech\s*pack|bill\s*stub|account\s*information|forwarder(?:['’]s|s)?\s+billing\s+invoice|expeditors?\s+billing\s+invoice|forwarder(?:['’]s|s)?\s+invoice|expeditors?\s+invoice)\b/i;
+const SFTP_PLACEHOLDER_INVOICE_NUMBER = /^SFTP-\d+$/i;
 
 let watcherInterval: NodeJS.Timeout | null = null;
 let isProcessing = false;
@@ -138,7 +139,10 @@ export function intakeReviewReason(ocrResult: any, fileName = ''): string | null
   if (type === 'STATEMENT' || type === 'OTHER' || type === 'UNKNOWN' || (!typeLooksPayable && NON_INVOICE_HINTS.test(normalizedFileName))) {
     return `Document type ${type || 'unknown'} is not eligible for automatic invoice creation`;
   }
-  if (!String(ocrResult?.invoice_number || '').trim()) return 'Invoice number could not be extracted';
+  const invoiceNumber = String(ocrResult?.invoice_number || '').trim();
+  if (!invoiceNumber || SFTP_PLACEHOLDER_INVOICE_NUMBER.test(invoiceNumber)) {
+    return 'Invoice number could not be extracted';
+  }
   if (!Number.isFinite(amount) || amount <= 0) return 'A valid non-zero invoice amount could not be extracted';
   if (!ocrResult?.invoice_date) return 'Invoice date could not be extracted';
   // Non-USD handling is policy-driven (INTAKE_CURRENCY_MODE / vendor allowlists).
@@ -593,7 +597,7 @@ async function processSingleInvoiceBuffer(
   // If OCR and filename recovery both fail, keep the PDF auditable in
   // manual-review and wait for a human correction instead of creating AP data.
   const recoveredInvoiceNumber = String(ocrResult.invoice_number || '').trim();
-  if (!recoveredInvoiceNumber) {
+  if (!recoveredInvoiceNumber || SFTP_PLACEHOLDER_INVOICE_NUMBER.test(recoveredInvoiceNumber)) {
     const reason = `Invoice number could not be extracted for ${fileName}${partLabel}; placeholder invoice numbers are disabled`;
     logger.warn(`[File Watcher] ${fileName}${partLabel} → ManualReview: ${reason}`);
     if (splitIndex === undefined) safeMove(processingPath, MANUAL_REVIEW_DIR);

@@ -13,6 +13,8 @@ import prisma from '../config/database';
 import { logger } from '../utils/logger';
 import { AppError } from '../middleware/errorHandler';
 import crypto from 'crypto';
+import { classifyInvoiceDocument } from '../services/structuredInvoiceService';
+import { getPayableBlockReason } from '../services/payableDocumentGuard';
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
 
@@ -97,8 +99,28 @@ async function processSingleEmailInvoice(
     }
 
     // Step 2: OCR extraction
-    const ocrResult = await analyzeInvoice(fileBuffer, mimeType);
+    const ocrResult: any = await analyzeInvoice(fileBuffer, mimeType);
     logger.info(`[${requestId}] OCR completed${partLabel}: ${ocrResult.invoice_number}, vendor: ${ocrResult.vendor_name}`);
+
+    // This legacy email controller writes directly with prisma, so it must
+    // enforce the same pre-create gate as the newer intake service.
+    const classification = ocrResult.document_classification || classifyInvoiceDocument({
+      fileName,
+      mimeType,
+      text: String(ocrResult.raw_text || ocrResult.raw_data?.raw_text || ''),
+    });
+    const payableBlockReason = getPayableBlockReason({
+      document_type: ocrResult.document_type,
+      source_document_type: ocrResult.source_document_type,
+      invoice_type: ocrResult.invoice_type,
+      document_classification: classification,
+      is_non_invoice_document: ocrResult.is_non_invoice_document,
+      raw_text: ocrResult.raw_text || ocrResult.raw_data?.raw_text,
+      fileName,
+    });
+    if (payableBlockReason) {
+      return { success: false, status: 'REVIEW_REQUIRED', error: payableBlockReason };
+    }
 
     // Step 3: Post-OCR duplicate check (Level 3: business key)
     const postOcrDuplicate = await checkEmailDuplicate(fileBuffer, undefined, {
@@ -338,8 +360,26 @@ async function processSingleManualInvoice(
     }
 
     // OCR
-    const ocrResult = await analyzeInvoice(fileBuffer, mimeType);
+    const ocrResult: any = await analyzeInvoice(fileBuffer, mimeType);
     logger.info(`[${requestId}] OCR completed${partLabel}: ${ocrResult.invoice_number}, vendor: ${ocrResult.vendor_name}`);
+
+    const classification = ocrResult.document_classification || classifyInvoiceDocument({
+      fileName,
+      mimeType,
+      text: String(ocrResult.raw_text || ocrResult.raw_data?.raw_text || ''),
+    });
+    const payableBlockReason = getPayableBlockReason({
+      document_type: ocrResult.document_type,
+      source_document_type: ocrResult.source_document_type,
+      invoice_type: ocrResult.invoice_type,
+      document_classification: classification,
+      is_non_invoice_document: ocrResult.is_non_invoice_document,
+      raw_text: ocrResult.raw_text || ocrResult.raw_data?.raw_text,
+      fileName,
+    });
+    if (payableBlockReason) {
+      return { success: false, status: 'REVIEW_REQUIRED', error: payableBlockReason };
+    }
 
     // Business duplicate check
     const bizDup = await checkEmailDuplicate(fileBuffer, undefined, {

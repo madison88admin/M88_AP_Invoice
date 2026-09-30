@@ -31,6 +31,8 @@ import {
   TOP_10_BRANDS,
 } from '@ap-invoice/shared';
 import prisma from '../config/database';
+import { classifyInvoiceDocument } from './structuredInvoiceService';
+import { getPayableBlockReason } from './payableDocumentGuard';
 
 let watcherInterval: NodeJS.Timeout | null = null;
 let isProcessing = false;
@@ -83,6 +85,29 @@ async function processIncomingFile(file: { id: string; name: string; size: numbe
     logger.error(`[SharePoint Watcher] OCR failed for ${fileName}:`, err);
     await safeMoveByName(fileName, FOLDER_PROCESSING, FOLDER_FAILED);
     await createAuditLog(null, 'WATCHER_OCR_FAILED', `OCR extraction failed for ${fileName}: ${err}`);
+    return;
+  }
+
+  // This watcher writes directly with prisma, so apply the same hard gate as
+  // the API upload and email intake paths before any vendor/storage work.
+  const classification = ocrResult.document_classification || classifyInvoiceDocument({
+    fileName,
+    mimeType: 'application/pdf',
+    text: String(ocrResult.raw_text || ocrResult.raw_data?.raw_text || ''),
+  });
+  const payableBlockReason = getPayableBlockReason({
+    document_type: ocrResult.document_type,
+    source_document_type: ocrResult.source_document_type,
+    invoice_type: ocrResult.invoice_type,
+    document_classification: classification,
+    is_non_invoice_document: ocrResult.is_non_invoice_document,
+    raw_text: ocrResult.raw_text || ocrResult.raw_data?.raw_text,
+    fileName,
+  });
+  if (payableBlockReason) {
+    logger.warn(`[SharePoint Watcher] ${fileName} routed to manual review: ${payableBlockReason}`);
+    await safeMoveByName(fileName, FOLDER_PROCESSING, FOLDER_MANUAL_REVIEW);
+    await createAuditLog(null, 'WATCHER_REVIEW_REQUIRED', `${fileName}: ${payableBlockReason}`);
     return;
   }
 

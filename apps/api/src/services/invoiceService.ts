@@ -630,9 +630,9 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
   // Protected fields that cannot be set via update
   const protectedFields = ['id', 'created_at', 'updated_at', 'status', 'source', 'approval_tier', 'qb_posted_at', 'revision', 'edit_reason', 'new_vendor_name'];
 
-  // Non-SUPERADMIN edits cannot re-type an invoice into a non-payable document
-  // type (statement, etc.) — that would bypass the payable document guard.
-  if (userRole !== 'SUPERADMIN' && invoiceData.invoice_type !== undefined && invoiceData.invoice_type !== existing.invoice_type) {
+  // No role may re-type an invoice into a non-payable document. This keeps a
+  // non-invoice from entering the AP workflow through an edit after creation.
+  if (invoiceData.invoice_type !== undefined && invoiceData.invoice_type !== existing.invoice_type) {
     const { getPayableBlockReason } = await import('./payableDocumentGuard');
     const blockReason = getPayableBlockReason({ document_type: String(invoiceData.invoice_type) }, { skipFilenameHints: true });
     if (blockReason) {

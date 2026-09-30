@@ -18,8 +18,8 @@
  *   before creating an invoice record.
  * - Validation: `validatePayableDocument(invoice)` is RULE 20 and runs on every
  *   validateInvoice() so even manually-created records get caught.
- * - A SUPERADMIN override flag (`skip_payable_check=true` in the request body)
- *   is honored ONLY by the manual confirm path.
+ * - There is intentionally no override. Even SUPERADMIN cannot turn a
+ *   document classified as non-payable into an invoice record.
  */
 
 import { InvoiceType, InvoiceSource } from '@ap-invoice/shared';
@@ -48,6 +48,8 @@ export const NON_PAYABLE_DOCUMENT_TYPES = new Set<string>([
   'RECEIPT',
   'STATEMENT',
   'STATEMENT_OF_ACCOUNT',
+  'PROFORMA_INVOICE',
+  'PROFORMA',
   'OTHER',
   'UNKNOWN',
   'COMMERCIAL',
@@ -92,7 +94,11 @@ const NON_PAYABLE_TEXT_HINTS =
 
 /** Focused guard used by legacy intake review paths for the newly requested exclusions. */
 export function getShipmentBillBlockReason(doc: PayableCheckInput): string | null {
-  const docType = String(doc.document_type || doc.source_document_type || doc.invoice_type || '').toUpperCase();
+  const classification = doc.document_classification || undefined;
+  const docType = String(classification?.document_type || doc.document_type || doc.source_document_type || doc.invoice_type || '').toUpperCase();
+  if (classification && classification.payable_candidate === false) {
+    return `Document classification ${String(classification.document_type || docType || 'UNKNOWN').toUpperCase()} is not eligible for invoice creation`;
+  }
   if (docType === 'SHIPMENT_RECEIPT' || docType === 'BILL_PAYMENT' || docType === 'PAYMENT_BILL' || docType === 'PAYMENT_RECEIPT') {
     return `Document type ${docType} is not eligible for invoice creation`;
   }
@@ -141,6 +147,12 @@ export interface PayableCheckInput {
   is_non_invoice_document?: boolean | null;
   raw_text?: string | null;
   fileName?: string | null;
+  document_classification?: {
+    document_type?: string | null;
+    payable_candidate?: boolean | null;
+    confidence?: number | null;
+    reasons?: string[] | null;
+  } | null;
 }
 
 /**
@@ -151,9 +163,17 @@ export function getPayableBlockReason(
   doc: PayableCheckInput,
   options?: { skipFilenameHints?: boolean }
 ): string | null {
+  const classification = doc.document_classification || undefined;
+  // OCR classification is the strongest signal. Do not let a caller relabel
+  // a packing list/AWB as INVOICE after classification has already rejected it.
   const docType = String(
-    doc.document_type || doc.source_document_type || doc.invoice_type || ''
+    classification?.document_type || doc.document_type || doc.source_document_type || doc.invoice_type || ''
   ).toUpperCase();
+
+  if (classification && classification.payable_candidate === false) {
+    const label = String(classification.document_type || docType || 'UNKNOWN').toUpperCase();
+    return `Document classification ${label} is not payable — only actual invoices, debit notes, and credit notes may enter the AP workflow`;
+  }
 
   // 1. Explicit non-invoice flag from OCR (DHL AWB detector etc.)
   if (doc.is_non_invoice_document) {
@@ -229,6 +249,7 @@ export function validatePayableDocument(invoice: {
     is_non_invoice_document: ocrRaw.is_non_invoice_document,
     raw_text: typeof ocrRaw.raw_text === 'string' ? ocrRaw.raw_text.slice(0, 20000) : '',
     fileName,
+    document_classification: ocrRaw.document_classification,
   };
 
   const reason = getPayableBlockReason(doc);

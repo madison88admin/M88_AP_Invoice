@@ -10,8 +10,8 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
     expect(getPayableBlockReason({ document_type: 'INVOICE' })).toBeNull();
   });
 
-  it('allows PROFORMA / SALES / DEBIT_NOTE', () => {
-    expect(getPayableBlockReason({ document_type: 'PROFORMA_INVOICE' })).toBeNull();
+  it('allows SALES / DEBIT_NOTE but blocks proforma documents', () => {
+    expect(getPayableBlockReason({ document_type: 'PROFORMA_INVOICE' })).toMatch(/PROFORMA_INVOICE/);
     expect(getPayableBlockReason({ document_type: 'SALES' })).toBeNull();
     expect(getPayableBlockReason({ document_type: 'DEBIT_NOTE' })).toBeNull();
     expect(getPayableBlockReason({ document_type: 'COMMERCIAL' })).toMatch(/COMMERCIAL/);
@@ -35,6 +35,28 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
   it('blocks when OCR flags is_non_invoice_document', () => {
     const reason = getPayableBlockReason({ document_type: 'INVOICE', is_non_invoice_document: true });
     expect(reason).toMatch(/shipping\/non-invoice/);
+  });
+
+  it('trusts the OCR document classification over a relabeled INVOICE type', () => {
+    expect(getPayableBlockReason({
+      document_type: 'INVOICE',
+      document_classification: {
+        document_type: 'PACKING_LIST',
+        payable_candidate: false,
+        confidence: 0.99,
+      },
+    })).toMatch(/classification PACKING_LIST/);
+  });
+
+  it('blocks an unknown classification before an invoice record can be created', () => {
+    expect(getPayableBlockReason({
+      document_type: 'INVOICE',
+      document_classification: {
+        document_type: 'UNKNOWN',
+        payable_candidate: false,
+        confidence: 0.30,
+      },
+    })).toMatch(/classification UNKNOWN/);
   });
 
   it('blocks statement-of-account text markers even when type extraction failed', () => {

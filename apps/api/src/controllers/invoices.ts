@@ -16,28 +16,24 @@ export const createInvoice = async (
   try {
     const invoiceData = req.body;
 
-    // Payable document guard — same rule as confirm-ocr. Blocks packing lists,
-    // AWBs, statements, payment advices etc. from becoming invoice records via
-    // the generic POST /api/invoices endpoint. SUPERADMIN-only override.
-    if (!invoiceData.skip_payable_check) {
-      const pdfFileName = (invoiceData.storage_path || invoiceData.raw_file_url || invoiceData.pdf_path || '')
-        ? String(invoiceData.storage_path || invoiceData.raw_file_url || invoiceData.pdf_path).split('/').pop()
-        : '';
-      const blockReason = getPayableBlockReason(
-        {
-          document_type: invoiceData.source_document_type,
-          invoice_type: invoiceData.invoice_type,
-          is_non_invoice_document: invoiceData.ocr_raw_data?.is_non_invoice_document,
-          raw_text: invoiceData.ocr_raw_data?.raw_text,
-          fileName: pdfFileName,
-        },
-        { skipFilenameHints: true }
-      );
-      if (blockReason) {
-        throw new AppError(`Rejected: ${blockReason}. SUPERADMIN can retry with the override flag.`, 422);
-      }
-    } else if (req.user?.role !== 'SUPERADMIN') {
-      throw new AppError('skip_payable_check override is SUPERADMIN-only', 403);
+    // Hard gate: no caller, including SUPERADMIN, may bypass the payable
+    // document check. This is deliberately enforced before createInvoice().
+    const pdfFileName = (invoiceData.storage_path || invoiceData.raw_file_url || invoiceData.pdf_path || '')
+      ? String(invoiceData.storage_path || invoiceData.raw_file_url || invoiceData.pdf_path).split('/').pop()
+      : '';
+    const blockReason = getPayableBlockReason(
+      {
+        document_type: invoiceData.source_document_type,
+        invoice_type: invoiceData.invoice_type,
+        document_classification: invoiceData.document_classification || invoiceData.ocr_raw_data?.document_classification,
+        is_non_invoice_document: invoiceData.ocr_raw_data?.is_non_invoice_document,
+        raw_text: invoiceData.ocr_raw_data?.raw_text,
+        fileName: pdfFileName,
+      },
+      { skipFilenameHints: true }
+    );
+    if (blockReason) {
+      throw new AppError(`Rejected: ${blockReason}`, 422);
     }
 
     const invoice = await invoiceService.createInvoice(invoiceData, req.user!.id, req.user!.role);

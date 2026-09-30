@@ -70,6 +70,7 @@ export function intakeReviewReason(ocrResult: any, fileName: string, subject = '
     document_type: ocrResult?.document_type,
     invoice_type: ocrResult?.invoice_type,
     source_document_type: ocrResult?.source_document_type,
+    document_classification: ocrResult?.document_classification || ocrResult?.raw_data?.document_classification,
     is_non_invoice_document: ocrResult?.is_non_invoice_document,
     raw_text: rawText,
     fileName,

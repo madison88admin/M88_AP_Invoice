@@ -1186,6 +1186,7 @@ export const confirmOCR = async (
       ocr_confidence_score,
       ocr_raw_data,
       source_document_type,
+      document_classification,
       structured_source_format,
       document_layout_fingerprint,
       po_validation,
@@ -1195,21 +1196,21 @@ export const confirmOCR = async (
       accounting_preapproved,
       approval_evidence_confirmed,
       storage_path,
-      skip_payable_check,
     } = req.body;
 
     // Payable document guard — packing lists, AWBs, statements, payment advices
     // and other non-invoice documents must not become invoice records. This
     // closes the manual-upload loophole that let HKWSO DHL AWBs, ATX Freight
     // packing lists and HSBC statements into the invoice table (2026-08/09).
-    // SUPERADMIN can force-confirm an ambiguous document with an explicit override.
-    if (!skip_payable_check) {
+    // No override is allowed: even SUPERADMIN must pass the payable guard.
+    {
       const { getPayableBlockReason } = await import('../services/payableDocumentGuard');
       const pdfFileName = storage_path ? String(storage_path).split('/').pop() : '';
       const blockReason = getPayableBlockReason(
         {
           document_type: source_document_type,
           invoice_type,
+          document_classification: document_classification || ocr_raw_data?.document_classification,
           is_non_invoice_document: ocr_raw_data?.is_non_invoice_document,
           raw_text: ocr_raw_data?.raw_text,
           fileName: pdfFileName,
@@ -1218,11 +1219,9 @@ export const confirmOCR = async (
       );
       if (blockReason) {
         throw new AppError(
-          `Rejected: ${blockReason}. If this really is a payable invoice, ask a SUPERADMIN to retry with the override flag.`,
+          `Rejected: ${blockReason}`,
           422
         );      }
-    } else if (req.user?.role !== 'SUPERADMIN') {
-      throw new AppError('skip_payable_check override is SUPERADMIN-only', 403);
     }
 
     // Import invoice service dynamically to avoid circular dependency

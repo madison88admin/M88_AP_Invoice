@@ -14,6 +14,7 @@ export type EmailIntakeStage =
   | 'RETRY_QUEUED'
   | 'REVIEW_REQUIRED'
   | 'CREATED'
+  | 'SPLIT_COMPLETED'
   | 'FAILED';
 
 type IntakeEventInput = {

@@ -13,7 +13,7 @@ vi.mock('./emailIntakeMonitoringService', () => ({ recordEmailIntakeEvent: email
 vi.mock('./duplicateDetectionService', () => ({ checkDuplicateInvoice: vi.fn(), storeInvoiceHashFromStorage: vi.fn() }));
 vi.mock('./ocrDateSanityService', () => ({ runOcrDateSanityCheck: vi.fn() }));
 
-import { intakeReviewReason, shouldTreatAsRevision } from './fileWatcherService';
+import { hasUploadCompletionEvent, intakeReviewReason, shouldTreatAsRevision } from './fileWatcherService';
 
 describe('fileWatcherService.intakeReviewReason — body classification beats filename hints', () => {
   beforeEach(() => {
@@ -144,5 +144,44 @@ describe('fileWatcherService revision replacement policy', () => {
       { status: 'EXCEPTION_FLAGGED', vendor_name_raw: 'PT Victoria Label', invoice_hash: 'same-hash' },
       { vendorName: 'PT Victoria Label', fileHash: 'same-hash' },
     )).toBe(false);
+  });
+});
+
+describe('fileWatcherService upload-only recovery guard', () => {
+  const uploadedAt = new Date('2026-09-30T07:50:00.000Z');
+
+  it('recognizes a terminal event for a single-file intake', () => {
+    expect(hasUploadCompletionEvent('invoice.pdf', uploadedAt, [
+      { file_name: 'invoice.pdf', stage: 'UPLOADED', created_at: uploadedAt },
+      { file_name: 'invoice.pdf', stage: 'REVIEW_REQUIRED', created_at: new Date('2026-09-30T07:51:00.000Z') },
+    ])).toBe(true);
+  });
+
+  it('recognizes split-part completion for a multi-page intake', () => {
+    expect(hasUploadCompletionEvent('bundle.pdf', uploadedAt, [
+      { file_name: 'bundle.pdf', stage: 'UPLOADED', created_at: uploadedAt },
+      { file_name: 'bundle.pdf_part1', stage: 'REVIEW_REQUIRED', created_at: new Date('2026-09-30T07:51:00.000Z') },
+    ])).toBe(true);
+  });
+
+  it('does not treat an older terminal event as completion for a later upload', () => {
+    expect(hasUploadCompletionEvent('retry.pdf', uploadedAt, [
+      { file_name: 'retry.pdf', stage: 'CREATED', created_at: new Date('2026-09-29T07:51:00.000Z') },
+      { file_name: 'retry.pdf', stage: 'UPLOADED', created_at: uploadedAt },
+    ])).toBe(false);
+  });
+
+  it('does not treat OCR extraction alone as completed intake', () => {
+    expect(hasUploadCompletionEvent('stalled.pdf', uploadedAt, [
+      { file_name: 'stalled.pdf', stage: 'UPLOADED', created_at: uploadedAt },
+      { file_name: 'stalled.pdf_part1', stage: 'EXTRACTED', created_at: new Date('2026-09-30T07:51:00.000Z') },
+    ])).toBe(false);
+  });
+
+  it('recognizes the parent completion event after all split parts are routed', () => {
+    expect(hasUploadCompletionEvent('bundle.pdf', uploadedAt, [
+      { file_name: 'bundle.pdf', stage: 'UPLOADED', created_at: uploadedAt },
+      { file_name: 'bundle.pdf', stage: 'SPLIT_COMPLETED', created_at: new Date('2026-09-30T07:52:00.000Z') },
+    ])).toBe(true);
   });
 });

@@ -41,10 +41,41 @@ const MANUAL_REVIEW_DIR = process.env.WATCHER_MANUAL_REVIEW_DIR || '/incoming-in
 const FAILED_DIR = process.env.WATCHER_FAILED_DIR || '/incoming-invoices/failed';
 const NON_INVOICE_HINTS = /\b(statement|packing\s*(?:list|slip)|delivery\s*(?:note|receipt)|purchase\s*order|sales\s*order|order\s*confirmation|quotation|quote|remittance|receipt|shipping\s*document|shipment\s*document|air\s*way\s*bill|airway\s*bill|awb|bill\s*of\s*lading|cargo\s*manifest|waybill|layout|tech\s*pack|bill\s*stub|account\s*information|forwarder(?:['’]s|s)?\s+billing\s+invoice|expeditors?\s+billing\s+invoice|forwarder(?:['’]s|s)?\s+invoice|expeditors?\s+invoice)\b/i;
 const SFTP_PLACEHOLDER_INVOICE_NUMBER = /^SFTP-\d+$/i;
+const UPLOAD_ONLY_AUDIT_INTERVAL_MS = 5 * 60 * 1000;
+const UPLOAD_ONLY_MIN_AGE_MS = 10 * 60 * 1000;
+const UPLOAD_ONLY_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
+// OCR extraction alone is not a completed intake. A document can be extracted
+// successfully and still stall before review/creation (the historical
+// 5666715316.pdf failure did exactly that), so only terminal routing events
+// satisfy the upload-only guard.
+const UPLOAD_COMPLETION_STAGES = new Set(['REVIEW_REQUIRED', 'CREATED', 'SPLIT_COMPLETED', 'FAILED', 'RETRY_QUEUED']);
 
 let watcherInterval: NodeJS.Timeout | null = null;
 let isProcessing = false;
 const processedFiles = new Set<string>();
+let lastUploadOnlyAuditAt = 0;
+
+type IntakeEventSummary = {
+  file_name: string | null;
+  stage: string;
+  created_at: Date;
+};
+
+/**
+ * An upload event for a multi-page PDF is followed by events for
+ * `${fileName}_partN`. Treat those split events as completion for the parent
+ * file; otherwise every successfully split document would look orphaned.
+ */
+export function hasUploadCompletionEvent(
+  fileName: string,
+  uploadedAt: Date,
+  events: readonly IntakeEventSummary[],
+): boolean {
+  return events.some((event) => {
+    if (!event.file_name || event.created_at < uploadedAt || !UPLOAD_COMPLETION_STAGES.has(event.stage)) return false;
+    return event.file_name === fileName || event.file_name.startsWith(`${fileName}_part`);
+  });
+}
 
 async function countPdfPages(buffer: Buffer): Promise<number | undefined> {
   try {
@@ -357,7 +388,37 @@ function extractLabeledDateFromOcr(ocrResult: any): Date | null {
  * 7. Save to database
  * 8. Move to final folder
  */
+/**
+ * Run one file through the watcher pipeline and convert any unexpected
+ * exception into a durable failure event. Previously an exception after the
+ * UPLOADED event could leave a file with no terminal intake event at all.
+ */
 async function processFile(filePath: string, fileName: string): Promise<void> {
+  const processingPath = path.join(PROCESSING_DIR, fileName);
+  try {
+    await processFileInternal(filePath, fileName);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    logger.error(`[File Watcher] Unhandled pipeline failure for ${fileName}:`, err);
+    if (fs.existsSync(processingPath)) safeMove(processingPath, FAILED_DIR);
+    await createAuditLog(null, 'WATCHER_PIPELINE_FAILED', `Unhandled watcher failure for ${fileName}: ${detail}`);
+    await recordEmailIntakeEvent({
+      source: 'POWER_AUTOMATE',
+      stage: 'FAILED',
+      status: 'FAILED',
+      fileName,
+      error: `Watcher pipeline failed after upload: ${detail}`,
+      metadata: { failure_boundary: 'processFile', upload_only_guard: true },
+    });
+    await alertEmailIntakeFailure({
+      source: 'Power Automate SFTP intake',
+      fileName,
+      error: `Watcher pipeline failed after upload: ${detail}`,
+    });
+  }
+}
+
+async function processFileInternal(filePath: string, fileName: string): Promise<void> {
   logger.info(`[File Watcher] Processing: ${fileName}`);
   await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'ATTACHMENT_DETECTED', fileName, metadata: { channel: 'SFTP' } });
 
@@ -442,16 +503,51 @@ async function processFile(filePath: string, fileName: string): Promise<void> {
 
       for (let i = 0; i < splitBuffers.length; i++) {
         const partName = `${fileName}_part${i + 1}`;
+        // Keep each split as a real file while it is being processed. This is
+        // important when a page needs manual review or OCR retry: the parent
+        // PDF must remain an archive, while the page that needs attention must
+        // have its own durable path.
+        const splitProcessingPath = path.join(PROCESSING_DIR, partName);
+        try {
+          fs.writeFileSync(splitProcessingPath, splitBuffers[i]);
+        } catch (splitWriteErr) {
+          logger.error(`[File Watcher] Could not persist split ${i + 1} of ${fileName}:`, splitWriteErr);
+          await recordEmailIntakeEvent({
+            source: 'POWER_AUTOMATE',
+            stage: 'FAILED',
+            status: 'FAILED',
+            fileName: partName,
+            error: `Could not persist split PDF: ${splitWriteErr instanceof Error ? splitWriteErr.message : String(splitWriteErr)}`,
+            metadata: { parent_file: fileName, split_index: i },
+          });
+          continue;
+        }
         logger.info(`[File Watcher] Processing split invoice ${i + 1}/${splitBuffers.length} from ${fileName}`);
         try {
-          await processSingleInvoiceBuffer(splitBuffers[i], partName, processingPath, i);
+          await processSingleInvoiceBuffer(splitBuffers[i], partName, splitProcessingPath, i);
         } catch (splitErr) {
           logger.error(`[File Watcher] Error processing split ${i + 1} of ${fileName}:`, splitErr);
+          if (fs.existsSync(splitProcessingPath)) safeMove(splitProcessingPath, FAILED_DIR);
+          await recordEmailIntakeEvent({
+            source: 'POWER_AUTOMATE',
+            stage: 'FAILED',
+            status: 'FAILED',
+            fileName: partName,
+            error: `Split invoice processing failed: ${splitErr instanceof Error ? splitErr.message : String(splitErr)}`,
+            metadata: { parent_file: fileName, split_index: i },
+          });
         }
       }
 
       // Move original to processed after all splits are done
       safeMove(processingPath, PROCESSED_DIR);
+      await recordEmailIntakeEvent({
+        source: 'POWER_AUTOMATE',
+        stage: 'SPLIT_COMPLETED',
+        status: 'SUCCESS',
+        fileName,
+        metadata: { split_count: splitBuffers.length, parent_archived: true },
+      });
       logger.info(`[File Watcher] ${fileName} → Processed (${detection.invoiceCount} invoices extracted) ✅`);
       return;
     }
@@ -474,6 +570,9 @@ async function processSingleInvoiceBuffer(
   splitIndex?: number
 ): Promise<void> {
   const partLabel = splitIndex !== undefined ? ` [part ${splitIndex + 1}]` : '';
+  const currentProcessingPath = splitIndex !== undefined
+    ? path.join(PROCESSING_DIR, fileName)
+    : processingPath;
 
   // Step 3: OCR extraction
   let ocrResult: any;
@@ -523,7 +622,7 @@ async function processSingleInvoiceBuffer(
     await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'EXTRACTED', fileName, metadata: { documentType: ocrResult?.document_type, currency: ocrResult?.currency, input_pages: inputPages, processed_pages: processedPages, page_coverage_complete: inputPages === undefined || inputPages === processedPages } });
   } catch (err) {
     logger.error(`[File Watcher] OCR failed for ${fileName}${partLabel}:`, err);
-    if (splitIndex === undefined) safeMove(processingPath, FAILED_DIR);
+    safeMove(currentProcessingPath, FAILED_DIR);
     await createAuditLog(null, 'WATCHER_OCR_FAILED', `OCR extraction failed for ${fileName}${partLabel}: ${err}`);
     await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'FAILED', fileName, error: `OCR extraction failed: ${String(err)}` });
     await alertEmailIntakeFailure({ source: 'Power Automate SFTP intake', fileName, error: 'OCR extraction failed' });
@@ -544,7 +643,7 @@ async function processSingleInvoiceBuffer(
   const reviewReason = intakeReviewReason(ocrResult, fileName);
   if (reviewReason) {
     logger.info(`[File Watcher] ${fileName}${partLabel} → ManualReview: ${reviewReason}`);
-    if (splitIndex === undefined) safeMove(processingPath, MANUAL_REVIEW_DIR);
+    safeMove(currentProcessingPath, MANUAL_REVIEW_DIR);
     await createAuditLog(null, 'WATCHER_REVIEW_REQUIRED', `${fileName}${partLabel}: ${reviewReason}`);
     await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'FAILED', fileName, error: reviewReason });
     return;
@@ -554,7 +653,7 @@ async function processSingleInvoiceBuffer(
   if (intakeControls.reasons.length > 0) {
     const reason = intakeControls.reasons.join(' ');
     logger.info(`[File Watcher] ${fileName}${partLabel} → ManualReview: ${reason}`);
-    if (splitIndex === undefined) safeMove(processingPath, MANUAL_REVIEW_DIR);
+    safeMove(currentProcessingPath, MANUAL_REVIEW_DIR);
     await createAuditLog(null, 'WATCHER_INTAKE_CONTROL_REVIEW', `${fileName}${partLabel}: ${reason}`);
     await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'FAILED', fileName, error: reason, metadata: { intake_controls: intakeControls } });
     await alertEmailIntakeFailure({ source: 'Power Automate intake control', fileName, error: reason });
@@ -569,12 +668,20 @@ async function processSingleInvoiceBuffer(
     logger.warn(
       `[File Watcher] Low OCR confidence (${(ocrConfidence * 100).toFixed(1)}% < ${(OCR_CONFIDENCE_THRESHOLD * 100).toFixed(0)}%) for ${fileName}${partLabel} → ManualReview`
     );
-    if (splitIndex === undefined) safeMove(processingPath, MANUAL_REVIEW_DIR);
+    safeMove(currentProcessingPath, MANUAL_REVIEW_DIR);
     await createAuditLog(
       null,
       'WATCHER_LOW_OCR_CONFIDENCE',
       `OCR confidence ${(ocrConfidence * 100).toFixed(1)}% below threshold ${(OCR_CONFIDENCE_THRESHOLD * 100).toFixed(0)}% for ${fileName}${partLabel}. Routed to manual review.`
     );
+    await recordEmailIntakeEvent({
+      source: 'POWER_AUTOMATE',
+      stage: 'REVIEW_REQUIRED',
+      status: 'FAILED',
+      fileName,
+      error: `OCR confidence ${(ocrConfidence * 100).toFixed(1)}% below threshold ${(OCR_CONFIDENCE_THRESHOLD * 100).toFixed(0)}%`,
+      metadata: { reason: 'LOW_OCR_CONFIDENCE', split_index: splitIndex ?? null },
+    });
     return;
   }
 
@@ -600,7 +707,7 @@ async function processSingleInvoiceBuffer(
   if (!recoveredInvoiceNumber || SFTP_PLACEHOLDER_INVOICE_NUMBER.test(recoveredInvoiceNumber)) {
     const reason = `Invoice number could not be extracted for ${fileName}${partLabel}; placeholder invoice numbers are disabled`;
     logger.warn(`[File Watcher] ${fileName}${partLabel} → ManualReview: ${reason}`);
-    if (splitIndex === undefined) safeMove(processingPath, MANUAL_REVIEW_DIR);
+    safeMove(currentProcessingPath, MANUAL_REVIEW_DIR);
     await createAuditLog(null, 'WATCHER_REVIEW_REQUIRED', reason);
     await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'FAILED', fileName, error: reason });
     return;
@@ -635,7 +742,7 @@ async function processSingleInvoiceBuffer(
 
   if (dupResult.isDuplicate) {
     logger.info(`[File Watcher] Duplicate: ${fileName}${partLabel} → ${dupResult.existingInvoiceNumber} (${dupResult.level})`);
-    if (splitIndex === undefined) safeMove(processingPath, DUPLICATES_DIR);
+    safeMove(currentProcessingPath, DUPLICATES_DIR);
     await createAuditLog(
       dupResult.existingInvoiceId || null,
       'WATCHER_DUPLICATE',
@@ -652,7 +759,7 @@ async function processSingleInvoiceBuffer(
     });
     if (existing && !revisionParent) {
       logger.info(`[File Watcher] Duplicate invoice_number "${ocrResult.invoice_number}" already in DB: ${fileName}${partLabel}`);
-      if (splitIndex === undefined) safeMove(processingPath, DUPLICATES_DIR);
+      safeMove(currentProcessingPath, DUPLICATES_DIR);
       await createAuditLog(existing.id, 'WATCHER_DUPLICATE', `Duplicate invoice_number ${ocrResult.invoice_number} for ${fileName}`);
       return;
     }
@@ -699,7 +806,7 @@ async function processSingleInvoiceBuffer(
       if (fuzzyDup.is_duplicate && fuzzyDup.existing_invoice_id) {
         const reason = fuzzyDup.fuzzy_match_details?.match_reason || fuzzyDup.duplicate_type || 'fuzzy match';
         logger.warn(`[File Watcher] Duplicate (${fuzzyDup.duplicate_type}) for ${fileName}${partLabel} → existing ${fuzzyDup.existing_invoice_number}: ${reason}`);
-        if (splitIndex === undefined) safeMove(processingPath, DUPLICATES_DIR);
+        safeMove(currentProcessingPath, DUPLICATES_DIR);
         await createAuditLog(fuzzyDup.existing_invoice_id, 'WATCHER_DUPLICATE', `Duplicate detected for ${fileName}: ${reason}`);
         return;
       }
@@ -1005,7 +1112,7 @@ async function processSingleInvoiceBuffer(
         );
 
         if (!validationResult.passed && validationResult.exceptions.length > 0) {
-          if (splitIndex === undefined) await safeMoveAndUpdatePdfPath(processingPath, MANUAL_REVIEW_DIR, invoiceId);
+          await safeMoveAndUpdatePdfPath(currentProcessingPath, MANUAL_REVIEW_DIR, invoiceId);
           logger.info(`[File Watcher] ${fileName}${partLabel} → ManualReview (validation exceptions)`);
           return;
         }
@@ -1023,24 +1130,37 @@ async function processSingleInvoiceBuffer(
             detail: `Validation error during file watcher processing: ${validationError instanceof Error ? validationError.message : String(validationError)}`,
           },
         });
-        if (splitIndex === undefined) await safeMoveAndUpdatePdfPath(processingPath, MANUAL_REVIEW_DIR, invoiceId);
+        await safeMoveAndUpdatePdfPath(currentProcessingPath, MANUAL_REVIEW_DIR, invoiceId);
         return;
       }
     }
 
     // No vendor match → ManualReview (but invoice is saved in DB with EXCEPTION_FLAGGED)
     if (isVendorUnknown) {
-      if (splitIndex === undefined) await safeMoveAndUpdatePdfPath(processingPath, MANUAL_REVIEW_DIR, invoiceId);
+      await safeMoveAndUpdatePdfPath(currentProcessingPath, MANUAL_REVIEW_DIR, invoiceId);
       logger.info(`[File Watcher] ${fileName}${partLabel} → ManualReview (vendor not found, invoice saved as EXCEPTION_FLAGGED)`);
       return;
     }
 
-    // Step 9: Move to Processed (only for single invoice — multi-invoice moves original in processFile)
-    if (splitIndex === undefined) await safeMoveAndUpdatePdfPath(processingPath, PROCESSED_DIR, invoiceId);
+    // Step 9: Move the processed source. For split invoices the child was
+    // already uploaded to storage above; move only the local child here to
+    // avoid creating a second storage object. The parent PDF is archived by
+    // processFileInternal after all children finish.
+    if (splitIndex !== undefined) {
+      const finalSplitPath = safeMove(currentProcessingPath, PROCESSED_DIR);
+      if (finalSplitPath && invoiceId) {
+        const stored = await prisma.invoice.findUnique({ where: { id: invoiceId }, select: { pdf_path: true } });
+        if (!stored?.pdf_path || stored.pdf_path === currentProcessingPath) {
+          await prisma.invoice.update({ where: { id: invoiceId }, data: { pdf_path: finalSplitPath } });
+        }
+      }
+    } else {
+      await safeMoveAndUpdatePdfPath(currentProcessingPath, PROCESSED_DIR, invoiceId);
+    }
     logger.info(`[File Watcher] ${fileName}${partLabel} → Processed ✅`);
   } catch (err) {
     logger.error(`[File Watcher] DB save failed for ${fileName}${partLabel}:`, err);
-    if (splitIndex === undefined) safeMove(processingPath, FAILED_DIR);
+    safeMove(currentProcessingPath, FAILED_DIR);
     if (invoiceId) {
       await createAuditLog(invoiceId, 'WATCHER_DB_FAILED', `Database save failed for ${fileName}: ${err}`);
     }
@@ -1064,6 +1184,80 @@ function isLikelyInvoiceFilename(fileName: string): boolean {
     || /\b(?:PL|AWB|BL|DO|ML)\b/i.test(normalized)
     || /artwork|care\s*label|hangtag|barcode|tech\s*pack|trim\s*(?:received|sample)/i.test(normalized)) return false;
   return /invoice|\binv\b|debit|credit|commercial|proforma|sales\s*invoice|\bpi\b|\bci\b|\bsi\b|\bpci\b|bsninv|sic\d|ujdb|ujcr|invp\d|hkws[o0]\d+|ia\d{4,}|sc[-_ ]?\d{4,}/i.test(normalized);
+}
+
+function findWatcherFile(fileName: string): string | null {
+  for (const directory of [INCOMING_DIR, PROCESSING_DIR, PROCESSED_DIR, FAILED_DIR, MANUAL_REVIEW_DIR, DUPLICATES_DIR]) {
+    try {
+      if (fs.existsSync(path.join(directory, fileName))) return directory;
+    } catch {
+      // A missing/unavailable watcher directory is handled as not found.
+    }
+  }
+  return null;
+}
+
+/**
+ * Detect the historical failure mode where the watcher recorded UPLOADED but
+ * never emitted OCR/REVIEW/CREATED/FAILED. If the source file is still local,
+ * the normal queue can recover it; if it is gone, create one durable failure
+ * event so it cannot silently disappear again. This is intentionally an audit
+ * and alert path, not an automatic invoice creator.
+ */
+async function auditUploadOnlyIntake(): Promise<void> {
+  const now = Date.now();
+  if (now - lastUploadOnlyAuditAt < UPLOAD_ONLY_AUDIT_INTERVAL_MS) return;
+  lastUploadOnlyAuditAt = now;
+
+  try {
+    const events = await prisma.emailIntakeEvent.findMany({
+      where: {
+        source: 'POWER_AUTOMATE',
+        created_at: { gte: new Date(now - UPLOAD_ONLY_LOOKBACK_MS) },
+        stage: { in: ['UPLOADED', 'EXTRACTED', 'REVIEW_REQUIRED', 'CREATED', 'FAILED', 'RETRY_QUEUED'] },
+      },
+      select: { file_name: true, stage: true, created_at: true },
+      orderBy: { created_at: 'asc' },
+    }) as IntakeEventSummary[];
+
+    const latestUploads = new Map<string, Date>();
+    for (const event of events) {
+      if (event.stage !== 'UPLOADED' || !event.file_name) continue;
+      const previous = latestUploads.get(event.file_name);
+      if (!previous || event.created_at > previous) latestUploads.set(event.file_name, event.created_at);
+    }
+
+    for (const [fileName, uploadedAt] of latestUploads) {
+      if (now - uploadedAt.getTime() < UPLOAD_ONLY_MIN_AGE_MS) continue;
+      if (hasUploadCompletionEvent(fileName, uploadedAt, events)) continue;
+
+      const location = findWatcherFile(fileName);
+      // Files still in incoming/processing are handled by the normal poll and
+      // stale-file recovery. Do not race the active pipeline here.
+      if (location === INCOMING_DIR || location === PROCESSING_DIR) continue;
+
+      const reason = location
+        ? `Upload event has no subsequent intake completion event; file is parked in ${location}.`
+        : 'Upload event has no subsequent intake completion event and the source file is no longer in the watcher folders.';
+      await createAuditLog(null, 'WATCHER_UPLOAD_ONLY', `${fileName}: ${reason}`);
+      await recordEmailIntakeEvent({
+        source: 'POWER_AUTOMATE',
+        stage: 'FAILED',
+        status: 'FAILED',
+        fileName,
+        error: `Upload-only intake recovery required: ${reason}`,
+        metadata: {
+          upload_only_intake: true,
+          recovery_required: true,
+          uploaded_at: uploadedAt.toISOString(),
+          watcher_location: location,
+        },
+      });
+      logger.error(`[File Watcher] ${fileName}: ${reason}`);
+    }
+  } catch (error) {
+    logger.warn('[File Watcher] Upload-only intake audit failed:', error);
+  }
 }
 
 /**
@@ -1135,6 +1329,7 @@ async function pollIncomingDirectory(): Promise<void> {
   try {
     // Recover stuck files from processing/ (files older than 10 minutes)
     recoverStuckFilesPeriodic();
+    await auditUploadOnlyIntake();
     await queueRetryableFiles();
 
     if (!fs.existsSync(INCOMING_DIR)) {

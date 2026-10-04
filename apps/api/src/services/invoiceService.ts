@@ -504,6 +504,14 @@ export const getInvoices = async (filters: any, userRole?: string) => {
       signatures: true,
       exceptions: true,
       stage_timestamps: true,
+      // The manager's Returned Invoices queue needs the reason without
+      // opening each invoice. Keep the list payload small by returning only
+      // return/rejection audit entries; the detail endpoint still returns the
+      // complete audit history.
+      audit_logs: {
+        where: { action: { in: ['RETURNED_FOR_CORRECTION', 'REJECTED'] } },
+        orderBy: { created_at: 'desc' },
+      },
       invoice_lines: true,
       payments: true,
       follow_up_tasks: true,

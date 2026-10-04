@@ -2,7 +2,7 @@ import { useState, ReactNode } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useMockData } from '../contexts/MockDataContext';
-import { getPendingApprovalsForUser, getApprovedByUser } from '../lib/approvalQueue';
+import { getPendingApprovalsForUser, getApprovedByUser, getReturnedInvoicesForUser } from '../lib/approvalQueue';
 import { ThemeToggle } from './ThemeToggle';
 import NotificationBell from './NotificationBell';
 import SidebarItem from './ui/SidebarItem';
@@ -11,6 +11,7 @@ import {
   Package, BarChart3, FileSearch, Users, Settings, ChevronLeft,
   Menu, X, LogOut, Upload, Pause, Activity, Gauge, History,
   ClipboardList, Landmark,
+  RotateCcw,
 } from 'lucide-react';
 
 interface AppLayoutProps {
@@ -56,7 +57,8 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
       items: [
         { icon: CheckSquare, label: 'Approvals', path: '/approvals', roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'PLANNING_MANAGER', 'SR_MANAGER_GLOBAL_PRODUCTION', 'MS_POLLY', 'ACCOUNTING_SUPERVISOR'], badgeKey: 'approvals', badgeColor: 'red' },
         { icon: History, label: 'Approved Invoices', path: '/approved-invoices', roles: ['PURCHASING_MANAGER'], badgeKey: 'approvedByMe', badgeColor: 'lime' },
-        { icon: AlertTriangle, label: 'Exceptions', path: '/exceptions', roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN'], badgeKey: 'exceptions', badgeColor: 'amber' },
+        { icon: RotateCcw, label: 'Returned Invoices', path: '/returned-invoices', roles: ['PURCHASING_MANAGER'], badgeKey: 'returned', badgeColor: 'amber' },
+        { icon: AlertTriangle, label: 'Exceptions', path: '/exceptions', roles: ['PURCHASING_COORDINATOR', 'IT_ADMIN'], badgeKey: 'exceptions', badgeColor: 'amber' },
         { icon: Pause, label: 'On-Hold Queue', path: '/on-hold-queue', roles: ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'], badgeKey: 'onhold', badgeColor: 'amber' },
       ],
     },
@@ -90,13 +92,17 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
 
   // Compute badges from mock data
   const { invoices, vendors, paymentBatches } = useMockData();
+  const isPurchasingManager = user?.role === 'PURCHASING_MANAGER';
   const badges: Record<string, number> = {
-    dashboard: invoices.filter(i => ['RECEIVED', 'VALIDATION_PENDING', 'EXCEPTION_FLAGGED'].includes(i.status)).length,
-    repository: invoices.length,
+    // A manager's sidebar should surface actionable work, not the size of the
+    // entire repository. Approval count below is the manager's real queue.
+    dashboard: isPurchasingManager ? 0 : invoices.filter(i => ['RECEIVED', 'VALIDATION_PENDING', 'EXCEPTION_FLAGGED'].includes(i.status)).length,
+    repository: isPurchasingManager ? 0 : invoices.length,
     workbench: invoices.filter(i => ['VALIDATION_PENDING', 'EXCEPTION_FLAGGED'].includes(i.status)).length,
     // Per-user pending queue — must match the Approval Inbox page count.
     approvals: getPendingApprovalsForUser(invoices, user).length,
     approvedByMe: getApprovedByUser(invoices, user).length,
+    returned: getReturnedInvoicesForUser(invoices, user).length,
     exceptions: invoices.filter(i => i.exceptions.some(e => e.status === 'OPEN' || e.status === 'PENDING')).length,
     onhold: invoices.filter(i => i.status === 'ON_HOLD').length,
     batches: paymentBatches.filter(b => b.status === 'DRAFT').length,

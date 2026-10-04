@@ -8,6 +8,7 @@ import Dashboard from './components/Dashboard';
 import InvoiceUpload from './components/InvoiceUpload';
 import ApprovalInbox from './components/ApprovalInbox';
 import ApprovedInvoices from './components/ApprovedInvoices';
+import ReturnedInvoices from './components/ReturnedInvoices';
 import ExceptionManager from './components/ExceptionManager';
 import PaymentBatchManager from './components/PaymentBatchManager';
 import Reports from './components/Reports';
@@ -25,7 +26,7 @@ import FinanceControlsDashboard from './components/FinanceControlsDashboard';
 import ProtectedRoute from './components/ProtectedRoute';
 import NotFound from './components/NotFound';
 import AppLayout from './components/AppLayout';
-import { FileText, CheckSquare, AlertTriangle, Building2, Package, BarChart3, FileSearch, Users, Settings, Upload, FileSearch as AuditIcon, LayoutDashboard, Landmark, CheckCircle } from 'lucide-react';
+import { FileText, CheckSquare, AlertTriangle, Building2, Package, BarChart3, FileSearch, Users, Settings, Upload, FileSearch as AuditIcon, LayoutDashboard, Landmark, CheckCircle, RotateCcw } from 'lucide-react';
 
 function App() {
   return (
@@ -68,6 +69,13 @@ function App() {
                   <ProtectedRoute>
                     <AppLayout title="Approved Invoices" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-lime), var(--accent-green))' }}><CheckCircle className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
                       <ApprovedInvoices />
+                    </AppLayout>
+                  </ProtectedRoute>
+                } />
+                <Route path="/returned-invoices" element={
+                  <ProtectedRoute>
+                    <AppLayout title="Returned Invoices" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-amber), var(--accent-red))' }}><RotateCcw className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
+                      <ReturnedInvoices />
                     </AppLayout>
                   </ProtectedRoute>
                 } />

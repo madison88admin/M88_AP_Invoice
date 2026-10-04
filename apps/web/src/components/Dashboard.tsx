@@ -17,6 +17,7 @@ import { MockInvoice } from '../lib/mockData';
 import { hasPermission, filterInvoicesByRole, canUserApproveStatus, isWithinRoleThreshold } from '../lib/roleAccess';
 import { cn } from '../lib/utils';
 import { getAuditActorDisplay } from '../lib/auditActor';
+import { isReturnedSignatureForUser } from '../lib/approvalQueue';
 import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, ChevronRight, LogOut, Edit, Unlock, Pause, Users, Loader2, Menu, X, Trash2, Landmark, Paperclip, Upload, Download, Eye, Info } from 'lucide-react';
 import { Skeleton, SkeletonBar } from './ui/Skeleton';
 
@@ -165,28 +166,6 @@ function calcTrend(invoiceList: { created_at?: string }[]): { trend: string; tre
 function deriveBaseMpo(value?: string | null): string {
   const match = String(value || '').toUpperCase().match(/MPO\d{5,8}/);
   return match?.[0] || '';
-}
-
-/**
- * True when a signature represents a return/reject re-open assigned to the
- * current user. Matches by signatory_user_id (preferred); legacy records
- * without a user ID fall back to name matching.
- */
-function isReturnedSignatureForUser(
-  sig: any,
-  currentStage: string | undefined,
-  user: { id?: string; name?: string } | null
-): boolean {
-  if (!sig || sig.ocr_detected || sig.signed_at || sig.approval_status !== 'RECONFIRMATION_REQUIRED') return false;
-  if (currentStage && sig.signatory_role !== currentStage) return false;
-  if (sig.signatory_user_id) {
-    return Boolean(user?.id && sig.signatory_user_id === user.id);
-  }
-  return Boolean(
-    sig.signatory_name &&
-    user?.name &&
-    sig.signatory_name.trim().toLowerCase() === user.name.trim().toLowerCase()
-  );
 }
 
 type QuickFilter = 'all' | 'returned' | 'urgent' | 'issues';

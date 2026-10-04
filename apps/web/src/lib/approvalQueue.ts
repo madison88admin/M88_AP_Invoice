@@ -30,6 +30,69 @@ export const orderedSignatures = (invoice: MockInvoice) => (invoice.signatures |
     (!signature.invalidated_at || signature.approval_status === 'RECONFIRMATION_REQUIRED'))
   .sort((a, b) => APPROVAL_ROLE_ORDER.indexOf(a.signatory_role) - APPROVAL_ROLE_ORDER.indexOf(b.signatory_role));
 
+/**
+ * True when a workflow signature is an active return/re-open assigned to the
+ * current user. OCR signatures are source evidence only and must never appear
+ * in the returned queue.
+ */
+export function isReturnedSignatureForUser(
+  sig: any,
+  currentStage: string | undefined,
+  user: { id?: string; name?: string } | null,
+): boolean {
+  if (!sig || sig.ocr_detected || sig.signed_at || sig.approval_status !== 'RECONFIRMATION_REQUIRED') return false;
+  if (currentStage && sig.signatory_role !== currentStage) return false;
+  if (sig.signatory_user_id) return Boolean(user?.id && sig.signatory_user_id === user.id);
+  return Boolean(sig.signatory_name && user?.name &&
+    sig.signatory_name.trim().toLowerCase() === user.name.trim().toLowerCase());
+}
+
+export interface ReturnedInvoiceDetails {
+  invoice: MockInvoice;
+  reason: string;
+  returnedAt?: string;
+  returnedBy?: string;
+}
+
+/** Return the latest reason recorded for a returned invoice. */
+export function getReturnedInvoiceDetails(
+  invoice: MockInvoice,
+  user: { id?: string; name?: string } | null,
+): ReturnedInvoiceDetails | null {
+  const returnedSignature = (invoice.signatures || [])
+    .filter(sig => isReturnedSignatureForUser(sig, invoice.current_stage, user))
+    .sort((a, b) => new Date(b.invalidated_at || 0).getTime() - new Date(a.invalidated_at || 0).getTime())[0];
+  if (!returnedSignature) return null;
+
+  const returnLog = (invoice.audit_logs || [])
+    .filter(log => ['RETURNED_FOR_CORRECTION', 'REJECTED'].includes(String(log.action || '').toUpperCase()))
+    .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())[0];
+  const note = String(returnLog?.note || '');
+  const reasonFromAudit = note.match(/reason:\s*(.+)$/i)?.[1]?.trim();
+  // Audit notes contain the clean user-entered reason after "Reason:";
+  // signature invalidation text may include a technical prefix, so prefer
+  // the audit value when both are available.
+  const reason = String(reasonFromAudit || returnedSignature.invalidation_reason || '').trim() || 'No return reason was recorded.';
+
+  return {
+    invoice,
+    reason,
+    returnedAt: returnLog?.created_at || returnedSignature.invalidated_at,
+    returnedBy: returnLog?.performed_by,
+  };
+}
+
+/** Returned invoices assigned to this user, newest return first. */
+export function getReturnedInvoicesForUser(
+  invoices: MockInvoice[],
+  user: { role: string; name?: string; id?: string } | null,
+): ReturnedInvoiceDetails[] {
+  return invoices
+    .map(invoice => getReturnedInvoiceDetails(invoice, user))
+    .filter((entry): entry is ReturnedInvoiceDetails => entry !== null)
+    .sort((a, b) => new Date(b.returnedAt || 0).getTime() - new Date(a.returnedAt || 0).getTime());
+}
+
 /** The timestamp when the coordinator endorsed the invoice to the next stage. */
 export const getCoordinatorSubmissionDate = (invoice: MockInvoice): string | undefined =>
   orderedSignatures(invoice).find(signature =>

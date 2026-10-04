@@ -1,5 +1,6 @@
 import { MockInvoice } from '../lib/mockData';
-import { hasPermission, canUserApproveStatus } from '../lib/roleAccess';
+import { hasPermission } from '../lib/roleAccess';
+import { getPendingApprovalsForUser } from '../lib/approvalQueue';
 import { InvoiceStatus } from '@ap-invoice/shared';
 import { CheckCircle, AlertTriangle, Send, Clock, FileText } from 'lucide-react';
 
@@ -14,9 +15,7 @@ export default function MyTasksWidget({ user, invoices, onFilterClick }: MyTasks
 
   const role = user.role;
 
-  const pendingApprovals = invoices.filter(
-    inv => inv.status && canUserApproveStatus(role, String(inv.status))
-  );
+  const pendingApprovals = getPendingApprovalsForUser(invoices, user);
 
   const pendingPosts = hasPermission(role, 'canPost')
     ? invoices.filter(inv => inv.status === InvoiceStatus.PENDING_ACCOUNTING || inv.status === InvoiceStatus.APPROVED)

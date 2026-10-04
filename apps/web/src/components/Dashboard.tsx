@@ -17,8 +17,8 @@ import { MockInvoice } from '../lib/mockData';
 import { hasPermission, filterInvoicesByRole, canUserApproveStatus, isWithinRoleThreshold } from '../lib/roleAccess';
 import { cn } from '../lib/utils';
 import { getAuditActorDisplay } from '../lib/auditActor';
-import { isReturnedSignatureForUser } from '../lib/approvalQueue';
-import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, ChevronRight, LogOut, Edit, Unlock, Pause, Users, Loader2, Menu, X, Trash2, Landmark, Paperclip, Upload, Download, Eye, Info } from 'lucide-react';
+import { getPendingApprovalsForUser, getReturnedInvoicesForUser, isReturnedSignatureForUser } from '../lib/approvalQueue';
+import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, RotateCcw, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, ChevronRight, LogOut, Edit, Unlock, Pause, Users, Loader2, Menu, X, Trash2, Landmark, Paperclip, Upload, Download, Eye, Info } from 'lucide-react';
 import { Skeleton, SkeletonBar } from './ui/Skeleton';
 
 const CANCELLATION_APPROVER_BY_USER_ROLE: Record<string, string> = {
@@ -1799,13 +1799,10 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
       }
 
       case 'PURCHASING_MANAGER': {
-        const pendMgr = allInvoices.filter(i => i.status === 'PENDING_MANAGER');
+        const pendMgr = getPendingApprovalsForUser(allInvoices, user);
+        const returnedInvoices = getReturnedInvoicesForUser(allInvoices, user);
         const poSum = allInvoices.filter(i => i.po_validation?.po_found);
         const escalated = allInvoices.filter(i => i.status === InvoiceStatus.ON_HOLD);
-        const approvedMgr = allInvoices.filter(i => i.status === 'APPROVED');
-        const approvalRate = approvedMgr.length + pendMgr.length > 0
-          ? Math.round((approvedMgr.length / (approvedMgr.length + pendMgr.length)) * 100)
-          : 0;
         return [
           {
             label: 'Pending My Approval',
@@ -1815,12 +1812,12 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
             ...calcTrend(pendMgr),
           },
           {
-            label: 'Team Performance',
-            value: approvalRate + '%',
-            icon: TrendingUp,
-            accent: 'default',
-            ...calcTrend(approvedMgr),
-            subtitle: 'Coordinator approval rate',
+            label: 'Returned Invoices',
+            value: returnedInvoices.length,
+            icon: RotateCcw,
+            accent: 'warning',
+            ...calcTrend(returnedInvoices.map(({ invoice }) => invoice)),
+            subtitle: 'Returned for correction',
           },
           {
             label: 'NextGen Validation Summary',

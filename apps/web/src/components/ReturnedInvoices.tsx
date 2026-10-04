@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, CalendarClock, FileText, RotateCcw, Search } from 'lucide-react';
 import { useMockData } from '../contexts/MockDataContext';
@@ -18,6 +18,7 @@ export default function ReturnedInvoices() {
   const { invoices } = useMockData();
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
 
   const returned = useMemo(() => getReturnedInvoicesForUser(invoices, user), [invoices, user]);
   const filtered = useMemo(() => {
@@ -32,6 +33,15 @@ export default function ReturnedInvoices() {
       reason,
     ].filter(Boolean).join(' ').toLowerCase().includes(query));
   }, [returned, search]);
+
+  const pageSize = 5;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const paginated = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, returned.length]);
 
   if (user?.role !== 'PURCHASING_MANAGER') {
     return (
@@ -89,7 +99,7 @@ export default function ReturnedInvoices() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(({ invoice, reason, returnedAt }) => (
+                {paginated.map(({ invoice, reason, returnedAt }) => (
                   <tr key={invoice.id} className="transition-colors" style={{ borderTop: '1px solid var(--border-subtle)' }} onMouseEnter={(event) => { event.currentTarget.style.background = 'var(--bg-card-hover)'; }} onMouseLeave={(event) => { event.currentTarget.style.background = 'transparent'; }}>
                     <td className="px-5 py-4 align-top">
                       <button onClick={() => navigate(`/repository?invoiceId=${encodeURIComponent(invoice.id)}`)} className="text-left text-sm font-semibold hover:underline" style={{ color: 'var(--accent-purple)' }}>{invoice.invoice_number || 'Unnamed invoice'}</button>
@@ -105,6 +115,34 @@ export default function ReturnedInvoices() {
               </tbody>
             </table>
           </div>
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between gap-3 px-5 py-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                Showing {(safePage - 1) * pageSize + 1}–{Math.min(safePage * pageSize, filtered.length)} of {filtered.length}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                  disabled={safePage === 1}
+                  className="rounded-lg px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-40"
+                  style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}
+                >
+                  Previous
+                </button>
+                <span className="min-w-16 text-center text-xs" style={{ color: 'var(--text-secondary)' }}>Page {safePage} of {totalPages}</span>
+                <button
+                  type="button"
+                  onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                  disabled={safePage === totalPages}
+                  className="rounded-lg px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-40"
+                  style={{ background: 'var(--accent-purple)', color: 'var(--text-inverse)', border: '1px solid var(--accent-purple)' }}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

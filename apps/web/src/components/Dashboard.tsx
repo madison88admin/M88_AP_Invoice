@@ -268,6 +268,9 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
   const [showConfirmSendModal, setShowConfirmSendModal] = useState(false);
   const [detailTab, setDetailTab] = useState<'overview' | 'pipeline' | 'validation' | 'actions' | 'audit'>('overview');
   const [openingDocument, setOpeningDocument] = useState(false);
+  const [showPdfModal, setShowPdfModal] = useState(false);
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
+  const [pdfPreviewError, setPdfPreviewError] = useState<string | null>(null);
   const [replacingPdf, setReplacingPdf] = useState(false);
   const replacePdfInputRef = useRef<HTMLInputElement>(null);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
@@ -279,6 +282,36 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
 
   // Use live invoice data from the API
   const allInvoices = invoices;
+
+  // Keep the PDF in its own modal layer so the invoice detail/actions panel
+  // remains available underneath it instead of opening a separate browser tab.
+  useEffect(() => {
+    if (!showPdfModal || !selectedInvoice) {
+      setOpeningDocument(false);
+      setPdfPreviewUrl(null);
+      setPdfPreviewError(null);
+      return;
+    }
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    setOpeningDocument(true);
+    setPdfPreviewError(null);
+    void invoiceApi.getDocument(selectedInvoice.id).then((response) => {
+      if (cancelled) return;
+      const contentType = String(response.headers['content-type'] || 'application/pdf');
+      objectUrl = URL.createObjectURL(new Blob([response.data], { type: contentType }));
+      setPdfPreviewUrl(objectUrl);
+    }).catch((error: any) => {
+      if (cancelled) return;
+      setPdfPreviewError(error?.response?.data?.message || 'The actual invoice PDF is not available for this record.');
+    }).finally(() => {
+      if (!cancelled) setOpeningDocument(false);
+    });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [showPdfModal, selectedInvoice?.id]);
 
   // Filter invoices based on user role and permissions
   const getRoleFilteredInvoices = () => {
@@ -892,51 +925,9 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
     }
   };
 
-  const openInvoicePdf = async (invoice: MockInvoice) => {
-    const previewWindow = window.open('', '_blank');
-    try {
-      setOpeningDocument(true);
-      if (previewWindow) {
-        previewWindow.document.title = 'Loading invoice...';
-        previewWindow.document.body.textContent = 'Loading invoice PDF...';
-      }
-      const response = await invoiceApi.getDocument(invoice.id);
-      const contentType = String(response.headers['content-type'] || 'application/pdf');
-      const verificationWarning = response.headers['x-pdf-verification'];
-      if (verificationWarning) {
-        try {
-          showToast(decodeURIComponent(verificationWarning), 'warning');
-        } catch {
-          showToast(String(verificationWarning), 'warning');
-        }
-      }
-      const url = URL.createObjectURL(new Blob([response.data], { type: contentType }));
-      if (previewWindow) {
-        previewWindow.location.href = url;
-      } else {
-        const link = document.createElement('a');
-        link.href = url;
-        link.target = '_blank';
-        link.rel = 'noopener noreferrer';
-        link.click();
-      }
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch (error: any) {
-      previewWindow?.close();
-      const blob = error?.response?.data;
-      let message = 'The actual invoice PDF is not available for this record.';
-      if (blob instanceof Blob) {
-        try {
-          const parsed = JSON.parse(await blob.text());
-          message = parsed?.error?.message || parsed?.message || message;
-        } catch {
-          // Keep the user-friendly fallback for non-JSON failures.
-        }
-      }
-      showToast(message, 'error');
-    } finally {
-      setOpeningDocument(false);
-    }
+  const openInvoicePdf = (invoice: MockInvoice) => {
+    setSelectedInvoice(invoice);
+    setShowPdfModal(true);
   };
 
   const handleReplacePdf = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -2275,6 +2266,17 @@ ${dataRows}
     }, 150);
   };
 
+  const selectAdjacentInvoice = (direction: 'next' | 'previous') => {
+    if (!selectedInvoice || sortedInvoices.length === 0) return;
+    const index = sortedInvoices.findIndex((invoice) => invoice.id === selectedInvoice.id);
+    const nextIndex = direction === 'next' ? index + 1 : index - 1;
+    const nextInvoice = sortedInvoices[nextIndex];
+    if (nextInvoice) {
+      setDetailTab('overview');
+      setSelectedInvoice(nextInvoice);
+    }
+  };
+
   return (
     <div>
       {/* Primary Action Bar */}
@@ -3004,8 +3006,30 @@ ${dataRows}
                   <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{selectedInvoice.vendor?.name} · {selectedInvoice.currency} {Number(selectedInvoice.total_amount).toFixed(2)}</p>
                 </div>
               </div>
+              <div className="flex items-center gap-1 flex-shrink-0">
+              <button
+                onClick={() => selectAdjacentInvoice('previous')}
+                disabled={sortedInvoices.findIndex((invoice) => invoice.id === selectedInvoice.id) <= 0}
+                aria-label="Previous invoice"
+                title="Previous invoice"
+                className="hidden sm:inline-flex p-2 rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                <ChevronLeft className="h-4 w-4" strokeWidth={1.75} />
+              </button>
+              <button
+                onClick={() => selectAdjacentInvoice('next')}
+                disabled={sortedInvoices.findIndex((invoice) => invoice.id === selectedInvoice.id) < 0 || sortedInvoices.findIndex((invoice) => invoice.id === selectedInvoice.id) >= sortedInvoices.length - 1}
+                aria-label="Next invoice"
+                title="Next invoice"
+                className="hidden sm:inline-flex p-2 rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                <ChevronRight className="h-4 w-4" strokeWidth={1.75} />
+              </button>
               <button
                 onClick={() => setSelectedInvoice(null)}
+                aria-label="Close invoice details"
                 className="p-2 rounded-xl transition-colors flex-shrink-0"
                 style={{ color: 'var(--text-muted)' }}
                 onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
@@ -3013,6 +3037,7 @@ ${dataRows}
               >
                 <X className="h-5 w-5" strokeWidth={1.75} />
               </button>
+              </div>
             </div>
             {/* Status badge + Tab navigation */}
             <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -3041,6 +3066,39 @@ ${dataRows}
             {/* Overview Tab */}
             {detailTab === 'overview' && (
             <div className="space-y-4">
+              {/* High-frequency actions stay visible on the overview so users do
+                  not have to open the Actions tab for every invoice. */}
+              <div className="sticky top-0 z-10 rounded-xl p-3" style={{ background: 'color-mix(in srgb, var(--bg-card) 94%, transparent)', border: '1px solid var(--border-color)', boxShadow: '0 6px 18px rgba(0,0,0,0.08)', backdropFilter: 'blur(10px)' }}>
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Quick actions</p>
+                  <button type="button" onClick={() => setDetailTab('actions')} className="text-xs font-medium" style={{ color: 'var(--accent-purple)' }}>All actions →</button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => void openInvoicePdf(selectedInvoice)} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold" style={{ background: 'var(--accent-blue)', color: 'var(--text-inverse)' }}>
+                    <Eye className="h-3.5 w-3.5" /> View PDF
+                  </button>
+                  {user && (hasPermission(user.role, 'canEditInvoice') || hasPermission(user.role, 'canEditBankDetails')) && (
+                    <button type="button" onClick={() => void handleOpenEdit()} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold" style={{ background: 'var(--accent-purple)', color: 'var(--text-inverse)' }}>
+                      <Edit className="h-3.5 w-3.5" /> Edit
+                    </button>
+                  )}
+                  {(selectedInvoice.status === (InvoiceStatus.RECEIVED as any) || selectedInvoice.status === (InvoiceStatus.VALIDATION_PENDING as any) || selectedInvoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any)) && user && hasPermission(user.role, 'canValidate') && (
+                    <button type="button" onClick={() => void handleValidate()} disabled={validating} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold disabled:opacity-50" style={{ background: 'var(--accent-lime)', color: 'var(--text-inverse)' }}>
+                      <Shield className="h-3.5 w-3.5" /> {validating ? 'Validating…' : 'Validate'}
+                    </button>
+                  )}
+                  {selectedInvoice.status && user && canUserApproveStatus(user.role, String(selectedInvoice.status)) && String(selectedInvoice.status).startsWith('PENDING_') && hasPermission(user.role, 'canApprove') && (
+                    <button type="button" onClick={() => void handleApprove(selectedInvoice.id)} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold" style={{ background: 'var(--accent-lime)', color: 'var(--text-inverse)' }}>
+                      <CheckCircle className="h-3.5 w-3.5" /> Approve
+                    </button>
+                  )}
+                  {selectedInvoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any) && user && ['PURCHASING_COORDINATOR', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role) && (
+                    <button type="button" onClick={() => navigate('/exceptions', { state: { selectedInvoiceId: selectedInvoice.id } })} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-amber) 14%, transparent)', color: 'var(--accent-amber)', border: '1px solid color-mix(in srgb, var(--accent-amber) 25%, transparent)' }}>
+                      <AlertTriangle className="h-3.5 w-3.5" /> Resolve issue
+                    </button>
+                  )}
+                </div>
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Invoice Number</p>
@@ -4137,6 +4195,35 @@ ${dataRows}
                   Confirm Rejection
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PDF preview is intentionally a separate modal layer from the invoice
+          detail/actions panel, so both contexts remain easy to switch between. */}
+      {mode === 'repository' && showPdfModal && selectedInvoice && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-6" role="dialog" aria-modal="true" aria-labelledby="invoice-pdf-preview-title" style={{ background: 'rgba(0,0,0,0.68)', backdropFilter: 'blur(5px)' }} onMouseDown={(event) => { if (event.target === event.currentTarget) setShowPdfModal(false); }}>
+          <div className="flex h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 24px 80px rgba(0,0,0,0.45)' }}>
+            <div className="flex items-center justify-between gap-3 px-5 py-3 sm:px-6" style={{ borderBottom: '1px solid var(--border-color)' }}>
+              <div className="min-w-0">
+                <h3 id="invoice-pdf-preview-title" className="truncate text-base font-semibold" style={{ color: 'var(--text-primary)' }}>Actual invoice PDF</h3>
+                <p className="truncate text-xs" style={{ color: 'var(--text-muted)' }}>{selectedInvoice.invoice_number} · {selectedInvoice.vendor?.name || selectedInvoice.vendor_name}</p>
+              </div>
+              <button type="button" onClick={() => setShowPdfModal(false)} aria-label="Close PDF preview" className="rounded-xl p-2" style={{ color: 'var(--text-muted)' }}><X className="h-5 w-5" /></button>
+            </div>
+            <div className="min-h-0 flex-1 bg-white">
+              {pdfPreviewUrl ? (
+                <iframe title={`Invoice PDF ${selectedInvoice.invoice_number}`} src={pdfPreviewUrl} className="h-full w-full" />
+              ) : (
+                <div className="flex h-full items-center justify-center p-6 text-center text-sm" style={{ color: pdfPreviewError ? 'var(--accent-red)' : 'var(--text-muted)' }}>
+                  {pdfPreviewError || (openingDocument ? 'Loading invoice PDF…' : 'No PDF preview available')}
+                </div>
+              )}
+            </div>
+            <div className="flex items-center justify-between gap-3 px-5 py-3 sm:px-6" style={{ borderTop: '1px solid var(--border-color)', background: 'var(--bg-card)' }}>
+              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Invoice details and actions remain available behind this preview.</span>
+              <button type="button" onClick={() => setShowPdfModal(false)} className="rounded-xl px-4 py-2 text-sm font-semibold" style={{ background: 'var(--accent-purple)', color: 'var(--text-inverse)' }}>Back to invoice</button>
             </div>
           </div>
         </div>

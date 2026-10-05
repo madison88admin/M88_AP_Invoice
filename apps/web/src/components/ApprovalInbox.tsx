@@ -141,6 +141,7 @@ export default function ApprovalInbox() {
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
   const [pdfPreviewError, setPdfPreviewError] = useState<string | null>(null);
   const [showInvoicePreview, setShowInvoicePreview] = useState(false);
+  const [showPdfModal, setShowPdfModal] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [returnReason, setReturnReason] = useState('');
@@ -198,7 +199,8 @@ export default function ApprovalInbox() {
   }, [searchQuery, approvalFilter]);
 
   useEffect(() => {
-    if (!showInvoicePreview || !selectedInvoice) {
+    if (!showPdfModal || !selectedInvoice) {
+      setOpeningDocument(false);
       setPdfPreviewUrl(null);
       setPdfPreviewError(null);
       return;
@@ -223,7 +225,7 @@ export default function ApprovalInbox() {
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [showInvoicePreview, selectedInvoice]);
+  }, [showPdfModal, selectedInvoice]);
 
   const handleApprove = async () => {
     if (!selectedInvoice || !user) return;
@@ -265,7 +267,7 @@ export default function ApprovalInbox() {
 
   const openInvoicePdf = (invoice: MockInvoice) => {
     setSelectedInvoice(invoice);
-    setShowInvoicePreview(true);
+    setShowPdfModal(true);
   };
 
   const handleViewDocument = () => { if (selectedInvoice) openInvoicePdf(selectedInvoice); };
@@ -678,19 +680,10 @@ export default function ApprovalInbox() {
             </div>
 
             <div className="overflow-y-auto p-6">
-              <section className="mb-5 overflow-hidden rounded-xl" style={{ border: '1px solid var(--border-color)' }}>
-                <div className="flex items-center justify-between px-4 py-3" style={{ background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border-subtle)' }}>
-                  <h4 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Actual invoice PDF</h4>
-                  {openingDocument && <Loader2 className="h-4 w-4 animate-spin" style={{ color: 'var(--accent-blue)' }} />}
-                </div>
-                <div className="min-h-[300px] bg-white">
-                  {pdfPreviewUrl ? <iframe title="Actual invoice PDF" src={pdfPreviewUrl} className="h-[420px] w-full" /> : (
-                    <div className="flex min-h-[300px] items-center justify-center p-6 text-center text-sm" style={{ color: pdfPreviewError ? 'var(--accent-red)' : 'var(--text-muted)' }}>
-                      {pdfPreviewError || (openingDocument ? 'Loading invoice PDF…' : 'No PDF preview available')}
-                    </div>
-                  )}
-                </div>
-              </section>
+              <button type="button" onClick={handleViewDocument} className="mb-5 flex w-full items-center justify-between rounded-xl p-4 text-left" style={{ background: 'color-mix(in srgb, var(--accent-blue) 9%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-blue) 24%, transparent)' }}>
+                <span><span className="block text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Actual invoice PDF</span><span className="mt-1 block text-xs" style={{ color: 'var(--text-muted)' }}>Open the document in a separate preview modal.</span></span>
+                <FileText className="h-5 w-5" style={{ color: 'var(--accent-blue)' }} />
+              </button>
               <div className="space-y-4">
                 {QUICK_VIEW_SECTIONS.map((section) => (
                   <section key={section.title} className="overflow-hidden rounded-xl" style={{ border: '1px solid var(--border-color)' }}>
@@ -785,6 +778,19 @@ export default function ApprovalInbox() {
                 {approving ? 'Approving…' : 'Approve (A)'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showPdfModal && selectedInvoice && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/65 p-3 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="approval-pdf-title" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowPdfModal(false); }}>
+          <div className="flex h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 24px 80px rgba(0,0,0,0.45)' }}>
+            <div className="flex items-center justify-between gap-3 px-5 py-3" style={{ borderBottom: '1px solid var(--border-color)' }}>
+              <div className="min-w-0"><h3 id="approval-pdf-title" className="truncate text-base font-semibold" style={{ color: 'var(--text-primary)' }}>Actual invoice PDF</h3><p className="truncate text-xs" style={{ color: 'var(--text-muted)' }}>{selectedInvoice.invoice_number} · {selectedInvoice.vendor_name}</p></div>
+              <button type="button" onClick={() => setShowPdfModal(false)} aria-label="Close PDF preview" className="rounded-xl p-2" style={{ color: 'var(--text-muted)' }}><X className="h-5 w-5" /></button>
+            </div>
+            <div className="min-h-0 flex-1 bg-white">{pdfPreviewUrl ? <iframe title={`Invoice PDF ${selectedInvoice.invoice_number}`} src={pdfPreviewUrl} className="h-full w-full" /> : <div className="flex h-full items-center justify-center p-6 text-center text-sm" style={{ color: pdfPreviewError ? 'var(--accent-red)' : 'var(--text-muted)' }}>{pdfPreviewError || (openingDocument ? 'Loading invoice PDF…' : 'No PDF preview available')}</div>}</div>
+            <div className="flex items-center justify-end px-5 py-3" style={{ borderTop: '1px solid var(--border-color)' }}><button type="button" onClick={() => setShowPdfModal(false)} className="rounded-xl px-4 py-2 text-sm font-semibold" style={{ background: 'var(--accent-purple)', color: 'var(--text-inverse)' }}>Back to invoice</button></div>
           </div>
         </div>
       )}

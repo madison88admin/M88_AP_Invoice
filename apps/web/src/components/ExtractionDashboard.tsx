@@ -79,8 +79,24 @@ const COLORS = {
 };
 
 
-function formatMs(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
+function finiteNumber(value: unknown, fallback = 0): number {
+  const number = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function nullableNumber(value: unknown): number | null {
+  const number = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function positiveNullableNumber(value: unknown): number | null {
+  const number = nullableNumber(value);
+  return number !== null && number > 0 ? number : null;
+}
+
+function formatMs(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || !Number.isFinite(ms)) return 'N/A';
+  if (ms < 1000) return `${Math.round(ms)}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
@@ -98,6 +114,118 @@ function confidenceColorVar(conf: number | null): string {
 
 function displayPercent(value: number | null): string {
   return value === null || value === undefined ? 'N/A' : `${value}%`;
+}
+
+/**
+ * The API and web app can be deployed independently. During a rolling deploy
+ * an older API may omit the newer snake_case fields, so normalize both the
+ * current response and the previous response shape before rendering. This
+ * also prevents `undefined`/`NaN` from appearing in operational KPIs.
+ */
+export function normalizeDashboardData(input: any): DashboardData {
+  const source = input?.performance || input?.confidence ? input : (input?.data || {});
+  const confidence = source.confidence || {};
+  const performance = source.performance || {};
+  const distribution = confidence.distribution || {};
+  const high = finiteNumber(distribution.high);
+  const medium = finiteNumber(distribution.medium);
+  const low = finiteNumber(distribution.low);
+  const missing = finiteNumber(distribution.missing);
+  const distributionTotal = high + medium + low + missing;
+  const totalActual = finiteNumber(
+    confidence.total_actual_invoices ?? confidence.totalActualInvoices ??
+      performance.actual_invoice_count ?? performance.actualInvoicesProcessed ??
+      performance.total_processed ?? distributionTotal,
+  );
+  const scored = finiteNumber(
+    confidence.scored_count ?? confidence.scoredCount ?? (high + medium + low),
+  );
+  const coverage = nullableNumber(confidence.coverage_rate ?? confidence.coverageRate) ??
+    (totalActual ? Math.round((scored / totalActual) * 100) : 0);
+  const actualCount = finiteNumber(
+    performance.actual_invoice_count ?? performance.actualInvoicesProcessed ??
+      performance.total_processed ?? totalActual,
+  );
+  const pending = finiteNumber(
+    performance.pending_review_count ?? performance.pendingReviewCount ??
+      (performance.manual_review_rate !== undefined
+        ? Math.round((finiteNumber(performance.manual_review_rate) / 100) * actualCount)
+        : 0),
+  );
+  const avgProcessing = nullableNumber(
+    performance.avg_processing_time_ms ?? performance.avgProcessingTimeMs ??
+      source.timeline?.total_avg_ms,
+  );
+  const avgApproval = positiveNullableNumber(
+    performance.avg_time_to_approval_ms ?? performance.avgTimeToApprovalMs ??
+      (performance.avg_processing_time_ms ?? source.timeline?.total_avg_ms),
+  );
+  const fields = Array.isArray(confidence.per_field) ? confidence.per_field : [];
+
+  return {
+    confidence: {
+      overall_avg: nullableNumber(confidence.overall_avg ?? confidence.overallAvg),
+      scored_count: scored,
+      total_actual_invoices: totalActual,
+      coverage_rate: finiteNumber(coverage),
+      per_field: fields.map((field: any) => {
+        const total = finiteNumber(field.total ?? field.count);
+        return {
+          field: String(field.field || 'unknown'),
+          avg_confidence: nullableNumber(field.avg_confidence ?? field.avgConfidence),
+          low_confidence_count: finiteNumber(field.low_confidence_count ?? field.lowConfidenceCount),
+          total,
+          coverage_rate: finiteNumber(field.coverage_rate ?? field.coverageRate ?? (totalActual ? (total / totalActual) * 100 : 0)),
+        };
+      }),
+      trend: Array.isArray(confidence.trend) ? confidence.trend.map((point: any) => ({
+        date: String(point.date || ''),
+        avg_confidence: finiteNumber(point.avg_confidence ?? point.avgConfidence),
+        count: finiteNumber(point.count),
+      })) : [],
+      distribution: { high, medium, low, missing: Math.max(missing, Math.max(0, totalActual - scored)) },
+    },
+    vendors: { vendors: Array.isArray(source.vendors?.vendors) ? source.vendors.vendors : [] },
+    errors: {
+      total_errors: finiteNumber(source.errors?.total_errors),
+      total_warnings: finiteNumber(source.errors?.total_warnings),
+      by_field: Array.isArray(source.errors?.by_field) ? source.errors.by_field : [],
+      by_severity: {
+        CRITICAL: finiteNumber(source.errors?.by_severity?.CRITICAL),
+        WARNING: finiteNumber(source.errors?.by_severity?.WARNING),
+        INFO: finiteNumber(source.errors?.by_severity?.INFO),
+      },
+      trend: Array.isArray(source.errors?.trend) ? source.errors.trend : [],
+      top_correction_reasons: Array.isArray(source.errors?.top_correction_reasons) ? source.errors.top_correction_reasons : [],
+    },
+    timeline: {
+      stages: Array.isArray(source.timeline?.stages) ? source.timeline.stages : [],
+      total_avg_ms: finiteNumber(source.timeline?.total_avg_ms ?? avgProcessing),
+      slowest_invoices: Array.isArray(source.timeline?.slowest_invoices) ? source.timeline.slowest_invoices : [],
+    },
+    performance: {
+      total_processed: finiteNumber(performance.total_processed ?? actualCount),
+      actual_invoice_count: actualCount,
+      non_invoice_blocked_count: finiteNumber(performance.non_invoice_blocked_count ?? performance.nonInvoiceBlockedCount),
+      duplicate_count: finiteNumber(performance.duplicate_count ?? performance.duplicateCount),
+      pending_review_count: pending,
+      auto_approved_rate: finiteNumber(performance.auto_approved_rate ?? performance.autoApprovedRate),
+      manual_review_rate: finiteNumber(performance.manual_review_rate ?? performance.manualReviewRate),
+      avg_processing_time_ms: avgProcessing ?? 0,
+      avg_time_to_approval_ms: avgApproval,
+      extraction_accuracy: nullableNumber(performance.extraction_accuracy ?? performance.extractionAccuracy),
+      first_pass_validation_rate: nullableNumber(performance.first_pass_validation_rate ?? performance.self_validation_pass_rate ?? performance.firstPassValidationRate),
+      manual_correction_rate: nullableNumber(performance.manual_correction_rate ?? performance.manualCorrectionRate),
+      actual_invoice_acceptance_rate: nullableNumber(performance.actual_invoice_acceptance_rate ?? performance.actualInvoiceAcceptanceRate ?? performance.auto_approved_rate),
+      false_positive_non_invoice_rate: nullableNumber(performance.false_positive_non_invoice_rate ?? performance.falsePositiveNonInvoiceRate),
+      duplicate_detection_rate: nullableNumber(performance.duplicate_detection_rate ?? performance.duplicateDetectionRate),
+      engine_usage: Array.isArray(performance.engine_usage) ? performance.engine_usage : [],
+      retry_rate: finiteNumber(performance.retry_rate),
+      retry_success_rate: finiteNumber(performance.retry_success_rate),
+      fraud_detection_rate: finiteNumber(performance.fraud_detection_rate ?? performance.fraudDetectionRate),
+      self_validation_pass_rate: nullableNumber(performance.self_validation_pass_rate),
+    },
+  };
 }
 
 export default function ExtractionDashboard() {
@@ -125,7 +253,7 @@ export default function ExtractionDashboard() {
     setError(null);
     try {
       const res = await analyticsApi.getDashboard(days);
-      setData(res.data);
+      setData(normalizeDashboardData(res.data));
     } catch (e: any) {
       setError(e.message || 'Failed to load analytics');
     } finally {

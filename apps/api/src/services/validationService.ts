@@ -640,9 +640,11 @@ function validateInvoiceDate(invoiceDate: Date | null): ValidationResult {
     };
   }
 
-  // Check if invoice date is in the future
-  const now = new Date();
-  if (date > now) {
+  // Invoice dates are calendar dates. Compare UTC date-only strings so a
+  // midnight/timezone conversion cannot make a past invoice look future-dated.
+  const invoiceDateOnly = date.toISOString().slice(0, 10);
+  const todayOnly = new Date().toISOString().slice(0, 10);
+  if (invoiceDateOnly > todayOnly) {
     return {
       passed: false,
       reason: ExceptionReason.OCR_LOW_CONFIDENCE,
@@ -679,7 +681,7 @@ function validateDueDate(dueDate: Date | null, invoiceDate: Date | null): Valida
   // Due date should be after invoice date
   if (invoiceDate) {
     const invDate = new Date(invoiceDate);
-    if (date < invDate) {
+    if (date.toISOString().slice(0, 10) < invDate.toISOString().slice(0, 10)) {
       return {
         passed: false,
         reason: ExceptionReason.OCR_LOW_CONFIDENCE,

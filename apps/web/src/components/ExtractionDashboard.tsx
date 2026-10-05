@@ -12,8 +12,11 @@ import { analyticsApi } from '../lib/api';
 
 interface DashboardData {
   confidence: {
-    overall_avg: number;
-    per_field: Array<{ field: string; avg_confidence: number; low_confidence_count: number; total: number }>;
+    overall_avg: number | null;
+    scored_count: number;
+    total_actual_invoices: number;
+    coverage_rate: number;
+    per_field: Array<{ field: string; avg_confidence: number | null; low_confidence_count: number; total: number; coverage_rate: number }>;
     trend: Array<{ date: string; avg_confidence: number; count: number }>;
     distribution: { high: number; medium: number; low: number; missing: number };
   };
@@ -21,7 +24,7 @@ interface DashboardData {
     vendors: Array<{
       vendor_name: string;
       invoice_count: number;
-      avg_confidence: number;
+      avg_confidence: number | null;
       correction_count: number;
       top_error_fields: string[];
       fraud_flags: number;
@@ -43,14 +46,25 @@ interface DashboardData {
   };
   performance: {
     total_processed: number;
+    actual_invoice_count: number;
+    non_invoice_blocked_count: number;
+    duplicate_count: number;
+    pending_review_count: number;
     auto_approved_rate: number;
     manual_review_rate: number;
     avg_processing_time_ms: number;
-    engine_usage: Array<{ engine: string; count: number; avg_confidence: number }>;
+    avg_time_to_approval_ms: number | null;
+    extraction_accuracy: number | null;
+    first_pass_validation_rate: number | null;
+    manual_correction_rate: number | null;
+    actual_invoice_acceptance_rate: number | null;
+    false_positive_non_invoice_rate: number | null;
+    duplicate_detection_rate: number | null;
+    engine_usage: Array<{ engine: string; count: number; avg_confidence: number | null }>;
     retry_rate: number;
     retry_success_rate: number;
     fraud_detection_rate: number;
-    self_validation_pass_rate: number;
+    self_validation_pass_rate: number | null;
   };
 }
 
@@ -70,15 +84,20 @@ function formatMs(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function confidenceColor(conf: number): string {
+function confidenceColor(conf: number | null): string {
+  if (conf === null || conf === undefined) return 'var(--text-muted)';
   if (conf >= 80) return 'var(--accent-green)';
   if (conf >= 60) return 'var(--accent-amber)';
   if (conf >= 40) return 'var(--accent-amber)';
   return 'var(--accent-red)';
 }
 
-function confidenceColorVar(conf: number): string {
+function confidenceColorVar(conf: number | null): string {
   return confidenceColor(conf);
+}
+
+function displayPercent(value: number | null): string {
+  return value === null || value === undefined ? 'N/A' : `${value}%`;
 }
 
 export default function ExtractionDashboard() {
@@ -145,7 +164,7 @@ export default function ExtractionDashboard() {
     { name: 'High (80%+)', value: data.confidence.distribution.high, fill: COLORS.high },
     { name: 'Medium (60-79%)', value: data.confidence.distribution.medium, fill: COLORS.medium },
     { name: 'Low (30-59%)', value: data.confidence.distribution.low, fill: COLORS.low },
-    { name: 'Missing (<30%)', value: data.confidence.distribution.missing, fill: COLORS.missing },
+    { name: 'Missing / Unscored', value: data.confidence.distribution.missing, fill: COLORS.missing },
   ];
 
   const severityData = [
@@ -180,33 +199,43 @@ export default function ExtractionDashboard() {
           </button>
         </div>
 
-      {/* KPI Cards */}
+      {/* Operational KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <KpiCard
-          icon={<Gauge className="w-5 h-5" />}
-          label="Avg Confidence"
-          value={`${data.confidence.overall_avg}%`}
-          color={confidenceColor(data.confidence.overall_avg)}
+          icon={<FileCheck2 className="w-5 h-5" />}
+          label="Actual Invoices Processed"
+          value={`${data.performance.actual_invoice_count}`}
+          subtitle={`${data.performance.pending_review_count} pending/manual review`}
+          color="var(--accent-blue)"
         />
         <KpiCard
           icon={<CheckCircle className="w-5 h-5" />}
-          label="Auto-Approved"
-          value={`${data.performance.auto_approved_rate}%`}
-          subtitle={`${data.performance.total_processed} processed`}
+          label="First-Pass Validation"
+          value={displayPercent(data.performance.first_pass_validation_rate)}
+          subtitle={`Acceptance ${displayPercent(data.performance.actual_invoice_acceptance_rate)}`}
           color="var(--accent-green)"
         />
         <KpiCard
-          icon={<Shield className="w-5 h-5" />}
-          label="Fraud Detected"
-          value={`${data.performance.fraud_detection_rate}%`}
+          icon={<RefreshCw className="w-5 h-5" />}
+          label="Manual Correction Rate"
+          value={displayPercent(data.performance.manual_correction_rate)}
+          subtitle={`Extraction accuracy ${displayPercent(data.performance.extraction_accuracy)}`}
           color="var(--accent-amber)"
         />
         <KpiCard
-          icon={<Brain className="w-5 h-5" />}
-          label="Self-Validation Pass"
-          value={`${data.performance.self_validation_pass_rate}%`}
-          color="var(--accent-blue)"
+          icon={<Clock className="w-5 h-5" />}
+          label="Avg Time to Approval"
+          value={data.performance.avg_time_to_approval_ms === null ? 'N/A' : formatMs(data.performance.avg_time_to_approval_ms)}
+          subtitle={`${data.performance.duplicate_count} duplicate · ${data.performance.non_invoice_blocked_count} non-invoice blocked`}
+          color="var(--accent-purple)"
         />
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <MetricPill label="Confidence coverage" value={`${data.confidence.coverage_rate}%`} detail={`${data.confidence.scored_count}/${data.confidence.total_actual_invoices} scored`} />
+        <MetricPill label="Duplicate detection" value={displayPercent(data.performance.duplicate_detection_rate)} detail={`${data.performance.duplicate_count} records`} />
+        <MetricPill label="Fraud flags" value={`${data.performance.fraud_detection_rate}%`} detail="of actual invoices" />
+        <MetricPill label="Non-invoice false positive" value={data.performance.false_positive_non_invoice_rate === null ? 'N/A' : displayPercent(data.performance.false_positive_non_invoice_rate)} detail="needs labelled outcomes" />
       </div>
 
       {/* Confidence Section */}
@@ -236,7 +265,8 @@ export default function ExtractionDashboard() {
 
         {/* Confidence Distribution */}
         <div className="rounded-xl p-6" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
-          <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>Confidence Distribution</h2>
+          <h2 className="text-lg font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Confidence Distribution</h2>
+          <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>{data.confidence.scored_count}/{data.confidence.total_actual_invoices} scored ({data.confidence.coverage_rate}% coverage)</p>
           {data.confidence.distribution.high + data.confidence.distribution.medium + data.confidence.distribution.low + data.confidence.distribution.missing > 0 ? (
             <ResponsiveContainer width="100%" height={250}>
               <PieChart>
@@ -274,6 +304,14 @@ export default function ExtractionDashboard() {
         ) : (
           <EmptyState message="No per-field data yet" />
         )}
+        <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2">
+          {data.confidence.per_field.map((field) => (
+            <div key={field.field} className="text-xs rounded-lg p-2" style={{ background: 'var(--bg-elevated)', color: 'var(--text-muted)' }}>
+              <div className="font-medium" style={{ color: 'var(--text-primary)' }}>{field.field}</div>
+              <div>{field.avg_confidence === null ? 'N/A' : `${field.avg_confidence}%`} · {field.total}/{data.confidence.total_actual_invoices} scored</div>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Vendor Analytics */}
@@ -301,7 +339,7 @@ export default function ExtractionDashboard() {
                     <td className="py-2 pr-4 font-medium" style={{ color: 'var(--text-primary)' }}>{v.vendor_name}</td>
                     <td className="py-2 pr-4 text-right" style={{ color: 'var(--text-secondary)' }}>{v.invoice_count}</td>
                     <td className="py-2 pr-4 text-right font-medium" style={{ color: confidenceColorVar(v.avg_confidence) }}>
-                      {v.avg_confidence}%
+                      {displayPercent(v.avg_confidence)}
                     </td>
                     <td className="py-2 pr-4 text-right" style={{ color: 'var(--text-secondary)' }}>
                       {v.correction_count > 0 ? (
@@ -540,6 +578,16 @@ function KpiCard({ icon, label, value, subtitle, color }: {
       </div>
       <div className="text-2xl font-bold" style={{ color: color || 'var(--text-primary)' }}>{value}</div>
       {subtitle && <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{subtitle}</div>}
+    </div>
+  );
+}
+
+function MetricPill({ label, value, detail }: { label: string; value: string; detail: string }) {
+  return (
+    <div className="rounded-lg px-3 py-2" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{label}</div>
+      <div className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>{value}</div>
+      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{detail}</div>
     </div>
   );
 }

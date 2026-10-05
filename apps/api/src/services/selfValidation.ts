@@ -133,7 +133,7 @@ function runRuleBasedValidation(data: any): ValidationIssue[] {
     const invDate = new Date(data.invoice_date);
     const dueDate = new Date(data.due_date);
     if (!isNaN(invDate.getTime()) && !isNaN(dueDate.getTime())) {
-      if (dueDate < invDate) {
+      if (dueDate.toISOString().slice(0, 10) < invDate.toISOString().slice(0, 10)) {
         issues.push({
           field: 'due_date',
           issue: `Due date (${data.due_date}) is before invoice date (${data.invoice_date})`,
@@ -144,11 +144,14 @@ function runRuleBasedValidation(data: any): ValidationIssue[] {
     }
   }
 
-  // Invoice date in future
+  // Invoice date in future. Compare calendar dates, not timestamps. OCR dates are
+  // date-only values; parsing them as local midnight can shift them across a
+  // timezone boundary and incorrectly flag a valid date as future.
   if (data.invoice_date) {
-    const invDate = new Date(data.invoice_date);
-    const now = new Date();
-    if (!isNaN(invDate.getTime()) && invDate > now) {
+    const dateText = String(data.invoice_date).slice(0, 10);
+    const invDate = new Date(`${dateText}T00:00:00.000Z`);
+    const todayText = new Date().toISOString().slice(0, 10);
+    if (!isNaN(invDate.getTime()) && /^\d{4}-\d{2}-\d{2}$/.test(dateText) && dateText > todayText) {
       issues.push({
         field: 'invoice_date',
         issue: `Invoice date (${data.invoice_date}) is in the future`,

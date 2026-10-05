@@ -1,597 +1,78 @@
 import prisma from '../config/database';
 import { logger } from '../utils/logger';
 
-// ============================================================================
-// TYPES
-// ============================================================================
+type RawRecord = Record<string, any>;
+const FIELD_NAMES = ['vendor_name', 'invoice_number', 'invoice_date', 'due_date', 'total_amount', 'currency', 'po_number', 'mpo_number', 'brand', 'season', 'payment_terms'];
+const NON_INVOICE_TYPES = new Set(['PROFORMA', 'COMMERCIAL', 'SALES', 'STATEMENT', 'PREPAID', 'PROTO_SAMPLE']);
+const TERMINAL_STATUSES = new Set(['APPROVED', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID', 'PAYMENT_CONFIRMATION_SENT']);
+const MANUAL_REVIEW_STATUSES = new Set(['RECEIVED', 'OCR_PROCESSING', 'VALIDATION_PENDING', 'EXCEPTION_FLAGGED', 'PENDING_COORDINATOR', 'PENDING_MANAGER', 'ON_HOLD', 'REJECTED']);
 
-export interface ConfidenceMetrics {
-  overall_avg: number;
-  per_field: Array<{ field: string; avg_confidence: number; low_confidence_count: number; total: number }>;
-  trend: Array<{ date: string; avg_confidence: number; count: number }>;
-  distribution: { high: number; medium: number; low: number; missing: number };
-}
+function normalizeScore(value: unknown): number | null { const n = Number(value); return !Number.isFinite(n) || n <= 0 ? null : Math.max(0, Math.min(1, n > 1 ? n / 100 : n)); }
+function percent(value: unknown): number | null { const s = normalizeScore(value); return s === null ? null : Math.round(s * 100); }
+export function normalizeVendorKey(value: unknown): string { return String(value || 'UNKNOWN').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/&/g, ' AND ').replace(/\b(PT|PTE|LTD|LIMITED|INC|INCORPORATED|CO\.?|CORP|CORPORATION|B\.V\.)\b/g, '').replace(/[^A-Z0-9]/g, '').replace(/^PT(?=[A-Z0-9])/, ''); }
+function canonicalVendor(inv: any): { key: string; name: string } { const name = inv.vendor?.name || inv.vendor_name_raw || 'Unknown'; const cleanName = String(name).replace(/\s+/g, ' ').trim() || 'Unknown'; return { key: normalizeVendorKey(cleanName) || inv.vendor_id || 'UNKNOWN', name: cleanName }; }
+function isNonInvoice(inv: any): boolean { return NON_INVOICE_TYPES.has(String(inv.invoice_type || '').toUpperCase()) || String(inv.source_document_type || '').toUpperCase() === 'WAYBILL'; }
+function isActualInvoice(inv: any): boolean { return String(inv.invoice_type || '').toUpperCase() === 'INVOICE' && inv.status !== 'CANCELLED' && !inv.is_duplicate; }
+function extractFieldConfidence(raw: RawRecord, field: string): number | null { for (const decision of [raw?.field_decision, raw?.decision, raw?.field_confidence]) { const candidate = decision?.fields?.[field] ?? decision?.[field]; const value = candidate && typeof candidate === 'object' ? (candidate.final_confidence ?? candidate.confidence ?? candidate.score) : candidate; const result = percent(value); if (result !== null) return result; } return null; }
+function numericValue(value: unknown): number | null { if (value === null || value === undefined || value === '') return null; const n = Number(String(value).replace(/[^0-9.-]/g, '')); return Number.isFinite(n) ? n : null; }
+function rawAmount(raw: RawRecord): number | null { return numericValue(raw?.decision?.final?.total_amount ?? raw?.field_decision?.final?.total_amount ?? raw?.raw_data?.amount ?? raw?.amount ?? raw?.total_amount); }
+function addIssue(map: Map<string, { errors: number; warnings: number; sample: string }>, field: string, severity: 'ERROR' | 'WARNING', message: string) { const current = map.get(field) || { errors: 0, warnings: 0, sample: message }; if (severity === 'ERROR') current.errors++; else current.warnings++; map.set(field, current); }
 
-export interface VendorAnalytics {
-  vendors: Array<{
-    vendor_name: string;
-    invoice_count: number;
-    avg_confidence: number;
-    correction_count: number;
-    top_error_fields: string[];
-    fraud_flags: number;
-    last_invoice_date: Date | null;
-  }>;
-}
-
-export interface ErrorAnalytics {
-  total_errors: number;
-  total_warnings: number;
-  by_field: Array<{ field: string; error_count: number; warning_count: number; sample_issue: string }>;
-  by_severity: { CRITICAL: number; WARNING: number; INFO: number };
-  trend: Array<{ date: string; error_count: number; warning_count: number }>;
-  top_correction_reasons: Array<{ reason: string; count: number }>;
-}
-
-export interface ProcessingTimeline {
-  stages: Array<{
-    stage: string;
-    avg_duration_ms: number;
-    min_duration_ms: number;
-    max_duration_ms: number;
-    count: number;
-  }>;
-  total_avg_ms: number;
-  slowest_invoices: Array<{
-    invoice_number: string;
-    vendor_name: string;
-    duration_ms: number;
-    stage: string;
-  }>;
-}
-
-export interface PerformanceMetrics {
-  total_processed: number;
-  auto_approved_rate: number;
-  manual_review_rate: number;
-  avg_processing_time_ms: number;
-  engine_usage: Array<{ engine: string; count: number; avg_confidence: number }>;
-  retry_rate: number;
-  retry_success_rate: number;
-  fraud_detection_rate: number;
-  self_validation_pass_rate: number;
-}
-
-export interface DashboardSummary {
-  confidence: ConfidenceMetrics;
-  vendors: VendorAnalytics;
-  errors: ErrorAnalytics;
-  timeline: ProcessingTimeline;
-  performance: PerformanceMetrics;
-  generated_at: Date;
-}
-
-// ============================================================================
-// ANALYTICS SERVICE
-// ============================================================================
+export interface ConfidenceMetrics { overall_avg: number | null; scored_count: number; total_actual_invoices: number; coverage_rate: number; per_field: Array<{ field: string; avg_confidence: number | null; low_confidence_count: number; total: number; coverage_rate: number }>; trend: Array<{ date: string; avg_confidence: number; count: number }>; distribution: { high: number; medium: number; low: number; missing: number }; }
+export interface VendorAnalytics { vendors: Array<{ vendor_name: string; invoice_count: number; avg_confidence: number | null; correction_count: number; top_error_fields: string[]; fraud_flags: number; last_invoice_date: Date | null }>; }
+export interface ErrorAnalytics { total_errors: number; total_warnings: number; by_field: Array<{ field: string; error_count: number; warning_count: number; sample_issue: string }>; by_severity: { CRITICAL: number; WARNING: number; INFO: number }; trend: Array<{ date: string; error_count: number; warning_count: number }>; top_correction_reasons: Array<{ reason: string; count: number }>; }
+export interface ProcessingTimeline { stages: Array<{ stage: string; avg_duration_ms: number; min_duration_ms: number; max_duration_ms: number; count: number }>; total_avg_ms: number; slowest_invoices: Array<{ invoice_number: string; vendor_name: string; duration_ms: number; stage: string }>; }
+export interface PerformanceMetrics { total_processed: number; actual_invoice_count: number; non_invoice_blocked_count: number; duplicate_count: number; pending_review_count: number; auto_approved_rate: number; manual_review_rate: number; avg_processing_time_ms: number; avg_time_to_approval_ms: number | null; extraction_accuracy: number | null; first_pass_validation_rate: number | null; manual_correction_rate: number | null; actual_invoice_acceptance_rate: number | null; false_positive_non_invoice_rate: number | null; duplicate_detection_rate: number | null; engine_usage: Array<{ engine: string; count: number; avg_confidence: number | null }>; retry_rate: number; retry_success_rate: number; fraud_detection_rate: number; self_validation_pass_rate: number | null; }
+export interface DashboardSummary { confidence: ConfidenceMetrics; vendors: VendorAnalytics; errors: ErrorAnalytics; timeline: ProcessingTimeline; performance: PerformanceMetrics; generated_at: Date; }
 
 export class AnalyticsService {
   private static instance: AnalyticsService;
-
-  static getInstance(): AnalyticsService {
-    if (!AnalyticsService.instance) {
-      AnalyticsService.instance = new AnalyticsService();
-    }
-    return AnalyticsService.instance;
-  }
-
-  async getDashboardSummary(days: number = 30): Promise<DashboardSummary> {
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days);
-
-    const [confidence, vendors, errors, timeline, performance] = await Promise.all([
-      this.getConfidenceMetrics(startDate),
-      this.getVendorAnalytics(startDate),
-      this.getErrorAnalytics(startDate),
-      this.getProcessingTimeline(startDate),
-      this.getPerformanceMetrics(startDate),
-    ]);
-
-    return {
-      confidence,
-      vendors,
-      errors,
-      timeline,
-      performance,
-      generated_at: new Date(),
-    };
-  }
-
-  // ============================================================================
-  // CONFIDENCE METRICS
-  // ============================================================================
+  static getInstance(): AnalyticsService { return AnalyticsService.instance || (AnalyticsService.instance = new AnalyticsService()); }
+  private async invoiceRows(startDate: Date) { return prisma.invoice.findMany({ where: { created_at: { gte: startDate } }, select: { id: true, invoice_number: true, invoice_type: true, status: true, is_duplicate: true, source_document_type: true, vendor_id: true, vendor_name_raw: true, vendor: { select: { id: true, name: true, name_aliases: true } }, ocr_confidence_score: true, ocr_raw_data: true, created_at: true, updated_at: true, total_amount: true, currency: true, invoice_currency_original: true }, orderBy: { created_at: 'desc' }, take: 5000 }); }
+  async getDashboardSummary(days = 30): Promise<DashboardSummary> { const startDate = new Date(); startDate.setDate(startDate.getDate() - days); const [confidence, vendors, errors, timeline, performance] = await Promise.all([this.getConfidenceMetrics(startDate), this.getVendorAnalytics(startDate), this.getErrorAnalytics(startDate), this.getProcessingTimeline(startDate), this.getPerformanceMetrics(startDate)]); return { confidence, vendors, errors, timeline, performance, generated_at: new Date() }; }
 
   async getConfidenceMetrics(startDate: Date): Promise<ConfidenceMetrics> {
     try {
-      const invoices = await prisma.invoice.findMany({
-        where: {
-          created_at: { gte: startDate },
-          ocr_confidence_score: { not: null },
-        },
-        select: {
-          ocr_confidence_score: true,
-          ocr_raw_data: true,
-          created_at: true,
-          vendor_name_raw: true,
-        },
-        orderBy: { created_at: 'desc' },
-        take: 500,
-      });
-
-      const scores = invoices
-        .map(i => Number(i.ocr_confidence_score))
-        .filter(s => !isNaN(s) && s > 0);
-
-      const overallAvg = scores.length > 0
-        ? Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 100)
-        : 0;
-
-      // Distribution
-      const distribution = { high: 0, medium: 0, low: 0, missing: 0 };
-      for (const s of scores) {
-        if (s >= 0.8) distribution.high++;
-        else if (s >= 0.6) distribution.medium++;
-        else if (s >= 0.3) distribution.low++;
-        else distribution.missing++;
-      }
-
-      // Per-field confidence from ocr_raw_data (which may contain field_decision data)
-      const fieldStats = new Map<string, { total: number; sum: number; lowCount: number }>();
-      const fieldNames = ['vendor_name', 'invoice_number', 'invoice_date', 'due_date', 'total_amount', 'currency', 'po_number', 'mpo_number', 'brand', 'season', 'payment_terms'];
-
-      for (const field of fieldNames) {
-        fieldStats.set(field, { total: 0, sum: 0, lowCount: 0 });
-      }
-
-      for (const inv of invoices) {
-        const rawData = inv.ocr_raw_data as any;
-        const decision = rawData?.field_decision || rawData?.decision;
-        if (decision?.fields) {
-          for (const [fieldName, fieldData] of Object.entries(decision.fields)) {
-            const fd = fieldData as any;
-            const stats = fieldStats.get(fieldName);
-            if (stats && fd.final_confidence !== undefined) {
-              stats.total++;
-              stats.sum += fd.final_confidence;
-              if (fd.final_confidence < 60) stats.lowCount++;
-            }
-          }
-        }
-      }
-
-      const perField = Array.from(fieldStats.entries()).map(([field, stats]) => ({
-        field,
-        avg_confidence: stats.total > 0 ? Math.round(stats.sum / stats.total) : 0,
-        low_confidence_count: stats.lowCount,
-        total: stats.total,
-      }));
-
-      // Trend (daily averages)
-      const trendMap = new Map<string, { sum: number; count: number }>();
-      for (const inv of invoices) {
-        const date = inv.created_at.toISOString().split('T')[0];
-        const score = Number(inv.ocr_confidence_score);
-        if (!isNaN(score) && score > 0) {
-          if (!trendMap.has(date)) trendMap.set(date, { sum: 0, count: 0 });
-          const t = trendMap.get(date)!;
-          t.sum += score;
-          t.count++;
-        }
-      }
-
-      const trend = Array.from(trendMap.entries())
-        .map(([date, t]) => ({
-          date,
-          avg_confidence: Math.round((t.sum / t.count) * 100),
-          count: t.count,
-        }))
-        .sort((a, b) => a.date.localeCompare(b.date));
-
-      return {
-        overall_avg: overallAvg,
-        per_field: perField.sort((a, b) => a.avg_confidence - b.avg_confidence),
-        trend,
-        distribution,
-      };
-    } catch (error) {
-      logger.error('[Analytics] Confidence metrics failed:', error);
-      return { overall_avg: 0, per_field: [], trend: [], distribution: { high: 0, medium: 0, low: 0, missing: 0 } };
-    }
+      const rows = (await this.invoiceRows(startDate)).filter(isActualInvoice); const scores = rows.map(i => normalizeScore(i.ocr_confidence_score)).filter((v): v is number => v !== null); const distribution = { high: 0, medium: 0, low: 0, missing: 0 };
+      for (const row of rows) { const score = normalizeScore(row.ocr_confidence_score); if (score === null) distribution.missing++; else if (score >= .8) distribution.high++; else if (score >= .6) distribution.medium++; else if (score >= .3) distribution.low++; else distribution.missing++; }
+      const trendMap = new Map<string, { sum: number; count: number }>(); rows.forEach(row => { const score = normalizeScore(row.ocr_confidence_score); if (score !== null) { const d = row.created_at.toISOString().slice(0, 10); const x = trendMap.get(d) || { sum: 0, count: 0 }; x.sum += score; x.count++; trendMap.set(d, x); } });
+      const perField = FIELD_NAMES.map(field => { const values = rows.map(row => extractFieldConfidence((row.ocr_raw_data || {}) as RawRecord, field)).filter((v): v is number => v !== null); return { field, avg_confidence: values.length ? Math.round(values.reduce((a, b) => a + b, 0) / values.length) : null, low_confidence_count: values.filter(v => v < 60).length, total: values.length, coverage_rate: rows.length ? Math.round(values.length / rows.length * 100) : 0 }; });
+      return { overall_avg: scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length * 100) : null, scored_count: scores.length, total_actual_invoices: rows.length, coverage_rate: rows.length ? Math.round(scores.length / rows.length * 100) : 0, per_field: perField.sort((a, b) => (a.avg_confidence ?? 101) - (b.avg_confidence ?? 101)), trend: Array.from(trendMap.entries()).map(([date, x]) => ({ date, avg_confidence: Math.round(x.sum / x.count * 100), count: x.count })).sort((a, b) => a.date.localeCompare(b.date)), distribution };
+    } catch (error) { logger.error('[Analytics] Confidence metrics failed:', error); return { overall_avg: null, scored_count: 0, total_actual_invoices: 0, coverage_rate: 0, per_field: [], trend: [], distribution: { high: 0, medium: 0, low: 0, missing: 0 } }; }
   }
-
-  // ============================================================================
-  // VENDOR ANALYTICS
-  // ============================================================================
 
   async getVendorAnalytics(startDate: Date): Promise<VendorAnalytics> {
     try {
-      const invoices = await prisma.invoice.findMany({
-        where: { created_at: { gte: startDate } },
-        select: {
-          vendor_name_raw: true,
-          ocr_confidence_score: true,
-          ocr_raw_data: true,
-          created_at: true,
-        },
-      });
-
-      const corrections = await prisma.correctionLog.findMany({
-        where: { created_at: { gte: startDate } },
-        select: { vendor_name: true, original_fields: true, corrected_fields: true },
-      });
-
-      const vendorMap = new Map<string, {
-        invoice_count: number;
-        confidence_sum: number;
-        correction_count: number;
-        error_fields: Set<string>;
-        fraud_flags: number;
-        last_invoice_date: Date | null;
-      }>();
-
-      for (const inv of invoices) {
-        const vendor = inv.vendor_name_raw || 'Unknown';
-        if (!vendorMap.has(vendor)) {
-          vendorMap.set(vendor, {
-            invoice_count: 0,
-            confidence_sum: 0,
-            correction_count: 0,
-            error_fields: new Set(),
-            fraud_flags: 0,
-            last_invoice_date: null,
-          });
-        }
-        const v = vendorMap.get(vendor)!;
-        v.invoice_count++;
-        const rawScore = Number(inv.ocr_confidence_score);
-        // Clamp to 0-1 range — some legacy scores may be stored as 0-100
-        const score = !isNaN(rawScore) ? Math.max(0, Math.min(1, rawScore > 1 ? rawScore / 100 : rawScore)) : 0;
-        if (!isNaN(rawScore)) v.confidence_sum += score;
-
-        // Check for fraud flags in raw data
-        const rawData = inv.ocr_raw_data as any;
-        if (rawData?.fraud_check && !rawData.fraud_check.passed) {
-          v.fraud_flags++;
-        }
-
-        if (!v.last_invoice_date || inv.created_at > v.last_invoice_date) {
-          v.last_invoice_date = inv.created_at;
-        }
-      }
-
-      // Count corrections per vendor
-      for (const corr of corrections) {
-        const vendor = corr.vendor_name || 'Unknown';
-        const v = vendorMap.get(vendor);
-        if (v) {
-          v.correction_count++;
-          // Extract corrected fields
-          const corrected = corr.corrected_fields as any;
-          if (corrected) {
-            for (const field of Object.keys(corrected)) {
-              v.error_fields.add(field);
-            }
-          }
-        }
-      }
-
-      const vendors = Array.from(vendorMap.entries())
-        .map(([vendor_name, v]) => ({
-          vendor_name,
-          invoice_count: v.invoice_count,
-          avg_confidence: v.invoice_count > 0 ? Math.round((v.confidence_sum / v.invoice_count) * 100) : 0,
-          correction_count: v.correction_count,
-          top_error_fields: Array.from(v.error_fields).slice(0, 5),
-          fraud_flags: v.fraud_flags,
-          last_invoice_date: v.last_invoice_date,
-        }))
-        .sort((a, b) => b.invoice_count - a.invoice_count)
-        .slice(0, 20);
-
-      return { vendors };
-    } catch (error) {
-      logger.error('[Analytics] Vendor analytics failed:', error);
-      return { vendors: [] };
-    }
+      const rows = (await this.invoiceRows(startDate)).filter(isActualInvoice); const corrections = await prisma.correctionLog.findMany({ where: { created_at: { gte: startDate } }, select: { vendor_name: true, corrected_fields: true, invoice_id: true } }); const map = new Map<string, { name: string; count: number; scores: number[]; corrections: number; errors: Set<string>; fraud: number; last: Date | null }>(); const nameToKey = new Map<string, string>();
+      for (const row of rows) { const vendor = canonicalVendor(row); const v = map.get(vendor.key) || { name: vendor.name, count: 0, scores: [], corrections: 0, errors: new Set<string>(), fraud: 0, last: null }; v.count++; const score = normalizeScore(row.ocr_confidence_score); if (score !== null) v.scores.push(score); if ((row.ocr_raw_data as any)?.fraud_check && !(row.ocr_raw_data as any).fraud_check.passed) v.fraud++; if (!v.last || row.created_at > v.last) v.last = row.created_at; map.set(vendor.key, v); nameToKey.set(normalizeVendorKey(vendor.name), vendor.key); nameToKey.set(normalizeVendorKey(row.vendor_name_raw), vendor.key); }
+      for (const correction of corrections) { const key = nameToKey.get(normalizeVendorKey(correction.vendor_name)); const v = key ? map.get(key) : undefined; if (v) { v.corrections++; for (const f of Object.keys((correction.corrected_fields as RawRecord) || {})) v.errors.add(f); } }
+      return { vendors: Array.from(map.values()).map(v => ({ vendor_name: v.name, invoice_count: v.count, avg_confidence: v.scores.length ? Math.round(v.scores.reduce((a, b) => a + b, 0) / v.scores.length * 100) : null, correction_count: v.corrections, top_error_fields: Array.from(v.errors).slice(0, 5), fraud_flags: v.fraud, last_invoice_date: v.last })).sort((a, b) => b.invoice_count - a.invoice_count).slice(0, 20) };
+    } catch (error) { logger.error('[Analytics] Vendor analytics failed:', error); return { vendors: [] }; }
   }
-
-  // ============================================================================
-  // ERROR ANALYTICS
-  // ============================================================================
 
   async getErrorAnalytics(startDate: Date): Promise<ErrorAnalytics> {
     try {
-      const invoices = await prisma.invoice.findMany({
-        where: { created_at: { gte: startDate } },
-        select: { ocr_raw_data: true, created_at: true },
-        take: 500,
-      });
-
-      const corrections = await prisma.correctionLog.findMany({
-        where: { created_at: { gte: startDate } },
-        select: { note: true, original_fields: true, corrected_fields: true },
-      });
-
-      let totalErrors = 0;
-      let totalWarnings = 0;
-      const byFieldMap = new Map<string, { errors: number; warnings: number; sample: string }>();
-      const bySeverity = { CRITICAL: 0, WARNING: 0, INFO: 0 };
-      const trendMap = new Map<string, { errors: number; warnings: number }>();
-      const reasonMap = new Map<string, number>();
-
-      for (const inv of invoices) {
-        const rawData = inv.ocr_raw_data as any;
-        const date = inv.created_at.toISOString().split('T')[0];
-        if (!trendMap.has(date)) trendMap.set(date, { errors: 0, warnings: 0 });
-
-        // Self validation issues
-        if (rawData?.self_validation?.issues) {
-          for (const issue of rawData.self_validation.issues) {
-            if (issue.severity === 'ERROR') {
-              totalErrors++;
-              trendMap.get(date)!.errors++;
-            } else if (issue.severity === 'WARNING') {
-              totalWarnings++;
-              trendMap.get(date)!.warnings++;
-            }
-
-            const field = issue.field || 'unknown';
-            if (!byFieldMap.has(field)) byFieldMap.set(field, { errors: 0, warnings: 0, sample: issue.issue });
-            const f = byFieldMap.get(field)!;
-            if (issue.severity === 'ERROR') f.errors++;
-            else if (issue.severity === 'WARNING') f.warnings++;
-            if (!f.sample) f.sample = issue.issue;
-          }
-        }
-
-        // Decision conflicts
-        if (rawData?.decision?.conflicts) {
-          for (const conflict of rawData.decision.conflicts) {
-            bySeverity[conflict.severity as keyof typeof bySeverity]++;
-            const field = conflict.field || 'unknown';
-            if (!byFieldMap.has(field)) byFieldMap.set(field, { errors: 0, warnings: 0, sample: conflict.reason });
-            const f = byFieldMap.get(field)!;
-            if (conflict.severity === 'CRITICAL') f.errors++;
-            else if (conflict.severity === 'WARNING') f.warnings++;
-          }
-        }
-
-        // Fraud checks
-        if (rawData?.fraud_check && !rawData.fraud_check.passed) {
-          for (const check of rawData.fraud_check.checks || []) {
-            if (!check.passed) {
-              totalWarnings++;
-              trendMap.get(date)!.warnings++;
-            }
-          }
-        }
-      }
-
-      // Parse correction reasons from notes
-      for (const corr of corrections) {
-        if (corr.note) {
-          const reasonMatch = corr.note.match(/Reasons?:\s*(.+?)(?:;|$)/);
-          if (reasonMatch) {
-            const reason = reasonMatch[1].trim();
-            reasonMap.set(reason, (reasonMap.get(reason) || 0) + 1);
-          }
-        }
-      }
-
-      const by_field = Array.from(byFieldMap.entries())
-        .map(([field, f]) => ({
-          field,
-          error_count: f.errors,
-          warning_count: f.warnings,
-          sample_issue: f.sample,
-        }))
-        .sort((a, b) => (b.error_count + b.warning_count) - (a.error_count + a.warning_count))
-        .slice(0, 15);
-
-      const trend = Array.from(trendMap.entries())
-        .map(([date, t]) => ({ date, error_count: t.errors, warning_count: t.warnings }))
-        .sort((a, b) => a.date.localeCompare(b.date));
-
-      const top_correction_reasons = Array.from(reasonMap.entries())
-        .map(([reason, count]) => ({ reason, count }))
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 10);
-
-      return {
-        total_errors: totalErrors,
-        total_warnings: totalWarnings,
-        by_field,
-        by_severity: bySeverity,
-        trend,
-        top_correction_reasons,
-      };
-    } catch (error) {
-      logger.error('[Analytics] Error analytics failed:', error);
-      return {
-        total_errors: 0, total_warnings: 0, by_field: [],
-        by_severity: { CRITICAL: 0, WARNING: 0, INFO: 0 },
-        trend: [], top_correction_reasons: [],
-      };
-    }
+      const rows = (await this.invoiceRows(startDate)).filter(isActualInvoice); const corrections = await prisma.correctionLog.findMany({ where: { created_at: { gte: startDate } }, select: { note: true } }); let totalErrors = 0, totalWarnings = 0; const byField = new Map<string, { errors: number; warnings: number; sample: string }>(); const severity = { CRITICAL: 0, WARNING: 0, INFO: 0 }; const trend = new Map<string, { errors: number; warnings: number }>(); const reasons = new Map<string, number>(); const duplicateAmounts = new Map<string, Set<string>>();
+      for (const row of rows) { const raw = (row.ocr_raw_data || {}) as RawRecord; const date = row.created_at.toISOString().slice(0, 10); const t = trend.get(date) || { errors: 0, warnings: 0 }; trend.set(date, t); for (const issue of raw.self_validation?.issues || []) { const errorIssue = issue.severity === 'ERROR'; if (errorIssue) { totalErrors++; t.errors++; severity.CRITICAL++; } else { totalWarnings++; t.warnings++; severity.WARNING++; } addIssue(byField, issue.field || 'unknown', errorIssue ? 'ERROR' : 'WARNING', issue.issue || 'Self-validation issue'); } for (const conflict of raw.decision?.conflicts || []) { const errorIssue = conflict.severity === 'CRITICAL'; severity[conflict.severity as keyof typeof severity]++; addIssue(byField, conflict.field || 'unknown', errorIssue ? 'ERROR' : 'WARNING', conflict.reason || 'Extraction conflict'); if (errorIssue) { totalErrors++; t.errors++; } else { totalWarnings++; t.warnings++; } } const extractedAmount = rawAmount(raw); const storedAmount = numericValue(row.total_amount); if (extractedAmount !== null && storedAmount !== null && Math.abs(extractedAmount - storedAmount) > .01) { totalErrors++; t.errors++; severity.CRITICAL++; addIssue(byField, 'total_amount', 'ERROR', `OCR amount ${extractedAmount.toFixed(2)} differs from stored amount ${storedAmount.toFixed(2)}`); } const duplicateKey = `${row.vendor_id}:${String(row.invoice_number).trim().toUpperCase().replace(/[^A-Z0-9]/g, '')}`; const amountForGroup = storedAmount ?? extractedAmount; if (amountForGroup !== null) { const amounts = duplicateAmounts.get(duplicateKey) || new Set<string>(); amounts.add(amountForGroup.toFixed(2)); duplicateAmounts.set(duplicateKey, amounts); } const rawCurrency = String(raw?.decision?.final?.currency ?? raw?.raw_data?.currency ?? raw?.currency ?? '').toUpperCase(); const storedCurrency = String(row.currency || '').toUpperCase(); if (rawCurrency && storedCurrency && rawCurrency !== storedCurrency && rawCurrency !== String(row.invoice_currency_original || '').toUpperCase()) { totalErrors++; t.errors++; severity.CRITICAL++; addIssue(byField, 'currency', 'ERROR', `OCR currency ${rawCurrency} differs from stored currency ${storedCurrency}`); } if (raw.fraud_check && !raw.fraud_check.passed) for (const check of raw.fraud_check.checks || []) if (!check.passed) { totalWarnings++; t.warnings++; severity.WARNING++; addIssue(byField, 'fraud', 'WARNING', check.detail || check.reason || 'Fraud check failed'); } }
+      for (const [key, amounts] of duplicateAmounts) if (amounts.size > 1) { totalErrors++; severity.CRITICAL++; addIssue(byField, 'duplicate_amount', 'ERROR', `Duplicate invoice ${key} has conflicting amounts: ${Array.from(amounts).join(', ')}`); }
+      corrections.forEach(c => { const match = c.note?.match(/Reasons?:\s*(.+?)(?:;|$)/); if (match) reasons.set(match[1].trim(), (reasons.get(match[1].trim()) || 0) + 1); }); return { total_errors: totalErrors, total_warnings: totalWarnings, by_field: Array.from(byField.entries()).map(([field, x]) => ({ field, error_count: x.errors, warning_count: x.warnings, sample_issue: x.sample })).sort((a, b) => b.error_count + b.warning_count - (a.error_count + a.warning_count)).slice(0, 15), by_severity: severity, trend: Array.from(trend.entries()).map(([date, x]) => ({ date, error_count: x.errors, warning_count: x.warnings })).sort((a, b) => a.date.localeCompare(b.date)), top_correction_reasons: Array.from(reasons.entries()).map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count).slice(0, 10) };
+    } catch (error) { logger.error('[Analytics] Error analytics failed:', error); return { total_errors: 0, total_warnings: 0, by_field: [], by_severity: { CRITICAL: 0, WARNING: 0, INFO: 0 }, trend: [], top_correction_reasons: [] }; }
   }
-
-  // ============================================================================
-  // PROCESSING TIMELINE
-  // ============================================================================
 
   async getProcessingTimeline(startDate: Date): Promise<ProcessingTimeline> {
     try {
-      const invoices = await prisma.invoice.findMany({
-        where: { created_at: { gte: startDate } },
-        select: { ocr_raw_data: true, invoice_number: true, vendor_name_raw: true },
-        take: 500,
-      });
-
-      const stageMap = new Map<string, { durations: number[]; count: number }>();
-      const stageOrder = ['madison', 'gemini', 'qwen', 'groq', 'ollama', 'decision', 'line_item_validation', 'fraud_detection', 'self_validation', 'vendor_history'];
-
-      for (const stage of stageOrder) {
-        stageMap.set(stage, { durations: [], count: 0 });
-      }
-
-      const slowInvoices: Array<{ invoice_number: string; vendor_name: string; duration_ms: number; stage: string }> = [];
-
-      for (const inv of invoices) {
-        const rawData = inv.ocr_raw_data as any;
-        const decision = rawData?.decision;
-
-        if (decision?.extraction_time_ms) {
-          stageMap.get('decision')!.durations.push(decision.extraction_time_ms);
-          stageMap.get('decision')!.count++;
-
-          if (decision.extraction_time_ms > 5000) {
-            slowInvoices.push({
-              invoice_number: inv.invoice_number,
-              vendor_name: inv.vendor_name_raw || 'Unknown',
-              duration_ms: decision.extraction_time_ms,
-              stage: 'decision',
-            });
-          }
-        }
-
-        // Engine times (if available in raw data)
-        if (rawData?.extraction_trace) {
-          const trace = rawData.extraction_trace;
-          for (const engine of ['madison', 'gemini', 'qwen', 'groq', 'ollama']) {
-            if (trace[engine]?.duration_ms) {
-              stageMap.get(engine)!.durations.push(trace[engine].duration_ms);
-              stageMap.get(engine)!.count++;
-            }
-          }
-        }
-      }
-
-      const stages = stageOrder
-        .map(stage => {
-          const s = stageMap.get(stage)!;
-          if (s.durations.length === 0) return null;
-          const avg = s.durations.reduce((a, b) => a + b, 0) / s.durations.length;
-          return {
-            stage,
-            avg_duration_ms: Math.round(avg),
-            min_duration_ms: Math.min(...s.durations),
-            max_duration_ms: Math.max(...s.durations),
-            count: s.count,
-          };
-        })
-        .filter(s => s !== null) as ProcessingTimeline['stages'];
-
-      const totalAvg = stages.length > 0
-        ? Math.round(stages.reduce((a, b) => a + b.avg_duration_ms, 0))
-        : 0;
-
-      return {
-        stages,
-        total_avg_ms: totalAvg,
-        slowest_invoices: slowInvoices.sort((a, b) => b.duration_ms - a.duration_ms).slice(0, 10),
-      };
-    } catch (error) {
-      logger.error('[Analytics] Processing timeline failed:', error);
-      return { stages: [], total_avg_ms: 0, slowest_invoices: [] };
-    }
+      const rows = (await this.invoiceRows(startDate)).filter(isActualInvoice); const stages = await prisma.stageTimestamp.findMany({ where: { entered_at: { gte: startDate }, invoice: { invoice_type: 'INVOICE', status: { not: 'CANCELLED' }, is_duplicate: false } }, select: { invoice_id: true, stage: true, entered_at: true, exited_at: true, invoice: { select: { invoice_number: true, vendor_name_raw: true, vendor: { select: { name: true } } } } } }); const stageMap = new Map<string, number[]>(); const cycles = new Map<string, { start: number; end: number; number: string; vendor: string }>();
+      for (const s of stages) { if (!s.exited_at) continue; const duration = s.exited_at.getTime() - s.entered_at.getTime(); if (duration < 0) continue; const values = stageMap.get(String(s.stage)) || []; values.push(duration); stageMap.set(String(s.stage), values); const c = cycles.get(s.invoice_id) || { start: s.entered_at.getTime(), end: s.exited_at.getTime(), number: s.invoice.invoice_number, vendor: s.invoice.vendor?.name || s.invoice.vendor_name_raw || 'Unknown' }; c.start = Math.min(c.start, s.entered_at.getTime()); c.end = Math.max(c.end, s.exited_at.getTime()); cycles.set(s.invoice_id, c); }
+      for (const row of rows) if (!cycles.has(row.id) && TERMINAL_STATUSES.has(String(row.status))) cycles.set(row.id, { start: row.created_at.getTime(), end: row.updated_at.getTime(), number: row.invoice_number, vendor: canonicalVendor(row).name }); const stageRows = Array.from(stageMap.entries()).map(([stage, values]) => ({ stage, avg_duration_ms: Math.round(values.reduce((a, b) => a + b, 0) / values.length), min_duration_ms: Math.min(...values), max_duration_ms: Math.max(...values), count: values.length })).sort((a, b) => b.avg_duration_ms - a.avg_duration_ms); const cycleRows = Array.from(cycles.values()).map(c => ({ ...c, duration: Math.max(0, c.end - c.start) })).filter(c => c.duration > 0); const totalAvg = cycleRows.length ? Math.round(cycleRows.reduce((a, b) => a + b.duration, 0) / cycleRows.length) : stageRows.reduce((a, b) => a + b.avg_duration_ms, 0); return { stages: stageRows, total_avg_ms: totalAvg, slowest_invoices: cycleRows.sort((a, b) => b.duration - a.duration).slice(0, 10).map(c => ({ invoice_number: c.number, vendor_name: c.vendor, duration_ms: c.duration, stage: 'end-to-end' })) };
+    } catch (error) { logger.error('[Analytics] Processing timeline failed:', error); return { stages: [], total_avg_ms: 0, slowest_invoices: [] }; }
   }
-
-  // ============================================================================
-  // PERFORMANCE METRICS
-  // ============================================================================
 
   async getPerformanceMetrics(startDate: Date): Promise<PerformanceMetrics> {
     try {
-      const invoices = await prisma.invoice.findMany({
-        where: { created_at: { gte: startDate } },
-        select: {
-          status: true,
-          ocr_confidence_score: true,
-          ocr_raw_data: true,
-          created_at: true,
-        },
-        take: 1000,
-      });
-
-      const totalProcessed = invoices.length;
-      const autoApproved = invoices.filter(i =>
-        i.status === 'POSTED_TO_QB' || i.status === 'PAYMENT_SCHEDULED' || i.status === 'PAID'
-      ).length;
-
-      const manualReview = invoices.filter(i =>
-        i.status === 'PENDING_COORDINATOR' || i.status === 'PENDING_MANAGER'
-      ).length;
-
-      // Engine usage from raw data
-      const engineMap = new Map<string, { count: number; confidenceSum: number }>();
-      let retryCount = 0;
-      let retrySuccessCount = 0;
-      let fraudDetectedCount = 0;
-      let selfValidationPassCount = 0;
-      let selfValidationTotal = 0;
-
-      for (const inv of invoices) {
-        const rawData = inv.ocr_raw_data as any;
-        const decision = rawData?.decision;
-
-        if (decision?.engines_used) {
-          for (const engine of decision.engines_used) {
-            if (!engineMap.has(engine)) engineMap.set(engine, { count: 0, confidenceSum: 0 });
-            const e = engineMap.get(engine)!;
-            e.count++;
-            const score = Number(inv.ocr_confidence_score);
-            if (!isNaN(score)) e.confidenceSum += score;
-          }
-        }
-
-        if (rawData?.fraud_check && !rawData.fraud_check.passed) {
-          fraudDetectedCount++;
-        }
-
-        if (rawData?.self_validation) {
-          selfValidationTotal++;
-          if (rawData.self_validation.passed) selfValidationPassCount++;
-        }
-      }
-
-      const engine_usage = Array.from(engineMap.entries())
-        .map(([engine, e]) => ({
-          engine,
-          count: e.count,
-          avg_confidence: e.count > 0 ? Math.round((e.confidenceSum / e.count) * 100) : 0,
-        }))
-        .sort((a, b) => b.count - a.count);
-
-      return {
-        total_processed: totalProcessed,
-        auto_approved_rate: totalProcessed > 0 ? Math.round((autoApproved / totalProcessed) * 100) : 0,
-        manual_review_rate: totalProcessed > 0 ? Math.round((manualReview / totalProcessed) * 100) : 0,
-        avg_processing_time_ms: 0, // computed from timeline
-        engine_usage,
-        retry_rate: totalProcessed > 0 ? Math.round((retryCount / totalProcessed) * 100) : 0,
-        retry_success_rate: retryCount > 0 ? Math.round((retrySuccessCount / retryCount) * 100) : 0,
-        fraud_detection_rate: totalProcessed > 0 ? Math.round((fraudDetectedCount / totalProcessed) * 100) : 0,
-        self_validation_pass_rate: selfValidationTotal > 0 ? Math.round((selfValidationPassCount / selfValidationTotal) * 100) : 0,
-      };
-    } catch (error) {
-      logger.error('[Analytics] Performance metrics failed:', error);
-      return {
-        total_processed: 0, auto_approved_rate: 0, manual_review_rate: 0,
-        avg_processing_time_ms: 0, engine_usage: [], retry_rate: 0,
-        retry_success_rate: 0, fraud_detection_rate: 0, self_validation_pass_rate: 0,
-      };
-    }
+      const rows = await this.invoiceRows(startDate); const actual = rows.filter(isActualInvoice); const nonInvoiceRows = rows.filter(isNonInvoice); const blocked = nonInvoiceRows.filter(r => r.status !== 'CANCELLED').length; const duplicate = rows.filter(r => r.is_duplicate).length; const pending = actual.filter(r => MANUAL_REVIEW_STATUSES.has(String(r.status))).length; const terminal = actual.filter(r => TERMINAL_STATUSES.has(String(r.status))).length; const correctionLogs = await prisma.correctionLog.findMany({ where: { created_at: { gte: startDate }, invoice_id: { not: null } }, select: { invoice_id: true } }); const correctedIds = new Set(correctionLogs.map(c => c.invoice_id).filter(Boolean) as string[]); const selfRows = actual.map(r => (r.ocr_raw_data as RawRecord)?.self_validation).filter(Boolean); const engineMap = new Map<string, { count: number; scores: number[] }>(); let fraud = 0, retries = 0, retrySuccess = 0;
+      for (const row of actual) { const raw = (row.ocr_raw_data || {}) as RawRecord; const decision = raw.decision || raw.field_decision; const engines = decision?.engines_used || Object.keys(raw.extraction_trace || {}); for (const engine of engines) { const e = engineMap.get(engine) || { count: 0, scores: [] }; e.count++; const score = normalizeScore(row.ocr_confidence_score); if (score !== null) e.scores.push(score); engineMap.set(engine, e); } if (raw.fraud_check && !raw.fraud_check.passed) fraud++; const attempt = Number(raw.retry_count || raw.retries || 0); if (attempt > 0) { retries++; if (raw.retry_success) retrySuccess++; } }
+      const timeline = await this.getProcessingTimeline(startDate); const accepted = actual.filter(r => !['EXCEPTION_FLAGGED', 'REJECTED', 'ON_HOLD'].includes(String(r.status))).length; const falsePositiveRows = nonInvoiceRows.filter(r => !['RECEIVED', 'OCR_PROCESSING', 'VALIDATION_PENDING', 'EXCEPTION_FLAGGED', 'CANCELLED'].includes(String(r.status))); const selfPass = selfRows.filter(s => s.passed).length; return { total_processed: actual.length, actual_invoice_count: actual.length, non_invoice_blocked_count: blocked, duplicate_count: duplicate, pending_review_count: pending, auto_approved_rate: actual.length ? Math.round(terminal / actual.length * 100) : 0, manual_review_rate: actual.length ? Math.round(pending / actual.length * 100) : 0, avg_processing_time_ms: timeline.total_avg_ms, avg_time_to_approval_ms: terminal ? timeline.total_avg_ms : null, extraction_accuracy: actual.length ? Math.round((actual.length - correctedIds.size) / actual.length * 100) : null, first_pass_validation_rate: selfRows.length ? Math.round(selfPass / selfRows.length * 100) : null, manual_correction_rate: actual.length ? Math.round(correctedIds.size / actual.length * 100) : null, actual_invoice_acceptance_rate: actual.length ? Math.round(accepted / actual.length * 100) : null, false_positive_non_invoice_rate: nonInvoiceRows.length ? Math.round(falsePositiveRows.length / nonInvoiceRows.length * 100) : null, duplicate_detection_rate: rows.length ? Math.round(duplicate / rows.length * 100) : null, engine_usage: Array.from(engineMap.entries()).map(([engine, e]) => ({ engine, count: e.count, avg_confidence: e.scores.length ? Math.round(e.scores.reduce((a, b) => a + b, 0) / e.scores.length * 100) : null })).sort((a, b) => b.count - a.count), retry_rate: actual.length ? Math.round(retries / actual.length * 100) : 0, retry_success_rate: retries ? Math.round(retrySuccess / retries * 100) : 0, fraud_detection_rate: actual.length ? Math.round(fraud / actual.length * 100) : 0, self_validation_pass_rate: selfRows.length ? Math.round(selfPass / selfRows.length * 100) : null };
+    } catch (error) { logger.error('[Analytics] Performance metrics failed:', error); return { total_processed: 0, actual_invoice_count: 0, non_invoice_blocked_count: 0, duplicate_count: 0, pending_review_count: 0, auto_approved_rate: 0, manual_review_rate: 0, avg_processing_time_ms: 0, avg_time_to_approval_ms: null, extraction_accuracy: null, first_pass_validation_rate: null, manual_correction_rate: null, actual_invoice_acceptance_rate: null, false_positive_non_invoice_rate: null, duplicate_detection_rate: null, engine_usage: [], retry_rate: 0, retry_success_rate: 0, fraud_detection_rate: 0, self_validation_pass_rate: null }; }
   }
 }
-
 export const analyticsService = AnalyticsService.getInstance();

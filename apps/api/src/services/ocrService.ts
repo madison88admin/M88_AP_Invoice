@@ -56,6 +56,27 @@ const DOCUMENT_TYPE_MAP: Record<string, string> = {
   PROTO_SAMPLE: 'PROTO_SAMPLE',
 };
 
+/**
+ * Restrict vendor extraction to the invoice header.  OCR text often puts the
+ * bank, signature and footer after the supplier block; allowing the generic
+ * first-capitalised-line fallback to scan the whole document is how values
+ * such as "AuthorizedSignatureandCompanyChop" and HSBC ended up as vendors.
+ */
+function extractHeaderVendorName(text: string): string {
+  const header = text
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .slice(0, 45)
+    .join('\n');
+  const stop = header.search(/\b(BILL\s*TO|SHIP\s*TO|BANK\s+DETAILS?|BENEFICIARY|SWIFT|ACCOUNT\s+NO|AUTHORIZED\s+SIGNATURE|COMPANY\s+CHOP|PAYMENT\s+TERMS)\b/i);
+  const region = (stop >= 0 ? header.slice(0, stop) : header).slice(0, 5000);
+  const rejected = /(?:INVOICE\s*(?:NO|NUMBER)?|PROFORMA|WAYBILL|PACKING\s*LIST|AUTHORIZED|SIGNATURE|COMPANY\s*CHOP|BANK|HSBC|SWIFT|ACCOUNT|MADISON\s*88)/i;
+  const lines = region.split(/\r?\n/).map(line => line.replace(/[|,:]+$/, '').trim()).filter(line => line.length >= 3 && line.length <= 120 && !rejected.test(line));
+  const anchored = lines.find(line => /^(?:PT\.?\s+|[A-Z][A-Za-z&.'-]+(?:\s+[A-Z][A-Za-z&.'-]+){1,8}\s+(?:LTD|LIMITED|INC|CORP(?:ORATION)?|CO\.?|B\.V\.?|LLC|PTE|SDN|BHD))\b/i.test(line));
+  return anchored || '';
+}
+
 function mapDocumentType(docType: string | undefined): string {
   if (!docType) return 'INVOICE';
   const normalized = docType.toUpperCase().trim();
@@ -211,6 +232,8 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
   console.log('[OCR] Text contains 8.62:', text.includes('8.62'));
   console.log('[OCR] Text contains TOTAL USD:', text.toUpperCase().includes('TOTAL USD'));
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const headerText = extractHeaderVendorName(text);
+  const vendorSearchText = headerText || text.split(/\r?\n/).slice(0, 45).join('\n');
 
   // vendor_name — multiple patterns for different invoice formats
   const vendorNamePatterns = [
@@ -225,9 +248,10 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
   // Known BILL TO entities that should not be extracted as vendors
   const billToEntities = ['MADISON LIMITED', 'MADISON 88 LTD', 'MADISON_88_LTD'];
 
-  let vendor_name = '';
+  let vendor_name = headerText;
   for (const pattern of vendorNamePatterns) {
-    const m = text.match(pattern);
+    if (vendor_name) break;
+    const m = vendorSearchText.match(pattern);
     if (m) {
       const candidate = m[1] ? m[1].trim() : m[0].trim();
       // Skip if this is a known BILL TO entity
@@ -253,7 +277,7 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
     const foundVendor = knownVendors.find(v =>
       text.toLowerCase().includes(v.toLowerCase())
     );
-    vendor_name = foundVendor || lines[0];
+    vendor_name = foundVendor || '';
   }
 
   // invoice_number — multiple patterns, prioritized by specificity

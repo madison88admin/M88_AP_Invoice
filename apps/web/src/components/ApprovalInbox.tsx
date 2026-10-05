@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
 import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { CheckCircle, XCircle, Clock, ArrowLeft, Loader2, ExternalLink, FileText, Upload } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, ArrowLeft, Loader2, ExternalLink, FileText, Upload, X } from 'lucide-react';
 import { MockInvoice } from '../lib/mockData';
 import { invoiceApi } from '../lib/api';
 import { Skeleton } from './ui/Skeleton';
@@ -24,6 +23,7 @@ export default function ApprovalInbox() {
   const [approving, setApproving] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [openingDocument, setOpeningDocument] = useState(false);
+  const [showInvoicePreview, setShowInvoicePreview] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [showRejectModal, setShowRejectModal] = useState(false);
   
@@ -143,6 +143,8 @@ export default function ApprovalInbox() {
   };
 
   const handleViewDocument = () => { if (selectedInvoice) void openInvoicePdf(selectedInvoice); };
+
+  const closeInvoicePreview = () => setShowInvoicePreview(false);
 
   const handleReplacePdf = async (file: File) => {
     if (!selectedInvoice) return;
@@ -351,15 +353,15 @@ export default function ApprovalInbox() {
                     )}
 
                     {user?.role === 'PURCHASING_MANAGER' && (
-                      <Link
-                        to="/"
-                        state={{ selectedInvoiceId: selectedInvoice.id }}
+                      <button
+                        type="button"
+                        onClick={() => setShowInvoicePreview(true)}
                         className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border transition-all text-sm font-semibold"
                         style={{ borderColor: 'var(--border-color)', color: 'var(--text-primary)', background: 'var(--bg-card-hover)' }}
                       >
                         <FileText className="h-4 w-4" />
                         View Invoice in System
-                      </Link>
+                      </button>
                     )}
 
                     <button
@@ -474,7 +476,87 @@ export default function ApprovalInbox() {
                 </div>
               </div>
             )}
+      </div>
+
+      {/* Quick view for managers: keep approval context visible without sending
+          them to the repository and making them click through another page. */}
+      {showInvoicePreview && selectedInvoice && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="invoice-preview-title"
+          onMouseDown={(event) => { if (event.target === event.currentTarget) closeInvoicePreview(); }}
+        >
+          <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 24px 80px rgba(0,0,0,0.3)' }}>
+            <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
+              <div>
+                <h3 id="invoice-preview-title" className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Invoice quick view</h3>
+                <p className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>Review the extracted invoice details without leaving Approvals.</p>
+              </div>
+              <button type="button" onClick={closeInvoicePreview} aria-label="Close invoice preview" className="rounded-lg p-2 transition-colors" style={{ color: 'var(--text-muted)' }}>
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto p-6">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {[
+                  ['Invoice Number', selectedInvoice.invoice_number],
+                  ['Vendor', selectedInvoice.vendor_name || (selectedInvoice as any).vendor?.name],
+                  ['Amount', `${selectedInvoice.currency || ''} ${Number(selectedInvoice.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`.trim()],
+                  ['Invoice Date', selectedInvoice.invoice_date ? new Date(selectedInvoice.invoice_date).toLocaleDateString() : 'N/A'],
+                  ['Due Date', (selectedInvoice as any).due_date ? new Date((selectedInvoice as any).due_date).toLocaleDateString() : 'N/A'],
+                  ['PO / MPO', [(selectedInvoice as any).po_number, selectedInvoice.mpo_number].filter(Boolean).join(' / ') || 'N/A'],
+                  ['Brand', selectedInvoice.brand || 'N/A'],
+                  ['Status', String(selectedInvoice.status || '').replace(/_/g, ' ') || 'N/A'],
+                ].map(([label, value]) => (
+                  <div key={label} className="rounded-xl p-3" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}>
+                    <p className="text-[11px] uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>{label}</p>
+                    <p className="mt-1 break-words text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{value || 'N/A'}</p>
+                  </div>
+                ))}
+              </div>
+
+              {selectedInvoice.exceptions?.some((exception: any) => ['OPEN', 'PENDING'].includes(String(exception.status).toUpperCase())) && (
+                <div className="mt-5 rounded-xl p-4" style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 25%, transparent)' }}>
+                  <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--accent-amber)' }}>Open issues</p>
+                  <ul className="mt-2 space-y-1 text-sm" style={{ color: 'var(--text-primary)' }}>
+                    {selectedInvoice.exceptions.filter((exception: any) => ['OPEN', 'PENDING'].includes(String(exception.status).toUpperCase())).map((exception: any) => (
+                      <li key={exception.id || exception.code}>{exception.message || exception.description || exception.code || 'Review required'}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {orderedSignatures(selectedInvoice).length > 0 && (
+                <div className="mt-5 rounded-xl p-4" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}>
+                  <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Approval progress</p>
+                  <div className="mt-3 space-y-2">
+                    {orderedSignatures(selectedInvoice).map((signature) => (
+                      <div key={signature.id} className="flex items-center justify-between text-sm">
+                        <span style={{ color: 'var(--text-primary)' }}>{signature.signatory_name || signature.signatory_role}</span>
+                        <span className="inline-flex items-center gap-1" style={{ color: signature.signed_at ? 'var(--accent-lime)' : 'var(--accent-amber)' }}>
+                          {signature.signed_at ? <CheckCircle className="h-4 w-4" /> : <Clock className="h-4 w-4" />}
+                          {signature.signed_at ? 'Signed' : 'Pending'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-col-reverse gap-3 px-6 py-4 sm:flex-row sm:justify-end" style={{ borderTop: '1px solid var(--border-color)' }}>
+              <button type="button" onClick={closeInvoicePreview} className="rounded-xl px-4 py-2.5 text-sm font-medium" style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>Close</button>
+              <button type="button" onClick={handleViewDocument} disabled={openingDocument} className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold" style={{ background: 'var(--accent-blue)', color: '#fff' }}>
+                {openingDocument ? <Loader2 className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}
+                {openingDocument ? 'Opening PDF...' : 'View actual invoice PDF'}
+              </button>
+            </div>
           </div>
+        </div>
+      )}
 
       {/* Reject Modal */}
       {showRejectModal && (

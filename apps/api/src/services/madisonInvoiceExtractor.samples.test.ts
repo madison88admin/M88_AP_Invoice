@@ -149,6 +149,23 @@ describe('Avery Dennison invoice sample', () => {
   });
 });
 
+describe('Header-anchored vendor extraction', () => {
+  it('keeps the Avery operating company instead of the parent brand', () => {
+    const text = `AVERY DENNISON RIS VIETNAM CO., LTD\nA/C NAME: AVERY DENNISON RIS VIETNAM CO., LTD\nInvoice No: 17778374\nBILL TO: Madison 88 Ltd\nBank: PT UWU JUMP INDONESIA`;
+    expect(extractVendorName(text)).toBe('AVERY DENNISON RIS VIETNAM CO., LTD');
+  });
+
+  it('does not select a lower-page bank/signature company over the header supplier', () => {
+    const text = `SUPPLIER: ACG INTERNATIONAL CO., LTD\nInvoice No: ACG-1001\nBILL TO: Madison 88 Ltd\n\nBank beneficiary: PT UWU JUMP INDONESIA\nAuthorized Signature and Company Chop`;
+    expect(extractVendorName(text)).toMatch(/ACG INTERNATIONAL CO\., LTD/i);
+  });
+
+  it('handles other suppliers without a vendor-specific rule', () => {
+    expect(extractVendorName(`NILORN EAST ASIA LIMITED\nInvoice No: INVP-100\nBank: PT UWU JUMP INDONESIA`)).toMatch(/NILORN EAST ASIA LIMITED/i);
+    expect(extractVendorName(`Vendor Name: MICRO-PAK INTERNATIONAL LTD\nInvoice No: MP-100\nBeneficiary: PT UWU JUMP INDONESIA`)).toMatch(/MICRO-PAK INTERNATIONAL LTD/i);
+  });
+});
+
 describe('Paxar invoice sample', () => {
   it('detects Paxar vendor', () => {
     const result = detectVendor(paxarInvoice);

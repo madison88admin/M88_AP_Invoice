@@ -138,4 +138,18 @@ describe('approveInvoice', () => {
     const stageCall = stageTimestampCreate.mock.calls.find(([args]: any) => args.data.invoice_id === 'inv-1')!;
     expect(stageCall[0].data.stage).toBe(InvoiceStatus.PENDING_MANAGER);
   });
+
+  it('routes a returned invoice from coordinator back to the purchasing manager', async () => {
+    const invoice = makeInvoice();
+    invoice.signatures[0].approval_status = 'RECONFIRMATION_REQUIRED';
+    invoice.signatures[1].approval_status = 'RECONFIRMATION_REQUIRED';
+    invoice.status = InvoiceStatus.PENDING_COORDINATOR;
+    invoiceFindUnique.mockResolvedValue(invoice);
+
+    await approveInvoice('inv-1', 'user-1', 'PURCHASING_COORDINATOR', 'Sarah Jane Cariquitan');
+
+    const invUpdateCall = invoiceUpdate.mock.calls.find(([args]: any) => args.where.id === 'inv-1')!;
+    expect(invUpdateCall[0].data.status).toBe(InvoiceStatus.PENDING_MANAGER);
+    expect(invUpdateCall[0].data.current_approver_role).toBe(SignatoryRole.PURCHASING_MANAGER);
+  });
 });

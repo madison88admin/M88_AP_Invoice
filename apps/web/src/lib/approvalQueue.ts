@@ -54,7 +54,14 @@ export interface ReturnedInvoiceDetails {
   returnedBy?: string;
 }
 
-/** Return the latest reason recorded for a returned invoice. */
+/**
+ * Return the latest reason recorded for a returned invoice.
+ *
+ * The current stage is deliberately part of the match. A manager-returned
+ * invoice has reconfirmation signatures for both purchasing steps, but it is
+ * visible only to the active stage owner: first the coordinator, then (after
+ * the coordinator approves) the purchasing manager.
+ */
 export function getReturnedInvoiceDetails(
   invoice: MockInvoice,
   user: { id?: string; name?: string } | null,

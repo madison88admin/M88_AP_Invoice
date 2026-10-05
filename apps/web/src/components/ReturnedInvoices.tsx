@@ -43,10 +43,12 @@ export default function ReturnedInvoices() {
     setPage(1);
   }, [search, returned.length]);
 
-  if (user?.role !== 'PURCHASING_MANAGER') {
+  const canReviewReturnedInvoices = user?.role === 'PURCHASING_MANAGER' || user?.role === 'PURCHASING_COORDINATOR';
+
+  if (!canReviewReturnedInvoices) {
     return (
       <div className="rounded-2xl p-10 text-center" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
-        <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>This queue is available to Purchasing Managers only.</p>
+        <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>This queue is available to Purchasing Managers and Purchasing Coordinators.</p>
       </div>
     );
   }

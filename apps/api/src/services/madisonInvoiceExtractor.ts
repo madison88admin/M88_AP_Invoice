@@ -186,6 +186,63 @@ function cleanValue(str: string): string {
 }
 
 /**
+ * Read the supplier identity from the document header before looking at the
+ * rest of the page.  Bank, remittance and signature blocks often contain a
+ * second company name; those are not the invoice vendor.
+ */
+function extractHeaderVendorName(text: string): string | null {
+  const header = text.substring(0, Math.min(2200, text.length));
+  const lines = header
+    .split(/\r?\n/)
+    .map(line => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+
+  // Vendor-agnostic legal-entity matching. This deliberately does not key on
+  // a particular supplier: Avery, ACG, Nilorn, Micro-Pak, PT entities and
+  // other suppliers are all handled by the same header rules.
+  const legalSuffix = '(?:CO\\.?\\s*,?\\s*(?:LTD|LIMITED)|LIMITED|LTD\\.?|INC\\.?|CORPORATION|CORP\\.?|COMPANY|LLC|PTE\\.?|B\\.?V\\.?|GMBH|AG|PLC|S\\.?A\\.?|N\\.?V\\.?|SDN\\.?\\s+BHD)';
+  const legalCompanyPattern = new RegExp(`\\b([A-Z][A-Za-z0-9&.'()/\\-]*(?:\\s+[A-Za-z0-9&.'()/\\-]+){1,10}\\s+${legalSuffix})\\b`, 'i');
+  const prefixCompanyPattern = /\b(PT\.?\s+[A-Z][A-Za-z0-9&.'()/\-]*(?:\s+[A-Z][A-Za-z0-9&.'()/\-]*){0,8})/i;
+  const blockedHeaderLine = /^(?:BILL|SHIP|INVOICE|DELIVERY|SOLD\s+TO|BANK|SWIFT|ACCOUNT|A\/C|AUTHORIZED|SIGNATURE|BENEFICIARY|PAYMENT)\b/i;
+  const trimCompany = (value: string) => value
+    .split(/\b(?:INVOICE|DATE|NO\.?|PO|MPO|TEL|FAX|EMAIL|BANK|SWIFT|ACCOUNT|A\/C|BILL\s+TO|SHIP\s+TO)\b/i)[0]
+    .replace(/[|]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/[.;,:]+$/, '')
+    .trim();
+
+  for (const line of lines) {
+    if (blockedHeaderLine.test(line)) continue;
+    const legalMatch = line.match(legalCompanyPattern);
+    if (legalMatch?.[1]) {
+      const candidate = trimCompany(legalMatch[1]);
+      if (candidate && !candidate.toUpperCase().includes('MADISON') && !isGenericLabel(candidate)) return candidate;
+    }
+    const prefixMatch = line.match(prefixCompanyPattern);
+    if (prefixMatch?.[1]) {
+      const candidate = trimCompany(prefixMatch[1]);
+      if (candidate && !candidate.toUpperCase().includes('MADISON') && !isGenericLabel(candidate)) return candidate;
+    }
+  }
+
+  // If the header has an explicit supplier/vendor label, prefer the company
+  // immediately following it.  This keeps lower-page customer/bank names out
+  // of vendor_name even when the PDF has no legal suffix on the first line.
+  const supplierLabel = /(?:^|\b)(?:SUPPLIER|VENDOR)(?:\s+NAME)?\b\s*[:\-]?\s*(.*)$|(?:^|\b)(?:FROM|SOLD\s+BY|ISSUED\s+BY|BILL\s+FROM|COMPANY\s+NAME)\b\s*[:\-]?\s*(.*)$/i;
+  const ignoredLabels = /^(?:BILL|SHIP|INVOICE|DELIVERY|SOLD\s+TO)\b/i;
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = lines[index].match(supplierLabel);
+    if (!match || ignoredLabels.test(lines[index])) continue;
+    const candidate = (match[1] || match[2] || '').trim() || lines[index + 1] || '';
+    if (!candidate || ignoredLabels.test(candidate)) continue;
+    const cleaned = trimCompany(candidate);
+    if (cleaned && !isGenericLabel(cleaned) && cleaned.length >= 3) return cleaned;
+  }
+
+  return null;
+}
+
+/**
  * Extract vendor name - FIX 5: vendor_name = supplier (invoice issuer), NOT bill-to customer
  * Additive approach: try label-anchored first, then fallback to position-based
  * Explicitly excludes BILL TO, SHIP TO, INVOICE TO entities to avoid confusion
@@ -197,7 +254,16 @@ export function extractVendorName(text: string): string | null {
 
   const upperText = text.toUpperCase();
 
-  // Special case: Avery Dennison is the parent/vendor even when the invoice is produced by PT. Paxar Indonesia.
+  // Header-first extraction prevents a bank/signature/footer company from
+  // replacing the supplier.  It also keeps the full Avery legal entity.
+  const headerVendor = extractHeaderVendorName(text);
+  if (headerVendor) {
+    console.log('[extractVendorName] Header-anchored vendor:', headerVendor);
+    return headerVendor;
+  }
+
+  // Keep the legacy Avery fallback for documents that only print the parent
+  // brand and do not contain a legal entity in their header.
   if (upperText.includes('AVERY DENNISON') || upperText.includes('AVERYDENNISON') || /AVERY\s*DENNISON/i.test(text)) {
     console.log('[extractVendorName] Detected Avery Dennison parent brand, returning Avery Dennison');
     return 'Avery Dennison';
@@ -292,18 +358,24 @@ export function extractVendorName(text: string): string | null {
     }
   }
 
+  // A candidate in the header is more trustworthy than one found later in a
+  // remittance/signature block.  Keep the old 3,000-character search only as a
+  // fallback for PDFs whose header has no recognizable company name.
+  const headerCandidates = candidates.filter(candidate => candidate.position < 1800);
+  const prioritizedCandidates = headerCandidates.length > 0 ? headerCandidates : candidates;
+
   // If a known vendor keyword is detected, prefer the first candidate containing it.
   if (detectedVendor) {
-    const vendorCandidate = candidates.find(c => c.name.toUpperCase().includes(detectedVendor.keyword));
+    const vendorCandidate = prioritizedCandidates.find(c => c.name.toUpperCase().includes(detectedVendor.keyword));
     if (vendorCandidate) {
       console.log('[extractVendorName] Known vendor keyword detected, using candidate:', vendorCandidate.name);
       return vendorCandidate.name;
     }
   }
 
-  if (candidates.length > 0) {
-    candidates.sort((a, b) => a.position - b.position);
-    const bestCandidate = candidates[0].name;
+  if (prioritizedCandidates.length > 0) {
+    prioritizedCandidates.sort((a, b) => a.position - b.position);
+    const bestCandidate = prioritizedCandidates[0].name;
     console.log('[extractVendorName] Best vendor (supplier) candidate:', bestCandidate);
     if (!isGenericLabel(bestCandidate)) {
       return bestCandidate;

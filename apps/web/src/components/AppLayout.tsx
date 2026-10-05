@@ -57,7 +57,10 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
       items: [
         { icon: CheckSquare, label: 'Approvals', path: '/approvals', roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'PLANNING_MANAGER', 'SR_MANAGER_GLOBAL_PRODUCTION', 'MS_POLLY', 'ACCOUNTING_SUPERVISOR'], badgeKey: 'approvals', badgeColor: 'red' },
         { icon: History, label: 'Approved Invoices', path: '/approved-invoices', roles: ['PURCHASING_MANAGER'], badgeKey: 'approvedByMe', badgeColor: 'lime' },
-        { icon: RotateCcw, label: 'Returned Invoices', path: '/returned-invoices', roles: ['PURCHASING_MANAGER'], badgeKey: 'returned', badgeColor: 'amber' },
+        // Returned work is actionable for both sides of the purchasing
+        // hand-off: managers can send an invoice back, and coordinators must
+        // be able to correct it before it returns to the manager's queue.
+        { icon: RotateCcw, label: 'Returned Invoices', path: '/returned-invoices', roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER'], badgeKey: 'returned', badgeColor: 'amber' },
         { icon: AlertTriangle, label: 'Exceptions', path: '/exceptions', roles: ['PURCHASING_COORDINATOR', 'IT_ADMIN'], badgeKey: 'exceptions', badgeColor: 'amber' },
         { icon: Pause, label: 'On-Hold Queue', path: '/on-hold-queue', roles: ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'], badgeKey: 'onhold', badgeColor: 'amber' },
       ],

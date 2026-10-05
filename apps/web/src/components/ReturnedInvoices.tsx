@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, CalendarClock, FileText, RotateCcw, Search, X, Loader2, Eye, Edit } from 'lucide-react';
+import { AlertTriangle, CalendarClock, FileText, RotateCcw, Search, X, Eye } from 'lucide-react';
 import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { getReturnedInvoicesForUser } from '../lib/approvalQueue';
-import { invoiceApi } from '../lib/api';
 import type { MockInvoice } from '../lib/mockData';
 
 const formatDate = (value?: string) => {
@@ -23,10 +22,6 @@ export default function ReturnedInvoices() {
   const [page, setPage] = useState(1);
   const [selectedReturned, setSelectedReturned] = useState<MockInvoice | null>(null);
   const [showDetails, setShowDetails] = useState(false);
-  const [showPdf, setShowPdf] = useState(false);
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
-  const [pdfError, setPdfError] = useState<string | null>(null);
-  const [pdfLoading, setPdfLoading] = useState(false);
   const [showReturnReason, setShowReturnReason] = useState(true);
   const [reasonPosition, setReasonPosition] = useState({ x: 24, y: 112 });
   const [draggingReason, setDraggingReason] = useState(false);
@@ -74,27 +69,13 @@ export default function ReturnedInvoices() {
     };
   }, [draggingReason]);
 
-  useEffect(() => {
-    if (!showPdf || !selectedReturned) {
-      setPdfLoading(false);
-      setPdfUrl(null);
-      setPdfError(null);
-      return;
-    }
-    let cancelled = false;
-    let objectUrl: string | null = null;
-    setPdfLoading(true);
-    void invoiceApi.getDocument(selectedReturned.id).then((response) => {
-      if (cancelled) return;
-      objectUrl = URL.createObjectURL(new Blob([response.data], { type: String(response.headers['content-type'] || 'application/pdf') }));
-      setPdfUrl(objectUrl);
-    }).catch((error: any) => {
-      if (!cancelled) setPdfError(error?.response?.data?.message || 'The invoice PDF is not available.');
-    }).finally(() => { if (!cancelled) setPdfLoading(false); });
-    return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl); };
-  }, [showPdf, selectedReturned?.id]);
-
   const canReviewReturnedInvoices = user?.role === 'PURCHASING_MANAGER' || user?.role === 'PURCHASING_COORDINATOR';
+
+  const openReturnedWorkspace = (invoice: MockInvoice, reason: string) => {
+    navigate(`/repository?invoiceId=${encodeURIComponent(invoice.id)}&edit=1&pdf=1`, {
+      state: { returnReason: reason },
+    });
+  };
 
   if (!canReviewReturnedInvoices) {
     return (
@@ -162,7 +143,7 @@ export default function ReturnedInvoices() {
                     <td className="whitespace-nowrap px-5 py-4 align-top text-sm font-semibold tabular-nums" style={{ color: 'var(--text-primary)' }}>{invoice.currency} {Number(invoice.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                     <td className="whitespace-nowrap px-5 py-4 align-top text-xs" style={{ color: 'var(--text-muted)' }}><span className="inline-flex items-center gap-1"><CalendarClock className="h-3.5 w-3.5" style={{ color: 'var(--accent-amber)' }} />{formatDate(returnedAt)}</span></td>
                     <td className="min-w-[280px] max-w-[520px] px-5 py-4 align-top"><div className="flex gap-2 rounded-xl p-3" style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 22%, transparent)' }}><AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" style={{ color: 'var(--accent-amber)' }} /><span className="text-sm leading-5" style={{ color: 'var(--text-primary)' }}>{reason}</span></div></td>
-                    <td className="px-5 py-4 align-top"><div className="flex flex-col gap-2"><button onClick={() => { setSelectedReturned(invoice); setShowReturnReason(true); setShowDetails(true); }} className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium" style={{ background: 'var(--bg-elevated)', color: 'var(--accent-purple)', border: '1px solid var(--border-color)' }}><Eye className="h-3.5 w-3.5" />View invoice</button><button onClick={() => navigate(`/repository?invoiceId=${encodeURIComponent(invoice.id)}&edit=1&pdf=1`)} className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-semibold" style={{ background: 'var(--accent-purple)', color: 'var(--text-inverse)', border: '1px solid var(--accent-purple)' }}><Edit className="h-3.5 w-3.5" />Edit &amp; Resubmit</button></div></td>
+                    <td className="px-5 py-4 align-top"><div className="flex flex-col gap-2"><button onClick={() => { setSelectedReturned(invoice); setShowReturnReason(true); setShowDetails(true); }} className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium" style={{ background: 'var(--bg-elevated)', color: 'var(--accent-purple)', border: '1px solid var(--border-color)' }}><Eye className="h-3.5 w-3.5" />View invoice</button><button onClick={() => openReturnedWorkspace(invoice, reason)} className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-semibold" style={{ background: 'var(--accent-purple)', color: 'var(--text-inverse)', border: '1px solid var(--accent-purple)' }}><FileText className="h-3.5 w-3.5" />Review PDF &amp; Edit</button></div></td>
                   </tr>
                 ))}
               </tbody>
@@ -205,7 +186,7 @@ export default function ReturnedInvoices() {
             <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}><div><h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Returned invoice</h3><p className="text-xs" style={{ color: 'var(--text-muted)' }}>{selectedReturned.invoice_number} · {selectedReturned.vendor_name}</p></div><button type="button" onClick={() => setShowDetails(false)} className="rounded-lg p-2" style={{ color: 'var(--text-muted)' }}><X className="h-5 w-5" /></button></div>
             <div className="grid grid-cols-2 gap-4 p-6"><div><p className="text-xs" style={{ color: 'var(--text-muted)' }}>Vendor</p><p className="mt-1 text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedReturned.vendor_name || 'N/A'}</p></div><div><p className="text-xs" style={{ color: 'var(--text-muted)' }}>Amount</p><p className="mt-1 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{selectedReturned.currency} {Number(selectedReturned.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></div><div><p className="text-xs" style={{ color: 'var(--text-muted)' }}>Status</p><p className="mt-1 text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{String(selectedReturned.status || '').replace(/_/g, ' ')}</p></div><div><p className="text-xs" style={{ color: 'var(--text-muted)' }}>Invoice date</p><p className="mt-1 text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{formatDate(selectedReturned.invoice_date)}</p></div></div>
             <div className="mx-6 mb-6 rounded-xl p-4" style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 22%, transparent)' }}><p className="text-xs font-semibold uppercase" style={{ color: 'var(--accent-amber)' }}>Return reason</p><p className="mt-1 text-sm" style={{ color: 'var(--text-primary)' }}>{returned.find((item) => item.invoice.id === selectedReturned.id)?.reason || 'Reason unavailable'}</p></div>
-            <div className="flex flex-wrap justify-end gap-2 px-6 pb-6"><button type="button" onClick={() => setShowPdf(true)} className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold" style={{ background: 'var(--accent-blue)', color: 'var(--text-inverse)' }}><FileText className="h-4 w-4" /> View PDF</button><button type="button" onClick={() => navigate(`/repository?invoiceId=${encodeURIComponent(selectedReturned.id)}&edit=1&pdf=1`)} className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold" style={{ background: 'var(--accent-purple)', color: 'var(--text-inverse)' }}><Edit className="h-4 w-4" /> Edit &amp; Resubmit</button></div>
+            <div className="flex flex-wrap justify-end gap-2 px-6 pb-6"><button type="button" onClick={() => openReturnedWorkspace(selectedReturned, returned.find((item) => item.invoice.id === selectedReturned.id)?.reason || 'Reason unavailable')} className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold" style={{ background: 'var(--accent-purple)', color: 'var(--text-inverse)' }}><FileText className="h-4 w-4" /> Review PDF &amp; Edit</button></div>
           </div>
           {showReturnReason && (
             <div
@@ -231,11 +212,6 @@ export default function ReturnedInvoices() {
         </div>
       )}
 
-      {showPdf && selectedReturned && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/65 p-3 backdrop-blur-sm" role="dialog" aria-modal="true" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowPdf(false); }}>
-          <div className="flex h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}><div className="flex items-center justify-between px-5 py-3" style={{ borderBottom: '1px solid var(--border-color)' }}><div><h3 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>Actual invoice PDF</h3><p className="text-xs" style={{ color: 'var(--text-muted)' }}>{selectedReturned.invoice_number}</p></div><button type="button" onClick={() => setShowPdf(false)} className="rounded-lg p-2" style={{ color: 'var(--text-muted)' }}><X className="h-5 w-5" /></button></div><div className="min-h-0 flex-1 bg-white">{pdfUrl ? <iframe title="Returned invoice PDF" src={pdfUrl} className="h-full w-full" /> : <div className="flex h-full items-center justify-center p-6 text-center text-sm" style={{ color: pdfError ? 'var(--accent-red)' : 'var(--text-muted)' }}>{pdfError || (pdfLoading ? <><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Loading PDF…</> : 'No PDF preview available')}</div>}</div><div className="flex justify-end px-5 py-3" style={{ borderTop: '1px solid var(--border-color)' }}><button type="button" onClick={() => setShowPdf(false)} className="rounded-xl px-4 py-2 text-sm font-semibold" style={{ background: 'var(--accent-purple)', color: 'var(--text-inverse)' }}>Back to invoice</button></div></div>
-        </div>
-      )}
     </div>
   );
 }

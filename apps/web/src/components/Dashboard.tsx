@@ -207,6 +207,7 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
   const [focusQueueRequested, setFocusQueueRequested] = useState(false);
   const [pendingEditId, setPendingEditId] = useState<string | null>(null);
   const [pendingPdfId, setPendingPdfId] = useState<string | null>(null);
+  const [returnReasonNote, setReturnReasonNote] = useState<string | null>(null);
   const [validating, setValidating] = useState(false);
   const [requestingApproval, setRequestingApproval] = useState(false);
   const [validationResult, setValidationResult] = useState<any>(null);
@@ -611,7 +612,7 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
 
   // Auto-select invoice when navigated from Exception Manager with selectedInvoiceId
   useEffect(() => {
-    const state = location.state as { selectedInvoiceId?: string } | null;
+    const state = location.state as { selectedInvoiceId?: string; returnReason?: string } | null;
     const queryParams = new URLSearchParams(location.search);
     const queryId = queryParams.get('invoiceId');
     const editParam = queryParams.get('edit');
@@ -630,6 +631,7 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
         setSelectedInvoice(target);
         if (editParam === '1') setPendingEditId(target.id);
         if (pdfParam === '1') setPendingPdfId(target.id);
+        if (state?.returnReason) setReturnReasonNote(state.returnReason);
         // Clear the state/query so it doesn't re-trigger on refresh
         navigate('/repository', { replace: true, state: {} });
       }
@@ -4462,6 +4464,18 @@ ${dataRows}
                 </div>
                 <button type="button" onClick={() => setShowEditModal(false)} aria-label="Close edit invoice" className="rounded-xl p-2" style={{ color: 'var(--text-muted)' }}><X className="h-5 w-5" /></button>
               </div>
+
+              {returnReasonNote && (
+                <div className="mb-4 rounded-xl p-3" style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 28%, transparent)' }}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: 'var(--accent-amber)' }}>Return reason</p>
+                      <p className="mt-1 text-sm leading-5" style={{ color: 'var(--text-primary)' }}>{returnReasonNote}</p>
+                    </div>
+                    <button type="button" onClick={() => setReturnReasonNote(null)} aria-label="Hide return reason" className="rounded-lg p-1" style={{ color: 'var(--text-muted)' }}><X className="h-4 w-4" /></button>
+                  </div>
+                </div>
+              )}
 
               {([
                 { title: 'Basic Information', fields: [

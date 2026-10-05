@@ -206,6 +206,7 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
   const [selectedInvoice, setSelectedInvoice] = useState<MockInvoice | null>(null);
   const [focusQueueRequested, setFocusQueueRequested] = useState(false);
   const [pendingEditId, setPendingEditId] = useState<string | null>(null);
+  const [pendingPdfId, setPendingPdfId] = useState<string | null>(null);
   const [validating, setValidating] = useState(false);
   const [requestingApproval, setRequestingApproval] = useState(false);
   const [validationResult, setValidationResult] = useState<any>(null);
@@ -614,6 +615,7 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
     const queryParams = new URLSearchParams(location.search);
     const queryId = queryParams.get('invoiceId');
     const editParam = queryParams.get('edit');
+    const pdfParam = queryParams.get('pdf');
     const targetId = state?.selectedInvoiceId || queryId;
     if (targetId && invoices.length > 0) {
       if (mode === 'dashboard') {
@@ -627,6 +629,7 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
         setDetailTab('overview');
         setSelectedInvoice(target);
         if (editParam === '1') setPendingEditId(target.id);
+        if (pdfParam === '1') setPendingPdfId(target.id);
         // Clear the state/query so it doesn't re-trigger on refresh
         navigate('/repository', { replace: true, state: {} });
       }
@@ -1019,6 +1022,12 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
     setPendingEditId(null);
     void handleOpenEdit();
   }, [pendingEditId, selectedInvoice]);
+
+  useEffect(() => {
+    if (!pendingPdfId || !selectedInvoice || pendingPdfId !== selectedInvoice.id) return;
+    setPendingPdfId(null);
+    setShowPdfModal(true);
+  }, [pendingPdfId, selectedInvoice]);
 
   const handleEditChange = (field: string, value: string | boolean) => {
     setEditFormData((prev: any) => {

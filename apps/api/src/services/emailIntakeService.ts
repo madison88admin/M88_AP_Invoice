@@ -20,6 +20,7 @@ import { PDFDocument } from 'pdf-lib';
 import { buildIntakeIdempotencyKey, evaluateIntakeControls } from './intakeControlService';
 import { checkEmailDuplicate, generateFileHash } from './emailDuplicateService';
 import { getShipmentBillBlockReason } from './payableDocumentGuard';
+import { replaceInvoicePdfByNumber, PdfReplacementResult } from './invoicePdfReplacementService';
 
 const clientId = process.env.GRAPH_API_CLIENT_ID || '';
 const clientSecret = process.env.GRAPH_API_CLIENT_SECRET || '';
@@ -29,6 +30,28 @@ let emailPollerTimer: NodeJS.Timeout | null = null;
 let emailPollerStarted = false;
 let emailPollInProgress = false;
 const processedMessageIds = new Set<string>();
+
+async function replaceExistingInvoicePdfIfPresent(options: {
+  invoiceNumber?: string;
+  buffer: Buffer;
+  fileName: string;
+  contentType?: string;
+  source: 'email_poller' | 'powerautomate' | 'sharepoint';
+  storagePath?: string;
+}): Promise<Exclude<PdfReplacementResult, { action: 'NOT_FOUND' }> | null> {
+  const invoiceNumber = String(options.invoiceNumber || '').trim();
+  if (!invoiceNumber) return null;
+  const result = await replaceInvoicePdfByNumber({
+    invoiceNumber,
+    buffer: options.buffer,
+    fileName: options.fileName,
+    contentType: options.contentType || 'application/pdf',
+    source: options.source,
+    uploadedStoragePath: options.storagePath,
+  });
+  if (result.action === 'NOT_FOUND') return null;
+  return result;
+}
 
 async function countPdfPages(buffer: Buffer): Promise<number | undefined> {
   try {
@@ -499,6 +522,39 @@ async function processSingleInvoiceAttachment(
       return;
     }
 
+    const graphReplacement = await replaceExistingInvoicePdfIfPresent({
+      invoiceNumber: ocrResult.invoice_number,
+      buffer,
+      fileName,
+      contentType,
+      source: 'email_poller',
+      storagePath,
+    });
+    if (graphReplacement) {
+      const replacementInvoice = graphReplacement.invoice;
+      const replacementMessage = graphReplacement.action === 'REPLACED'
+        ? `Updated the stored PDF for existing invoice ${replacementInvoice.invoice_number}.`
+        : `Identical PDF already stored for existing invoice ${replacementInvoice.invoice_number}.`;
+      await recordEmailIntakeEvent({
+        source: 'GRAPH',
+        stage: graphReplacement.action === 'REPLACED' ? 'PDF_REPLACED' : 'REVIEW_REQUIRED',
+        status: graphReplacement.action === 'REPLACED' ? 'COMPLETED' : 'FAILED',
+        mailbox: mailboxAddress,
+        messageId: message.id,
+        attachmentId,
+        fileName,
+        invoiceId: replacementInvoice.id,
+        error: graphReplacement.action === 'NOOP_DUPLICATE' ? replacementMessage : undefined,
+        metadata: {
+          invoice_number: replacementInvoice.invoice_number,
+          replacement: graphReplacement.action === 'REPLACED',
+          storage_path: graphReplacement.action === 'REPLACED' ? graphReplacement.storagePath : replacementInvoice.pdf_path,
+        },
+      });
+      logger.info(`[Email Intake] ${fileName} → ${replacementMessage}`);
+      return;
+    }
+
     const graphDuplicate = await checkEmailDuplicate(buffer, { internetMessageId: message.id }, {
       vendorName: ocrResult.vendor_name,
       invoiceNumber: ocrResult.invoice_number,
@@ -847,6 +903,37 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
       logger.warn(`[SharePoint Intake] ${data.fileName} routed to review: ${controlReason}`);
       return { success: false, status: 'REVIEW_REQUIRED', error: controlReason };
     }
+    const sharePointReplacement = await replaceExistingInvoicePdfIfPresent({
+      invoiceNumber: ocrResult.invoice_number,
+      buffer,
+      fileName: data.fileName,
+      contentType: 'application/pdf',
+      source: 'sharepoint',
+      storagePath,
+    });
+    if (sharePointReplacement) {
+      const replacementInvoice = sharePointReplacement.invoice;
+      const replaced = sharePointReplacement.action === 'REPLACED';
+      const message = replaced
+        ? `Updated the stored PDF for existing invoice ${replacementInvoice.invoice_number}.`
+        : `Identical PDF already stored for existing invoice ${replacementInvoice.invoice_number}.`;
+      await recordEmailIntakeEvent({
+        source: 'SHAREPOINT',
+        stage: replaced ? 'PDF_REPLACED' : 'REVIEW_REQUIRED',
+        status: replaced ? 'COMPLETED' : 'FAILED',
+        messageId: intakeKey,
+        fileName: data.fileName,
+        invoiceId: replacementInvoice.id,
+        error: replaced ? undefined : message,
+        metadata: {
+          invoice_number: replacementInvoice.invoice_number,
+          replacement: replaced,
+          storage_path: replaced ? sharePointReplacement.storagePath : replacementInvoice.pdf_path,
+        },
+      });
+      logger.info(`[SharePoint Intake] ${data.fileName} → ${message}`);
+      return { success: true, invoiceNumber: replacementInvoice.invoice_number, invoiceId: replacementInvoice.id, status: replaced ? 'PDF_REPLACED' : 'DUPLICATE' };
+    }
     const sharePointDuplicate = await checkEmailDuplicate(buffer, undefined, {
       vendorName: ocrResult.vendor_name,
       invoiceNumber: ocrResult.invoice_number,
@@ -1127,6 +1214,37 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
       await alertEmailIntakeFailure({ source: 'Power Automate invoice intake control', fileName: data.fileName, error: controlReason });
       logger.warn(`[Power Automate] ${data.fileName} routed to review: ${controlReason}`);
       return { success: false, status: 'REVIEW_REQUIRED', error: controlReason };
+    }
+    const powerAutomateReplacement = await replaceExistingInvoicePdfIfPresent({
+      invoiceNumber: ocrResult.invoice_number,
+      buffer,
+      fileName: data.fileName,
+      contentType: data.contentType || 'application/pdf',
+      source: 'powerautomate',
+      storagePath,
+    });
+    if (powerAutomateReplacement) {
+      const replacementInvoice = powerAutomateReplacement.invoice;
+      const replaced = powerAutomateReplacement.action === 'REPLACED';
+      const message = replaced
+        ? `Updated the stored PDF for existing invoice ${replacementInvoice.invoice_number}.`
+        : `Identical PDF already stored for existing invoice ${replacementInvoice.invoice_number}.`;
+      await recordEmailIntakeEvent({
+        source: 'POWER_AUTOMATE',
+        stage: replaced ? 'PDF_REPLACED' : 'REVIEW_REQUIRED',
+        status: replaced ? 'COMPLETED' : 'FAILED',
+        messageId: intakeKey,
+        fileName: data.fileName,
+        invoiceId: replacementInvoice.id,
+        error: replaced ? undefined : message,
+        metadata: {
+          invoice_number: replacementInvoice.invoice_number,
+          replacement: replaced,
+          storage_path: replaced ? powerAutomateReplacement.storagePath : replacementInvoice.pdf_path,
+        },
+      });
+      logger.info(`[Power Automate] ${data.fileName} → ${message}`);
+      return { success: true, invoiceNumber: replacementInvoice.invoice_number, invoiceId: replacementInvoice.id, status: replaced ? 'PDF_REPLACED' : 'DUPLICATE' };
     }
     const powerAutomateDuplicate = await checkEmailDuplicate(buffer, undefined, {
       vendorName: ocrResult.vendor_name,

@@ -13,6 +13,7 @@ export type EmailIntakeStage =
   | 'RETRY_ATTEMPT'
   | 'RETRY_QUEUED'
   | 'REVIEW_REQUIRED'
+  | 'PDF_REPLACED'
   | 'CREATED'
   | 'SPLIT_COMPLETED'
   | 'FAILED';
@@ -20,7 +21,7 @@ export type EmailIntakeStage =
 type IntakeEventInput = {
   source: 'GRAPH' | 'POWER_AUTOMATE' | 'SHAREPOINT';
   stage: EmailIntakeStage;
-  status?: 'SUCCESS' | 'FAILED';
+  status?: 'SUCCESS' | 'COMPLETED' | 'FAILED';
   mailbox?: string;
   messageId?: string;
   attachmentId?: string;

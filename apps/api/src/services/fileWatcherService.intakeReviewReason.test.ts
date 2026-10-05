@@ -199,4 +199,11 @@ describe('fileWatcherService upload-only recovery guard', () => {
       { file_name: 'bundle.pdf', stage: 'SPLIT_COMPLETED', created_at: new Date('2026-09-30T07:52:00.000Z') },
     ])).toBe(true);
   });
+
+  it('recognizes PDF replacement as a terminal intake event', () => {
+    expect(hasUploadCompletionEvent('corrected.pdf', uploadedAt, [
+      { file_name: 'corrected.pdf', stage: 'UPLOADED', created_at: uploadedAt },
+      { file_name: 'corrected.pdf', stage: 'PDF_REPLACED', created_at: new Date('2026-09-30T07:53:00.000Z') },
+    ])).toBe(true);
+  });
 });

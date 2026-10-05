@@ -32,6 +32,7 @@ import { hasStrongNonInvoiceHeading, isObviouslyNonInvoiceFilename, nonInvoiceSu
 import { PDFDocument } from 'pdf-lib';
 import { evaluateIntakeControls } from './intakeControlService';
 import { getShipmentBillBlockReason } from './payableDocumentGuard';
+import { replaceInvoicePdfByNumber } from './invoicePdfReplacementService';
 
 const INCOMING_DIR = process.env.WATCHER_INCOMING_DIR || '/incoming-invoices';
 const PROCESSING_DIR = process.env.WATCHER_PROCESSING_DIR || '/incoming-invoices/processing';
@@ -48,7 +49,7 @@ const UPLOAD_ONLY_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
 // successfully and still stall before review/creation (the historical
 // 5666715316.pdf failure did exactly that), so only terminal routing events
 // satisfy the upload-only guard.
-const UPLOAD_COMPLETION_STAGES = new Set(['REVIEW_REQUIRED', 'CREATED', 'SPLIT_COMPLETED', 'FAILED', 'RETRY_QUEUED']);
+const UPLOAD_COMPLETION_STAGES = new Set(['REVIEW_REQUIRED', 'PDF_REPLACED', 'CREATED', 'SPLIT_COMPLETED', 'FAILED', 'RETRY_QUEUED']);
 
 let watcherInterval: NodeJS.Timeout | null = null;
 let isProcessing = false;
@@ -719,8 +720,46 @@ async function processSingleInvoiceBuffer(
   }
   ocrResult.invoice_number = recoveredInvoiceNumber;
 
-  // Step 4: Duplicate detection / revision detection
+  // Step 4: Duplicate detection / attachment replacement.
+  // A corrected PDF with the same invoice number is an attachment update, not
+  // a new invoice revision. Keep the existing workflow/status and replace only
+  // the stored PDF so approvals and accounting history remain intact.
   const fileHash = generateFileHash(fileBuffer);
+  if (ocrResult.invoice_number) {
+    const replacement = await replaceInvoicePdfByNumber({
+      invoiceNumber: ocrResult.invoice_number,
+      buffer: fileBuffer,
+      fileName,
+      contentType: 'application/pdf',
+      source: 'file_watcher',
+    });
+    if (replacement.action === 'REPLACED') {
+      safeMove(currentProcessingPath, PROCESSED_DIR);
+      await recordEmailIntakeEvent({
+        source: 'POWER_AUTOMATE',
+        stage: 'PDF_REPLACED',
+        status: 'COMPLETED',
+        fileName,
+        invoiceId: replacement.invoice.id,
+        metadata: {
+          invoice_number: replacement.invoice.invoice_number,
+          storage_path: replacement.storagePath,
+          replacement: true,
+        },
+      });
+      logger.info(`[File Watcher] ${fileName}${partLabel} → replaced PDF for ${replacement.invoice.invoice_number}`);
+      return;
+    }
+    if (replacement.action === 'NOOP_DUPLICATE') {
+      safeMove(currentProcessingPath, DUPLICATES_DIR);
+      await createAuditLog(replacement.invoice.id, 'WATCHER_DUPLICATE', `Identical PDF for invoice ${replacement.invoice.invoice_number}: ${fileName}`);
+      return;
+    }
+  }
+
+  // Step 4b: Revision detection is retained only for invoice numbers that do
+  // not already exist. This prevents same-number corrections from creating
+  // duplicate child records.
   let revisionParent: any = null;
   if (ocrResult.invoice_number) {
     const incomingVendorKey = normalizeVendorKey(ocrResult.vendor_name);
@@ -756,7 +795,9 @@ async function processSingleInvoiceBuffer(
     return;
   }
 
-  // Also check DB directly for existing invoice_number to prevent unique constraint errors
+  // Also check DB directly for existing invoice_number to prevent unique constraint errors.
+  // The replacement branch above should have handled this; this remains a
+  // defensive guard for races or records created between the two queries.
   if (ocrResult.invoice_number) {
     const existing = await prisma.invoice.findFirst({
       where: { invoice_number: ocrResult.invoice_number },
@@ -1219,7 +1260,7 @@ async function auditUploadOnlyIntake(): Promise<void> {
       where: {
         source: 'POWER_AUTOMATE',
         created_at: { gte: new Date(now - UPLOAD_ONLY_LOOKBACK_MS) },
-        stage: { in: ['UPLOADED', 'EXTRACTED', 'REVIEW_REQUIRED', 'CREATED', 'FAILED', 'RETRY_QUEUED'] },
+        stage: { in: ['UPLOADED', 'EXTRACTED', 'REVIEW_REQUIRED', 'PDF_REPLACED', 'CREATED', 'FAILED', 'RETRY_QUEUED'] },
       },
       select: { file_name: true, stage: true, created_at: true },
       orderBy: { created_at: 'asc' },

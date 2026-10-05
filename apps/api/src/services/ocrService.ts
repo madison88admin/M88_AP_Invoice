@@ -63,6 +63,12 @@ const DOCUMENT_TYPE_MAP: Record<string, string> = {
  * such as "AuthorizedSignatureandCompanyChop" and HSBC ended up as vendors.
  */
 function extractHeaderVendorName(text: string): string {
+  // pdf2json may flatten the page in coordinate order, placing the bank
+  // block before the supplier header. Use an explicit supplier anchor before
+  // falling back to line-based header parsing so bank names cannot win.
+  const averyVietnam = text.match(/Avery\s+Dennison\s+RIS\s+Vietnam\s+Co\.?\s*,?\s*(?:Limited|Ltd\.?)\b/i);
+  if (averyVietnam) return averyVietnam[0].replace(/\s+/g, ' ').trim();
+
   const header = text
     .split(/\r?\n/)
     .map(line => line.trim())
@@ -401,6 +407,11 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
     /(\d{4}\.\d{2}\.\d{2})/, // Fallback: find any YYYY.MM.DD (e.g. BSN "Invoice No. Date / : NUM : 2026.09.11")
   ];
   let invoice_date = '';
+  // Avery's flattened PDF order can be: "INVOICE DATE: INVOICE NO:
+  // 17778374 15-SEP-2026". Recover the date adjacent to the invoice header
+  // before generic date fallbacks see received/endorsement timestamps.
+  const averyInvoiceDate = text.match(/INVOICE\s+DATE\s*:\s*INVOICE\s+NO\s*:\s*[A-Z0-9\-\/]*\s*(\d{1,2}-[A-Z]{3}-\d{2,4})/i);
+  if (averyInvoiceDate) invoice_date = averyInvoiceDate[1];
   const isPlausibleDateCapture = (value: string): boolean => {
     // Numeric-only fallbacks are dangerous: they match bank-account segments
     // (012-561-9-201456-0 → "201456"), phone numbers, and PO fragments. A
@@ -421,6 +432,7 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
     return true;
   };
   for (const pattern of datePatterns) {
+    if (invoice_date) break;
     const m = text.match(pattern);
     if (m && isPlausibleDateCapture(m[1])) { invoice_date = m[1]; break; }
   }
@@ -440,7 +452,11 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
     /Settle[:\s]*(?:on|before)?[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
   ];
   let due_date = '';
+  // The flattened Avery layout places the date before the DUE DATE label.
+  const dueDateBeforeLabel = text.match(/(\d{1,2}-[A-Z]{3}-\d{2,4})\s+DUE\s+DATE/i);
+  if (dueDateBeforeLabel) due_date = dueDateBeforeLabel[1];
   for (const pattern of dueDatePatterns) {
+    if (due_date) break;
     const m = text.match(pattern);
     if (m) { due_date = m[1]; break; }
   }

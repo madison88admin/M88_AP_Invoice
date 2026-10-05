@@ -52,8 +52,6 @@ export const NON_PAYABLE_DOCUMENT_TYPES = new Set<string>([
   'PROFORMA',
   'OTHER',
   'UNKNOWN',
-  'COMMERCIAL',
-  'COMMERCIAL_INVOICE',
   'TECH_PACK',
   'TRIM_RECEIPT',
   'FAKTUR_PAJAK',
@@ -91,6 +89,21 @@ const HARD_EXCLUDED_FILENAME_HINTS =
 /** Strong headings for payment/shipment paperwork, even when OCR labels it INVOICE. */
 const NON_PAYABLE_TEXT_HINTS =
   /\b(?:shipment\s+receipt|bill\s+payment|payment\s+bill|payment\s+receipt)\b/i;
+
+/** Commercial Invoice is a payable subtype, but only with core invoice data. */
+function isValidCommercialInvoice(doc: PayableCheckInput, docType: string): boolean {
+  if (docType !== 'COMMERCIAL' && docType !== 'COMMERCIAL_INVOICE') return false;
+  const invoiceNumber = String(doc.invoice_number || '').trim();
+  const vendorName = String(doc.vendor_name || '').trim();
+  const invoiceDate = String(doc.invoice_date || '').trim();
+  const totalAmount = Number(String(doc.total_amount ?? '').replace(/[^0-9.-]/g, ''));
+  const hasInvoiceHeading = /\bcommercial\s+invoice\b|\binvoice\b/i.test(
+    `${String(doc.raw_text || '')}\n${String(doc.fileName || '')}`
+  );
+  return Boolean(
+    invoiceNumber && vendorName && invoiceDate && Number.isFinite(totalAmount) && totalAmount > 0 && hasInvoiceHeading
+  );
+}
 
 /** Focused guard used by legacy intake review paths for the newly requested exclusions. */
 export function getShipmentBillBlockReason(doc: PayableCheckInput): string | null {
@@ -147,6 +160,10 @@ export interface PayableCheckInput {
   is_non_invoice_document?: boolean | null;
   raw_text?: string | null;
   fileName?: string | null;
+  invoice_number?: string | null;
+  vendor_name?: string | null;
+  total_amount?: unknown;
+  invoice_date?: string | Date | null;
   document_classification?: {
     document_type?: string | null;
     payable_candidate?: boolean | null;
@@ -203,7 +220,8 @@ export function getPayableBlockReason(
   //    Underscores/hyphens are normalized to spaces (same as
   //    nonInvoiceSuppression.ts) so `AWB_543505` and `PackingList_THK` match.
   const fileName = String(doc.fileName || '');
-  if (fileName && filenameIsHardExcluded(fileName)) {
+  const validCommercialInvoice = isValidCommercialInvoice(doc, docType);
+  if (fileName && filenameIsHardExcluded(fileName) && !validCommercialInvoice) {
     return `Filename identifies an excluded non-invoice document (${fileName}) — not eligible for invoice creation`;
   }
   if (fileName && !options?.skipFilenameHints) {
@@ -211,6 +229,8 @@ export function getPayableBlockReason(
       docType.startsWith('INVOICE') ||
       docType === 'PROFORMA' ||
       docType === 'PROFORMA_INVOICE' ||
+      docType === 'COMMERCIAL' ||
+      docType === 'COMMERCIAL_INVOICE' ||
       docType === 'SALES' ||
       docType === 'DEBIT_NOTE' ||
       docType === 'CREDIT_NOTE';
@@ -230,6 +250,10 @@ export function getPayableBlockReason(
  * shape compatible with the validation rules engine.
  */
 export function validatePayableDocument(invoice: {
+  invoice_number?: string | null;
+  vendor_name_raw?: string | null;
+  total_amount?: unknown;
+  invoice_date?: string | Date | null;
   invoice_type?: string | null;
   source_document_type?: string | null;
   pdf_path?: string | null;
@@ -249,6 +273,10 @@ export function validatePayableDocument(invoice: {
     is_non_invoice_document: ocrRaw.is_non_invoice_document,
     raw_text: typeof ocrRaw.raw_text === 'string' ? ocrRaw.raw_text.slice(0, 20000) : '',
     fileName,
+    invoice_number: invoice.invoice_number,
+    vendor_name: invoice.vendor_name_raw,
+    total_amount: invoice.total_amount == null ? null : String(invoice.total_amount),
+    invoice_date: invoice.invoice_date,
     document_classification: ocrRaw.document_classification,
   };
 

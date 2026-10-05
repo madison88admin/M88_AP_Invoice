@@ -15,7 +15,7 @@ export function hasStrongNonInvoiceHeading(text: unknown): boolean {
   if (!normalized) return false;
 
   const firstPage = normalized.slice(0, 1200);
-  const marker = firstPage.search(/\b(?:packing\s+(?:list|slip)|shipment\s+airwaybill|air\s*way\s*bill|bill\s+of\s+lading|cargo\s+manifest|shipping\s+document|shipment\s+document|delivery\s+(?:note|receipt)|commercial\s+invoice|faktur\s+pajak|tech\s+pack|trim\s+(?:received|receipt|sample)|forwarder(?:['’]s|s)?\s+billing\s+invoice|expeditors?\s+billing\s+invoice|forwarder(?:['’]s|s)?\s+invoice|expeditors?\s+invoice)\b/i);
+  const marker = firstPage.search(/\b(?:packing\s+(?:list|slip)|shipment\s+airwaybill|air\s*way\s*bill|bill\s+of\s+lading|cargo\s+manifest|shipping\s+document|shipment\s+document|delivery\s+(?:note|receipt)|faktur\s+pajak|tech\s+pack|trim\s+(?:received|receipt|sample)|forwarder(?:['’]s|s)?\s+billing\s+invoice|expeditors?\s+billing\s+invoice|forwarder(?:['’]s|s)?\s+invoice|expeditors?\s+invoice)\b/i);
   if (marker < 0) return false;
 
   // A payable heading before the supporting-document title indicates an

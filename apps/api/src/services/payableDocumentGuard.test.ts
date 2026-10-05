@@ -14,7 +14,15 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
     expect(getPayableBlockReason({ document_type: 'PROFORMA_INVOICE' })).toMatch(/PROFORMA_INVOICE/);
     expect(getPayableBlockReason({ document_type: 'SALES' })).toBeNull();
     expect(getPayableBlockReason({ document_type: 'DEBIT_NOTE' })).toBeNull();
-    expect(getPayableBlockReason({ document_type: 'COMMERCIAL' })).toMatch(/COMMERCIAL/);
+    expect(getPayableBlockReason({
+      document_type: 'COMMERCIAL',
+      invoice_number: 'CI-123',
+      vendor_name: 'Avery Dennison RIS Vietnam Co. Limited',
+      invoice_date: '2026-09-25',
+      total_amount: 7.47,
+      raw_text: 'COMMERCIAL INVOICE\nInvoice No: CI-123\nTOTAL USD 7.47',
+      fileName: 'Commercial_Invoice_CI-123.pdf',
+    })).toBeNull();
     expect(getPayableBlockReason({ document_type: 'TECH_PACK' })).toMatch(/TECH_PACK/);
     expect(getPayableBlockReason({ document_type: 'TRIM_RECEIPT' })).toMatch(/TRIM_RECEIPT/);
     expect(getPayableBlockReason({ document_type: 'FAKTUR_PAJAK' })).toMatch(/FAKTUR_PAJAK/);
@@ -151,6 +159,19 @@ describe('payableDocumentGuard — validatePayableDocument (RULE 20 input shape)
       source_document_type: 'INVOICE',
       pdf_path: 'invoices/2026/09/123_INV-100.pdf',
       ocr_raw_data: {},
+    });
+    expect(result.passed).toBe(true);
+  });
+
+  it('passes a valid commercial invoice record', () => {
+    const result = validatePayableDocument({
+      invoice_number: 'CI-123',
+      vendor_name_raw: 'Avery Dennison RIS Vietnam Co. Limited',
+      invoice_type: 'COMMERCIAL',
+      pdf_path: 'invoices/2026/09/Commercial_Invoice_CI-123.pdf',
+      invoice_date: '2026-09-25',
+      total_amount: 7.47,
+      ocr_raw_data: { raw_text: 'COMMERCIAL INVOICE\nInvoice No: CI-123\nTOTAL USD 7.47' },
     });
     expect(result.passed).toBe(true);
   });

@@ -43,6 +43,17 @@ const PAXAR = [
   'VAT TOTAL  USD 0.00 210.01 0.00 210.01 SALE AMOUNT',
 ].join(' ');
 
+// Flattened Avery Vietnam email intake text. pdf2json places the bank block
+// first and moves the supplier/date labels near the end of the page, so this
+// guards against regressing to vendor="Bank Name" or the endorsement date.
+const AVERY_VN = [
+  'Bank Name : CITIBANK N.A. VIETNAM BANK ADD:15th Floor, Sunwah Tower',
+  'A/C NAME : AVERY DENNISON RIS VIETNAM CO., LTD A/C NO.:0302103 003 (USD)',
+  '94.53 HATQUARTER INC MADISON 88 LTD TERMS : CK 30 NET 15-OCT-26 DUE DATE:',
+  'CURRENCY : USD 94.53 SALES: 0.00 TOTAL: USD',
+  'AVERY DENNISON RIS Vietnam Co., Limited. PO NUMBER: INVOICE DATE: INVOICE NO: 17778374 15-SEP-2026',
+].join(' ');
+
 // Scanned (image-only) Combine invoice: no embedded text layer at all.
 const SCANNED = '';
 
@@ -74,6 +85,15 @@ describe('extractInvoiceFields date extraction — parked-manual-review regressi
     const result = await extractInvoiceFields(Buffer.from('fake'));
     expect(result.invoice_date).toBe('2026-09-14');
     expect(result.due_date).toBe('2026-10-14');
+  });
+
+  it('captures Avery Vietnam vendor/date from flattened email text', async () => {
+    state.text = AVERY_VN;
+    const result = await extractInvoiceFields(Buffer.from('fake'));
+    expect(result.vendor_name.toUpperCase()).toContain('AVERY DENNISON RIS VIETNAM');
+    expect(result.invoice_number).toBe('17778374');
+    expect(result.invoice_date).toBe('2026-09-15');
+    expect(result.due_date).toBe('2026-10-15');
   });
 
   it('captures the RapidOCR-squashed "DATE:11SEPT,2026" (no space after colon/comma, or day-month)', async () => {

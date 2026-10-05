@@ -13,7 +13,12 @@ vi.mock('./emailIntakeMonitoringService', () => ({ recordEmailIntakeEvent: email
 vi.mock('./duplicateDetectionService', () => ({ checkDuplicateInvoice: vi.fn(), storeInvoiceHashFromStorage: vi.fn() }));
 vi.mock('./ocrDateSanityService', () => ({ runOcrDateSanityCheck: vi.fn() }));
 
-import { hasUploadCompletionEvent, intakeReviewReason, shouldTreatAsRevision } from './fileWatcherService';
+import {
+  extractInvoiceNumberFromFilename,
+  hasUploadCompletionEvent,
+  intakeReviewReason,
+  shouldTreatAsRevision,
+} from './fileWatcherService';
 
 describe('fileWatcherService.intakeReviewReason — body classification beats filename hints', () => {
   beforeEach(() => {
@@ -119,6 +124,16 @@ describe('fileWatcherService.intakeReviewReason — body classification beats fi
     expect(
       intakeReviewReason({ ...baseValidInvoice, total_amount: 0 }, 'plain.pdf')
     ).toMatch(/A valid non-zero invoice amount/);
+  });
+});
+
+describe('fileWatcherService filename invoice fallback', () => {
+  it('recovers a bare numeric invoice filename', () => {
+    expect(extractInvoiceNumberFromFilename('254070.pdf')).toBe('254070');
+  });
+
+  it('does not treat an arbitrary short numeric filename as an invoice', () => {
+    expect(extractInvoiceNumberFromFilename('123.pdf')).toBeNull();
   });
 });
 

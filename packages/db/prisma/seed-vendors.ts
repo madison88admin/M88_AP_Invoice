@@ -38,7 +38,7 @@ const EXISTING_VENDORS_WITH_BANK_DETAILS: Record<string, Partial<VendorSeedData>
     supplier_location: "HK",
   },
   "Avery Vietnam": {
-    name_aliases: ["Avery Dennison (VN)", "AVERY VN", "Avery Dennison Vietnam", "Avery Dennison RIS Vietnam CO., Limited"],
+    name_aliases: ["Avery Dennison (VN)", "AVERY VN", "Avery Dennison Vietnam", "Avery Dennison RIS Vietnam CO., Limited", "AVERYDENNISON RISVIETNAMCO", "AVERYDENNISONRISVIETNAMCO", "Avery Dennison RIS Vietnam Co. Limited", "Avery Dennison RISVietnam Co."],
     supplier_location: "Vietnam",
   },
   "Trimco HK": {

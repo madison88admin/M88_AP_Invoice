@@ -23,7 +23,7 @@ describe('non-invoice filename suppression', () => {
   });
 
   it('blocks excluded commercial invoices while keeping an invoice that references a packing list eligible', () => {
-    expect(hasStrongNonInvoiceHeading('COMMERCIAL INVOICE\nInvoice No: INV-123\nPacking List No: PL-456')).toBe(true);
+    expect(hasStrongNonInvoiceHeading('COMMERCIAL INVOICE\nInvoice No: INV-123\nPacking List No: PL-456')).toBe(false);
     expect(hasStrongNonInvoiceHeading('Invoice No: INV-123\nPacking List No: PL-456')).toBe(false);
     expect(hasStrongNonInvoiceHeading('FAKTUR PAJAK\nKode dan Nomor Seri Faktur Pajak')).toBe(true);
     expect(hasStrongNonInvoiceHeading("FORWARDER'S BILLING INVOICE\nInvoice No: FWD-123")).toBe(true);

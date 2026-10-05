@@ -150,7 +150,7 @@ export function intakeReviewReason(ocrResult: any, fileName = ''): string | null
   const hasPayableHeading = /\b(?:INVOICE|DEBIT\s+NOTE|CREDIT\s+NOTE)\b/i.test(rawText);
   const shipmentDocument = hasStrongNonInvoiceHeading(rawText) || (!hasPayableHeading && /(?:^|\n)\s*(?:PACKING\s+(?:LIST|SLIP)|AIR\s*WAY\s*BILL|SHIPMENT\s+AIRWAYBILL|BILL\s+OF\s+LADING|CARGO\s+MANIFEST|SHIPPING\s+DOCUMENT|SHIPMENT\s+DOCUMENT|DELIVERY\s+(?:NOTE|RECEIPT))\b/im.test(rawText));
 
-  if (ocrResult?.is_non_invoice_document || ['AIRWAY_BILL', 'PACKING_LIST', 'COMMERCIAL', 'COMMERCIAL_INVOICE', 'TECH_PACK', 'TRIM_RECEIPT', 'FAKTUR_PAJAK', 'FORWARDER_BILLING_INVOICE', 'FORWARDERS_BILLING_INVOICE', 'EXPEDITOR_BILLING_INVOICE', 'EXPEDITORS_BILLING_INVOICE', 'FORWARDER_INVOICE', 'EXPEDITOR_INVOICE', 'EXPEDITORS_INVOICE'].includes(type) || shipmentDocument) {
+  if (ocrResult?.is_non_invoice_document || ['AIRWAY_BILL', 'PACKING_LIST', 'TECH_PACK', 'TRIM_RECEIPT', 'FAKTUR_PAJAK', 'FORWARDER_BILLING_INVOICE', 'FORWARDERS_BILLING_INVOICE', 'EXPEDITOR_BILLING_INVOICE', 'EXPEDITORS_BILLING_INVOICE', 'FORWARDER_INVOICE', 'EXPEDITOR_INVOICE', 'EXPEDITORS_INVOICE'].includes(type) || shipmentDocument) {
     return 'Document is a shipping/non-invoice document (packing list, AWB, delivery or shipment document) — not eligible for invoice creation';
   }
   // Filename hints are decisive ONLY when the document body did not yield a
@@ -314,8 +314,13 @@ function recoverStuckFilesPeriodic(): void {
  *   "Bo Hing_Inv_1609160_HT&DRT.pdf"                  → INV-1609160
  * Returns null when no credible pattern is found.
  */
-function extractInvoiceNumberFromFilename(fileName: string): string | null {
+export function extractInvoiceNumberFromFilename(fileName: string): string | null {
   const base = path.basename(fileName).replace(/\.pdf$/i, '');
+
+  // Some suppliers use the invoice number as the entire filename, e.g.
+  // `254070.pdf`. Keep this deliberately narrow so arbitrary numeric names
+  // are not treated as invoice numbers.
+  if (/^\d{4,12}$/.test(base)) return base;
 
   // Label-prefixed numbers first (most specific, least ambiguous):
   //   PCI-26031718, INV-1609160, INVOICE_123456, I/V.123456, NO-123456

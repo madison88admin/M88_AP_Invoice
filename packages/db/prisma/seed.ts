@@ -18,7 +18,7 @@ async function main() {
     },
     {
       name: "Avery Vietnam",
-      name_aliases: ["Avery Dennison (VN)", "AVERY VN", "Avery Dennison Vietnam"],
+      name_aliases: ["Avery Dennison (VN)", "AVERY VN", "Avery Dennison Vietnam", "Avery Dennison RIS Vietnam CO., Limited", "AVERYDENNISON RISVIETNAMCO", "AVERYDENNISONRISVIETNAMCO"],
       invoice_template_type: InvoiceTemplateType.INVOICE,
       supplier_location: "Vietnam",
     },

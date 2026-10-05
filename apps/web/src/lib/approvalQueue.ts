@@ -25,6 +25,27 @@ export const mapUserRoleToSignatoryRoles = (role: string): string[] => {
   return mapping[role] || [];
 };
 
+// API payloads normally expose current_approver_role (for example,
+// COORDINATOR), while some legacy/summary payloads expose the pending status
+// (for example, PENDING_COORDINATOR). Normalize both forms before matching a
+// returned signature so the invoice still lands with the exact coordinator
+// who originally approved it.
+const PENDING_STATUS_TO_SIGNATORY_ROLE: Record<string, string> = {
+  PENDING_COORDINATOR: 'COORDINATOR',
+  PENDING_MANAGER: 'PURCHASING_MANAGER',
+  PENDING_MLO_ACCOUNT_HOLDER: 'MLO_ACCOUNT_HOLDER',
+  PENDING_MLO_PLANNING_MANAGER: 'MLO_PLANNING_MANAGER',
+  PENDING_SR_MANAGER: 'SR_MANAGER_GLOBAL_PRODUCTION',
+  PENDING_POLLY: 'MS_POLLY',
+  PENDING_PRESIDENT: 'PRESIDENT',
+  PENDING_ACCOUNTING: 'ACCOUNTING_REVIEWER',
+};
+
+const normalizeCurrentStage = (stage?: string): string | undefined => {
+  if (!stage) return undefined;
+  return PENDING_STATUS_TO_SIGNATORY_ROLE[stage] || stage;
+};
+
 export const orderedSignatures = (invoice: MockInvoice) => (invoice.signatures || [])
   .filter(signature => !signature.ocr_detected &&
     (!signature.invalidated_at || signature.approval_status === 'RECONFIRMATION_REQUIRED'))
@@ -41,7 +62,8 @@ export function isReturnedSignatureForUser(
   user: { id?: string; name?: string } | null,
 ): boolean {
   if (!sig || sig.ocr_detected || sig.signed_at || sig.approval_status !== 'RECONFIRMATION_REQUIRED') return false;
-  if (currentStage && sig.signatory_role !== currentStage) return false;
+  const normalizedStage = normalizeCurrentStage(currentStage);
+  if (normalizedStage && sig.signatory_role !== normalizedStage) return false;
   if (sig.signatory_user_id) return Boolean(user?.id && sig.signatory_user_id === user.id);
   return Boolean(sig.signatory_name && user?.name &&
     sig.signatory_name.trim().toLowerCase() === user.name.trim().toLowerCase());

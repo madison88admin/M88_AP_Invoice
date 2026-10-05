@@ -204,6 +204,8 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
   const isAccountingRole = user?.role === 'ACCOUNTING_SUPERVISOR' || user?.role === 'ACCOUNTING_ASSOCIATE';
   const { invoices, vendors, paymentBatches, refresh, loading: ctxLoading } = useMockData();
   const [selectedInvoice, setSelectedInvoice] = useState<MockInvoice | null>(null);
+  const [focusQueueRequested, setFocusQueueRequested] = useState(false);
+  const [pendingEditId, setPendingEditId] = useState<string | null>(null);
   const [validating, setValidating] = useState(false);
   const [requestingApproval, setRequestingApproval] = useState(false);
   const [validationResult, setValidationResult] = useState<any>(null);
@@ -489,7 +491,9 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
   // returns to the top with its marker reset.
   useEffect(() => {
     setCurrentPage(1);
-    repoListRef.current?.scrollTo({ top: 0 });
+    if (repoListRef.current && typeof repoListRef.current.scrollTo === 'function') {
+      repoListRef.current.scrollTo({ top: 0 });
+    }
     setRepoAtTop(true);
     setRepoRange(null);
   }, [filters]);
@@ -511,6 +515,15 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
   const startIndex = (safePage - 1) * invoicesPerPage;
   const endIndex = repositoryOneScroll ? sortedInvoices.length : startIndex + invoicesPerPage;
   const displayedInvoices = repositoryOneScroll ? sortedInvoices : sortedInvoices.slice(startIndex, endIndex);
+
+  // KPI navigation can request a focused split view: select the first matching
+  // invoice automatically so users can review it beside the repository list.
+  useEffect(() => {
+    if (!focusQueueRequested || selectedInvoice || displayedInvoices.length === 0) return;
+    setSelectedInvoice(displayedInvoices[0]);
+    setDetailTab('overview');
+    setFocusQueueRequested(false);
+  }, [focusQueueRequested, mode, displayedInvoices, selectedInvoice]);
 
   const jumpRepoToTop = () => {
     repoListRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
@@ -565,7 +578,9 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
   // Auto-select invoice when navigated from Exception Manager with selectedInvoiceId
   useEffect(() => {
     const state = location.state as { selectedInvoiceId?: string } | null;
-    const queryId = new URLSearchParams(location.search).get('invoiceId');
+    const queryParams = new URLSearchParams(location.search);
+    const queryId = queryParams.get('invoiceId');
+    const editParam = queryParams.get('edit');
     const targetId = state?.selectedInvoiceId || queryId;
     if (targetId && invoices.length > 0) {
       if (mode === 'dashboard') {
@@ -578,6 +593,7 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
       if (target) {
         setDetailTab('overview');
         setSelectedInvoice(target);
+        if (editParam === '1') setPendingEditId(target.id);
         // Clear the state/query so it doesn't re-trigger on refresh
         navigate('/repository', { replace: true, state: {} });
       }
@@ -591,13 +607,15 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
     const params = new URLSearchParams(location.search);
     const statusParam = params.get('status') as InvoiceStatus | null;
     const urgentParam = params.get('urgentDue');
-    if (!statusParam && !urgentParam) return;
+    const focusParam = params.get('focus');
+    if (!statusParam && !urgentParam && !focusParam) return;
     if (statusParam && !Object.values(InvoiceStatus).includes(statusParam)) return;
     setFilters((f) => ({
       ...f,
       status: statusParam ?? undefined,
       urgentDue: urgentParam ? true : undefined,
     }));
+    if (focusParam === '1') setFocusQueueRequested(true);
     navigate('/repository', { replace: true, state: {} });
   }, [location.search, mode, navigate]);
 
@@ -1004,6 +1022,12 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
     });
     setShowEditModal(true);
   };
+
+  useEffect(() => {
+    if (!pendingEditId || !selectedInvoice || pendingEditId !== selectedInvoice.id) return;
+    setPendingEditId(null);
+    void handleOpenEdit();
+  }, [pendingEditId, selectedInvoice]);
 
   const handleEditChange = (field: string, value: string | boolean) => {
     setEditFormData((prev: any) => {
@@ -2232,12 +2256,14 @@ ${dataRows}
       const params = new URLSearchParams();
       if (nextStatus) params.set('status', nextStatus);
       if (nextUrgentDue) params.set('urgentDue', '1');
+      params.set('focus', '1');
       const qs = params.toString();
       navigate(qs ? `/repository?${qs}` : '/repository');
       return;
     }
     setFilters({ ...filters, status: nextStatus, urgentDue: nextUrgentDue });
     setQuickFilter(nextQuickFilter);
+    setFocusQueueRequested(true);
     // Scroll to invoice table
     setTimeout(() => {
       const section = document.getElementById('invoice-list-section');

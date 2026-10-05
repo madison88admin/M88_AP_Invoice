@@ -59,6 +59,14 @@ describe('returned invoice routing visibility', () => {
     expect(getReturnedInvoicesForUser([invoice], { id: 'manager-1', name: 'Maricar', role: 'PURCHASING_MANAGER' })).toHaveLength(0);
   });
 
+  it('routes legacy pending-stage payloads to the exact coordinator who signed', () => {
+    const invoice = returnedInvoice('COORDINATOR', false);
+    invoice.current_stage = 'PENDING_COORDINATOR';
+
+    expect(getReturnedInvoicesForUser([invoice], { id: 'coordinator-1', name: 'Sarah', role: 'PURCHASING_COORDINATOR' })).toHaveLength(1);
+    expect(getReturnedInvoicesForUser([invoice], { id: 'another-coordinator', name: 'Another Coordinator', role: 'PURCHASING_COORDINATOR' })).toHaveLength(0);
+  });
+
   it('shows the returned invoice to the manager only after coordinator approval advances the stage', () => {
     const invoice = returnedInvoice('PURCHASING_MANAGER', true);
 

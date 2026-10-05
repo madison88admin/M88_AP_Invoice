@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { CheckCircle, XCircle, Clock, ArrowLeft, Loader2, ExternalLink, FileText, Upload, X } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, ArrowLeft, Loader2, ExternalLink, FileText, Upload, X, Search, RotateCcw } from 'lucide-react';
 import { MockInvoice } from '../lib/mockData';
 import { invoiceApi } from '../lib/api';
 import { Skeleton } from './ui/Skeleton';
@@ -11,6 +11,121 @@ import {
   getCoordinatorSubmissionDate,
   getPendingApprovalsForUser,
 } from '../lib/approvalQueue';
+
+type QuickViewField = {
+  label: string;
+  field: keyof MockInvoice | string;
+  format?: 'date' | 'amount' | 'boolean' | 'percent';
+};
+
+const QUICK_VIEW_SECTIONS: Array<{ title: string; fields: QuickViewField[] }> = [
+  {
+    title: 'Invoice Details',
+    fields: [
+      { label: 'Invoice Number', field: 'invoice_number' },
+      { label: 'Vendor', field: 'vendor_name' },
+      { label: 'Vendor Name (OCR)', field: 'vendor_name_raw' },
+      { label: 'Invoice Date', field: 'invoice_date', format: 'date' },
+      { label: 'Due Date', field: 'due_date', format: 'date' },
+      { label: 'Received Date', field: 'invoice_received_date', format: 'date' },
+      { label: 'Amount', field: 'total_amount', format: 'amount' },
+      { label: 'Currency', field: 'currency' },
+      { label: 'Document Type', field: 'invoice_type' },
+      { label: 'Payment Terms', field: 'payment_terms' },
+      { label: 'Incoterm', field: 'incoterm' },
+    ],
+  },
+  {
+    title: 'Classification',
+    fields: [
+      { label: 'Brand', field: 'brand' },
+      { label: 'Brand Code', field: 'brand_code' },
+      { label: 'Brand Tier', field: 'brand_tier' },
+      { label: 'Season', field: 'season' },
+      { label: 'Order Type', field: 'order_type' },
+      { label: 'Category', field: 'category' },
+      { label: 'Bill To Entity', field: 'bill_to_entity' },
+    ],
+  },
+  {
+    title: 'PO & Material',
+    fields: [
+      { label: 'PO Number', field: 'po_number' },
+      { label: 'Customer PO Number', field: 'customer_po_number' },
+      { label: 'MPO Number', field: 'mpo_number' },
+      { label: 'Base MPO', field: 'mpo_base_number' },
+      { label: 'Order Sequence', field: 'mpo_order_sequence' },
+      { label: 'Material Code', field: 'material_code' },
+      { label: 'Material Name', field: 'material_name' },
+      { label: 'QTY Shipped', field: 'qty_shipped' },
+    ],
+  },
+  {
+    title: 'Financial Details',
+    fields: [
+      { label: 'Subtotal', field: 'subtotal', format: 'amount' },
+      { label: 'Tax Amount', field: 'tax_amount', format: 'amount' },
+      { label: 'Discount', field: 'discount_amount', format: 'amount' },
+      { label: 'Bank Charges', field: 'bank_charges', format: 'amount' },
+      { label: 'Freight Charges', field: 'freight_charges', format: 'amount' },
+      { label: 'Additional Charges', field: 'additional_charges', format: 'amount' },
+      { label: 'Exchange Rate', field: 'exchange_rate_to_usd' },
+      { label: 'Original Currency', field: 'invoice_currency_original' },
+    ],
+  },
+  {
+    title: 'Bank Details',
+    fields: [
+      { label: 'Beneficiary Name', field: 'beneficiary_name' },
+      { label: 'Bank Name', field: 'bank_name' },
+      { label: 'SWIFT Code', field: 'swift_code' },
+      { label: 'Account Number', field: 'account_number' },
+    ],
+  },
+  {
+    title: 'Shipping & Dates',
+    fields: [
+      { label: 'Ship To', field: 'ship_to' },
+      { label: 'Sold To', field: 'sold_to' },
+      { label: 'Date Range Start', field: 'date_range_start', format: 'date' },
+      { label: 'Date Range End', field: 'date_range_end', format: 'date' },
+      { label: 'Priority Pay Date', field: 'priority_pay_date', format: 'date' },
+    ],
+  },
+  {
+    title: 'Flags & Processing',
+    fields: [
+      { label: 'Status', field: 'status' },
+      { label: 'Current Stage', field: 'current_stage' },
+      { label: 'OCR Confidence', field: 'ocr_confidence_score', format: 'percent' },
+      { label: 'Handwritten', field: 'is_handwritten', format: 'boolean' },
+      { label: 'Urgent', field: 'is_urgent', format: 'boolean' },
+      { label: 'Priority Flag', field: 'priority_flag', format: 'boolean' },
+    ],
+  },
+];
+
+function formatQuickViewValue(invoice: MockInvoice, field: QuickViewField): string {
+  const value = (invoice as any)[field.field];
+  if (value === undefined || value === null || value === '') return 'N/A';
+  if (field.format === 'boolean') return value ? 'Yes' : 'No';
+  if (field.format === 'date') {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString();
+  }
+  if (field.format === 'percent') {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return String(value);
+    return `${numeric <= 1 ? numeric * 100 : numeric}%`;
+  }
+  if (field.format === 'amount') {
+    const numeric = Number(value);
+    return Number.isFinite(numeric)
+      ? `${invoice.currency || ''} ${numeric.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`.trim()
+      : String(value);
+  }
+  return String(value);
+}
 
 export default function ApprovalInbox() {
   const { invoices, approveInvoice, rejectInvoice } = useMockData();
@@ -23,9 +138,16 @@ export default function ApprovalInbox() {
   const [approving, setApproving] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [openingDocument, setOpeningDocument] = useState(false);
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
+  const [pdfPreviewError, setPdfPreviewError] = useState<string | null>(null);
   const [showInvoicePreview, setShowInvoicePreview] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [showRejectModal, setShowRejectModal] = useState(false);
+  const [returnReason, setReturnReason] = useState('');
+  const [showReturnModal, setShowReturnModal] = useState(false);
+  const [returning, setReturning] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [approvalFilter, setApprovalFilter] = useState<'all' | 'urgent' | 'returned' | 'issues'>('all');
   
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -38,6 +160,18 @@ export default function ApprovalInbox() {
   // Filter invoices to show only pending approvals for the current user's role
   // (shared with the sidebar badge so the counts always agree)
   const pendingApprovals = getPendingApprovalsForUser(invoices, user);
+
+  const filteredPendingApprovals = pendingApprovals.filter((invoice) => {
+    const query = searchQuery.trim().toLowerCase();
+    const matchesSearch = !query || [invoice.invoice_number, invoice.vendor_name, invoice.brand, invoice.po_number, invoice.mpo_number]
+      .filter(Boolean).join(' ').toLowerCase().includes(query);
+    const exceptionText = (invoice.exceptions || []).map((exception: any) => `${exception.code || ''} ${exception.message || ''}`).join(' ').toLowerCase();
+    const matchesFilter = approvalFilter === 'all'
+      || (approvalFilter === 'urgent' && Boolean(invoice.is_urgent || invoice.priority_flag))
+      || (approvalFilter === 'returned' && (String(invoice.status).includes('RETURNED') || exceptionText.includes('return')))
+      || (approvalFilter === 'issues' && (invoice.exceptions || []).some((exception: any) => ['OPEN', 'PENDING'].includes(String(exception.status).toUpperCase())));
+    return matchesSearch && matchesFilter;
+  });
 
   const getCoordinatorName = (invoice: MockInvoice) => {
     const coordinator = orderedSignatures(invoice).find(sig =>
@@ -54,10 +188,42 @@ export default function ApprovalInbox() {
 
 
   // Pagination logic
-  const totalPages = Math.ceil(pendingApprovals.length / itemsPerPage);
+  const totalPages = Math.max(1, Math.ceil(filteredPendingApprovals.length / itemsPerPage));
   const startIndex = (currentPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
-  const displayedInvoices = pendingApprovals.slice(startIndex, endIndex);
+  const displayedInvoices = filteredPendingApprovals.slice(startIndex, endIndex);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, approvalFilter]);
+
+  useEffect(() => {
+    if (!showInvoicePreview || !selectedInvoice) {
+      setPdfPreviewUrl(null);
+      setPdfPreviewError(null);
+      return;
+    }
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    setOpeningDocument(true);
+    setPdfPreviewError(null);
+    void invoiceApi.getDocument(selectedInvoice.id).then((response) => {
+      if (cancelled) return;
+      const contentType = String(response.headers['content-type'] || 'application/pdf');
+      objectUrl = URL.createObjectURL(new Blob([response.data], { type: contentType }));
+      setPdfPreviewUrl(objectUrl);
+    }).catch((error: any) => {
+      if (cancelled) return;
+      const message = error?.response?.data?.message || 'The actual invoice PDF is not available for this record.';
+      setPdfPreviewError(message);
+    }).finally(() => {
+      if (!cancelled) setOpeningDocument(false);
+    });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [showInvoicePreview, selectedInvoice]);
 
   const handleApprove = async () => {
     if (!selectedInvoice || !user) return;
@@ -67,6 +233,7 @@ export default function ApprovalInbox() {
       await approveInvoice(selectedInvoice.id, user.name);
       showToast('Invoice approved successfully', 'success');
       setSelectedInvoice(null);
+      setShowInvoicePreview(false);
     } catch (error: any) {
       console.error('Failed to approve invoice:', error);
       const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to approve invoice';
@@ -84,6 +251,7 @@ export default function ApprovalInbox() {
       await rejectInvoice(selectedInvoice.id, rejectReason);
       showToast('Invoice rejected successfully', 'success');
       setSelectedInvoice(null);
+      setShowInvoicePreview(false);
       setShowRejectModal(false);
       setRejectReason('');
     } catch (error: any) {
@@ -95,54 +263,47 @@ export default function ApprovalInbox() {
     }
   };
 
-  const openInvoicePdf = async (invoice: MockInvoice) => {
-    const previewWindow = window.open('', '_blank');
+  const openInvoicePdf = (invoice: MockInvoice) => {
+    setSelectedInvoice(invoice);
+    setShowInvoicePreview(true);
+  };
+
+  const handleViewDocument = () => { if (selectedInvoice) openInvoicePdf(selectedInvoice); };
+
+  const handleReturn = async () => {
+    if (!selectedInvoice || !returnReason.trim() || !user) return;
     try {
-      setOpeningDocument(true);
-      if (previewWindow) {
-        previewWindow.document.title = 'Loading invoice...';
-        previewWindow.document.body.textContent = 'Loading invoice PDF...';
-      }
-      const response = await invoiceApi.getDocument(invoice.id);
-      const contentType = String(response.headers['content-type'] || 'application/pdf');
-      const verificationWarning = response.headers['x-pdf-verification'];
-      if (verificationWarning) {
-        try {
-          showToast(decodeURIComponent(verificationWarning), 'warning');
-        } catch {
-          showToast(String(verificationWarning), 'warning');
-        }
-      }
-      const url = URL.createObjectURL(new Blob([response.data], { type: contentType }));
-      if (previewWindow) {
-        previewWindow.location.href = url;
-      } else {
-        const link = document.createElement('a');
-        link.href = url;
-        link.target = '_blank';
-        link.rel = 'noopener noreferrer';
-        link.click();
-      }
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      setReturning(true);
+      await invoiceApi.returnForCorrection(selectedInvoice.id, returnReason.trim(), 'PURCHASING_COORDINATOR');
+      showToast('Invoice returned for correction', 'success');
+      setShowReturnModal(false);
+      setShowInvoicePreview(false);
+      setSelectedInvoice(null);
+      setReturnReason('');
     } catch (error: any) {
-      previewWindow?.close();
-      const blob = error?.response?.data;
-      let message = 'The actual invoice PDF is not available for this record.';
-      if (blob instanceof Blob) {
-        try {
-          const parsed = JSON.parse(await blob.text());
-          message = parsed?.error?.message || parsed?.message || message;
-        } catch {
-          // Keep the user-friendly fallback for non-JSON failures.
-        }
-      }
-      showToast(message, 'error');
+      showToast(error?.response?.data?.message || 'Failed to return invoice', 'error');
     } finally {
-      setOpeningDocument(false);
+      setReturning(false);
     }
   };
 
-  const handleViewDocument = () => { if (selectedInvoice) void openInvoicePdf(selectedInvoice); };
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement;
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || !selectedInvoice) return;
+      if (event.key.toLowerCase() === 'a') { event.preventDefault(); void handleApprove(); }
+      if (event.key.toLowerCase() === 'r') { event.preventDefault(); setShowReturnModal(true); }
+      if (event.key.toLowerCase() === 'n' || event.key.toLowerCase() === 'p') {
+        event.preventDefault();
+        const index = filteredPendingApprovals.findIndex((invoice) => invoice.id === selectedInvoice.id);
+        const nextIndex = event.key.toLowerCase() === 'n' ? index + 1 : index - 1;
+        const next = filteredPendingApprovals[nextIndex];
+        if (next) { setSelectedInvoice(next); setShowInvoicePreview(true); }
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [selectedInvoice, filteredPendingApprovals, handleApprove]);
 
   const closeInvoicePreview = () => setShowInvoicePreview(false);
 
@@ -187,7 +348,25 @@ export default function ApprovalInbox() {
                   <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
                     Pending Approvals
                   </h2>
-                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{pendingApprovals.length} items</span>
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{filteredPendingApprovals.length} of {pendingApprovals.length} items</span>
+                </div>
+                <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2" style={{ color: 'var(--text-subtle)' }} />
+                    <input
+                      value={searchQuery}
+                      onChange={(event) => setSearchQuery(event.target.value)}
+                      placeholder="Search invoice, vendor, PO/MPO..."
+                      className="w-full rounded-xl py-2 pl-9 pr-3 text-sm focus:outline-none"
+                      style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
+                    />
+                  </div>
+                  <select value={approvalFilter} onChange={(event) => setApprovalFilter(event.target.value as typeof approvalFilter)} className="rounded-xl px-3 py-2 text-sm focus:outline-none" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}>
+                    <option value="all">All pending</option>
+                    <option value="urgent">Urgent</option>
+                    <option value="returned">Returned</option>
+                    <option value="issues">With issues</option>
+                  </select>
                 </div>
                 {loading ? (
                   <div className="px-4 md:px-6 py-4 space-y-4">
@@ -202,7 +381,7 @@ export default function ApprovalInbox() {
                       </div>
                     ))}
                   </div>
-                ) : pendingApprovals.length === 0 ? (
+                ) : filteredPendingApprovals.length === 0 ? (
                   <div className="px-6 py-12 text-center">
                     <div className="inline-flex p-4 rounded-2xl mb-3" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
                       <CheckCircle className="h-8 w-8" style={{ color: 'var(--text-subtle)' }} strokeWidth={1.75} />
@@ -215,7 +394,7 @@ export default function ApprovalInbox() {
                       {displayedInvoices.map((invoice, idx) => (
                       <div
                         key={invoice.id}
-                        onClick={() => setSelectedInvoice(invoice)}
+                        onClick={() => { setSelectedInvoice(invoice); setShowInvoicePreview(true); }}
                         className="px-4 md:px-6 py-4 cursor-pointer transition-colors"
                         style={{
                           borderTop: idx > 0 ? '1px solid var(--border-subtle)' : 'none',
@@ -254,7 +433,7 @@ export default function ApprovalInbox() {
                               {getApprovalStatus(invoice)}
                             </p>
                             <button
-                              onClick={(e) => { e.stopPropagation(); void openInvoicePdf(invoice); }}
+                              onClick={(e) => { e.stopPropagation(); openInvoicePdf(invoice); }}
                               className="mt-2 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors"
                               title="View actual invoice PDF"
                               style={{ background: 'var(--bg-elevated)', color: 'var(--accent-blue)', border: '1px solid var(--border-color)' }}
@@ -352,27 +531,18 @@ export default function ApprovalInbox() {
                       </div>
                     )}
 
-                    {user?.role === 'PURCHASING_MANAGER' && (
-                      <button
-                        type="button"
-                        onClick={() => setShowInvoicePreview(true)}
-                        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border transition-all text-sm font-semibold"
-                        style={{ borderColor: 'var(--border-color)', color: 'var(--text-primary)', background: 'var(--bg-card-hover)' }}
-                      >
-                        <FileText className="h-4 w-4" />
-                        View Invoice in System
-                      </button>
-                    )}
-
                     <button
                       type="button"
-                      onClick={handleViewDocument}
-                      disabled={openingDocument}
+                      onClick={() => setShowInvoicePreview(true)}
                       className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border transition-all text-sm font-semibold"
-                      style={{ borderColor: 'var(--border-color)', color: 'var(--accent-blue)', background: 'var(--bg-elevated)' }}
+                      style={{ borderColor: 'var(--border-color)', color: 'var(--text-primary)', background: 'var(--bg-card-hover)' }}
                     >
-                      {openingDocument ? <Loader2 className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}
-                      {openingDocument ? 'Opening Invoice...' : 'View Actual Invoice'}
+                      <FileText className="h-4 w-4" />
+                      View invoice details
+                    </button>
+
+                    <button type="button" onClick={handleViewDocument} className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border transition-all text-sm font-semibold" style={{ borderColor: 'var(--border-color)', color: 'var(--accent-blue)', background: 'var(--bg-elevated)' }}>
+                      <FileText className="h-4 w-4" /> View Actual Invoice in panel
                     </button>
 
                     {user && ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'PURCHASING_COORDINATOR', 'IT_ADMIN'].includes(user.role) && (
@@ -441,7 +611,7 @@ export default function ApprovalInbox() {
                     )}
 
                     {/* Action Buttons */}
-                    <div className="pt-4 space-y-2" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                    <div className="sticky bottom-0 z-10 -mx-1 mt-4 space-y-2 border-t p-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
                       <button
                         onClick={handleApprove}
                         disabled={approving}
@@ -471,6 +641,14 @@ export default function ApprovalInbox() {
                         <XCircle className="h-4 w-4 mr-2" strokeWidth={1.75} />
                         Reject
                       </button>
+                      <button
+                        onClick={() => setShowReturnModal(true)}
+                        disabled={returning}
+                        className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                        style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}
+                      >
+                        <RotateCcw className="h-4 w-4 mr-2" /> Return for correction
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -492,7 +670,7 @@ export default function ApprovalInbox() {
             <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
               <div>
                 <h3 id="invoice-preview-title" className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Invoice quick view</h3>
-                <p className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>Review the extracted invoice details without leaving Approvals.</p>
+                <p className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>Review the extracted invoice details without leaving Approvals. Shortcuts: A approve · R return · N/P next/previous.</p>
               </div>
               <button type="button" onClick={closeInvoicePreview} aria-label="Close invoice preview" className="rounded-lg p-2 transition-colors" style={{ color: 'var(--text-muted)' }}>
                 <X className="h-5 w-5" />
@@ -500,23 +678,74 @@ export default function ApprovalInbox() {
             </div>
 
             <div className="overflow-y-auto p-6">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                {[
-                  ['Invoice Number', selectedInvoice.invoice_number],
-                  ['Vendor', selectedInvoice.vendor_name || (selectedInvoice as any).vendor?.name],
-                  ['Amount', `${selectedInvoice.currency || ''} ${Number(selectedInvoice.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`.trim()],
-                  ['Invoice Date', selectedInvoice.invoice_date ? new Date(selectedInvoice.invoice_date).toLocaleDateString() : 'N/A'],
-                  ['Due Date', (selectedInvoice as any).due_date ? new Date((selectedInvoice as any).due_date).toLocaleDateString() : 'N/A'],
-                  ['PO / MPO', [(selectedInvoice as any).po_number, selectedInvoice.mpo_number].filter(Boolean).join(' / ') || 'N/A'],
-                  ['Brand', selectedInvoice.brand || 'N/A'],
-                  ['Status', String(selectedInvoice.status || '').replace(/_/g, ' ') || 'N/A'],
-                ].map(([label, value]) => (
-                  <div key={label} className="rounded-xl p-3" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}>
-                    <p className="text-[11px] uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>{label}</p>
-                    <p className="mt-1 break-words text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{value || 'N/A'}</p>
-                  </div>
+              <section className="mb-5 overflow-hidden rounded-xl" style={{ border: '1px solid var(--border-color)' }}>
+                <div className="flex items-center justify-between px-4 py-3" style={{ background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border-subtle)' }}>
+                  <h4 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Actual invoice PDF</h4>
+                  {openingDocument && <Loader2 className="h-4 w-4 animate-spin" style={{ color: 'var(--accent-blue)' }} />}
+                </div>
+                <div className="min-h-[300px] bg-white">
+                  {pdfPreviewUrl ? <iframe title="Actual invoice PDF" src={pdfPreviewUrl} className="h-[420px] w-full" /> : (
+                    <div className="flex min-h-[300px] items-center justify-center p-6 text-center text-sm" style={{ color: pdfPreviewError ? 'var(--accent-red)' : 'var(--text-muted)' }}>
+                      {pdfPreviewError || (openingDocument ? 'Loading invoice PDF…' : 'No PDF preview available')}
+                    </div>
+                  )}
+                </div>
+              </section>
+              <div className="space-y-4">
+                {QUICK_VIEW_SECTIONS.map((section) => (
+                  <section key={section.title} className="overflow-hidden rounded-xl" style={{ border: '1px solid var(--border-color)' }}>
+                    <div className="px-4 py-3" style={{ background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border-subtle)' }}>
+                      <h4 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{section.title}</h4>
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2">
+                      {section.fields.map((field) => (
+                        <div key={field.field} className="rounded-lg p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+                          <p className="text-[11px] uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>{field.label}</p>
+                          <p className="mt-1 break-words text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                            {formatQuickViewValue(selectedInvoice, field)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
                 ))}
               </div>
+
+              {Array.isArray(selectedInvoice.ocr_raw_data?.extraction?.line_items) && selectedInvoice.ocr_raw_data.extraction.line_items.length > 0 && (
+                <section className="mt-4 overflow-hidden rounded-xl" style={{ border: '1px solid var(--border-color)' }}>
+                  <div className="px-4 py-3" style={{ background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border-subtle)' }}>
+                    <h4 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      Extracted Line Items ({selectedInvoice.ocr_raw_data.extraction.line_items.length})
+                    </h4>
+                  </div>
+                  <div className="overflow-x-auto p-4">
+                    <table className="w-full min-w-[620px] text-left text-xs">
+                      <thead style={{ color: 'var(--text-muted)' }}>
+                        <tr>
+                          <th className="px-2 py-2 font-medium">#</th>
+                          <th className="px-2 py-2 font-medium">Description</th>
+                          <th className="px-2 py-2 font-medium">Code</th>
+                          <th className="px-2 py-2 font-medium">Qty</th>
+                          <th className="px-2 py-2 font-medium">Unit Price</th>
+                          <th className="px-2 py-2 font-medium">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedInvoice.ocr_raw_data.extraction.line_items.map((line: any, index: number) => (
+                          <tr key={`${line?.id || line?.line_number || index}`} style={{ borderTop: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>
+                            <td className="px-2 py-2">{line?.line_number || index + 1}</td>
+                            <td className="max-w-[260px] break-words px-2 py-2">{line?.description || line?.material_name || line?.item_description || 'N/A'}</td>
+                            <td className="px-2 py-2">{line?.material_code || line?.item_code || line?.code || 'N/A'}</td>
+                            <td className="px-2 py-2">{line?.quantity ?? line?.qty ?? 'N/A'} {line?.unit || ''}</td>
+                            <td className="px-2 py-2">{line?.unit_price ?? line?.price ?? 'N/A'}</td>
+                            <td className="px-2 py-2">{line?.amount ?? line?.line_total ?? line?.total ?? 'N/A'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              )}
 
               {selectedInvoice.exceptions?.some((exception: any) => ['OPEN', 'PENDING'].includes(String(exception.status).toUpperCase())) && (
                 <div className="mt-5 rounded-xl p-4" style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 25%, transparent)' }}>
@@ -547,12 +776,29 @@ export default function ApprovalInbox() {
               )}
             </div>
 
-            <div className="flex flex-col-reverse gap-3 px-6 py-4 sm:flex-row sm:justify-end" style={{ borderTop: '1px solid var(--border-color)' }}>
+            <div className="sticky bottom-0 flex flex-col gap-2 px-6 py-4 sm:flex-row sm:items-center sm:justify-end" style={{ borderTop: '1px solid var(--border-color)', background: 'var(--bg-card)' }}>
               <button type="button" onClick={closeInvoicePreview} className="rounded-xl px-4 py-2.5 text-sm font-medium" style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>Close</button>
-              <button type="button" onClick={handleViewDocument} disabled={openingDocument} className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold" style={{ background: 'var(--accent-blue)', color: '#fff' }}>
-                {openingDocument ? <Loader2 className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}
-                {openingDocument ? 'Opening PDF...' : 'View actual invoice PDF'}
+              <button type="button" onClick={() => setShowReturnModal(true)} className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-amber) 12%, transparent)', color: 'var(--accent-amber)', border: '1px solid color-mix(in srgb, var(--accent-amber) 28%, transparent)' }}><RotateCcw className="h-4 w-4" /> Return</button>
+              <button type="button" onClick={() => setShowRejectModal(true)} className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', color: 'var(--accent-red)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}><XCircle className="h-4 w-4" /> Reject</button>
+              <button type="button" onClick={handleApprove} disabled={approving} className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold" style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}>
+                {approving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
+                {approving ? 'Approving…' : 'Approve (A)'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showReturnModal && selectedInvoice && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
+            <div className="p-6">
+              <h3 className="mb-4 text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Return for correction</h3>
+              <textarea value={returnReason} onChange={(event) => setReturnReason(event.target.value)} placeholder="Explain what needs to be corrected…" className="w-full rounded-xl px-3 py-2 text-sm focus:outline-none" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }} rows={4} autoFocus />
+              <div className="mt-4 flex justify-end gap-3">
+                <button type="button" onClick={() => { setShowReturnModal(false); setReturnReason(''); }} className="px-4 py-2 text-sm" style={{ color: 'var(--text-secondary)' }}>Cancel</button>
+                <button type="button" onClick={handleReturn} disabled={!returnReason.trim() || returning} className="rounded-xl px-4 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50" style={{ background: 'var(--accent-amber)', color: '#fff' }}>{returning ? 'Returning…' : 'Confirm return'}</button>
+              </div>
             </div>
           </div>
         </div>

@@ -2993,7 +2993,13 @@ ${dataRows}
 
       {/* Invoice Detail Panel — functional page only; the dashboard is static */}
       {mode === 'repository' && selectedInvoice && (
-        <div className="fixed right-0 top-0 h-full w-full sm:w-[560px] lg:w-[640px] flex flex-col z-50 animate-slide-in-right" style={{ background: 'var(--bg-card)', borderLeft: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+        <>
+        <div
+          className="fixed inset-0 z-40"
+          aria-hidden="true"
+          onMouseDown={() => setSelectedInvoice(null)}
+        />
+        <div className="fixed right-0 top-0 h-full w-full sm:w-[560px] lg:w-[640px] flex flex-col z-50 animate-slide-in-right" style={{ background: 'var(--bg-card)', borderLeft: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }} onMouseDown={(event) => event.stopPropagation()}>
           {/* Panel Header — Invoice number + status + close */}
           <div className="px-6 py-4 flex-shrink-0" style={{ borderBottom: '1px solid var(--border-color)' }}>
             <div className="flex items-center justify-between mb-3">
@@ -3066,6 +3072,21 @@ ${dataRows}
             {/* Overview Tab */}
             {detailTab === 'overview' && (
             <div className="space-y-4">
+              {/* Match the approval quick-view affordance: the source PDF is
+                  always the first, prominent action in the invoice view. */}
+              <button
+                type="button"
+                onClick={() => void openInvoicePdf(selectedInvoice)}
+                className="flex w-full items-center justify-between rounded-xl p-4 text-left transition-colors"
+                style={{ background: 'color-mix(in srgb, var(--accent-blue) 9%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-blue) 24%, transparent)' }}
+              >
+                <span>
+                  <span className="block text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Actual invoice PDF</span>
+                  <span className="mt-1 block text-xs" style={{ color: 'var(--text-muted)' }}>Open the document beside the invoice details or edit form.</span>
+                </span>
+                <FileText className="h-5 w-5 flex-shrink-0" style={{ color: 'var(--accent-blue)' }} />
+              </button>
+
               {/* High-frequency actions stay visible on the overview so users do
                   not have to open the Actions tab for every invoice. */}
               <div className="sticky top-0 z-10 rounded-xl p-3" style={{ background: 'color-mix(in srgb, var(--bg-card) 94%, transparent)', border: '1px solid var(--border-color)', boxShadow: '0 6px 18px rgba(0,0,0,0.08)', backdropFilter: 'blur(10px)' }}>
@@ -3074,9 +3095,6 @@ ${dataRows}
                   <button type="button" onClick={() => setDetailTab('actions')} className="text-xs font-medium" style={{ color: 'var(--accent-purple)' }}>All actions →</button>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={() => void openInvoicePdf(selectedInvoice)} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold" style={{ background: 'var(--accent-blue)', color: 'var(--text-inverse)' }}>
-                    <Eye className="h-3.5 w-3.5" /> View PDF
-                  </button>
                   {user && (hasPermission(user.role, 'canEditInvoice') || hasPermission(user.role, 'canEditBankDetails')) && (
                     <button type="button" onClick={() => void handleOpenEdit()} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold" style={{ background: 'var(--accent-purple)', color: 'var(--text-inverse)' }}>
                       <Edit className="h-3.5 w-3.5" /> Edit
@@ -4056,6 +4074,7 @@ ${dataRows}
             )}
           </div>
         </div>
+        </>
       )}
 
       {/* NextGen Alias Management Modal */}
@@ -4200,14 +4219,18 @@ ${dataRows}
         </div>
       )}
 
-      {/* PDF preview is intentionally a separate modal layer from the invoice
-          detail/actions panel, so both contexts remain easy to switch between. */}
+      {/* PDF preview is intentionally a separate layer from the invoice
+          detail/actions panel. On desktop it occupies the left side so the
+          invoice details (or edit form) can remain visible on the right. */}
       {mode === 'repository' && showPdfModal && selectedInvoice && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-6" role="dialog" aria-modal="true" aria-labelledby="invoice-pdf-preview-title" style={{ background: 'rgba(0,0,0,0.68)', backdropFilter: 'blur(5px)' }} onMouseDown={(event) => { if (event.target === event.currentTarget) setShowPdfModal(false); }}>
-          <div className="flex h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 24px 80px rgba(0,0,0,0.45)' }}>
+        <div className="pointer-events-none fixed inset-0 z-[55]" role="dialog" aria-modal="true" aria-labelledby="invoice-pdf-preview-title" style={{ background: showEditModal ? 'rgba(0,0,0,0.12)' : 'rgba(0,0,0,0.08)' }} onMouseDown={(event) => { if (event.target === event.currentTarget) setShowPdfModal(false); }}>
+          <div className="pointer-events-auto flex h-full w-full flex-col overflow-hidden border-r lg:w-[calc(100%_-_640px)]" style={{ background: 'var(--bg-card)', borderColor: 'var(--border-color)', boxShadow: '12px 0 40px rgba(0,0,0,0.18)' }} onMouseDown={(event) => event.stopPropagation()}>
             <div className="flex items-center justify-between gap-3 px-5 py-3 sm:px-6" style={{ borderBottom: '1px solid var(--border-color)' }}>
               <div className="min-w-0">
-                <h3 id="invoice-pdf-preview-title" className="truncate text-base font-semibold" style={{ color: 'var(--text-primary)' }}>Actual invoice PDF</h3>
+                <div className="flex items-center gap-2">
+                  <h3 id="invoice-pdf-preview-title" className="truncate text-base font-semibold" style={{ color: 'var(--text-primary)' }}>Actual invoice PDF</h3>
+                  <span className="hidden rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide lg:inline-flex" style={{ background: 'color-mix(in srgb, var(--accent-purple) 12%, transparent)', color: 'var(--accent-purple)' }}>Side-by-side view</span>
+                </div>
                 <p className="truncate text-xs" style={{ color: 'var(--text-muted)' }}>{selectedInvoice.invoice_number} · {selectedInvoice.vendor?.name || selectedInvoice.vendor_name}</p>
               </div>
               <button type="button" onClick={() => setShowPdfModal(false)} aria-label="Close PDF preview" className="rounded-xl p-2" style={{ color: 'var(--text-muted)' }}><X className="h-5 w-5" /></button>
@@ -4221,9 +4244,14 @@ ${dataRows}
                 </div>
               )}
             </div>
-            <div className="flex items-center justify-between gap-3 px-5 py-3 sm:px-6" style={{ borderTop: '1px solid var(--border-color)', background: 'var(--bg-card)' }}>
-              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Invoice details and actions remain available behind this preview.</span>
-              <button type="button" onClick={() => setShowPdfModal(false)} className="rounded-xl px-4 py-2 text-sm font-semibold" style={{ background: 'var(--accent-purple)', color: 'var(--text-inverse)' }}>Back to invoice</button>
+            <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 sm:px-6" style={{ borderTop: '1px solid var(--border-color)', background: 'var(--bg-card)' }}>
+              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{showEditModal ? 'Compare the PDF with the editable invoice fields on the right.' : 'Invoice details and actions remain available on the right.'}</span>
+              <div className="flex items-center gap-2">
+                {user && hasPermission(user.role, 'canEditInvoice') && (
+                  <button type="button" onClick={() => void handleOpenEdit()} className="rounded-xl px-4 py-2 text-sm font-semibold" style={{ background: 'var(--accent-blue)', color: 'var(--text-inverse)' }}>Edit invoice</button>
+                )}
+                <button type="button" onClick={() => setShowPdfModal(false)} className="rounded-xl px-4 py-2 text-sm font-semibold" style={{ background: 'var(--accent-purple)', color: 'var(--text-inverse)' }}>{showEditModal ? 'Close PDF' : 'Back to invoice'}</button>
+              </div>
             </div>
           </div>
         </div>
@@ -4415,12 +4443,16 @@ ${dataRows}
 
       {/* Edit Invoice Modal */}
       {mode === 'repository' && showEditModal && selectedInvoice && (
-        <div className="fixed inset-0 flex items-center justify-center z-50 animate-backdrop" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
-          <div className="max-w-2xl w-full mx-2 sm:mx-4 max-h-[90vh] overflow-y-auto rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+        <div className={showPdfModal ? "fixed inset-y-0 right-0 z-[70] w-full lg:w-[640px]" : "fixed inset-0 z-50 flex items-center justify-center animate-backdrop"} style={showPdfModal ? { background: 'var(--bg-card)', borderLeft: '1px solid var(--border-color)', boxShadow: '-12px 0 40px rgba(0,0,0,0.2)' } : { background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
+          <div className={showPdfModal ? "h-full w-full overflow-y-auto" : "max-h-[90vh] w-full max-w-2xl mx-2 sm:mx-4 overflow-y-auto rounded-2xl animate-modal-in"} style={{ background: 'var(--bg-card)', border: showPdfModal ? undefined : '1px solid var(--border-color)', boxShadow: showPdfModal ? undefined : '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div className="p-6">
-              <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
-                Edit Invoice
-              </h3>
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Edit Invoice</h3>
+                  {showPdfModal && <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>PDF preview remains open on the left for reference.</p>}
+                </div>
+                <button type="button" onClick={() => setShowEditModal(false)} aria-label="Close edit invoice" className="rounded-xl p-2" style={{ color: 'var(--text-muted)' }}><X className="h-5 w-5" /></button>
+              </div>
 
               {([
                 { title: 'Basic Information', fields: [

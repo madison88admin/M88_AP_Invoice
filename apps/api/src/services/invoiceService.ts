@@ -556,14 +556,14 @@ export const getInvoiceById = async (id: string) => {
 
 const managerMaySeeReturnedInvoice = (invoice: any): boolean => {
   if (String(invoice?.status || '') !== 'PENDING_MANAGER') return true;
-  const managerReconfirmation = Array.isArray(invoice.signatures) && invoice.signatures.some((sig: any) =>
-    sig.signatory_role === 'PURCHASING_MANAGER' && sig.approval_status === 'RECONFIRMATION_REQUIRED' &&
-    !sig.signed_at && !sig.ocr_detected
-  );
-  if (!managerReconfirmation) return true;
   const latestReturnAt = (invoice.audit_logs || [])
     .filter((log: any) => ['RETURNED_FOR_CORRECTION', 'REJECTED'].includes(String(log.action || '').toUpperCase()))
     .sort((a: any, b: any) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())[0]?.created_at;
+  // Legacy returned records may not have the manager signature marked as
+  // RECONFIRMATION_REQUIRED. The return audit itself is authoritative: while
+  // a PENDING_MANAGER invoice has any return history, the coordinator must
+  // sign again after that return before the manager can see it.
+  if (!latestReturnAt) return true;
   const returnTime = new Date(latestReturnAt || 0).getTime();
   return (invoice.signatures || []).some((sig: any) =>
     sig.signatory_role === 'COORDINATOR' && !!sig.signed_at && (!returnTime || new Date(sig.signed_at).getTime() > returnTime)

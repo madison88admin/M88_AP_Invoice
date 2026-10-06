@@ -73,4 +73,11 @@ describe('returned invoice routing visibility', () => {
     expect(getReturnedInvoicesForUser([invoice], { id: 'coordinator-1', name: 'Sarah', role: 'PURCHASING_COORDINATOR' })).toHaveLength(0);
     expect(getReturnedInvoicesForUser([invoice], { id: 'manager-1', name: 'Maricar', role: 'PURCHASING_MANAGER' })).toHaveLength(1);
   });
+
+  it('hides legacy manager-stage returns even when the manager signature lacks reconfirmation metadata', () => {
+    const invoice = returnedInvoice('PURCHASING_MANAGER', false);
+    (invoice.signatures as any[])[1].approval_status = undefined;
+
+    expect(getReturnedInvoicesForUser([invoice], { id: 'manager-1', name: 'Maricar', role: 'PURCHASING_MANAGER' })).toHaveLength(0);
+  });
 });

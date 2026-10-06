@@ -57,6 +57,9 @@ const coordinatorApprovedAfterLatestReturn = (invoice: MockInvoice): boolean => 
   );
 };
 
+const hasReturnHistory = (invoice: MockInvoice): boolean =>
+  (invoice.audit_logs || []).some(log => ['RETURNED_FOR_CORRECTION', 'REJECTED'].includes(String(log.action || '').toUpperCase()));
+
 export const orderedSignatures = (invoice: MockInvoice) => (invoice.signatures || [])
   .filter(signature => !signature.ocr_detected &&
     (!signature.invalidated_at || signature.approval_status === 'RECONFIRMATION_REQUIRED'))
@@ -107,7 +110,7 @@ export function getReturnedInvoiceDetails(
   // coordinator has completed the correction pass. Legacy records may still
   // say PENDING_MANAGER while the coordinator signature is only the original
   // signed approval, so require a fresh coordinator signature after the return.
-  if (user?.role === 'PURCHASING_MANAGER' && String(invoice.status) === 'PENDING_MANAGER') {
+  if (user?.role === 'PURCHASING_MANAGER' && String(invoice.status) === 'PENDING_MANAGER' && hasReturnHistory(invoice)) {
     if (!coordinatorApprovedAfterLatestReturn(invoice)) return null;
   }
 
@@ -164,7 +167,7 @@ export function getPendingApprovalsForUser(invoices: MockInvoice[], user: { role
     const firstPending = orderedSignatures(invoice).find(s => !s.signed_at);
     if (!firstPending) return false;
     if (user?.role === 'PURCHASING_MANAGER' && String(invoice.status) === 'PENDING_MANAGER' &&
-      firstPending.approval_status === 'RECONFIRMATION_REQUIRED' && !coordinatorApprovedAfterLatestReturn(invoice)) {
+      hasReturnHistory(invoice) && !coordinatorApprovedAfterLatestReturn(invoice)) {
       return false;
     }
     if (firstPending.approval_status === 'RECONFIRMATION_REQUIRED') {

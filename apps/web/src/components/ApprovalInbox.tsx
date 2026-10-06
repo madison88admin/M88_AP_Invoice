@@ -6,6 +6,7 @@ import { CheckCircle, XCircle, Clock, ArrowLeft, Loader2, ExternalLink, FileText
 import { MockInvoice } from '../lib/mockData';
 import { invoiceApi } from '../lib/api';
 import { Skeleton } from './ui/Skeleton';
+import InvoiceComments from './InvoiceComments';
 import {
   orderedSignatures,
   getCoordinatorSubmissionDate,
@@ -680,6 +681,12 @@ export default function ApprovalInbox() {
             </div>
 
             <div className="overflow-y-auto p-6">
+              <div className="mb-5">
+                <InvoiceComments
+                  invoice={selectedInvoice}
+                  onCommentAdded={(comment) => setSelectedInvoice((current) => current ? { ...current, audit_logs: [...(current.audit_logs || []), comment] } : current)}
+                />
+              </div>
               <button type="button" onClick={handleViewDocument} className="mb-5 flex w-full items-center justify-between rounded-xl p-4 text-left" style={{ background: 'color-mix(in srgb, var(--accent-blue) 9%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-blue) 24%, transparent)' }}>
                 <span><span className="block text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Actual invoice PDF</span><span className="mt-1 block text-xs" style={{ color: 'var(--text-muted)' }}>Open the document in a separate preview modal.</span></span>
                 <FileText className="h-5 w-5" style={{ color: 'var(--accent-blue)' }} />

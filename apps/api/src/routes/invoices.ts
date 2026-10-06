@@ -43,6 +43,7 @@ router.post('/corrections', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.
 router.post('/corrections/similar', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), correctionController.getSimilarCorrections);
 router.get('/:id/timeline', invoiceController.getInvoiceTimeline);
 router.get('/:id/document', invoiceController.viewInvoiceDocument);
+router.post('/:id/comments', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.PURCHASING_MANAGER, UserRole.MLO_ACCOUNT_HOLDER, UserRole.PLANNING_MANAGER, UserRole.SR_MANAGER_GLOBAL_PRODUCTION, UserRole.MS_POLLY, UserRole.PRESIDENT, UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), invoiceController.addInvoiceComment);
 router.post('/:id/validate', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), validationController.validateInvoiceAsyncController);
 router.post('/:id/validate-sync', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), validationController.validateInvoiceController);
 router.post('/:id/request-approval', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN, UserRole.SUPERADMIN), approvalController.requestApproval);

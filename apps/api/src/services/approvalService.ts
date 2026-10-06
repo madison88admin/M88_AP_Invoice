@@ -996,7 +996,9 @@ export async function rejectInvoice(
   const signedRole = pendingSignature.signatory_role;
 
   // Invalidate all signatures from the rejecting approver onwards so re-approval is required
-  const sortedSigs = [...invoice.signatures].sort(
+  const sortedSigs = invoice.signatures.filter((sig: any) =>
+    !sig.ocr_detected && sig.approval_status !== 'SUPERSEDED'
+  ).sort(
     (a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
   );
   const rejectIndex = sortedSigs.findIndex((s: any) => s.id === pendingSignature.id);
@@ -1111,8 +1113,10 @@ export async function rejectInvoice(
 
 /**
  * Special reject path for Accounting roles rejecting from PENDING_ACCOUNTING stage.
- * Since ACCOUNTING_REVIEWER is not part of the signature chain, we find the last
- * signed approver and return the invoice to their stage for correction.
+ * Since ACCOUNTING_REVIEWER is not part of the signature chain, accounting
+ * returns always restart at the Purchasing Coordinator. The coordinator must
+ * correct/review first, then the Purchasing Manager re-approves before the
+ * invoice can reach Accounting again.
  */
 async function rejectFromAccounting(
   invoiceId: string,
@@ -1125,34 +1129,24 @@ async function rejectFromAccounting(
     throw new AppError('Rejection reason is required', 400);
   }
 
-  const sortedSigs = [...invoice.signatures].sort(
+  const sortedSigs = invoice.signatures.filter((sig: any) =>
+    !sig.ocr_detected && sig.approval_status !== 'SUPERSEDED'
+  ).sort(
     (a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
   );
 
-  // Find the last signed, non-invalidated approver
-  const signedSigs = sortedSigs.filter(
-    (s: any) => s.signed_at && !s.invalidated_at
+  const coordinatorIndex = sortedSigs.findIndex(
+    (s: any) => s.signatory_role === SignatoryRole.COORDINATOR && !s.ocr_detected
   );
-  const lastApprover = signedSigs[signedSigs.length - 1];
+  const targetStatus: any = InvoiceStatus.PENDING_COORDINATOR;
+  const targetApproverRole: string = SignatoryRole.COORDINATOR;
 
-  let targetStatus: any;
-  let targetApproverRole: string;
-
-  if (lastApprover) {
-    targetStatus = mapSignatoryRoleToPendingStatus(lastApprover.signatory_role as SignatoryRole);
-    targetApproverRole = lastApprover.signatory_role;
-  } else {
-    // No signed approver — return to coordinator as fallback
-    targetStatus = InvoiceStatus.PENDING_COORDINATOR as any;
-    targetApproverRole = SignatoryRole.COORDINATOR;
-  }
-
-  // Re-open the last approver's signature (same as the regular reject path).
-  // Without this, the signature stays signed and approveInvoice can find no
-  // pending signature for that role, stranding the invoice at the returned stage.
-  if (lastApprover) {
-    await prisma.signature.update({
-      where: { id: lastApprover.id },
+  if (coordinatorIndex >= 0) {
+    // Invalidate the coordinator and every later approval (including the
+    // manager) so the full purchasing route must be re-confirmed in order.
+    const signaturesToReopen = sortedSigs.slice(coordinatorIndex);
+    await prisma.signature.updateMany({
+      where: { id: { in: signaturesToReopen.map((sig: any) => sig.id) } },
       data: {
         signed_at: null,
         approval_status: 'RECONFIRMATION_REQUIRED',
@@ -1161,11 +1155,8 @@ async function rejectFromAccounting(
       },
     });
   } else {
-    // No approval chain exists (accounting bulk-uploaded "pre-approved"
-    // invoices are created directly in PENDING_ACCOUNTING with no signatures).
-    // Without this, the returned invoice would strand at PENDING_COORDINATOR
-    // because no coordinator signature exists to approve. Create one so the
-    // coordinator can actually act on the returned invoice.
+    // Pre-approved/accounting-uploaded invoices may have no workflow chain.
+    // Create an actionable coordinator signature for the return queue.
     await createFallbackCoordinatorSignature(invoiceId, invoice.revision);
   }
 

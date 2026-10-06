@@ -6,6 +6,7 @@ import InvoiceTable from './InvoiceTable';
 import UploadInvoiceModal from './UploadInvoiceModal';
 import BottleneckView from './BottleneckView';
 import AuditLogViewer from './AuditLogViewer';
+import InvoiceComments from './InvoiceComments';
 import PipelineTracker from './PipelineTracker';
 import MyTasksWidget from './MyTasksWidget';
 import StatusGuide from './StatusGuide';
@@ -3083,6 +3084,10 @@ ${dataRows}
             {/* Overview Tab */}
             {detailTab === 'overview' && (
             <div className="space-y-4">
+              <InvoiceComments
+                invoice={selectedInvoice}
+                onCommentAdded={(comment) => setSelectedInvoice((current) => current ? { ...current, audit_logs: [...(current.audit_logs || []), comment] } : current)}
+              />
               {/* Match the approval quick-view affordance: the source PDF is
                   always the first, prominent action in the invoice view. */}
               <button

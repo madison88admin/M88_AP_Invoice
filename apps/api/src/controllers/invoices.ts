@@ -132,6 +132,25 @@ export const getInvoiceById = async (
   }
 };
 
+export const addInvoiceComment = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const comment = await invoiceService.addInvoiceComment(
+      req.params.id,
+      req.user!.id,
+      req.user!.name || req.user!.email,
+      req.user!.role,
+      req.body?.comment,
+    );
+    res.status(201).json(comment);
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const viewInvoiceDocument = async (
   req: AuthRequest,
   res: Response,

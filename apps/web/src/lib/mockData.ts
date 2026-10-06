@@ -178,6 +178,8 @@ export interface MockAuditLog {
   action: string;
   performed_by: string;
   note: string;
+  actor_name?: string;
+  actor_role?: string;
   created_at: string;
 }
 

@@ -87,6 +87,24 @@ describe('fileWatcherService.intakeReviewReason — body classification beats fi
     expect(reason).toMatch(/shipping\/non-invoice/);
   });
 
+  it('allows a commercial invoice whose OCR non-invoice flag is a false positive', () => {
+    const reason = intakeReviewReason(
+      {
+        ...baseValidInvoice,
+        invoice_type: 'INVOICE',
+        invoice_number: 'PL00000263849',
+        vendor_name: 'Nilorn East Asia Limited',
+        invoice_date: '2026-09-28',
+        total_amount: 133.56,
+        is_non_invoice_document: true,
+        document_classification: { document_type: 'INVOICE', payable_candidate: false },
+        raw_text: 'Nilorn East Asia Limited\nCommercial Invoice\nCustoms Invoice No. PL00000263849\nDocument Date 28/09/2026\nTotal Declared Value USD 133.56',
+      },
+      'HKWSO1237147_CI.pdf',
+    );
+    expect(reason).toBeNull();
+  });
+
   it('blocks packing lists whose OCR contains an invoice reference', () => {
     const reason = intakeReviewReason(
       {

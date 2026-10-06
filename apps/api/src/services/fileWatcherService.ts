@@ -31,7 +31,7 @@ import { analyzeWithRetry } from './intakeRetryService';
 import { hasStrongNonInvoiceHeading, isObviouslyNonInvoiceFilename, nonInvoiceSuppressionReason } from './nonInvoiceSuppression';
 import { PDFDocument } from 'pdf-lib';
 import { evaluateIntakeControls } from './intakeControlService';
-import { getShipmentBillBlockReason } from './payableDocumentGuard';
+import { getShipmentBillBlockReason, isValidCommercialInvoice } from './payableDocumentGuard';
 import { replaceInvoicePdfByNumber } from './invoicePdfReplacementService';
 
 const INCOMING_DIR = process.env.WATCHER_INCOMING_DIR || '/incoming-invoices';
@@ -138,6 +138,18 @@ export function intakeReviewReason(ocrResult: any, fileName = ''): string | null
   const amount = Number(ocrResult?.total_amount ?? ocrResult?.amount);
   const currency = String(ocrResult?.currency || '').toUpperCase();
   const rawText = String(ocrResult?.raw_text || ocrResult?.raw_data?.raw_text || '');
+  const validCommercialInvoice = isValidCommercialInvoice({
+    document_type: ocrResult?.document_type,
+    invoice_type: ocrResult?.invoice_type,
+    source_document_type: ocrResult?.source_document_type,
+    document_classification: ocrResult?.document_classification || ocrResult?.raw_data?.document_classification,
+    raw_text: rawText,
+    fileName,
+    invoice_number: ocrResult?.invoice_number,
+    vendor_name: ocrResult?.vendor_name,
+    total_amount: ocrResult?.total_amount ?? ocrResult?.amount,
+    invoice_date: ocrResult?.invoice_date,
+  }, type);
   const payableBlockReason = getShipmentBillBlockReason({
     document_type: ocrResult?.document_type,
     invoice_type: ocrResult?.invoice_type,
@@ -146,12 +158,16 @@ export function intakeReviewReason(ocrResult: any, fileName = ''): string | null
     is_non_invoice_document: ocrResult?.is_non_invoice_document,
     raw_text: rawText,
     fileName,
+    invoice_number: ocrResult?.invoice_number,
+    vendor_name: ocrResult?.vendor_name,
+    total_amount: ocrResult?.total_amount ?? ocrResult?.amount,
+    invoice_date: ocrResult?.invoice_date,
   });
   if (payableBlockReason) return payableBlockReason;
   const hasPayableHeading = /\b(?:INVOICE|DEBIT\s+NOTE|CREDIT\s+NOTE)\b/i.test(rawText);
   const shipmentDocument = hasStrongNonInvoiceHeading(rawText) || (!hasPayableHeading && /(?:^|\n)\s*(?:PACKING\s+(?:LIST|SLIP)|AIR\s*WAY\s*BILL|SHIPMENT\s+AIRWAYBILL|BILL\s+OF\s+LADING|CARGO\s+MANIFEST|SHIPPING\s+DOCUMENT|SHIPMENT\s+DOCUMENT|DELIVERY\s+(?:NOTE|RECEIPT))\b/im.test(rawText));
 
-  if (ocrResult?.is_non_invoice_document || ['AIRWAY_BILL', 'PACKING_LIST', 'TECH_PACK', 'TRIM_RECEIPT', 'FAKTUR_PAJAK', 'FORWARDER_BILLING_INVOICE', 'FORWARDERS_BILLING_INVOICE', 'EXPEDITOR_BILLING_INVOICE', 'EXPEDITORS_BILLING_INVOICE', 'FORWARDER_INVOICE', 'EXPEDITOR_INVOICE', 'EXPEDITORS_INVOICE'].includes(type) || shipmentDocument) {
+  if ((ocrResult?.is_non_invoice_document && !validCommercialInvoice) || ['AIRWAY_BILL', 'PACKING_LIST', 'TECH_PACK', 'TRIM_RECEIPT', 'FAKTUR_PAJAK', 'FORWARDER_BILLING_INVOICE', 'FORWARDERS_BILLING_INVOICE', 'EXPEDITOR_BILLING_INVOICE', 'EXPEDITORS_BILLING_INVOICE', 'FORWARDER_INVOICE', 'EXPEDITOR_INVOICE', 'EXPEDITORS_INVOICE'].includes(type) || shipmentDocument) {
     return 'Document is a shipping/non-invoice document (packing list, AWB, delivery or shipment document) — not eligible for invoice creation';
   }
   // Filename hints are decisive ONLY when the document body did not yield a

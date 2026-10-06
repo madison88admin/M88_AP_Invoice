@@ -46,6 +46,17 @@ const normalizeCurrentStage = (stage?: string): string | undefined => {
   return PENDING_STATUS_TO_SIGNATORY_ROLE[stage] || stage;
 };
 
+const coordinatorApprovedAfterLatestReturn = (invoice: MockInvoice): boolean => {
+  const latestReturnAt = (invoice.audit_logs || [])
+    .filter(log => ['RETURNED_FOR_CORRECTION', 'REJECTED'].includes(String(log.action || '').toUpperCase()))
+    .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())[0]?.created_at;
+  const returnTime = new Date(latestReturnAt || 0).getTime();
+  return (invoice.signatures || []).some(sig =>
+    sig.signatory_role === 'COORDINATOR' && !!sig.signed_at &&
+    (!returnTime || new Date(sig.signed_at).getTime() > returnTime)
+  );
+};
+
 export const orderedSignatures = (invoice: MockInvoice) => (invoice.signatures || [])
   .filter(signature => !signature.ocr_detected &&
     (!signature.invalidated_at || signature.approval_status === 'RECONFIRMATION_REQUIRED'))
@@ -86,16 +97,25 @@ export interface ReturnedInvoiceDetails {
  */
 export function getReturnedInvoiceDetails(
   invoice: MockInvoice,
-  user: { id?: string; name?: string } | null,
+  user: { id?: string; name?: string; role?: string } | null,
 ): ReturnedInvoiceDetails | null {
+  const returnLog = (invoice.audit_logs || [])
+    .filter(log => ['RETURNED_FOR_CORRECTION', 'REJECTED'].includes(String(log.action || '').toUpperCase()))
+    .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())[0];
+
+  // A manager must not see an accounting-returned invoice until the
+  // coordinator has completed the correction pass. Legacy records may still
+  // say PENDING_MANAGER while the coordinator signature is only the original
+  // signed approval, so require a fresh coordinator signature after the return.
+  if (user?.role === 'PURCHASING_MANAGER' && String(invoice.status) === 'PENDING_MANAGER') {
+    if (!coordinatorApprovedAfterLatestReturn(invoice)) return null;
+  }
+
   const returnedSignature = (invoice.signatures || [])
     .filter(sig => isReturnedSignatureForUser(sig, invoice.current_stage, user))
     .sort((a, b) => new Date(b.invalidated_at || 0).getTime() - new Date(a.invalidated_at || 0).getTime())[0];
   if (!returnedSignature) return null;
 
-  const returnLog = (invoice.audit_logs || [])
-    .filter(log => ['RETURNED_FOR_CORRECTION', 'REJECTED'].includes(String(log.action || '').toUpperCase()))
-    .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())[0];
   const note = String(returnLog?.note || '');
   const reasonFromAudit = note.match(/reason:\s*(.+)$/i)?.[1]?.trim();
   // Audit notes contain the clean user-entered reason after "Reason:";
@@ -143,6 +163,10 @@ export function getPendingApprovalsForUser(invoices: MockInvoice[], user: { role
     // Find the first unsigned signature (sequential enforcement — signatures are in route order)
     const firstPending = orderedSignatures(invoice).find(s => !s.signed_at);
     if (!firstPending) return false;
+    if (user?.role === 'PURCHASING_MANAGER' && String(invoice.status) === 'PENDING_MANAGER' &&
+      firstPending.approval_status === 'RECONFIRMATION_REQUIRED' && !coordinatorApprovedAfterLatestReturn(invoice)) {
+      return false;
+    }
     if (firstPending.approval_status === 'RECONFIRMATION_REQUIRED') {
       // Returned invoices belong to the exact user who signed before the return.
       // Match by user id; legacy records without one fall back to name matching.

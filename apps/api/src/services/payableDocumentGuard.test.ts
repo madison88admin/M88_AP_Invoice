@@ -45,6 +45,20 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
     expect(reason).toMatch(/shipping\/non-invoice/);
   });
 
+  it('allows a commercial invoice when OCR incorrectly flags it as non-invoice', () => {
+    expect(getPayableBlockReason({
+      document_type: 'INVOICE',
+      is_non_invoice_document: true,
+      document_classification: { document_type: 'INVOICE', payable_candidate: false, confidence: 0.92 },
+      invoice_number: 'PL00000263849',
+      vendor_name: 'Nilorn East Asia Limited',
+      invoice_date: '2026-09-28',
+      total_amount: 133.56,
+      raw_text: 'Nilorn East Asia Limited\nCommercial Invoice\nCustoms Invoice No. PL00000263849\nDocument Date 28/09/2026\nTotal Declared Value USD 133.56',
+      fileName: 'HKWSO1237147_CI.pdf',
+    })).toBeNull();
+  });
+
   it('trusts the OCR document classification over a relabeled INVOICE type', () => {
     expect(getPayableBlockReason({
       document_type: 'INVOICE',

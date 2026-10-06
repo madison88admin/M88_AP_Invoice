@@ -509,7 +509,7 @@ export const getInvoices = async (filters: any, userRole?: string) => {
       // return/rejection audit entries; the detail endpoint still returns the
       // complete audit history.
       audit_logs: {
-        where: { action: { in: ['RETURNED_FOR_CORRECTION', 'REJECTED'] } },
+        where: { action: { in: ['RETURNED_FOR_CORRECTION', 'REJECTED', 'INVOICE_COMMENT'] } },
         orderBy: { created_at: 'desc' },
       },
       invoice_lines: true,
@@ -522,7 +522,10 @@ export const getInvoices = async (filters: any, userRole?: string) => {
     },
   });
 
-  return invoices.map(applyVendorDisplayFallbacks);
+  const visibleInvoices = userRole === 'PURCHASING_MANAGER'
+    ? invoices.filter(managerMaySeeReturnedInvoice)
+    : invoices;
+  return visibleInvoices.map(applyVendorDisplayFallbacks);
 };
 
 export const getInvoiceById = async (id: string) => {
@@ -549,6 +552,49 @@ export const getInvoiceById = async (id: string) => {
   if (!invoice) return invoice;
   const auditLogs = await resolveAuditActorNames(invoice.audit_logs);
   return applyVendorDisplayFallbacks({ ...invoice, audit_logs: auditLogs });
+};
+
+const managerMaySeeReturnedInvoice = (invoice: any): boolean => {
+  if (String(invoice?.status || '') !== 'PENDING_MANAGER') return true;
+  const managerReconfirmation = Array.isArray(invoice.signatures) && invoice.signatures.some((sig: any) =>
+    sig.signatory_role === 'PURCHASING_MANAGER' && sig.approval_status === 'RECONFIRMATION_REQUIRED' &&
+    !sig.signed_at && !sig.ocr_detected
+  );
+  if (!managerReconfirmation) return true;
+  const latestReturnAt = (invoice.audit_logs || [])
+    .filter((log: any) => ['RETURNED_FOR_CORRECTION', 'REJECTED'].includes(String(log.action || '').toUpperCase()))
+    .sort((a: any, b: any) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())[0]?.created_at;
+  const returnTime = new Date(latestReturnAt || 0).getTime();
+  return (invoice.signatures || []).some((sig: any) =>
+    sig.signatory_role === 'COORDINATOR' && !!sig.signed_at && (!returnTime || new Date(sig.signed_at).getTime() > returnTime)
+  );
+};
+
+/** Add a collaborative invoice comment without mutating the extracted fields. */
+export const addInvoiceComment = async (
+  invoiceId: string,
+  userId: string,
+  userName: string,
+  userRole: string,
+  comment: string,
+) => {
+  const text = String(comment || '').trim();
+  if (!text) throw new AppError('Comment is required', 400);
+  if (text.length > 2000) throw new AppError('Comment must be 2,000 characters or fewer', 400);
+
+  const invoice = await prisma.invoice.findUnique({ where: { id: invoiceId }, select: { id: true } });
+  if (!invoice) throw new AppError('Invoice not found', 404);
+
+  return prisma.auditLog.create({
+    data: {
+      invoice_id: invoiceId,
+      action: 'INVOICE_COMMENT',
+      performed_by: userId,
+      actor_name: userName,
+      actor_role: userRole,
+      note: text,
+    },
+  });
 };
 
 export const updateInvoiceStatus = async (id: string, status: InvoiceStatus, userId: string) => {

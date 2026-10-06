@@ -194,6 +194,8 @@ const apiInvoiceToMock = (invoice: any): MockInvoice => {
       action: al.action || '',
       performed_by: al.performed_by || '',
       note: al.note || '',
+      actor_name: al.actor_name || undefined,
+      actor_role: al.actor_role || undefined,
       created_at: dateToString(al.created_at),
     })),
     due_date: invoice.due_date ? dateToString(invoice.due_date) : undefined,

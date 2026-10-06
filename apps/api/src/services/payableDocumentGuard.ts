@@ -90,18 +90,24 @@ const HARD_EXCLUDED_FILENAME_HINTS =
 const NON_PAYABLE_TEXT_HINTS =
   /\b(?:shipment\s+receipt|bill\s+payment|payment\s+bill|payment\s+receipt)\b/i;
 
-/** Commercial Invoice is a payable subtype, but only with core invoice data. */
-function isValidCommercialInvoice(doc: PayableCheckInput, docType: string): boolean {
-  if (docType !== 'COMMERCIAL' && docType !== 'COMMERCIAL_INVOICE') return false;
+/**
+ * Commercial Invoice is a payable subtype, but only with core invoice data.
+ *
+ * Some OCR engines incorrectly set `is_non_invoice_document` or
+ * `payable_candidate=false` when they see shipping language in the body of a
+ * commercial invoice.  The legal heading and core invoice fields are a
+ * stronger signal than that noisy flag, so use them as a narrow escape hatch.
+ */
+export function isValidCommercialInvoice(doc: PayableCheckInput, docType: string): boolean {
+  if (!['COMMERCIAL', 'COMMERCIAL_INVOICE', 'INVOICE', 'SALES'].includes(docType)) return false;
   const invoiceNumber = String(doc.invoice_number || '').trim();
   const vendorName = String(doc.vendor_name || '').trim();
   const invoiceDate = String(doc.invoice_date || '').trim();
   const totalAmount = Number(String(doc.total_amount ?? '').replace(/[^0-9.-]/g, ''));
-  const hasInvoiceHeading = /\bcommercial\s+invoice\b|\binvoice\b/i.test(
-    `${String(doc.raw_text || '')}\n${String(doc.fileName || '')}`
-  );
+  const firstPage = String(doc.raw_text || '').replace(/\r\n?/g, '\n').slice(0, 1600);
+  const hasCommercialHeading = /\bcommercial\s+invoice\b/i.test(firstPage);
   return Boolean(
-    invoiceNumber && vendorName && invoiceDate && Number.isFinite(totalAmount) && totalAmount > 0 && hasInvoiceHeading
+    invoiceNumber && vendorName && invoiceDate && Number.isFinite(totalAmount) && totalAmount > 0 && hasCommercialHeading
   );
 }
 
@@ -109,7 +115,8 @@ function isValidCommercialInvoice(doc: PayableCheckInput, docType: string): bool
 export function getShipmentBillBlockReason(doc: PayableCheckInput): string | null {
   const classification = doc.document_classification || undefined;
   const docType = String(classification?.document_type || doc.document_type || doc.source_document_type || doc.invoice_type || '').toUpperCase();
-  if (classification && classification.payable_candidate === false) {
+  const validCommercialInvoice = isValidCommercialInvoice(doc, docType);
+  if (classification && classification.payable_candidate === false && !validCommercialInvoice) {
     return `Document classification ${String(classification.document_type || docType || 'UNKNOWN').toUpperCase()} is not eligible for invoice creation`;
   }
   if (docType === 'SHIPMENT_RECEIPT' || docType === 'BILL_PAYMENT' || docType === 'PAYMENT_BILL' || docType === 'PAYMENT_RECEIPT') {
@@ -186,19 +193,21 @@ export function getPayableBlockReason(
   const docType = String(
     classification?.document_type || doc.document_type || doc.source_document_type || doc.invoice_type || ''
   ).toUpperCase();
+  const validCommercialInvoice = isValidCommercialInvoice(doc, docType);
 
   if (classification && classification.payable_candidate === false) {
+    if (validCommercialInvoice) return null;
     const label = String(classification.document_type || docType || 'UNKNOWN').toUpperCase();
     return `Document classification ${label} is not payable — only actual invoices, debit notes, and credit notes may enter the AP workflow`;
   }
 
   // 1. Explicit non-invoice flag from OCR (DHL AWB detector etc.)
-  if (doc.is_non_invoice_document) {
+  if (doc.is_non_invoice_document && !validCommercialInvoice) {
     return 'Document is a shipping/non-invoice document (OCR detection) — not eligible for invoice creation';
   }
 
   // 2. Hard-blocked document types
-  if (NON_PAYABLE_DOCUMENT_TYPES.has(docType)) {
+  if (NON_PAYABLE_DOCUMENT_TYPES.has(docType) && !validCommercialInvoice) {
     return `Document type ${docType} is not eligible for invoice creation`;
   }
 
@@ -220,7 +229,6 @@ export function getPayableBlockReason(
   //    Underscores/hyphens are normalized to spaces (same as
   //    nonInvoiceSuppression.ts) so `AWB_543505` and `PackingList_THK` match.
   const fileName = String(doc.fileName || '');
-  const validCommercialInvoice = isValidCommercialInvoice(doc, docType);
   if (fileName && filenameIsHardExcluded(fileName) && !validCommercialInvoice) {
     return `Filename identifies an excluded non-invoice document (${fileName}) — not eligible for invoice creation`;
   }

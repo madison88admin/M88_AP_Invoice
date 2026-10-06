@@ -45,6 +45,7 @@ export const invoiceApi = {
   getTimeline: (id: string) => api.get(`/api/invoices/${id}/timeline`),
   getDuplicateInvoices: () => api.get('/api/invoices/duplicates'),
   getDocument: (id: string) => api.get(`/api/invoices/${id}/document`, { responseType: 'blob' }),
+  addComment: (id: string, comment: string) => api.post(`/api/invoices/${id}/comments`, { comment }),
   uploadPdf: (id: string, file: File) => {
     const fd = new FormData();
     fd.append('file', file);

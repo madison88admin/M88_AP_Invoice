@@ -6,6 +6,7 @@ import { MockInvoice } from '../lib/mockData';
 import { invoiceApi } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 import { FileText, Search, Filter, Download, Eye, CheckCircle, XCircle, Calendar, FileSearch, AlertTriangle, Landmark, Clock, User, Paperclip, Check, X as XIcon, Loader2, Send } from 'lucide-react';
+import InvoiceComments from './InvoiceComments';
 export default function AccountingReview() {
   const { invoices } = useMockData();
   const { user } = useAuth();
@@ -569,6 +570,13 @@ ${dataRows}
                     <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Posted Date</label>
                     <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.updated_at ? new Date(selectedInvoice.updated_at).toLocaleDateString() : 'N/A'}</p>
                   </div>
+                </div>
+
+                <div className="mt-6">
+                  <InvoiceComments
+                    invoice={selectedInvoice}
+                    onCommentAdded={(comment) => setSelectedInvoice((current) => current ? { ...current, audit_logs: [...(current.audit_logs || []), comment] } : current)}
+                  />
                 </div>
 
                 <div className="mt-6 pt-6" style={{ borderTop: '1px solid var(--border-color)' }}>

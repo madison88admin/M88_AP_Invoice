@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const {
   invoiceFindUnique,
   signatureUpdate,
+  signatureUpdateMany,
   signatureCreate,
   stageTimestampFindFirst,
   stageTimestampUpdate,
@@ -19,6 +20,7 @@ const {
 } = vi.hoisted(() => ({
   invoiceFindUnique: vi.fn(),
   signatureUpdate: vi.fn(),
+  signatureUpdateMany: vi.fn(),
   signatureCreate: vi.fn(),
   stageTimestampFindFirst: vi.fn(),
   stageTimestampUpdate: vi.fn(),
@@ -36,7 +38,7 @@ const {
 vi.mock('../config/database', () => ({
   default: {
     invoice: { findUnique: invoiceFindUnique, update: invoiceUpdate },
-    signature: { update: signatureUpdate, create: signatureCreate },
+    signature: { update: signatureUpdate, updateMany: signatureUpdateMany, create: signatureCreate },
     stageTimestamp: { findFirst: stageTimestampFindFirst, update: stageTimestampUpdate, create: stageTimestampCreate },
     auditLog: { create: auditLogCreate },
     invoiceWorkflowAction: { create: workflowActionCreate, findFirst: workflowActionFindFirst },
@@ -95,6 +97,7 @@ function makeSignedInvoice() {
 beforeEach(() => {
   invoiceFindUnique.mockReset();
   signatureUpdate.mockReset();
+  signatureUpdateMany.mockReset().mockResolvedValue({ count: 0 });
   signatureCreate.mockReset().mockResolvedValue({});
   stageTimestampFindFirst.mockReset();
   stageTimestampUpdate.mockReset().mockResolvedValue({});
@@ -121,30 +124,30 @@ beforeEach(() => {
 });
 
 describe('rejectInvoice from PENDING_ACCOUNTING (rejectFromAccounting)', () => {
-  it('re-opens the last signed approver signature so they can re-approve', async () => {
+  it('restarts accounting returns at coordinator and reopens the manager too', async () => {
     invoiceFindUnique.mockResolvedValue(makeSignedInvoice());
 
     await rejectInvoice('inv-1', 'qa-assoc', 'ACCOUNTING_ASSOCIATE', 'QA e2e: accounting rejects');
 
-    // The manager's signature must be re-opened (signed_at cleared,
-    // RECONFIRMATION_REQUIRED) so approveInvoice can find a pending signature
-    // for the returned stage and enforce the original signer's re-approval.
-    const reOpenCall = signatureUpdate.mock.calls.find(([args]: any) => args.where.id === MGR)!;
+    // Both purchasing approvals must be re-opened so the coordinator corrects
+    // first and the manager must explicitly approve the revised invoice again.
+    const reOpenCall = signatureUpdateMany.mock.calls[0];
     expect(reOpenCall).toBeDefined();
+    expect(reOpenCall[0].where.id.in).toEqual([COORD, MGR]);
     const data = reOpenCall[0].data;
     expect(data.signed_at).toBeNull();
     expect(data.approval_status).toBe('RECONFIRMATION_REQUIRED');
     expect(data.invalidated_at).toBeInstanceOf(Date);
     expect(String(data.invalidation_reason)).toMatch(/Re-opened after rejection by Accounting/);
 
-    // Invoice returned to the manager stage.
+    // Invoice returned to the coordinator stage.
     const invUpdateCall = invoiceUpdate.mock.calls.find(([args]: any) => args.where.id === 'inv-1')!;
-    expect(invUpdateCall[0].data.status).toBe(InvoiceStatus.PENDING_MANAGER);
-    expect(invUpdateCall[0].data.current_approver_role).toBe(SignatoryRole.PURCHASING_MANAGER);
+    expect(invUpdateCall[0].data.status).toBe(InvoiceStatus.PENDING_COORDINATOR);
+    expect(invUpdateCall[0].data.current_approver_role).toBe(SignatoryRole.COORDINATOR);
 
     // A fresh stage timer for the returned stage.
     const stageCall = stageTimestampCreate.mock.calls.find(([args]: any) => args.data.invoice_id === 'inv-1')!;
-    expect(stageCall[0].data.stage).toBe(InvoiceStatus.PENDING_MANAGER);
+    expect(stageCall[0].data.stage).toBe(InvoiceStatus.PENDING_COORDINATOR);
   });
 
   it('creates a coordinator signature when there is no signed approver so the return is actionable', async () => {

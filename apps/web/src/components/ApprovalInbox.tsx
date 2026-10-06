@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { CheckCircle, XCircle, Clock, ArrowLeft, Loader2, ExternalLink, FileText, Upload, X, Search, RotateCcw } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, ArrowLeft, Loader2, ExternalLink, FileText, Upload, X, Search, RotateCcw, PanelRightOpen, PanelRightClose } from 'lucide-react';
 import { MockInvoice } from '../lib/mockData';
 import { invoiceApi } from '../lib/api';
 import { Skeleton } from './ui/Skeleton';
@@ -143,6 +143,7 @@ export default function ApprovalInbox() {
   const [pdfPreviewError, setPdfPreviewError] = useState<string | null>(null);
   const [showInvoicePreview, setShowInvoicePreview] = useState(false);
   const [showPdfModal, setShowPdfModal] = useState(false);
+  const [showSystemInvoiceSideBySide, setShowSystemInvoiceSideBySide] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [returnReason, setReturnReason] = useState('');
@@ -268,6 +269,7 @@ export default function ApprovalInbox() {
 
   const openInvoicePdf = (invoice: MockInvoice) => {
     setSelectedInvoice(invoice);
+    setShowSystemInvoiceSideBySide(false);
     setShowPdfModal(true);
   };
 
@@ -790,14 +792,40 @@ export default function ApprovalInbox() {
       )}
 
       {showPdfModal && selectedInvoice && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/65 p-3 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="approval-pdf-title" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowPdfModal(false); }}>
-          <div className="flex h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 24px 80px rgba(0,0,0,0.45)' }}>
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/65 p-3 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="approval-pdf-title" onMouseDown={(event) => { if (event.target === event.currentTarget) { setShowPdfModal(false); setShowSystemInvoiceSideBySide(false); } }}>
+          <div className={`flex h-[92vh] w-full ${showSystemInvoiceSideBySide ? 'max-w-7xl' : 'max-w-5xl'} flex-col overflow-hidden rounded-2xl`} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 24px 80px rgba(0,0,0,0.45)' }}>
             <div className="flex items-center justify-between gap-3 px-5 py-3" style={{ borderBottom: '1px solid var(--border-color)' }}>
               <div className="min-w-0"><h3 id="approval-pdf-title" className="truncate text-base font-semibold" style={{ color: 'var(--text-primary)' }}>Actual invoice PDF</h3><p className="truncate text-xs" style={{ color: 'var(--text-muted)' }}>{selectedInvoice.invoice_number} · {selectedInvoice.vendor_name}</p></div>
-              <button type="button" onClick={() => setShowPdfModal(false)} aria-label="Close PDF preview" className="rounded-xl p-2" style={{ color: 'var(--text-muted)' }}><X className="h-5 w-5" /></button>
+              <button type="button" onClick={() => { setShowPdfModal(false); setShowSystemInvoiceSideBySide(false); }} aria-label="Close PDF preview" className="rounded-xl p-2" style={{ color: 'var(--text-muted)' }}><X className="h-5 w-5" /></button>
             </div>
-            <div className="min-h-0 flex-1 bg-white">{pdfPreviewUrl ? <iframe title={`Invoice PDF ${selectedInvoice.invoice_number}`} src={pdfPreviewUrl} className="h-full w-full" /> : <div className="flex h-full items-center justify-center p-6 text-center text-sm" style={{ color: pdfPreviewError ? 'var(--accent-red)' : 'var(--text-muted)' }}>{pdfPreviewError || (openingDocument ? 'Loading invoice PDF…' : 'No PDF preview available')}</div>}</div>
-            <div className="flex items-center justify-end px-5 py-3" style={{ borderTop: '1px solid var(--border-color)' }}><button type="button" onClick={() => setShowPdfModal(false)} className="rounded-xl px-4 py-2 text-sm font-semibold" style={{ background: 'var(--accent-purple)', color: 'var(--text-inverse)' }}>Back to invoice</button></div>
+            <div className={`grid min-h-0 flex-1 ${showSystemInvoiceSideBySide ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'}`}>
+              <div className="min-h-0 bg-white">{pdfPreviewUrl ? <iframe title={`Invoice PDF ${selectedInvoice.invoice_number}`} src={pdfPreviewUrl} className="h-full w-full" /> : <div className="flex h-full items-center justify-center p-6 text-center text-sm" style={{ color: pdfPreviewError ? 'var(--accent-red)' : 'var(--text-muted)' }}>{pdfPreviewError || (openingDocument ? 'Loading invoice PDF…' : 'No PDF preview available')}</div>}</div>
+              {showSystemInvoiceSideBySide && (
+                <div className="min-h-0 overflow-y-auto p-4" style={{ background: 'var(--bg-card)', borderLeft: '1px solid var(--border-color)' }}>
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <div><h4 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>System invoice</h4><p className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>Extracted and system-recorded values</p></div>
+                    <span className="rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide" style={{ background: 'color-mix(in srgb, var(--accent-purple) 12%, transparent)', color: 'var(--accent-purple)' }}>Side by side</span>
+                  </div>
+                  <div className="space-y-3">
+                    {QUICK_VIEW_SECTIONS.map((section) => (
+                      <section key={section.title} className="overflow-hidden rounded-xl" style={{ border: '1px solid var(--border-color)' }}>
+                        <div className="px-3 py-2.5" style={{ background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border-subtle)' }}><h5 className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>{section.title}</h5></div>
+                        <div className="grid grid-cols-1 gap-2 p-3 sm:grid-cols-2">
+                          {section.fields.map((field) => <div key={field.field} className="rounded-lg p-2.5" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}><p className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>{field.label}</p><p className="mt-1 break-words text-xs font-medium" style={{ color: 'var(--text-primary)' }}>{formatQuickViewValue(selectedInvoice, field)}</p></div>)}
+                        </div>
+                      </section>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 px-5 py-3" style={{ borderTop: '1px solid var(--border-color)' }}>
+              <button type="button" onClick={() => setShowSystemInvoiceSideBySide((current) => !current)} className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', color: 'var(--accent-blue)', border: '1px solid color-mix(in srgb, var(--accent-blue) 24%, transparent)' }}>
+                {showSystemInvoiceSideBySide ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
+                {showSystemInvoiceSideBySide ? 'Hide system invoice' : 'View system invoice'}
+              </button>
+              <button type="button" onClick={() => { setShowPdfModal(false); setShowSystemInvoiceSideBySide(false); }} className="rounded-xl px-4 py-2 text-sm font-semibold" style={{ background: 'var(--accent-purple)', color: 'var(--text-inverse)' }}>Back to invoice</button>
+            </div>
           </div>
         </div>
       )}

@@ -153,7 +153,7 @@ export default function ApprovedInvoices() {
         </div>
       </div>
 
-      {/* Cards */}
+      {/* List view */}
       {filtered.length === 0 ? (
         <div className="rounded-2xl p-12 text-center" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)' }}>
           <div className="inline-flex p-4 rounded-2xl mb-3" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
@@ -164,62 +164,45 @@ export default function ApprovedInvoices() {
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {filtered.map(({ invoice, signedAt }) => {
-            const mySig = (invoice.signatures || []).find(s =>
-              s.signatory_role === 'PURCHASING_MANAGER' && !!s.signed_at &&
-              String(s.signatory_name || '').trim().toLowerCase() === (user?.name || '').trim().toLowerCase()
-            );
-            return (
-              <div
-                key={invoice.id}
-                onClick={() => setSelectedInvoice(invoice)}
-                className="rounded-2xl p-5 cursor-pointer transition-all"
-                style={{
-                  background: 'var(--bg-card)',
-                  border: selectedInvoice?.id === invoice.id ? '1px solid color-mix(in srgb, var(--accent-lime) 50%, transparent)' : '1px solid var(--border-color)',
-                  boxShadow: '0 4px 20px rgba(0,0,0,0.06)',
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 28px rgba(0,0,0,0.1)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = '0 4px 20px rgba(0,0,0,0.06)'; }}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{invoice.invoice_number}</p>
-                    <p className="text-xs truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>{invoice.vendor_name}</p>
-                  </div>
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap" style={{ background: 'color-mix(in srgb, var(--accent-blue) 12%, transparent)', color: 'var(--accent-blue)' }}>
-                    {String(invoice.status || '').replace(/_/g, ' ')}
-                  </span>
-                </div>
-                <div className="mt-3 flex items-end justify-between gap-2">
-                  <div>
-                    <p className="text-base font-bold tabular-nums" style={{ color: 'var(--text-primary)' }}>
-                      {invoice.currency} {Number(invoice.total_amount).toFixed(2)}
-                    </p>
-                    <p className="text-[11px] mt-1 flex items-center gap-1" style={{ color: 'var(--accent-lime)' }}>
-                      <CalendarCheck className="h-3 w-3" strokeWidth={2} />
-                      Approved {new Date(signedAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: '2-digit' })}
-                    </p>
-                    {invoice.brand && (
-                      <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-subtle)' }}>{invoice.brand}{invoice.brand_tier ? ` · ${invoice.brand_tier.replace(/_/g, ' ')}` : ''}</p>
-                    )}
-                  </div>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); void openInvoicePdf(invoice); }}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-medium transition-colors"
-                    title="View actual invoice PDF"
-                    style={{ background: 'var(--bg-elevated)', color: 'var(--accent-blue)', border: '1px solid var(--border-color)' }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-blue) 10%, transparent)'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--bg-elevated)'; }}
+        <div className="overflow-hidden rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+          <div className="overflow-x-auto">
+            <table className="min-w-[980px] w-full">
+              <thead style={{ background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border-subtle)' }}>
+                <tr>
+                  {['Invoice #', 'Vendor', 'Amount', 'Current status', 'Approved', 'Brand / MPO', ''].map((heading) => (
+                    <th key={heading} className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>{heading}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(({ invoice, signedAt }) => (
+                  <tr
+                    key={invoice.id}
+                    onClick={() => setSelectedInvoice(invoice)}
+                    className="cursor-pointer transition-colors"
+                    style={{ background: selectedInvoice?.id === invoice.id ? 'color-mix(in srgb, var(--accent-lime) 7%, transparent)' : undefined, borderTop: '1px solid var(--border-subtle)' }}
+                    onMouseEnter={(event) => { if (selectedInvoice?.id !== invoice.id) event.currentTarget.style.background = 'var(--bg-card-hover)'; }}
+                    onMouseLeave={(event) => { if (selectedInvoice?.id !== invoice.id) event.currentTarget.style.background = 'transparent'; }}
                   >
-                    <FileText className="h-3.5 w-3.5" strokeWidth={1.75} />
-                    PDF
-                  </button>
-                </div>
-              </div>
-            );
-          })}
+                    <td className="px-5 py-4 align-top">
+                      <button type="button" onClick={(event) => { event.stopPropagation(); setSelectedInvoice(invoice); }} className="text-left text-sm font-semibold hover:underline" style={{ color: 'var(--accent-purple)' }}>{invoice.invoice_number || 'Unnamed invoice'}</button>
+                      <p className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>{invoice.invoice_type || 'Invoice'}</p>
+                    </td>
+                    <td className="max-w-[260px] px-5 py-4 align-top text-sm" style={{ color: 'var(--text-secondary)' }}>{invoice.vendor_name || 'Unknown vendor'}</td>
+                    <td className="whitespace-nowrap px-5 py-4 align-top text-sm font-semibold tabular-nums" style={{ color: 'var(--text-primary)' }}>{invoice.currency || ''} {Number(invoice.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td className="px-5 py-4 align-top"><span className="inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-[10px] font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-blue) 12%, transparent)', color: 'var(--accent-blue)' }}>{formatStatusLabel(String(invoice.status || ''))}</span></td>
+                    <td className="whitespace-nowrap px-5 py-4 align-top text-xs" style={{ color: 'var(--text-muted)' }}><span className="inline-flex items-center gap-1"><CalendarCheck className="h-3.5 w-3.5" style={{ color: 'var(--accent-lime)' }} strokeWidth={2} />{new Date(signedAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: '2-digit' })}</span></td>
+                    <td className="max-w-[220px] px-5 py-4 align-top text-xs" style={{ color: 'var(--text-secondary)' }}><span className="block truncate">{invoice.brand || 'No brand'}</span><span className="mt-1 block truncate" style={{ color: 'var(--text-muted)' }}>{invoice.mpo_number || invoice.customer_po_number || 'No MPO / PO'}</span></td>
+                    <td className="px-5 py-4 align-top"><button type="button" onClick={(event) => { event.stopPropagation(); void openInvoicePdf(invoice); }} disabled={openingDocument} className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium" title="View actual invoice PDF" style={{ background: 'var(--bg-elevated)', color: 'var(--accent-blue)', border: '1px solid var(--border-color)' }}><FileText className="h-3.5 w-3.5" strokeWidth={1.75} /> PDF</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex items-center justify-between gap-3 px-5 py-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Showing {filtered.length} of {approved.length} approved invoices</span>
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Click a row to view details</span>
+          </div>
         </div>
       )}
 

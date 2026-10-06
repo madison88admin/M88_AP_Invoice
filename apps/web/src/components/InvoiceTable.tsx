@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { InvoiceStatus, OrderType, calcWorkingHoursElapsed } from '@ap-invoice/shared';
 import { formatCurrency, formatDate } from '../lib/utils';
-import { FileText, Calendar, DollarSign, Eye, Check, Flag, Clock, Zap, AlertTriangle, PenTool, Send, Loader2 } from 'lucide-react';
+import { AlertTriangle, Calendar, Check, ChevronDown, Clock, DollarSign, Eye, FileText, Filter, Flag, GripVertical, Loader2, PenTool, RotateCcw, Send, Settings2, Zap } from 'lucide-react';
 import { MockInvoice } from '../lib/mockData';
 import { POValidationBadge } from './POValidationBadge';
 import { Skeleton } from './ui/Skeleton';
@@ -12,570 +12,101 @@ import { getCoordinatorSubmissionDate } from '../lib/approvalQueue';
 interface InvoiceTableProps {
   invoices: MockInvoice[];
   onInvoiceClick?: (invoice: MockInvoice) => void;
-  /** Direct row actions (Invoice Repository). When provided, rows show only the actions that apply to that invoice's status/role. */
   onApprove?: (invoice: MockInvoice) => void;
   onPost?: (invoice: MockInvoice) => void;
-  /** Freezes the column header row while the (single-scroll) list scrolls. */
   stickyHeader?: boolean;
   loading?: boolean;
   emptyHint?: 'filters' | 'default';
 }
 
+type ColumnId = 'priority' | 'invoice' | 'vendor' | 'brand' | 'brandTier' | 'orderType' | 'season' | 'mpo' | 'po' | 'qty' | 'invoiceDate' | 'receivedDate' | 'coordinatorSubmissionDate' | 'amount' | 'category' | 'type' | 'status' | 'payDate' | 'nextgen' | 'signatures' | 'actions';
+type ColumnDefinition = { id: ColumnId; label: string; width?: number; filterable?: boolean };
+
+const BASE_COLUMNS: ColumnDefinition[] = [
+  { id: 'priority', label: 'Priority', width: 58 }, { id: 'invoice', label: 'Invoice #', width: 150 }, { id: 'vendor', label: 'Vendor', width: 220 }, { id: 'brand', label: 'Brand', width: 145 }, { id: 'brandTier', label: 'Brand Tier', width: 96 }, { id: 'orderType', label: 'Order Type', width: 100 }, { id: 'season', label: 'Season', width: 85 }, { id: 'mpo', label: 'MPO #', width: 115 }, { id: 'po', label: 'PO #', width: 115 }, { id: 'qty', label: 'Qty', width: 80 }, { id: 'invoiceDate', label: 'Invoice Date', width: 145 }, { id: 'receivedDate', label: 'Actual Date Received', width: 165 }, { id: 'coordinatorSubmissionDate', label: 'Coordinator Submission Date', width: 190 }, { id: 'amount', label: 'Amount', width: 135 }, { id: 'category', label: 'Category', width: 150 }, { id: 'type', label: 'Type', width: 105 }, { id: 'status', label: 'Status', width: 175 }, { id: 'payDate', label: 'Pay Date', width: 125 }, { id: 'nextgen', label: 'NextGen Validation', width: 170 }, { id: 'signatures', label: 'Signatures', width: 80 }, { id: 'actions', label: 'Actions', width: 120, filterable: false },
+];
+const DEFAULT_COLUMN_ORDER = BASE_COLUMNS.map((column) => column.id);
+const COLUMN_ORDER_STORAGE_KEY = 'ap-invoice-repository-column-order-v1';
+const COLUMN_FILTER_STORAGE_KEY = 'ap-invoice-repository-column-filters-v1';
+
 const statusColors: Partial<Record<InvoiceStatus, { bg: string; color: string }>> = {
-  [InvoiceStatus.RECEIVED]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' },
-  [InvoiceStatus.OCR_PROCESSING]: { bg: 'color-mix(in srgb, var(--accent-violet) 10%, transparent)', color: 'var(--accent-violet)' },
-  [InvoiceStatus.VALIDATION_PENDING]: { bg: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', color: 'var(--accent-blue)' },
-  [InvoiceStatus.EXCEPTION_FLAGGED]: { bg: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', color: 'var(--accent-red)' },
-  [InvoiceStatus.PENDING_COORDINATOR]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' },
-  [InvoiceStatus.PENDING_MANAGER]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' },
-  [InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' },
-  [InvoiceStatus.PENDING_MLO_PLANNING_MANAGER]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' },
-  [InvoiceStatus.PENDING_SR_MANAGER]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' },
-  [InvoiceStatus.PENDING_POLLY]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' },
-  [InvoiceStatus.PENDING_PRESIDENT]: { bg: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', color: 'var(--accent-red)' },
-  [InvoiceStatus.PENDING_ACCOUNTING]: { bg: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', color: 'var(--accent-blue)' },
-  [InvoiceStatus.APPROVED]: { bg: 'color-mix(in srgb, var(--accent-lime) 10%, transparent)', color: 'var(--accent-lime)' },
-  [InvoiceStatus.POSTED_TO_QB]: { bg: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', color: 'var(--accent-blue)' },
-  [InvoiceStatus.PAYMENT_SCHEDULED]: { bg: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', color: 'var(--accent-blue)' },
-  [InvoiceStatus.PAID]: { bg: 'color-mix(in srgb, var(--accent-lime) 10%, transparent)', color: 'var(--accent-lime)' },
-  [InvoiceStatus.PAYMENT_CONFIRMATION_SENT]: { bg: 'color-mix(in srgb, var(--accent-green) 12%, transparent)', color: 'var(--accent-green)' },
-  [InvoiceStatus.CANCELLED]: { bg: 'color-mix(in srgb, var(--text-muted) 10%, transparent)', color: 'var(--text-secondary)' },
-  [InvoiceStatus.REJECTED]: { bg: 'color-mix(in srgb, var(--text-muted) 10%, transparent)', color: 'var(--text-secondary)' },
-  [InvoiceStatus.ON_HOLD]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' },
+  [InvoiceStatus.RECEIVED]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' }, [InvoiceStatus.OCR_PROCESSING]: { bg: 'color-mix(in srgb, var(--accent-violet) 10%, transparent)', color: 'var(--accent-violet)' }, [InvoiceStatus.VALIDATION_PENDING]: { bg: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', color: 'var(--accent-blue)' }, [InvoiceStatus.EXCEPTION_FLAGGED]: { bg: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', color: 'var(--accent-red)' }, [InvoiceStatus.PENDING_COORDINATOR]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' }, [InvoiceStatus.PENDING_MANAGER]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' }, [InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' }, [InvoiceStatus.PENDING_MLO_PLANNING_MANAGER]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' }, [InvoiceStatus.PENDING_SR_MANAGER]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' }, [InvoiceStatus.PENDING_POLLY]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' }, [InvoiceStatus.PENDING_PRESIDENT]: { bg: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', color: 'var(--accent-red)' }, [InvoiceStatus.PENDING_ACCOUNTING]: { bg: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', color: 'var(--accent-blue)' }, [InvoiceStatus.APPROVED]: { bg: 'color-mix(in srgb, var(--accent-lime) 10%, transparent)', color: 'var(--accent-lime)' }, [InvoiceStatus.POSTED_TO_QB]: { bg: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', color: 'var(--accent-blue)' }, [InvoiceStatus.PAYMENT_SCHEDULED]: { bg: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', color: 'var(--accent-blue)' }, [InvoiceStatus.PAID]: { bg: 'color-mix(in srgb, var(--accent-lime) 10%, transparent)', color: 'var(--accent-lime)' }, [InvoiceStatus.PAYMENT_CONFIRMATION_SENT]: { bg: 'color-mix(in srgb, var(--accent-green) 12%, transparent)', color: 'var(--accent-green)' }, [InvoiceStatus.CANCELLED]: { bg: 'color-mix(in srgb, var(--text-muted) 10%, transparent)', color: 'var(--text-secondary)' }, [InvoiceStatus.REJECTED]: { bg: 'color-mix(in srgb, var(--text-muted) 10%, transparent)', color: 'var(--text-secondary)' }, [InvoiceStatus.ON_HOLD]: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' },
 };
+const orderTypeColors: Record<OrderType, { bg: string; color: string }> = { BULK: { bg: 'color-mix(in srgb, var(--accent-green) 10%, transparent)', color: 'var(--accent-lime)' }, SMS: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' }, SAMPLE: { bg: 'color-mix(in srgb, var(--accent-violet) 10%, transparent)', color: 'var(--accent-violet)' } };
 
-const orderTypeColors: Record<OrderType, { bg: string; color: string }> = {
-  BULK: { bg: 'color-mix(in srgb, var(--accent-green) 10%, transparent)', color: 'var(--accent-lime)' },
-  SMS: { bg: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)' },
-  SAMPLE: { bg: 'color-mix(in srgb, var(--accent-violet) 10%, transparent)', color: 'var(--accent-violet)' },
-};
-
-function getSLAStatus(invoice: MockInvoice): { label: string; bg: string; color: string; hoursRemaining: number } | null {
+function getSLAStatus(invoice: MockInvoice): { label: string; bg: string; color: string } | null {
   const timestamps = (invoice as any).stage_timestamps || [];
   const current = timestamps.find((t: any) => t.stage === invoice.status && !t.exited_at);
   if (!current || !current.sla_hours) return null;
-  const enteredAt = new Date(current.entered_at);
-  const now = new Date();
-  const elapsedHours = calcWorkingHoursElapsed(enteredAt, now);
-  const hoursRemaining = current.sla_hours - elapsedHours;
-  if (hoursRemaining <= 0) return { label: 'SLA Overdue', bg: 'var(--accent-red)', color: 'var(--text-inverse)', hoursRemaining: 0 };
-  if (hoursRemaining <= 24) return { label: `SLA ${Math.round(hoursRemaining)}h left`, bg: 'var(--accent-amber)', color: 'var(--text-primary)', hoursRemaining };
-  if (hoursRemaining <= 48) return { label: `SLA ${Math.round(hoursRemaining)}h left`, bg: 'color-mix(in srgb, var(--accent-blue) 12%, transparent)', color: 'var(--accent-blue)', hoursRemaining };
+  const hoursRemaining = current.sla_hours - calcWorkingHoursElapsed(new Date(current.entered_at), new Date());
+  if (hoursRemaining <= 0) return { label: 'SLA Overdue', bg: 'var(--accent-red)', color: 'var(--text-inverse)' };
+  if (hoursRemaining <= 48) return { label: `SLA ${Math.round(hoursRemaining)}h left`, bg: 'color-mix(in srgb, var(--accent-blue) 12%, transparent)', color: 'var(--accent-blue)' };
   return null;
 }
-
-function getDueDateStatus(invoice: MockInvoice): { isOverdue: boolean; isNear: boolean; daysRemaining: number } {
+function getDueDateStatus(invoice: MockInvoice) {
   if (!invoice.due_date) return { isOverdue: false, isNear: false, daysRemaining: 0 };
-  const paidStatuses: InvoiceStatus[] = [InvoiceStatus.PAID, InvoiceStatus.PAYMENT_CONFIRMATION_SENT, InvoiceStatus.CANCELLED, InvoiceStatus.REJECTED];
-  if (paidStatuses.includes(invoice.status as InvoiceStatus)) return { isOverdue: false, isNear: false, daysRemaining: 0 };
-  const dueDate = new Date(invoice.due_date);
-  dueDate.setHours(0, 0, 0, 0);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const diffDays = Math.floor((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-  return {
-    isOverdue: diffDays < 0,
-    isNear: diffDays >= 0 && diffDays <= 3,
-    daysRemaining: diffDays,
-  };
+  const ignored: InvoiceStatus[] = [InvoiceStatus.PAID, InvoiceStatus.PAYMENT_CONFIRMATION_SENT, InvoiceStatus.CANCELLED, InvoiceStatus.REJECTED];
+  if (ignored.includes(invoice.status as InvoiceStatus)) return { isOverdue: false, isNear: false, daysRemaining: 0 };
+  const dueDate = new Date(invoice.due_date); dueDate.setHours(0, 0, 0, 0); const today = new Date(); today.setHours(0, 0, 0, 0);
+  const daysRemaining = Math.floor((dueDate.getTime() - today.getTime()) / 86400000);
+  return { isOverdue: daysRemaining < 0, isNear: daysRemaining >= 0 && daysRemaining <= 3, daysRemaining };
 }
+function readStorage<T>(key: string, fallback: T): T { try { const value = window.localStorage.getItem(key); return value ? JSON.parse(value) as T : fallback; } catch { return fallback; } }
+function getFilterValue(invoice: MockInvoice, column: ColumnId, userRole?: string): string {
+  const coordinatorDate = getCoordinatorSubmissionDate(invoice); const payments = (invoice as any).payments; const scheduled = Array.isArray(payments) ? payments.find((p: any) => p.status === 'SCHEDULED' || p.status === 'PAID') : null;
+  const values: Record<ColumnId, unknown> = { priority: invoice.is_urgent ? 'urgent' : invoice.priority_flag ? 'priority' : invoice.is_handwritten ? 'handwritten' : '', invoice: invoice.invoice_number, vendor: invoice.vendor_name, brand: invoice.brand, brandTier: invoice.brand_tier, orderType: invoice.order_type, season: invoice.season, mpo: invoice.mpo_number, po: invoice.customer_po_number, qty: invoice.qty_shipped, invoiceDate: invoice.invoice_date, receivedDate: invoice.invoice_received_date, coordinatorSubmissionDate: userRole === 'PURCHASING_MANAGER' ? coordinatorDate : '', amount: `${invoice.currency || ''} ${invoice.total_amount || ''}`, category: invoice.category, type: invoice.invoice_type, status: invoice.status, payDate: scheduled?.payment_date, nextgen: (invoice as any).po_validation_status, signatures: invoice.signatures?.map((signature) => signature.signed_at ? 'signed' : 'pending').join(' '), actions: '' };
+  return String(values[column] ?? '').toLowerCase();
+}
+function badgeStyle(color: string) { return { background: `color-mix(in srgb, ${color} 10%, transparent)`, color, border: '1px solid var(--border-color)' }; }
 
 export default function InvoiceTable({ invoices, onInvoiceClick, onApprove, onPost, stickyHeader = false, loading = false, emptyHint = 'default' }: InvoiceTableProps) {
-  // Use invoices as-is
-  const sortedInvoices = invoices;
-  const { user } = useAuth();
-  const [busyId, setBusyId] = useState<string | null>(null);
-  // Direct row actions (approve/post) are accounting-side only — every other
-  // role keeps the classic buttons that open the invoice detail panel.
-  const isAccounting = !!user && (user.role === 'ACCOUNTING_ASSOCIATE' || user.role === 'ACCOUNTING_SUPERVISOR');
-  const hasQuickActions = isAccounting && !!(onApprove || onPost);
+  const { user } = useAuth(); const [busyId, setBusyId] = useState<string | null>(null); const [draggingColumn, setDraggingColumn] = useState<ColumnId | null>(null); const [filterColumn, setFilterColumn] = useState<ColumnId | null>(null); const [showColumnSettings, setShowColumnSettings] = useState(false);
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>(() => readStorage(COLUMN_FILTER_STORAGE_KEY, {})); const [columnOrder, setColumnOrder] = useState<ColumnId[]>(() => readStorage(COLUMN_ORDER_STORAGE_KEY, DEFAULT_COLUMN_ORDER));
+  const availableColumns = useMemo(() => BASE_COLUMNS.filter((column) => column.id !== 'coordinatorSubmissionDate' || user?.role === 'PURCHASING_MANAGER'), [user?.role]); const availableIds = useMemo(() => availableColumns.map((column) => column.id), [availableColumns]);
+  const orderedColumns = useMemo(() => { const existing = columnOrder.filter((id) => availableIds.includes(id)); return [...existing, ...availableIds.filter((id) => !existing.includes(id))].map((id) => availableColumns.find((column) => column.id === id)!); }, [availableColumns, availableIds, columnOrder]);
+  useEffect(() => { window.localStorage.setItem(COLUMN_ORDER_STORAGE_KEY, JSON.stringify(orderedColumns.map((column) => column.id))); }, [orderedColumns]); useEffect(() => { window.localStorage.setItem(COLUMN_FILTER_STORAGE_KEY, JSON.stringify(columnFilters)); }, [columnFilters]);
+  const filteredInvoices = useMemo(() => invoices.filter((invoice) => Object.entries(columnFilters).every(([column, filter]) => !filter.trim() || getFilterValue(invoice, column as ColumnId, user?.role).includes(filter.trim().toLowerCase()))), [invoices, columnFilters, user?.role]);
+  const hasQuickActions = !!user && (user.role === 'ACCOUNTING_ASSOCIATE' || user.role === 'ACCOUNTING_SUPERVISOR') && !!(onApprove || onPost);
+  const canApproveInvoice = (invoice: MockInvoice) => { if (!user || !onApprove || !hasPermission(user.role, 'canApprove')) return false; const status = String(invoice.status); if (!status.startsWith('PENDING_') || status === 'PENDING_ACCOUNTING' || !canUserApproveStatus(user.role, status)) return false; const stage = String((invoice as any).current_stage || ''); if (!stage) return true; return stage === user.role || (stage === 'COORDINATOR' && user.role === 'PURCHASING_COORDINATOR') || (stage === 'ACCOUNTING_REVIEWER' && ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'PRESIDENT'].includes(user.role)); };
+  const canPostInvoice = (invoice: MockInvoice) => !!user && !!onPost && hasPermission(user.role, 'canPost') && ['APPROVED', 'PENDING_ACCOUNTING'].includes(String(invoice.status));
+  const runQuickAction = async (invoice: MockInvoice, action: (inv: MockInvoice) => void | Promise<void>) => { if (busyId === invoice.id) return; setBusyId(invoice.id); try { await action(invoice); } finally { setBusyId(null); } };
+  const moveColumn = (source: ColumnId, target: ColumnId) => { if (source === target) return; setColumnOrder((current) => { const next = [...current]; const from = next.indexOf(source); const to = next.indexOf(target); if (from < 0 || to < 0) return current; next.splice(from, 1); next.splice(to, 0, source); return next; }); };
 
-  // Mirror the approval action rules from the invoice detail panel so a row
-  // only offers Approve when this role is the current approver of that stage.
-  const canApproveInvoice = (invoice: MockInvoice): boolean => {
-    if (!user || !onApprove) return false;
-    if (!hasPermission(user.role, 'canApprove')) return false;
-    const status = String(invoice.status);
-    if (!status.startsWith('PENDING_') || status === 'PENDING_ACCOUNTING') return false;
-    if (!canUserApproveStatus(user.role, status)) return false;
-    const stage = String((invoice as any).current_stage || '');
-    if (stage) {
-      const role = user.role;
-      const stageMatch =
-        stage === role ||
-        (stage === 'COORDINATOR' && role === 'PURCHASING_COORDINATOR') ||
-        (stage === 'MLO_PLANNING_MANAGER' && ['PLANNING_MANAGER', 'MLO_ACCOUNT_HOLDER', 'MLO_PLANNING_MANAGER'].includes(role)) ||
-        (stage === 'ACCOUNTING_REVIEWER' && ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'PRESIDENT'].includes(role));
-      if (!stageMatch) return false;
-    }
-    return true;
-  };
+  const renderHeader = (column: ColumnDefinition) => { const activeFilter = !!columnFilters[column.id]; return <th key={column.id} draggable onDragStart={() => setDraggingColumn(column.id)} onDragOver={(event) => event.preventDefault()} onDrop={() => { if (draggingColumn) moveColumn(draggingColumn, column.id); setDraggingColumn(null); }} onDragEnd={() => setDraggingColumn(null)} className="relative px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider select-none" style={{ minWidth: column.width, width: column.width, color: 'var(--text-muted)', cursor: 'grab', opacity: draggingColumn === column.id ? 0.45 : 1 }} title="Drag to rearrange this column"><div className="relative flex items-center gap-1.5"><GripVertical className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--text-subtle)' }} /><span className="truncate">{column.label}</span>{column.filterable !== false && <button type="button" aria-label={`Filter ${column.label}`} onClick={(event) => { event.stopPropagation(); setFilterColumn((current) => current === column.id ? null : column.id); }} className="ml-auto rounded p-0.5" style={{ color: activeFilter ? 'var(--accent-purple)' : 'var(--text-subtle)', background: activeFilter ? 'color-mix(in srgb, var(--accent-purple) 12%, transparent)' : 'transparent' }}><Filter className="h-3 w-3" /></button>}{filterColumn === column.id && column.filterable !== false && <div className="absolute left-0 top-7 z-30 w-56 rounded-xl p-3 normal-case shadow-xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }} onClick={(event) => event.stopPropagation()}><label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Filter {column.label}</label><input autoFocus value={columnFilters[column.id] || ''} onChange={(event) => setColumnFilters((current) => ({ ...current, [column.id]: event.target.value }))} placeholder={`Search ${column.label.toLowerCase()}...`} className="h-8 w-full rounded-lg px-2 text-xs focus:outline-none" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }} /><button type="button" className="mt-2 text-[11px] font-semibold" style={{ color: 'var(--accent-purple)' }} onClick={() => { setColumnFilters((current) => ({ ...current, [column.id]: '' })); setFilterColumn(null); }}>Clear filter</button></div>}</div></th>; };
+  const renderPriority = (invoice: MockInvoice) => <div className="flex flex-col items-center gap-1">{invoice.is_urgent && <div className="flex h-5 w-5 items-center justify-center rounded-full" style={{ background: 'var(--accent-red)' }} title="Urgent"><Zap className="h-3 w-3" style={{ color: 'white' }} fill="white" /></div>}{invoice.priority_flag && !invoice.is_urgent && <div className="flex h-5 w-5 items-center justify-center rounded-full" style={{ background: 'color-mix(in srgb, var(--accent-amber) 15%, transparent)', border: '1px solid var(--accent-amber)' }} title="Priority"><Flag className="h-3 w-3" style={{ color: 'var(--accent-amber)' }} /></div>}{invoice.is_handwritten && <div className="flex h-5 w-5 items-center justify-center rounded-full" style={{ background: 'color-mix(in srgb, var(--accent-violet) 15%, transparent)', border: '1px solid var(--accent-violet)' }} title="Handwritten"><PenTool className="h-3 w-3" style={{ color: 'var(--accent-violet)' }} /></div>}</div>;
 
-  const canPostInvoice = (invoice: MockInvoice): boolean => {
-    if (!user || !onPost) return false;
-    if (!hasPermission(user.role, 'canPost')) return false;
-    const status = String(invoice.status);
-    return status === 'APPROVED' || status === 'PENDING_ACCOUNTING';
-  };
-
-  const runQuickAction = async (invoice: MockInvoice, action: (inv: MockInvoice) => void | Promise<void>) => {
-    if (busyId === invoice.id) return;
-    setBusyId(invoice.id);
-    try {
-      await action(invoice);
-    } finally {
-      setBusyId(null);
+  const renderCell = (column: ColumnDefinition, invoice: MockInvoice) => {
+    const dueStatus = getDueDateStatus(invoice); const coordinatorSubmissionDate = getCoordinatorSubmissionDate(invoice); const tdClass = 'px-4 py-4 whitespace-nowrap'; const textStyle = { color: 'var(--text-secondary)' };
+    switch (column.id) {
+      case 'priority': return <td key={column.id} className={tdClass}>{renderPriority(invoice)}</td>;
+      case 'invoice': return <td key={column.id} className={`${tdClass} px-6`}><div className="flex items-center"><FileText className="mr-2 h-4 w-4" style={{ color: 'var(--text-muted)' }} /><span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{invoice.invoice_number}</span></div></td>;
+      case 'vendor': return <td key={column.id} className={`${tdClass} px-6 text-sm`} style={textStyle}>{invoice.vendor_name || 'Unknown'}</td>;
+      case 'brand': return <td key={column.id} className={`${tdClass} text-sm`} style={textStyle}>{invoice.brand || '—'}</td>;
+      case 'brandTier': return <td key={column.id} className={tdClass}>{invoice.brand_tier ? <span className="inline-flex rounded-full px-2 py-1 text-xs font-semibold" style={badgeStyle('var(--accent-blue)')}>{invoice.brand_tier}</span> : '—'}</td>;
+      case 'orderType': { const colors = orderTypeColors[invoice.order_type as OrderType]; return <td key={column.id} className={tdClass}>{invoice.order_type ? <span className="inline-flex rounded-full px-2 py-1 text-xs font-semibold" style={colors ? { background: colors.bg, color: colors.color, border: '1px solid var(--border-color)' } : badgeStyle('var(--text-secondary)')}>{invoice.order_type}</span> : '—'}</td>; }
+      case 'season': return <td key={column.id} className={`${tdClass} text-sm`} style={textStyle}>{invoice.season || '—'}</td>;
+      case 'mpo': return <td key={column.id} className={`${tdClass} text-sm`} style={textStyle}>{invoice.mpo_number || '—'}</td>;
+      case 'po': return <td key={column.id} className={`${tdClass} text-sm`} style={textStyle}>{invoice.customer_po_number || '—'}</td>;
+      case 'qty': return <td key={column.id} className={`${tdClass} text-sm`} style={{ ...textStyle, fontVariantNumeric: 'tabular-nums' }}>{invoice.qty_shipped != null ? invoice.qty_shipped.toLocaleString() : '—'}</td>;
+      case 'invoiceDate': return <td key={column.id} className={`${tdClass} px-6 text-sm`} style={{ color: 'var(--text-muted)' }}><Calendar className="mr-2 inline h-4 w-4" />{invoice.invoice_date ? formatDate(invoice.invoice_date) : '—'}</td>;
+      case 'receivedDate': return <td key={column.id} className={`${tdClass} px-6 text-sm`} style={{ color: 'var(--text-muted)' }}><Clock className="mr-2 inline h-4 w-4" style={{ color: 'var(--accent-blue)' }} />{invoice.invoice_received_date ? formatDate(invoice.invoice_received_date) : '—'}</td>;
+      case 'coordinatorSubmissionDate': return <td key={column.id} className={`${tdClass} px-6 text-sm`} style={{ color: 'var(--text-muted)' }}>{coordinatorSubmissionDate ? formatDate(coordinatorSubmissionDate) : '—'}</td>;
+      case 'amount': return <td key={column.id} className={`${tdClass} px-6 text-sm font-semibold`} style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}><DollarSign className="mr-1 inline h-4 w-4" style={{ color: 'var(--text-muted)' }} />{formatCurrency(Number(invoice.total_amount), invoice.currency)}</td>;
+      case 'category': return <td key={column.id} className={`${tdClass} px-6 text-sm`} style={textStyle}>{(invoice.category || '').replace(/_/g, ' ') || '—'}</td>;
+      case 'type': { const type = String(invoice.invoice_type || ''); const color = type === 'PROFORMA' ? 'var(--accent-violet)' : type === 'STATEMENT' ? 'var(--accent-amber)' : type === 'COMMERCIAL' ? 'var(--accent-green)' : 'var(--accent-blue)'; return <td key={column.id} className={`${tdClass} px-6`}>{type ? <span className="inline-flex rounded-full px-2 py-1 text-xs font-semibold" style={badgeStyle(color)}>{type === 'DEBIT_NOTE' ? 'Debit Note' : type}</span> : '—'}</td>; }
+      case 'status': { const sla = getSLAStatus(invoice); return <td key={column.id} className={`${tdClass} px-6`}><div className="flex flex-col gap-1"><span className="inline-flex w-fit rounded-full px-3 py-1 text-xs font-semibold" style={{ background: statusColors[invoice.status]?.bg, color: statusColors[invoice.status]?.color, border: '1px solid var(--border-color)' }}>{invoice.status.replace(/_/g, ' ')}</span>{sla && <span className="inline-flex w-fit items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold" style={{ background: sla.bg, color: sla.color }}><Clock className="h-2.5 w-2.5" />{sla.label}</span>}{(dueStatus.isOverdue || dueStatus.isNear) && <span className="inline-flex w-fit items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold" style={{ background: dueStatus.isOverdue ? 'var(--accent-red)' : 'color-mix(in srgb, var(--accent-amber) 15%, transparent)', color: dueStatus.isOverdue ? 'var(--text-inverse)' : 'var(--accent-amber)' }}><AlertTriangle className="h-2.5 w-2.5" />{dueStatus.isOverdue ? `Overdue ${Math.abs(dueStatus.daysRemaining)}d` : `Due in ${dueStatus.daysRemaining}d`}</span>}</div></td>; }
+      case 'payDate': { const payments = (invoice as any).payments; const payment = Array.isArray(payments) ? payments.find((p: any) => p.status === 'SCHEDULED' || p.status === 'PAID') : null; return <td key={column.id} className={`${tdClass} px-6`}>{payment ? <span className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold" style={badgeStyle(payment.status === 'PAID' ? 'var(--accent-lime)' : 'var(--accent-purple)')}><Calendar className="h-3 w-3" />{new Date(payment.payment_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })}</span> : '—'}</td>; }
+      case 'nextgen': return <td key={column.id} className={`${tdClass} px-6`} onClick={(event) => event.stopPropagation()}><POValidationBadge invoiceId={invoice.id} initialStatus={(invoice as any).po_validation_status || 'PENDING'} /></td>;
+      case 'signatures': { const signatures = invoice.signatures || []; const signed = signatures.filter((signature) => signature.signed_at).length; return <td key={column.id} className={`${tdClass} text-sm`}>{signatures.length ? <span className="text-xs font-semibold" style={{ color: signed === signatures.length ? 'var(--accent-lime)' : signed ? 'var(--accent-amber)' : 'var(--accent-red)' }}>{signed}/{signatures.length}</span> : '—'}</td>; }
+      case 'actions': return <td key={column.id} className={`${tdClass} px-6`}><div className="flex items-center gap-1"><button type="button" onClick={(event) => { event.stopPropagation(); onInvoiceClick?.(invoice); }} className="rounded-xl p-2" style={{ color: 'var(--text-muted)' }} title="View details"><Eye className="h-4 w-4" /></button>{!hasQuickActions ? <><button type="button" onClick={(event) => { event.stopPropagation(); onInvoiceClick?.(invoice); }} className="rounded-xl p-2" style={{ color: 'var(--text-muted)' }} title="Approve"><Check className="h-4 w-4" /></button><button type="button" onClick={(event) => { event.stopPropagation(); onInvoiceClick?.(invoice); }} className="rounded-xl p-2" style={{ color: 'var(--text-muted)' }} title="Flag"><Flag className="h-4 w-4" /></button></> : <>{canApproveInvoice(invoice) && <button type="button" onClick={(event) => { event.stopPropagation(); void runQuickAction(invoice, onApprove!); }} disabled={busyId === invoice.id} className="rounded-xl p-2 disabled:opacity-50" style={{ color: 'var(--text-muted)' }} title="Approve invoice">{busyId === invoice.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}</button>}{canPostInvoice(invoice) && <button type="button" onClick={(event) => { event.stopPropagation(); void runQuickAction(invoice, onPost!); }} disabled={busyId === invoice.id} className="rounded-xl p-2 disabled:opacity-50" style={{ color: 'var(--text-muted)' }} title="Post to accounting">{busyId === invoice.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}</button>}</>}</div></td>;
+      default: return <td key={column.id} />;
     }
   };
 
-  if (loading) {
-    return (
-      <div className="px-6 py-4">
-        <div className="space-y-2">
-          {[...Array(6)].map((_, i) => (
-            <div key={i} className="flex items-center gap-3 py-3" style={{ animationDelay: `${i * 60}ms` }}>
-              <Skeleton className="h-4 w-4 rounded" />
-              <Skeleton className="h-4 w-4 rounded" />
-              <div className="flex-1 flex items-center gap-4">
-                <Skeleton className="h-4 w-28" />
-                <Skeleton className="h-4 w-32" />
-                <Skeleton className="h-5 w-16 rounded-full" />
-                <Skeleton className="h-4 w-20" />
-                <Skeleton className="h-4 w-24" />
-                <Skeleton className="h-5 w-20 rounded-full" />
-              </div>
-              <Skeleton className="h-8 w-8 rounded-lg" />
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className={stickyHeader ? '' : 'overflow-x-auto'}>
-      {stickyHeader && (
-        <style>{`
-          [data-inv-sticky-table] thead th {
-            position: sticky;
-            top: 0;
-            z-index: 5;
-            background: var(--bg-elevated);
-            box-shadow: inset 0 -1px 0 var(--border-subtle);
-          }
-        `}</style>
-      )}
-      <table className="min-w-full" data-inv-sticky-table={stickyHeader ? 'true' : undefined}>
-        <thead style={{ background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border-subtle)' }}>
-          <tr>
-            <th className="px-4 py-3 text-left" style={{ width: '32px' }}>
-              <input type="checkbox" className="rounded" style={{ accentColor: 'var(--accent-lime)' }} />
-            </th>
-            <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '32px', color: 'var(--text-muted)' }}>
-              Priority
-            </th>
-            <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
-              Invoice #
-            </th>
-            <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
-              Vendor
-            </th>
-            <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '140px', color: 'var(--text-muted)' }}>
-              Brand
-            </th>
-            <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '80px', color: 'var(--text-muted)' }}>
-              Brand Tier
-            </th>
-            <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '80px', color: 'var(--text-muted)' }}>
-              Order Type
-            </th>
-            <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '60px', color: 'var(--text-muted)' }}>
-              Season
-            </th>
-            <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '100px', color: 'var(--text-muted)' }}>
-              MPO #
-            </th>
-            <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '100px', color: 'var(--text-muted)' }}>
-              PO #
-            </th>
-            <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '70px', color: 'var(--text-muted)' }}>
-              Qty
-            </th>
-            <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
-              Invoice Date
-            </th>
-            <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
-              Actual Date Received
-            </th>
-            {user?.role === 'PURCHASING_MANAGER' && (
-              <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
-                Coordinator Submission Date
-              </th>
-            )}
-            <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
-              Amount
-            </th>
-            <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
-              Category
-            </th>
-            <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '100px', color: 'var(--text-muted)' }}>
-              Type
-            </th>
-            <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
-              Status
-            </th>
-            <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '120px', color: 'var(--text-muted)' }}>
-              Pay Date
-            </th>
-            <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '160px', color: 'var(--text-muted)' }}>
-              NextGen Validation
-            </th>
-            <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ width: '60px', color: 'var(--text-muted)' }}>
-              Signatures
-            </th>
-            <th className="px-6 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
-              Actions
-            </th>
-          </tr>
-        </thead>
-        <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
-          {sortedInvoices.map((invoice, index) => {
-            const dueStatus = getDueDateStatus(invoice);
-            const isUrgentRow = invoice.is_urgent || dueStatus.isOverdue || dueStatus.isNear;
-            const coordinatorSubmissionDate = getCoordinatorSubmissionDate(invoice);
-            return (
-            <tr
-              key={invoice.id}
-              className={`cursor-pointer group transition-colors duration-150 animate-fade-in ${dueStatus.isNear && !dueStatus.isOverdue ? 'animate-pulse-due' : ''}`}
-              style={{
-                backgroundColor: index % 2 === 0 ? 'transparent' : 'var(--bg-card-hover)',
-                borderLeft: invoice.is_urgent ? '3px solid var(--accent-red)' : dueStatus.isOverdue ? '3px solid var(--accent-red)' : dueStatus.isNear ? '3px solid var(--accent-amber)' : '3px solid transparent',
-                animationDelay: `${index * 30}ms`,
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.borderLeftColor = isUrgentRow ? (invoice.is_urgent || dueStatus.isOverdue ? 'var(--accent-red)' : 'var(--accent-amber)') : 'var(--accent-lime)';
-                e.currentTarget.style.background = 'var(--bg-card-hover)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.borderLeftColor = invoice.is_urgent ? 'var(--accent-red)' : dueStatus.isOverdue ? 'var(--accent-red)' : dueStatus.isNear ? 'var(--accent-amber)' : 'transparent';
-                e.currentTarget.style.background = index % 2 === 0 ? 'transparent' : 'var(--bg-card-hover)';
-              }}
-              onClick={() => onInvoiceClick?.(invoice)}
-            >
-              <td className="px-4 py-4">
-                <input type="checkbox" className="rounded" style={{ accentColor: 'var(--accent-lime)' }} />
-              </td>
-              <td className="px-4 py-4 whitespace-nowrap" style={{ width: '32px' }}>
-                <div className="flex flex-col items-center gap-1">
-                  {invoice.is_urgent && (
-                    <div
-                      className="animate-pulse-urgent rounded-full flex items-center justify-center"
-                      style={{ width: '20px', height: '20px', background: 'var(--accent-red)' }}
-                      title="Urgent — needs immediate attention"
-                    >
-                      <Zap className="h-3 w-3" style={{ color: 'white' }} strokeWidth={2.5} fill="white" />
-                    </div>
-                  )}
-                  {invoice.priority_flag && !invoice.is_urgent && (
-                    <div
-                      className="rounded-full flex items-center justify-center"
-                      style={{ width: '20px', height: '20px', background: 'color-mix(in srgb, var(--accent-amber) 15%, transparent)', border: '1px solid var(--accent-amber)' }}
-                      title="Priority Flag"
-                    >
-                      <Flag className="h-3 w-3" style={{ color: 'var(--accent-amber)' }} strokeWidth={2.5} />
-                    </div>
-                  )}
-                  {invoice.is_handwritten && (
-                    <div
-                      className="rounded-full flex items-center justify-center"
-                      style={{ width: '20px', height: '20px', background: 'color-mix(in srgb, var(--accent-violet) 15%, transparent)', border: '1px solid var(--accent-violet)' }}
-                      title="Handwritten invoice"
-                    >
-                      <PenTool className="h-3 w-3" style={{ color: 'var(--accent-violet)' }} strokeWidth={2.5} />
-                    </div>
-                  )}
-                </div>
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap">
-                <div className="flex items-center">
-                  <FileText className="h-4 w-4 mr-2" style={{ color: 'var(--text-muted)' }} strokeWidth={1.75} />
-                  <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                    {invoice.invoice_number}
-                  </span>
-                </div>
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--text-secondary)' }}>
-                {invoice.vendor_name || 'Unknown'}
-              </td>
-              <td className="px-4 py-4 whitespace-nowrap text-sm" style={{ width: '140px', color: 'var(--text-secondary)' }}>
-                {invoice.brand || '—'}
-              </td>
-              <td className="px-4 py-4 whitespace-nowrap" style={{ width: '80px' }}>
-                {invoice.brand_tier && (
-                  <span
-                    className="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full"
-                    style={{ background: 'color-mix(in srgb, var(--accent-blue) 10%, transparent)', color: 'var(--accent-blue)', border: '1px solid color-mix(in srgb, var(--accent-blue) 20%, transparent)' }}
-                  >
-                    {invoice.brand_tier}
-                  </span>
-                )}
-              </td>
-              <td className="px-4 py-4 whitespace-nowrap" style={{ width: '80px' }}>
-                {invoice.order_type && (
-                  <span
-                    className="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full"
-                    style={{ background: orderTypeColors[invoice.order_type as OrderType]?.bg, color: orderTypeColors[invoice.order_type as OrderType]?.color, border: '1px solid var(--border-color)' }}
-                  >
-                    {invoice.order_type}
-                  </span>
-                )}
-              </td>
-              <td className="px-4 py-4 whitespace-nowrap text-sm" style={{ width: '60px', color: 'var(--text-secondary)' }}>
-                {invoice.season || '—'}
-              </td>
-              <td className="px-4 py-4 whitespace-nowrap text-sm" style={{ width: '100px', color: 'var(--text-secondary)' }}>
-                {invoice.mpo_number || '—'}
-              </td>
-              <td className="px-4 py-4 whitespace-nowrap text-sm" style={{ width: '100px', color: 'var(--text-secondary)' }}>
-                {invoice.customer_po_number || '—'}
-              </td>
-              <td className="px-4 py-4 whitespace-nowrap text-sm" style={{ width: '70px', color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
-                {invoice.qty_shipped != null ? invoice.qty_shipped.toLocaleString() : '—'}
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--text-muted)' }}>
-                <div className="flex items-center">
-                  <Calendar className="h-4 w-4 mr-2" style={{ color: 'var(--text-muted)' }} strokeWidth={1.75} />
-                  {invoice.invoice_date ? formatDate(invoice.invoice_date) : '—'}
-                </div>
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--text-muted)' }}>
-                <div className="flex items-center">
-                  <Clock className="h-4 w-4 mr-2" style={{ color: 'var(--accent-blue)' }} strokeWidth={1.75} />
-                  {invoice.invoice_received_date ? formatDate(invoice.invoice_received_date) : '—'}
-                </div>
-              </td>
-              {user?.role === 'PURCHASING_MANAGER' && (
-                <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--text-muted)' }}>
-                  {coordinatorSubmissionDate ? formatDate(coordinatorSubmissionDate) : '—'}
-                </td>
-              )}
-              <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
-                <div className="flex items-center">
-                  <DollarSign className="h-4 w-4 mr-1" style={{ color: 'var(--text-muted)' }} strokeWidth={1.75} />
-                  {formatCurrency(Number(invoice.total_amount), invoice.currency)}
-                </div>
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--text-secondary)' }}>
-                {(invoice.category || '').replace(/_/g, ' ')}
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap" style={{ width: '100px' }}>
-                {invoice.invoice_type && (
-                  <span
-                    className="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full"
-                    style={{
-                      background: invoice.invoice_type === 'PROFORMA'
-                        ? 'color-mix(in srgb, var(--accent-violet) 10%, transparent)'
-                        : invoice.invoice_type === 'STATEMENT'
-                        ? 'color-mix(in srgb, var(--accent-amber) 10%, transparent)'
-                        : invoice.invoice_type === 'SALES'
-                        ? 'color-mix(in srgb, var(--accent-blue) 10%, transparent)'
-                        : invoice.invoice_type === 'COMMERCIAL'
-                        ? 'color-mix(in srgb, var(--accent-green) 10%, transparent)'
-                        : 'color-mix(in srgb, var(--text-muted) 10%, transparent)',
-                      color: invoice.invoice_type === 'PROFORMA'
-                        ? 'var(--accent-violet)'
-                        : invoice.invoice_type === 'STATEMENT'
-                        ? 'var(--accent-amber)'
-                        : invoice.invoice_type === 'SALES'
-                        ? 'var(--accent-blue)'
-                        : invoice.invoice_type === 'COMMERCIAL'
-                        ? 'var(--accent-green)'
-                        : 'var(--text-secondary)',
-                      border: '1px solid var(--border-color)',
-                    }}
-                  >
-                    {(invoice.invoice_type as string) === 'DEBIT_NOTE' ? 'Debit Note' : invoice.invoice_type}
-                  </span>
-                )}
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap">
-                <div className="flex flex-col gap-1">
-                  <span
-                    className="px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full w-fit"
-                    style={{ background: statusColors[invoice.status]?.bg, color: statusColors[invoice.status]?.color, border: '1px solid var(--border-color)' }}
-                  >
-                    {invoice.status.replace(/_/g, ' ')}
-                  </span>
-                  {(() => {
-                    const sla = getSLAStatus(invoice);
-                    return sla ? (
-                      <span className="px-2 py-0.5 inline-flex text-[10px] leading-4 font-semibold rounded-full w-fit items-center gap-1" style={{ background: sla.bg, color: sla.color }}>
-                        <Clock className="h-2.5 w-2.5" strokeWidth={2.5} />
-                        {sla.label}
-                      </span>
-                    ) : null;
-                  })()}
-                  {(() => {
-                    if (!dueStatus.isOverdue && !dueStatus.isNear) return null;
-                    return (
-                      <span
-                        className={`px-2 py-0.5 inline-flex text-[10px] leading-4 font-semibold rounded-full w-fit items-center gap-1 ${dueStatus.isNear ? 'animate-pulse-due' : ''}`}
-                        style={{
-                          background: dueStatus.isOverdue ? 'var(--accent-red)' : 'color-mix(in srgb, var(--accent-amber) 15%, transparent)',
-                          color: dueStatus.isOverdue ? 'var(--text-inverse)' : 'var(--accent-amber)',
-                          border: dueStatus.isOverdue ? 'none' : '1px solid var(--accent-amber)',
-                        }}
-                      >
-                        <AlertTriangle className="h-2.5 w-2.5" strokeWidth={2.5} />
-                        {dueStatus.isOverdue ? `Overdue ${Math.abs(dueStatus.daysRemaining)}d` : `Due in ${dueStatus.daysRemaining}d`}
-                      </span>
-                    );
-                  })()}
-                </div>
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap" style={{ width: '120px' }}>
-                {(() => {
-                  const payments = (invoice as any).payments;
-                  const scheduledPayment = Array.isArray(payments) ? payments.find((p: any) => p.status === 'SCHEDULED' || p.status === 'PAID') : null;
-                  if (!scheduledPayment) return <span className="text-xs" style={{ color: 'var(--text-muted)' }}>—</span>;
-                  const payDate = new Date(scheduledPayment.payment_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
-                  const isPaid = scheduledPayment.status === 'PAID';
-                  return (
-                    <span
-                      className="px-2 py-1 inline-flex text-xs font-semibold rounded-full w-fit items-center gap-1"
-                      style={{
-                        background: isPaid
-                          ? 'color-mix(in srgb, var(--accent-lime) 10%, transparent)'
-                          : 'color-mix(in srgb, var(--accent-purple) 10%, transparent)',
-                        color: isPaid ? 'var(--accent-lime)' : 'var(--accent-purple)',
-                        border: `1px solid color-mix(in srgb, ${isPaid ? 'var(--accent-lime)' : 'var(--accent-purple)'} 20%, transparent)`,
-                      }}
-                    >
-                      <Calendar className="h-3 w-3" strokeWidth={2} />
-                      {payDate}
-                    </span>
-                  );
-                })()}
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap" style={{ width: '160px' }} onClick={(e) => e.stopPropagation()}>
-                <POValidationBadge
-                  invoiceId={invoice.id}
-                  initialStatus={(invoice as any).po_validation_status || 'PENDING'}
-                />
-              </td>
-              <td className="px-4 py-4 whitespace-nowrap text-sm" style={{ width: '60px' }}>
-                {invoice.signatures && invoice.signatures.length > 0 ? (
-                  <span className="text-xs font-semibold" style={{
-                    color: invoice.signatures.filter(s => s.signed_at).length === invoice.signatures.length ? 'var(--accent-lime)' :
-                    invoice.signatures.filter(s => s.signed_at).length > 0 ? 'var(--accent-amber)' : 'var(--accent-red)',
-                    fontVariantNumeric: 'tabular-nums'
-                  }}>
-                    {invoice.signatures.filter(s => s.signed_at).length}/{invoice.signatures.length}
-                  </span>
-                ) : '—'}
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap">
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onInvoiceClick?.(invoice);
-                    }}
-                    className="p-2 rounded-xl transition-colors"
-                    style={{ color: 'var(--text-muted)' }}
-                    onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-blue)'; e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent'; }}
-                    title="View Details"
-                  >
-                    <Eye className="h-4 w-4" strokeWidth={1.75} />
-                  </button>
-                  {!hasQuickActions ? (
-                    <>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onInvoiceClick?.(invoice);
-                        }}
-                        className="p-2 rounded-xl transition-colors"
-                        style={{ color: 'var(--text-muted)' }}
-                        onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-lime)'; e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent'; }}
-                        title="Approve"
-                      >
-                        <Check className="h-4 w-4" strokeWidth={1.75} />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onInvoiceClick?.(invoice);
-                        }}
-                        className="p-2 rounded-xl transition-colors"
-                        style={{ color: 'var(--text-muted)' }}
-                        onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-red)'; e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent'; }}
-                        title="Flag"
-                      >
-                        <Flag className="h-4 w-4" strokeWidth={1.75} />
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      {canApproveInvoice(invoice) && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void runQuickAction(invoice, onApprove!);
-                          }}
-                          disabled={busyId === invoice.id}
-                          className="p-2 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                          style={{ color: 'var(--text-muted)' }}
-                          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-lime)'; e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent'; }}
-                          title="Approve invoice"
-                        >
-                          {busyId === invoice.id ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.75} /> : <Check className="h-4 w-4" strokeWidth={1.75} />}
-                        </button>
-                      )}
-                      {canPostInvoice(invoice) && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void runQuickAction(invoice, onPost!);
-                          }}
-                          disabled={busyId === invoice.id}
-                          className="p-2 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                          style={{ color: 'var(--text-muted)' }}
-                          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-purple)'; e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent'; }}
-                          title="Post to Accounting"
-                        >
-                          {busyId === invoice.id ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.75} /> : <Send className="h-4 w-4" strokeWidth={1.75} />}
-                        </button>
-                      )}
-                    </>
-                  )}
-                </div>
-              </td>
-            </tr>
-            );
-          })}
-          {sortedInvoices.length === 0 && (
-            <tr>
-              <td colSpan={18} className="px-6 py-12 text-center">
-                <div className="flex flex-col items-center justify-center">
-                  <div className="p-4 rounded-2xl mb-4" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
-                    <FileText className="h-12 w-12" style={{ color: 'var(--text-muted)', animation: 'pulse-soft 2.5s ease-in-out infinite' }} />
-                  </div>
-                  <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>No invoices found</p>
-                  <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
-                    {emptyHint === 'filters' ? 'No invoices match the active filters — try clearing them.' : 'Upload an invoice to get started'}
-                  </p>
-                </div>
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
+  if (loading) return <div className="px-6 py-4"><div className="space-y-2">{[...Array(6)].map((_, index) => <div key={index} className="flex items-center gap-3 py-3"><Skeleton className="h-4 w-4 rounded" /><div className="flex flex-1 items-center gap-4"><Skeleton className="h-4 w-28" /><Skeleton className="h-4 w-32" /><Skeleton className="h-5 w-16 rounded-full" /><Skeleton className="h-4 w-20" /></div><Skeleton className="h-8 w-8 rounded-lg" /></div>)}</div></div>;
+  return <div className={stickyHeader ? '' : 'overflow-x-auto'} onClick={() => filterColumn && setFilterColumn(null)}>
+    {stickyHeader && <style>{`[data-inv-sticky-table] thead th { position: sticky; top: 0; z-index: 5; background: var(--bg-elevated); box-shadow: inset 0 -1px 0 var(--border-subtle); }`}</style>}
+    <div className="flex items-center justify-between gap-3 border-b px-4 py-2" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-elevated)' }}><p className="text-xs" style={{ color: 'var(--text-muted)' }}><GripVertical className="mr-1 inline h-3.5 w-3.5" />Drag a column header to rearrange it. Use <Filter className="mx-1 inline h-3 w-3" /> to filter.</p><div className="relative"><button type="button" onClick={(event) => { event.stopPropagation(); setShowColumnSettings((value) => !value); }} className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold" style={{ color: 'var(--accent-purple)', background: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)' }}><Settings2 className="h-3.5 w-3.5" />Columns <ChevronDown className="h-3 w-3" /></button>{showColumnSettings && <div className="absolute right-0 top-9 z-30 w-64 rounded-xl p-3 shadow-xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }} onClick={(event) => event.stopPropagation()}><div className="mb-2 flex items-center justify-between"><span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>Column order</span><button type="button" onClick={() => setColumnOrder(DEFAULT_COLUMN_ORDER)} className="inline-flex items-center gap-1 text-[11px]" style={{ color: 'var(--accent-purple)' }}><RotateCcw className="h-3 w-3" />Reset</button></div>{orderedColumns.map((column) => <div key={column.id} draggable onDragStart={() => setDraggingColumn(column.id)} onDragOver={(event) => event.preventDefault()} onDrop={() => { if (draggingColumn) moveColumn(draggingColumn, column.id); setDraggingColumn(null); }} className="flex cursor-grab items-center gap-2 rounded px-2 py-1.5 text-xs" style={{ color: 'var(--text-secondary)' }}><GripVertical className="h-3.5 w-3.5" style={{ color: 'var(--text-subtle)' }} />{column.label}</div>)}</div>}</div></div>
+    <table className="min-w-full" data-inv-sticky-table={stickyHeader ? 'true' : undefined}><thead style={{ background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border-subtle)' }}><tr><th className="px-4 py-3 text-left" style={{ width: 42 }}><input type="checkbox" className="rounded" style={{ accentColor: 'var(--accent-lime)' }} /></th>{orderedColumns.map(renderHeader)}</tr></thead><tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>{filteredInvoices.map((invoice, index) => { const dueStatus = getDueDateStatus(invoice); const urgent = invoice.is_urgent || dueStatus.isOverdue || dueStatus.isNear; return <tr key={invoice.id} className={`group cursor-pointer transition-colors duration-150 ${dueStatus.isNear && !dueStatus.isOverdue ? 'animate-pulse-due' : ''}`} style={{ backgroundColor: index % 2 === 0 ? 'transparent' : 'var(--bg-card-hover)', borderLeft: `${urgent ? 3 : 0}px solid ${invoice.is_urgent || dueStatus.isOverdue ? 'var(--accent-red)' : 'var(--accent-amber)'}` }} onClick={() => onInvoiceClick?.(invoice)} onMouseEnter={(event) => { event.currentTarget.style.background = 'var(--bg-card-hover)'; }} onMouseLeave={(event) => { event.currentTarget.style.background = index % 2 === 0 ? 'transparent' : 'var(--bg-card-hover)'; }}><td className="px-4 py-4" onClick={(event) => event.stopPropagation()}><input type="checkbox" className="rounded" style={{ accentColor: 'var(--accent-lime)' }} /></td>{orderedColumns.map((column) => renderCell(column, invoice))}</tr>; })}{filteredInvoices.length === 0 && <tr><td colSpan={orderedColumns.length + 1} className="px-6 py-12 text-center"><div className="flex flex-col items-center justify-center"><div className="mb-4 rounded-2xl p-4" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}><FileText className="h-12 w-12" style={{ color: 'var(--text-muted)' }} /></div><p className="text-sm" style={{ color: 'var(--text-secondary)' }}>No invoices found</p><p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>{emptyHint === 'filters' || Object.values(columnFilters).some(Boolean) ? 'No invoices match the active filters — try clearing them.' : 'Upload an invoice to get started'}</p></div></td></tr>}</tbody></table>
+  </div>;
 }

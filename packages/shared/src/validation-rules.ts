@@ -89,12 +89,50 @@ export const VALID_BILL_TO_ADDRESSES = [
 // ─── PAYMENT / INCOTERM / CATEGORY ───
 export const PAYMENT_TERMS_PATTERNS = [
   'Net 30',
+  'Net 30 days',
+  'Net 30 TT',
+  '30 Days',
+  'Net 45',
+  'Net 60',
   'Net 90',
   'Payment in Advance',
+  'Payment Before Delivery',
+  'Payment Before Shipment',
+  'Due on receipt',
+  'TT Upon Shipment',
+  'TT Payment',
+  'PREPAID',
+  'Cash on Delivery',
+  'PRIOR SHIPMENT',
+  'EVERY 20TH OF THE MONTH',
   'T/T 100%',
   'PBS',
   'PAYMENT BEFORE SHIPMENT',
 ];
+
+/** Canonical values used by supplier defaults and the invoice edit dropdown. */
+export const CANONICAL_PAYMENT_TERMS = [
+  'Net 30',
+  'Net 30 days',
+  'Net 30 TT',
+  '30 Days',
+  'Net 45',
+  'Net 60',
+  'Net 90',
+  'Payment in Advance',
+  'Payment Before Delivery',
+  'Payment Before Shipment',
+  '100% BEFORE SHIPMENT',
+  'TT BEFORE SHIPMENT',
+  'Due on receipt',
+  'TT Upon Shipment',
+  'TT Payment',
+  'PREPAID',
+  'Cash on Delivery',
+  'PRIOR SHIPMENT',
+  'EVERY 20TH OF THE MONTH',
+  'Net 30 (Columbia) / Payment before shipment (Skida)',
+] as const;
 
 export const INCOTERMS = ['EXW', 'DAP', 'FOB', 'CIF', 'DDP'];
 

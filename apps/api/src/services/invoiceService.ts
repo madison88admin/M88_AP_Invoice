@@ -1,4 +1,5 @@
 import prisma from '../config/database';
+import { CANONICAL_PAYMENT_TERMS } from '@ap-invoice/shared';
 import { InvoiceStatus, InvoiceType, InvoiceCategory, BrandTier, InvoiceSource, OrderType, OrderTypeCombination, BillToEntity, UserRole } from '@ap-invoice/shared';
 import { AppError } from '../middleware/errorHandler';
 import { isTop10Brand, TOP_10_BRANDS } from '@ap-invoice/shared';
@@ -414,7 +415,7 @@ export const getDistinctPaymentTerms = async (): Promise<string[]> => {
     .map((r) => r.payment_terms)
     .filter((t): t is string => !!t && t.trim().length > 0)
     .sort((a, b) => a.localeCompare(b));
-  return [...new Set(terms)];
+  return [...new Set([...CANONICAL_PAYMENT_TERMS, ...terms])];
 };
 
 export const getDistinctBrands = async (): Promise<string[]> => {

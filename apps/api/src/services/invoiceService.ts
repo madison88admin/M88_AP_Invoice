@@ -1,5 +1,4 @@
 import prisma from '../config/database';
-import { sendInvoiceTeamsNotification } from './teamsNotificationService';
 import { InvoiceStatus, InvoiceType, InvoiceCategory, BrandTier, InvoiceSource, OrderType, OrderTypeCombination, BillToEntity, UserRole } from '@ap-invoice/shared';
 import { AppError } from '../middleware/errorHandler';
 import { isTop10Brand, TOP_10_BRANDS } from '@ap-invoice/shared';
@@ -610,17 +609,6 @@ export const addInvoiceComment = async (
       actor_role: userRole,
       note: text,
     },
-  });
-  // Keep the in-app audit/comment write authoritative. Teams delivery is best-effort
-  // and must never block the conversation or approval workflow.
-  void sendInvoiceTeamsNotification({
-    invoiceId,
-    invoiceNumber: invoice.invoice_number,
-    vendorName: invoice.vendor?.name || invoice.vendor_name_raw || 'Unknown vendor',
-    comment: text,
-    actorName: userName,
-    actorRole: userRole,
-    targetRole: userRole.includes('ACCOUNTING') ? 'PURCHASING_COORDINATOR' : undefined,
   });
   return audit;
 };

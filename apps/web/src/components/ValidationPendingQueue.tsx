@@ -1,15 +1,15 @@
 import { useMemo, useState } from 'react';
 import { Navigate, Link } from 'react-router-dom';
 import { Clock3, FileText, RefreshCw, Search, UserRound } from 'lucide-react';
-import { InvoiceStatus } from '@ap-invoice/shared';
 import { useAuth } from '../contexts/AuthContext';
 import { useMockData } from '../contexts/MockDataContext';
 import { MockInvoice } from '../lib/mockData';
+import { isCoordinatorQueueStatus } from '../lib/coordinatorQueue';
 
 /**
- * Manager-only visibility into invoices that are still in validation. These
- * records have not been endorsed by the Purchasing Coordinator yet, so they
- * must not appear in the manager's approval queue.
+ * Shared visibility into the coordinator hand-off queue. Validation and
+ * exception states remain distinct internally, but are shown as one queue so
+ * users do not have to triage three labels for the same next owner.
  */
 export function getCoordinatorDisplayName(invoice: MockInvoice): string {
   const coordinatorSignature = (invoice.signatures || []).find((signature) =>
@@ -39,7 +39,7 @@ const formatDate = (value?: string) => {
 export function getValidationPendingInvoices(invoices: MockInvoice[], search = ''): MockInvoice[] {
   const query = search.trim().toLowerCase();
   return invoices
-    .filter((invoice) => String(invoice.status) === InvoiceStatus.VALIDATION_PENDING)
+    .filter((invoice) => isCoordinatorQueueStatus(String(invoice.status)))
     .filter((invoice) => {
       if (!query) return true;
       const coordinator = getCoordinatorDisplayName(invoice);
@@ -67,12 +67,9 @@ export default function ValidationPendingQueue() {
 
   const validationPending = useMemo(() => getValidationPendingInvoices(invoices, search), [invoices, search]);
 
-  const totalPending = invoices.filter((invoice) => String(invoice.status) === InvoiceStatus.VALIDATION_PENDING).length;
+  const totalPending = invoices.filter((invoice) => isCoordinatorQueueStatus(String(invoice.status))).length;
 
-  // This is deliberately a manager-only page. Coordinators work the same
-  // records from their validation/workbench flow, while the manager gets a
-  // read-only visibility queue until the coordinator submits them.
-  if (user?.role !== 'PURCHASING_MANAGER') {
+  if (!['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN'].includes(user?.role || '')) {
     return <Navigate to="/approvals" replace />;
   }
 
@@ -90,9 +87,9 @@ export default function ValidationPendingQueue() {
             <Clock3 className="h-5 w-5" style={{ color: 'var(--accent-blue)' }} strokeWidth={1.75} />
           </div>
           <div>
-            <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Validation Pending</h2>
+            <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Pending Coordinator</h2>
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-              Invoices awaiting Purchasing Coordinator validation and submission to your approval queue.
+              Invoices requiring Purchasing Coordinator review, validation, correction, or submission to the next approval step.
             </p>
           </div>
         </div>
@@ -120,7 +117,7 @@ export default function ValidationPendingQueue() {
           />
         </div>
         <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-          {validationPending.length} shown · {totalPending} validation pending
+          {validationPending.length} shown · {totalPending} pending coordinator
         </span>
       </div>
 
@@ -132,7 +129,7 @@ export default function ValidationPendingQueue() {
         <div className="rounded-2xl p-12 text-center" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
           <Clock3 className="mx-auto mb-3 h-8 w-8" style={{ color: 'var(--text-subtle)' }} strokeWidth={1.75} />
           <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-            {totalPending === 0 ? 'No invoices are waiting for coordinator submission.' : 'No validation-pending invoices match your search.'}
+            {totalPending === 0 ? 'No invoices are waiting for coordinator action.' : 'No pending coordinator invoices match your search.'}
           </p>
         </div>
       ) : (
@@ -176,7 +173,7 @@ export default function ValidationPendingQueue() {
             </table>
           </div>
           <div className="flex items-center justify-between gap-3 px-5 py-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Read-only visibility for Purchasing Manager</span>
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Coordinator hand-off queue</span>
             <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Invoices appear in Approvals after coordinator submission</span>
           </div>
         </div>

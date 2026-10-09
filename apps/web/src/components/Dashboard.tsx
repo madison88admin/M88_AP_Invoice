@@ -18,7 +18,8 @@ import { hasPermission, filterInvoicesByRole, canUserApproveStatus, isWithinRole
 import { cn } from '../lib/utils';
 import { getAuditActorDisplay } from '../lib/auditActor';
 import { getPendingApprovalsForUser, getReturnedInvoicesForUser, isReturnedSignatureForUser } from '../lib/approvalQueue';
-import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, RotateCcw, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, ChevronRight, LogOut, Edit, Unlock, Pause, Users, Loader2, Menu, X, Trash2, Landmark, Paperclip, Upload, Download, Eye, Info } from 'lucide-react';
+import { displayInvoiceStatus, isCoordinatorQueueStatus } from '../lib/coordinatorQueue';
+import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, RotateCcw, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, ChevronRight, LogOut, Edit, Unlock, Pause, Users, Loader2, Menu, X, Trash2, Landmark, Paperclip, Upload, Download, Eye, Info, PenTool, Zap } from 'lucide-react';
 import { Skeleton, SkeletonBar } from './ui/Skeleton';
 
 const CANCELLATION_APPROVER_BY_USER_ROLE: Record<string, string> = {
@@ -381,7 +382,9 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
 
   // Filter invoices based on filters
   const filteredInvoices = roleFilteredInvoices.filter(inv => {
-    if (filters.status && inv.status !== filters.status) return false;
+    if (filters.status && (filters.status === InvoiceStatus.PENDING_COORDINATOR
+      ? !isCoordinatorQueueStatus(String(inv.status))
+      : inv.status !== filters.status)) return false;
     if (filters.category && inv.category !== filters.category) return false;
     if (filters.type && inv.invoice_type !== filters.type) return false;
     if (filters.brand && inv.brand !== filters.brand) return false;
@@ -667,7 +670,7 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
 
 
   // Count-up animations for each KPI - calculate from live invoice data
-  const pendingValidationCount = useCountUp(allInvoices.filter(i => i.status === InvoiceStatus.VALIDATION_PENDING).length, 1200, countUpStarted);
+  const pendingValidationCount = useCountUp(allInvoices.filter(i => isCoordinatorQueueStatus(i.status)).length, 1200, countUpStarted);
   const awaitingApprovalCount = useCountUp(allInvoices.filter(i => i.status === InvoiceStatus.PENDING_MANAGER || i.status === InvoiceStatus.PENDING_MLO_PLANNING_MANAGER || i.status === InvoiceStatus.PENDING_SR_MANAGER || i.status === InvoiceStatus.PENDING_POLLY).length, 1200, countUpStarted);
   const urgentPaymentsCount = useCountUp(allInvoices.filter(i => {
     const currentStage = i.stage_timestamps.find(st => !st.exited_at);
@@ -2083,13 +2086,13 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
         ];
 
       default: {
-        const pendValDefault = allInvoices.filter(i => i.status === InvoiceStatus.VALIDATION_PENDING);
+        const pendValDefault = allInvoices.filter(i => isCoordinatorQueueStatus(i.status));
         const awaitAppr = allInvoices.filter(i => Object.values(InvoiceStatus).some(s => s.startsWith('PENDING_') && s !== 'PENDING_ACCOUNTING' && i.status === s));
         const urgentPay = allInvoices.filter(i => i.is_urgent && i.status !== 'PAID');
         const excDefault = allInvoices.filter(i => i.status === InvoiceStatus.EXCEPTION_FLAGGED);
         return [
           {
-            label: 'Pending Validation',
+            label: 'Pending Coordinator',
             value: pendingValidationCount.count,
             icon: FileText,
             accent: 'info',
@@ -2110,7 +2113,7 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
             ...calcTrend(urgentPay),
           },
           {
-            label: 'Exceptions',
+            label: 'Open Exceptions',
             value: exceptionsCount.count,
             icon: AlertCircle,
             accent: 'danger',
@@ -2230,12 +2233,12 @@ ${dataRows}
       nextStatus = InvoiceStatus.PENDING_COORDINATOR;
       nextQuickFilter = 'urgent';
     } else if (label.includes('validation')) {
-      nextStatus = InvoiceStatus.VALIDATION_PENDING;
+        nextStatus = InvoiceStatus.PENDING_COORDINATOR;
     } else if (label.includes('awaiting approval') || label.includes('pending my approval')) {
       // Pending approvals — clear status filter to show all pending stages
       nextStatus = undefined;
     } else if (label.includes('exception')) {
-      nextStatus = InvoiceStatus.EXCEPTION_FLAGGED;
+      nextStatus = InvoiceStatus.PENDING_COORDINATOR;
     } else if (label.includes('scheduled payment')) {
       nextStatus = InvoiceStatus.PAYMENT_SCHEDULED;
     } else if (label.includes('pending accounting') || label.includes('accounting review')) {
@@ -2495,9 +2498,9 @@ ${dataRows}
                   className="h-9 w-full md:w-auto px-4 rounded-full focus:outline-none text-sm appearance-none cursor-pointer transition-all" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
                 >
                   <option value="" style={{ background: 'var(--input-bg)' }}>All Statuses</option>
-                  {Object.values(InvoiceStatus).map((status) => (
+                  {Object.values(InvoiceStatus).filter((status) => status !== InvoiceStatus.VALIDATION_PENDING && status !== InvoiceStatus.EXCEPTION_FLAGGED).map((status) => (
                     <option key={status} value={status} style={{ background: 'var(--input-bg)' }}>
-                      {status.replace(/_/g, ' ')}
+                      {displayInvoiceStatus(status)}
                     </option>
                   ))}
                 </select>
@@ -2648,6 +2651,31 @@ ${dataRows}
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Repository flags stay outside the scrollable table so the action
+              labels remain visible while users review a long invoice list. */}
+          {mode === 'repository' && (
+            <div
+              className="sticky top-0 z-20 mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl px-4 py-3"
+              style={{ background: 'color-mix(in srgb, var(--bg-card) 96%, transparent)', border: '1px solid var(--border-color)', boxShadow: '0 6px 18px rgba(0,0,0,0.08)', backdropFilter: 'blur(10px)' }}
+              aria-label="Invoice attention flags"
+            >
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--text-primary)' }}>Invoice attention flags</p>
+                <p className="mt-0.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>These labels stay visible above the invoice list.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-violet) 12%, transparent)', color: 'var(--accent-violet)', border: '1px solid color-mix(in srgb, var(--accent-violet) 28%, transparent)' }}>
+                  <PenTool className="h-3.5 w-3.5" />
+                  Handwritten · {displayedInvoices.filter((invoice) => invoice.is_handwritten).length}
+                </span>
+                <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-red) 12%, transparent)', color: 'var(--accent-red)', border: '1px solid color-mix(in srgb, var(--accent-red) 28%, transparent)' }}>
+                  <Zap className="h-3.5 w-3.5" fill="currentColor" />
+                  Urgent / Priority · {displayedInvoices.filter((invoice) => invoice.is_urgent || invoice.priority_flag).length}
+                </span>
+              </div>
             </div>
           )}
 
@@ -3058,6 +3086,20 @@ ${dataRows}
               </button>
               </div>
             </div>
+            {(selectedInvoice.is_handwritten || selectedInvoice.is_urgent || selectedInvoice.priority_flag) && (
+              <div className="mb-3 flex flex-wrap items-center gap-2" aria-label="Invoice attention labels">
+                {selectedInvoice.is_handwritten && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-violet) 12%, transparent)', color: 'var(--accent-violet)', border: '1px solid color-mix(in srgb, var(--accent-violet) 28%, transparent)' }}>
+                    <PenTool className="h-3.5 w-3.5" /> Handwritten — manual review
+                  </span>
+                )}
+                {(selectedInvoice.is_urgent || selectedInvoice.priority_flag) && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-red) 12%, transparent)', color: 'var(--accent-red)', border: '1px solid color-mix(in srgb, var(--accent-red) 28%, transparent)' }}>
+                    <Zap className="h-3.5 w-3.5" fill="currentColor" /> Urgent / Priority — review ASAP
+                  </span>
+                )}
+              </div>
+            )}
             {/* Status badge + Tab navigation */}
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <span className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-full" style={{ background: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)', color: 'var(--accent-purple)', border: '1px solid color-mix(in srgb, var(--accent-purple) 20%, transparent)' }}>

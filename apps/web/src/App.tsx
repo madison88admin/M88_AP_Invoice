@@ -22,11 +22,12 @@ import UserManagement from './components/UserManagement';
 import SettingsPage from './components/SettingsPage';
 import BankDetailsMasterlist from './components/BankDetailsMasterlist';
 import FinanceControlsDashboard from './components/FinanceControlsDashboard';
+import AccountingInvoiceArchive from './components/AccountingInvoiceArchive';
 
 import ProtectedRoute from './components/ProtectedRoute';
 import NotFound from './components/NotFound';
 import AppLayout from './components/AppLayout';
-import { FileText, CheckSquare, AlertTriangle, Building2, Package, BarChart3, FileSearch, Users, Settings, Upload, FileSearch as AuditIcon, LayoutDashboard, Landmark, CheckCircle, RotateCcw, Clock3 } from 'lucide-react';
+import { FileText, CheckSquare, AlertTriangle, Building2, Package, BarChart3, FileSearch, Users, Settings, Upload, FileSearch as AuditIcon, LayoutDashboard, Landmark, CheckCircle, XCircle, RotateCcw, Clock3 } from 'lucide-react';
 import ValidationPendingQueue from './components/ValidationPendingQueue';
 
 function App() {
@@ -74,8 +75,8 @@ function App() {
                   </ProtectedRoute>
                 } />
                 <Route path="/validation-pending" element={
-                  <ProtectedRoute>
-                    <AppLayout title="Validation Pending" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-blue), var(--accent-purple))' }}><Clock3 className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
+                  <ProtectedRoute roles={['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN']}>
+                    <AppLayout title="Pending Coordinator" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-blue), var(--accent-purple))' }}><Clock3 className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
                       <ValidationPendingQueue />
                     </AppLayout>
                   </ProtectedRoute>
@@ -112,6 +113,27 @@ function App() {
                   <ProtectedRoute>
                     <AppLayout title="Accounting Review" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}><FileSearch className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
                       <AccountingReview />
+                    </AppLayout>
+                  </ProtectedRoute>
+                } />
+                <Route path="/cancelled-payment-batches" element={
+                  <ProtectedRoute>
+                    <AppLayout title="Cancelled Payment Batches" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-red), var(--accent-amber))' }}><XCircle className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
+                      <PaymentBatchManager initialTab="cancelled" />
+                    </AppLayout>
+                  </ProtectedRoute>
+                } />
+                <Route path="/accounting-approved-invoices" element={
+                  <ProtectedRoute roles={['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN']}>
+                    <AppLayout title="Approved Invoices" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-lime), var(--accent-green))' }}><CheckCircle className="h-5 w-5 text-white" /></div>}>
+                      <AccountingInvoiceArchive mode="approved" />
+                    </AppLayout>
+                  </ProtectedRoute>
+                } />
+                <Route path="/accounting-rejected-invoices" element={
+                  <ProtectedRoute roles={['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN']}>
+                    <AppLayout title="Rejected Invoices" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-red), var(--accent-amber))' }}><AlertTriangle className="h-5 w-5 text-white" /></div>}>
+                      <AccountingInvoiceArchive mode="rejected" />
                     </AppLayout>
                   </ProtectedRoute>
                 } />

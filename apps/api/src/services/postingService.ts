@@ -1,5 +1,5 @@
 import prisma from '../config/database';
-import { InvoiceStatus, ExceptionReason, SLA_LIMITS, BATCH_THRESHOLD_CONFIG, UserRole, calcWorkingHoursElapsed } from '@ap-invoice/shared';
+import { InvoiceStatus, ExceptionReason, SLA_LIMITS, UserRole, calcWorkingHoursElapsed } from '@ap-invoice/shared';
 import { AppError } from '../middleware/errorHandler';
 import { nextGenService } from './nextGenService';
 import { inAppNotificationService } from './inAppNotificationService';
@@ -173,8 +173,8 @@ export async function postInvoice(invoiceId: string, userId: string, bypassVaria
 
   // In Finance advisory mode, invoices held only for NextGen/PO advisory
   // exceptions (PO_NOT_FOUND etc.) are auto-released here and flow straight
-  // through to posting — the only intentional hold is HELD_BELOW_100 at the
-  // payment scheduling stage. ON_HOLD with genuine blocking exceptions still
+  // through to posting. Payment holds are an explicit Accounting Associate
+  // decision; posting must not silently hold an invoice based on amount. ON_HOLD with genuine blocking exceptions still
   // requires an explicit release from the On-Hold Queue.
   if (invoice.status === InvoiceStatus.ON_HOLD as any && getFinancePolicy().enforcementMode === 'advisory') {
     const pendingExcs = (invoice.exceptions || []).filter((exc: any) => exc.status === 'PENDING');
@@ -283,9 +283,8 @@ export async function postInvoice(invoiceId: string, userId: string, bypassVaria
     throw new AppError('All approvals must be completed before posting', 400);
   }
 
-  // The sub-$100 hold is applied at payment scheduling time (HELD_BELOW_100 +
-  // Accounting Supervisor release approval), NOT here. Posting never blocks a fully approved
-  // invoice on a vendor-cumulative threshold — see schedulePayment below.
+  // Posting never blocks a fully approved invoice on an amount threshold. Any
+  // payment hold is applied explicitly by Accounting after scheduling.
 
   // Check for any unresolved exceptions
   const unresolvedExceptions = invoice.exceptions.filter(
@@ -699,11 +698,6 @@ export async function schedulePayment(
         ? 'DUE_DATE'
         : 'DEFAULT';
 
-  // Sub-$100 invoices are HELD: they appear in the batch schedule only when
-  // they fall within the Associate's cut-off (due on or before the cut-off),
-  // and only proceed after Accounting Supervisor release.
-  const heldBelow100 = Number(invoice.total_amount) < BATCH_THRESHOLD_CONFIG.AMOUNT;
-
   // Create payment record
   const payment = await prisma.payment.create({
     data: {
@@ -712,7 +706,7 @@ export async function schedulePayment(
       currency: invoice.currency,
       payment_date: resolvedPaymentDate,
       payment_date_source: paymentDateSource,
-      status: heldBelow100 ? 'HELD_BELOW_100' : 'SCHEDULED',
+      status: 'SCHEDULED',
       vendor_id: invoice.vendor_id || undefined,
       beneficiary_name_snapshot: beneficiary,
       bank_name_snapshot: bankName,
@@ -726,19 +720,6 @@ export async function schedulePayment(
       invoice_revision_snapshot: invoice.revision,
     },
   });
-
-  if (heldBelow100) {
-    await inAppNotificationService.create({
-      invoice_id: invoiceId,
-      invoice_number: invoice.invoice_number,
-      vendor_name: invoice.vendor?.name || 'Unknown',
-      title: `Payment held below $${BATCH_THRESHOLD_CONFIG.AMOUNT}`,
-      message: `Payment of ${invoice.currency} ${Number(invoice.total_amount).toFixed(2)} is below the $${BATCH_THRESHOLD_CONFIG.AMOUNT} batch threshold. Accounting Supervisor release is required before batch selection.`,
-      type: 'warning',
-      category: 'payment',
-      target_role: UserRole.ACCOUNTING_SUPERVISOR,
-    });
-  }
 
   // Exit POSTED_TO_QB stage timestamp
   const postedStage = await prisma.stageTimestamp.findFirst({
@@ -778,7 +759,7 @@ export async function schedulePayment(
       invoice_id: invoiceId,
       action: 'PAYMENT_SCHEDULED',
       performed_by: userId,
-      note: `Payment of ${invoice.currency} ${Number(invoice.total_amount).toFixed(2)} scheduled for ${resolvedPaymentDate.toISOString().split('T')[0]}${heldBelow100 ? ` — HELD_BELOW_100 (under $${BATCH_THRESHOLD_CONFIG.AMOUNT}); Accounting notified for release approval` : ''}`,
+      note: `Payment of ${invoice.currency} ${Number(invoice.total_amount).toFixed(2)} scheduled for ${resolvedPaymentDate.toISOString().split('T')[0]} — no automatic amount-based hold; Accounting Associate may hold or release it manually`,
     },
   });
 
@@ -833,7 +814,16 @@ export async function processPayment(paymentId: string, userId: string, executio
     data: { status: InvoiceStatus.PAID as any },
   });
   const paidInvoice = await prisma.invoice.findUnique({ where: { id: payment.invoice_id }, include: { vendor: true } });
-  await inAppNotificationService.notifyStageTransition(payment.invoice_id, paidInvoice?.invoice_number || '', paidInvoice?.vendor?.name || 'Unknown', '', 'PAID');
+  // Keep the Accounting action as the source of truth, while explicitly
+  // notifying Purchasing Coordinators that their invoice is fully processed.
+  await inAppNotificationService.notifyStageTransition(
+    payment.invoice_id,
+    paidInvoice?.invoice_number || '',
+    paidInvoice?.vendor?.name || 'Unknown',
+    '',
+    'PAID',
+    UserRole.PURCHASING_COORDINATOR,
+  );
 
   // Exit PAYMENT_SCHEDULED stage timestamp
   const scheduledStage = await prisma.stageTimestamp.findFirst({

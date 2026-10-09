@@ -20,7 +20,32 @@ import {
 const router: Router = Router();
 
 const BANK_FIELDS = ['bank_name', 'swift_code', 'account_number', 'iban', 'sort_code', 'aba_routing_number', 'bank_name_alt', 'bank_address', 'account_number_alt', 'swift_code_alt', 'intermediary_bank_name', 'intermediary_bank_swift', 'has_multiple_accounts'];
+const FULL_BANK_DETAIL_ROLES = [
+  UserRole.PURCHASING_COORDINATOR,
+  UserRole.ACCOUNTING_SUPERVISOR,
+  UserRole.ACCOUNTING_ASSOCIATE,
+  UserRole.IT_ADMIN,
+];
 const ACCOUNTING_ROLES = [UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN];
+
+/**
+ * Bank account numbers are masked for general users, but Purchasing
+ * Coordinators and Accounting need the verified value to reconcile invoices,
+ * correct extraction, and release payments. Keep the policy at the API
+ * boundary so every permitted screen receives the same value and other roles
+ * never receive the unmasked account number by accident.
+ */
+const serializeVendorBankFields = (vendor: any, role?: UserRole) => {
+  const canViewFullBankDetails = Boolean(role && FULL_BANK_DETAIL_ROLES.includes(role));
+  return {
+    ...vendor,
+    account_number: canViewFullBankDetails ? vendor.account_number : maskBankAccount(vendor.account_number),
+    account_number_alt: canViewFullBankDetails
+      ? vendor.account_number_alt
+      : (vendor.account_number_alt || []).map(maskBankAccount),
+    iban: canViewFullBankDetails ? vendor.iban : maskBankAccount(vendor.iban),
+  };
+};
 
 router.use(authenticate);
 
@@ -82,7 +107,7 @@ router.get('/bank-details/masterlist', authenticate, async (req: Request, res: R
     });
     const countMap = new Map(invoiceCounts.map((c: any) => [c.vendor_id, c._count.id]));
 
-    const result = vendors.map(v => ({
+    const result = vendors.map(v => serializeVendorBankFields({
       id: v.id,
       name: v.name,
       beneficiary_name: v.beneficiary_name,
@@ -103,7 +128,7 @@ router.get('/bank-details/masterlist', authenticate, async (req: Request, res: R
       has_multiple_accounts: v.has_multiple_accounts,
       bank_verified_at: v.bank_verified_at,
       invoice_count: countMap.get(v.id) || 0,
-    }));
+    }, (req as AuthRequest).user?.role));
 
     res.json(result);
   } catch (error) {
@@ -128,7 +153,7 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
       orderBy: { name: 'asc' },
       take: limit ? parseInt(limit as string) : undefined,
     });
-    res.json(vendors.map(v => ({ ...v, account_number: maskBankAccount(v.account_number), account_number_alt: v.account_number_alt.map(maskBankAccount), iban: maskBankAccount(v.iban) })));
+    res.json(vendors.map(v => serializeVendorBankFields(v, (req as AuthRequest).user?.role)));
   } catch (error) {
     next(error);
   }
@@ -142,7 +167,7 @@ router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
     if (!vendor) {
       return res.status(404).json({ error: 'Vendor not found' });
     }
-    res.json({ ...vendor, account_number: maskBankAccount(vendor.account_number), account_number_alt: vendor.account_number_alt.map(maskBankAccount), iban: maskBankAccount(vendor.iban) });
+    res.json(serializeVendorBankFields(vendor, (req as AuthRequest).user?.role));
   } catch (error) {
     next(error);
   }
@@ -187,6 +212,51 @@ router.post('/', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_A
     }
 
     res.status(201).json(vendor);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Vendor deletion is intentionally a soft delete. Historical invoices keep
+// their vendor relation, while the vendor is removed from active intake and
+// bank masterlists. Bulk deletion uses the same safe behavior.
+router.delete('/bulk', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const rawIds: unknown[] = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    const ids: string[] = Array.from(new Set(
+      rawIds
+        .filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+        .map((id) => id.trim())
+    ));
+    if (ids.length === 0) {
+      throw new AppError('At least one vendor must be selected', 400);
+    }
+
+    const result = await prisma.vendor.updateMany({
+      where: { id: { in: ids }, is_active: true },
+      data: { is_active: false, updated_at: new Date() },
+    });
+    res.json({ message: `${result.count} vendor(s) archived`, archived_count: result.count });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete('/:id', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const vendor = await prisma.vendor.findUnique({ where: { id: req.params.id } });
+    if (!vendor) {
+      throw new AppError('Vendor not found', 404);
+    }
+    if (!vendor.is_active) {
+      return res.json({ message: 'Vendor is already archived', archived_count: 0 });
+    }
+
+    await prisma.vendor.update({
+      where: { id: req.params.id },
+      data: { is_active: false, updated_at: new Date() },
+    });
+    res.json({ message: 'Vendor archived successfully', archived_count: 1 });
   } catch (error) {
     next(error);
   }

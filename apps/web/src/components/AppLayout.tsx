@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useMockData } from '../contexts/MockDataContext';
 import { getPendingApprovalsForUser, getApprovedByUser, getReturnedInvoicesForUser } from '../lib/approvalQueue';
+import { isCoordinatorQueueStatus } from '../lib/coordinatorQueue';
 import { ThemeToggle } from './ThemeToggle';
 import NotificationBell from './NotificationBell';
 import SidebarItem from './ui/SidebarItem';
@@ -12,6 +13,7 @@ import {
   Menu, X, LogOut, Upload, Pause, Activity, Gauge, History,
   ClipboardList, Landmark,
   RotateCcw, Clock3,
+  CheckCircle, XCircle,
 } from 'lucide-react';
 
 interface AppLayoutProps {
@@ -56,7 +58,7 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
       label: 'Workflow',
       items: [
         { icon: CheckSquare, label: 'Approvals', path: '/approvals', roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'PLANNING_MANAGER', 'SR_MANAGER_GLOBAL_PRODUCTION', 'MS_POLLY', 'ACCOUNTING_SUPERVISOR'], badgeKey: 'approvals', badgeColor: 'red' },
-        { icon: Clock3, label: 'Validation Pending', path: '/validation-pending', roles: ['PURCHASING_MANAGER'], badgeKey: 'validationPending', badgeColor: 'blue' },
+        { icon: Clock3, label: 'Pending Coordinator', path: '/validation-pending', roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER'], badgeKey: 'validationPending', badgeColor: 'blue' },
         { icon: History, label: 'Approved Invoices', path: '/approved-invoices', roles: ['PURCHASING_MANAGER'], badgeKey: 'approvedByMe', badgeColor: 'lime' },
         // Returned work is actionable for both sides of the purchasing
         // hand-off: managers can send an invoice back, and coordinators must
@@ -70,7 +72,10 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
       label: 'Accounting',
       items: [
         { icon: Package, label: 'Payment Batches', path: '/payment-batches', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'batches', badgeColor: 'lime' },
+        { icon: XCircle, label: 'Cancelled Payment Batches', path: '/cancelled-payment-batches', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'cancelledBatches', badgeColor: 'red' },
         { icon: FileSearch, label: 'Accounting Review', path: '/accounting-review', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'review', badgeColor: 'blue' },
+        { icon: CheckCircle, label: 'Approved Invoices', path: '/accounting-approved-invoices', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'accountingApproved', badgeColor: 'lime' },
+        { icon: XCircle, label: 'Rejected Invoices', path: '/accounting-rejected-invoices', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'accountingRejected', badgeColor: 'red' },
         { icon: Landmark, label: 'Bank Details', path: '/bank-details', roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'] },
       ],
     },
@@ -105,13 +110,16 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
     workbench: invoices.filter(i => ['VALIDATION_PENDING', 'EXCEPTION_FLAGGED'].includes(i.status)).length,
     // Per-user pending queue — must match the Approval Inbox page count.
     approvals: getPendingApprovalsForUser(invoices, user).length,
-    validationPending: invoices.filter(i => i.status === 'VALIDATION_PENDING').length,
+    validationPending: invoices.filter(i => isCoordinatorQueueStatus(i.status)).length,
     approvedByMe: getApprovedByUser(invoices, user).length,
     returned: getReturnedInvoicesForUser(invoices, user).length,
     exceptions: invoices.filter(i => i.exceptions.some(e => e.status === 'OPEN' || e.status === 'PENDING')).length,
     onhold: invoices.filter(i => i.status === 'ON_HOLD').length,
     batches: paymentBatches.filter(b => b.status === 'DRAFT').length,
+    cancelledBatches: paymentBatches.filter(b => b.status === 'CANCELLED').length,
     review: invoices.filter(i => ['PENDING_ACCOUNTING', 'APPROVED', 'POSTED_TO_QB', 'PAID', 'PAYMENT_SCHEDULED'].includes(i.status)).length,
+    accountingApproved: invoices.filter(i => ['PENDING_ACCOUNTING', 'APPROVED', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAYMENT_CONFIRMATION_SENT', 'PAID'].includes(i.status)).length,
+    accountingRejected: invoices.filter(i => i.status === 'REJECTED').length,
   };
 
   const visibleGroups = navGroups.map(group => ({

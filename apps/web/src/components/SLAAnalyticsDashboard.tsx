@@ -54,7 +54,7 @@ const stageLabels: Record<string, string> = {
   RECEIVED: 'Received',
   OCR_PROCESSING: 'OCR Processing',
   VALIDATION_PENDING: 'Validation',
-  EXCEPTION_FLAGGED: 'Exception Flagged',
+  EXCEPTION_FLAGGED: 'Pending Coordinator',
   PENDING_COORDINATOR: 'Coordinator',
   PENDING_MANAGER: 'Purchasing Manager',
   PENDING_MLO_ACCOUNT_HOLDER: 'MLO Account Holder',

@@ -39,24 +39,27 @@ vi.mock('./inAppNotificationService', () => ({
   inAppNotificationService: { create: notificationCreate, notifyStageTransition: vi.fn() },
 }));
 
-import { getScheduledPaymentsForBatch, bulkApprovePaymentsForPayment, applyBankCharge, removeBankCharge, endorseBillStub, matchPaymentConfirmation, approveHeldPayment, markPaymentForPayment, returnInvoicesFromBatch, getStuckBatches, markPaymentBatchExported, createPaymentBatch, createGroupedPaymentBatches, reviewPaymentBatch, processPaymentBatch, autoBatchPaymentOnPost, updatePaymentBillsSetup, submitPaymentBatchForReview } from './paymentBatchService';
+import { getScheduledPaymentsForBatch, bulkApprovePaymentsForPayment, applyBankCharge, removeBankCharge, endorseBillStub, matchPaymentConfirmation, findPaymentBatchByConfirmationReference, approveHeldPayment, holdScheduledPayment, markPaymentForPayment, returnInvoicesFromBatch, getStuckBatches, markPaymentBatchExported, createPaymentBatch, createGroupedPaymentBatches, reviewPaymentBatch, processPaymentBatch, autoBatchPaymentOnPost, updatePaymentBillsSetup, submitPaymentBatchForReview } from './paymentBatchService';
 
 describe('payment batch segregation of duties', () => {
-  it('prevents the preparer from reviewing their own batch', async () => {
+  it('allows the Accounting Associate to finalize a legacy pending batch without supervisor approval', async () => {
     paymentBatchFindUnique.mockResolvedValue({
       id: 'batch-1', status: 'PENDING_SUPERVISOR_REVIEW', created_by: 'same-user', submitted_by: 'same-user',
     });
-    await expect(reviewPaymentBatch('batch-1', 'same-user')).rejects.toThrow('cannot review their own batch');
-    expect(paymentBatchUpdate).not.toHaveBeenCalled();
+    await reviewPaymentBatch('batch-1', 'same-user');
+    expect(paymentBatchUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'batch-1' },
+      data: expect.objectContaining({ status: 'REVIEWED', reviewed_by: 'same-user' }),
+    }));
   });
 
-  it('prevents the preparer or reviewer from executing the batch', async () => {
+  it('does not use preparer/reviewer segregation for execution, but still requires bill-stub evidence', async () => {
     paymentBatchFindUnique.mockResolvedValue({
       id: 'batch-1', batch_number: 'PB1', status: 'REVIEWED', created_by: 'preparer',
-      submitted_by: 'preparer', reviewed_by: 'reviewer', payments: [],
+      submitted_by: 'preparer', reviewed_by: 'reviewer', payments: [{ id: 'pay-1', invoice: { invoice_number: 'INV-1' }, bill_stub: null }],
     });
-    await expect(processPaymentBatch('batch-1', 'preparer')).rejects.toThrow('preparer cannot execute');
-    await expect(processPaymentBatch('batch-1', 'reviewer')).rejects.toThrow('reviewer cannot execute');
+    await expect(processPaymentBatch('batch-1', 'preparer')).rejects.toThrow('uploaded bill stub file');
+    await expect(processPaymentBatch('batch-1', 'reviewer')).rejects.toThrow('uploaded bill stub file');
   });
 });
 
@@ -505,6 +508,8 @@ describe('endorseBillStub', () => {
       balance: 0,
       discount: 0,
       paidAmount: 100,
+      proofFileUrl: '/api/payment-batches/proofs/stub-pay-1.pdf',
+      proofFileName: 'stub-pay-1.pdf',
     }, 'assoc-1');
 
     expect(billStubUpsert).toHaveBeenCalledWith({
@@ -522,12 +527,12 @@ describe('endorseBillStub', () => {
     expect(result).toMatchObject({ payment_status: 'ENDORSED' });
   });
 
-  it('only allows endorsement for reviewed/exported batches', async () => {
+  it('allows bill-stub upload during draft preparation', async () => {
     paymentBatchFindUnique.mockResolvedValue(makeBatch({ status: 'DRAFT' }));
+    billStubUpsert.mockResolvedValue({ id: 'stub-1', payment_id: 'pay-1' });
 
-    await expect(endorseBillStub('batch-1', 'pay-1', { paidAmount: 100 }, 'assoc-1'))
-      .rejects.toThrow('reviewed and exported to the bank');
-    expect(billStubUpsert).not.toHaveBeenCalled();
+    await expect(endorseBillStub('batch-1', 'pay-1', { paidAmount: 100, proofFileUrl: '/stub.pdf' }, 'assoc-1')).resolves.toBeTruthy();
+    expect(paymentUpdate).not.toHaveBeenCalledWith(expect.objectContaining({ data: { status: 'ENDORSED' } }));
   });
 
   it('rejects payments not in the batch or already paid', async () => {
@@ -538,7 +543,7 @@ describe('endorseBillStub', () => {
 
     await expect(endorseBillStub('batch-1', 'pay-99', { paidAmount: 100 }, 'assoc-1'))
       .rejects.toThrow('not part of this batch');
-    await expect(endorseBillStub('batch-1', 'pay-1', { paidAmount: 100 }, 'assoc-1'))
+    await expect(endorseBillStub('batch-1', 'pay-1', { paidAmount: 100, proofFileUrl: '/stub.pdf' }, 'assoc-1'))
       .rejects.toThrow('scheduled or supervisor-approved');
     expect(billStubUpsert).not.toHaveBeenCalled();
   });
@@ -572,6 +577,18 @@ describe('matchPaymentConfirmation', () => {
       data: expect.objectContaining({ action: 'PAYMENT_CONFIRMATION_MATCHED' }),
     });
     expect(result).toMatchObject({ matched: 1, batch_processed: false });
+  });
+
+  it('normalizes case and spacing in confirmation references', async () => {
+    paymentBatchFindUnique.mockResolvedValue(endorsedBatch());
+    paymentCount.mockResolvedValue(1);
+
+    const result = await matchPaymentConfirmation('batch-1', { reference: ' ref - 123 ' }, 'assoc-1');
+
+    expect(result).toMatchObject({ matched: 1 });
+    expect(paymentUpdate).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ status: 'PAID', reference: 'ref - 123' }),
+    }));
   });
 
   it('throws when the reference matches multiple payments and the amount cannot disambiguate', async () => {
@@ -646,6 +663,21 @@ describe('matchPaymentConfirmation', () => {
   });
 });
 
+describe('findPaymentBatchByConfirmationReference', () => {
+  it('resolves a batch from a unique endorsed payment reference for bulk imports', async () => {
+    paymentFindMany.mockResolvedValue([{
+      ...makePayment({ id: 'pay-bulk', batch_id: 'batch-bulk', status: 'ENDORSED', amount: 125, bill_stub: { reference: 'BANK 001' } }),
+      batch: { batch_number: 'PB-BULK-001' },
+    }]);
+
+    await expect(findPaymentBatchByConfirmationReference(' bank001 ', 125)).resolves.toEqual({
+      id: 'batch-bulk',
+      batch_number: 'PB-BULK-001',
+      payment_id: 'pay-bulk',
+    });
+  });
+});
+
 describe('approveHeldPayment', () => {
   it('releases a HELD_BELOW_100 payment to SCHEDULED and notifies the Associate', async () => {
     paymentFindUnique.mockResolvedValue(makePayment({
@@ -671,9 +703,9 @@ describe('approveHeldPayment', () => {
     expect(auditLogCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         invoice_id: 'inv-held',
-        action: 'HELD_BELOW_100_APPROVED',
+        action: 'PAYMENT_HOLD_RELEASED',
         performed_by: 'accounting-supervisor-1',
-        note: expect.stringContaining('Accounting approved'),
+        note: expect.stringContaining('Accounting Associate released'),
       }),
     }));
     expect(notificationCreate).toHaveBeenCalledWith(expect.objectContaining({
@@ -687,7 +719,7 @@ describe('approveHeldPayment', () => {
   it('rejects approval when the payment is not HELD_BELOW_100', async () => {
     paymentFindUnique.mockResolvedValue(makePayment({ id: 'pay-1', status: 'SCHEDULED' }));
 
-    await expect(approveHeldPayment('pay-1', 'purch-1')).rejects.toThrow('Only a held payment');
+    await expect(approveHeldPayment('pay-1', 'purch-1')).rejects.toThrow('Only a manually held payment');
     expect(paymentUpdate).not.toHaveBeenCalled();
   });
 
@@ -699,8 +731,35 @@ describe('approveHeldPayment', () => {
   });
 });
 
-describe('markPaymentForPayment', () => {
-  it('marks a scheduled, unbatched payment FOR_PAYMENT and clears batch selection', async () => {
+describe('holdScheduledPayment', () => {
+  it('lets Accounting Associate manually hold an unbatched scheduled payment', async () => {
+    paymentFindUnique.mockResolvedValue(makePayment({ id: 'pay-hold', status: 'SCHEDULED', batch_id: null }));
+    paymentUpdate.mockResolvedValue({ id: 'pay-hold', status: 'HELD_BELOW_100' });
+
+    const result = await holdScheduledPayment('pay-hold', 'assoc-1', 'Waiting for bank confirmation');
+
+    expect(result.status).toBe('HELD_BELOW_100');
+    expect(paymentUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'pay-hold' },
+      data: expect.objectContaining({
+        status: 'HELD_BELOW_100',
+        remarks: 'Waiting for bank confirmation',
+      }),
+    }));
+    expect(auditLogCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ action: 'PAYMENT_HOLD_PLACED', performed_by: 'assoc-1' }),
+    }));
+  });
+
+  it('does not allow a payment already inside a batch to be held', async () => {
+    paymentFindUnique.mockResolvedValue(makePayment({ id: 'pay-batched', status: 'SCHEDULED', batch_id: 'batch-1' }));
+    await expect(holdScheduledPayment('pay-batched', 'assoc-1')).rejects.toThrow('Remove the payment from its batch');
+    expect(paymentUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe('markPaymentForPayment (legacy compatibility)', () => {
+  it('keeps a scheduled, unbatched payment SCHEDULED and clears batch selection', async () => {
     paymentFindUnique.mockResolvedValue(makePayment({
       id: 'pay-fp',
       invoice_id: 'inv-fp',
@@ -710,24 +769,24 @@ describe('markPaymentForPayment', () => {
       selected_by: 'assoc-1',
       selected_at: new Date(),
     }));
-    paymentUpdate.mockResolvedValue({ id: 'pay-fp', status: 'FOR_PAYMENT' });
+    paymentUpdate.mockResolvedValue({ id: 'pay-fp', status: 'SCHEDULED' });
 
     const result = await markPaymentForPayment('pay-fp', 'assoc-1');
 
     expect(paymentUpdate).toHaveBeenCalledWith({
       where: { id: 'pay-fp' },
       data: {
-        status: 'FOR_PAYMENT',
+        status: 'SCHEDULED',
         selected_for_batch: false,
         selected_by: null,
         selected_at: null,
       },
     });
-    expect(result.status).toBe('FOR_PAYMENT');
+    expect(result.status).toBe('SCHEDULED');
     expect(auditLogCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         invoice_id: 'inv-fp',
-        action: 'PAYMENT_MARKED_FOR_PAYMENT',
+        action: 'PAYMENT_READY_FOR_BATCH',
         performed_by: 'assoc-1',
       }),
     }));
@@ -835,10 +894,11 @@ describe('returnInvoicesFromBatch', () => {
 
 describe('markPaymentBatchExported', () => {
   it('marks the batch EXPORTED_TO_BANK and records exported_at', async () => {
-    paymentBatchFindUnique.mockResolvedValue(makeBatch({ id: 'batch-1', status: 'REVIEWED' }));
+    paymentBatchFindUnique.mockResolvedValue(makeBatch({ id: 'batch-1', status: 'REVIEWED', payments: [makePayment({ id: 'pay-1', bill_stub: { proof_file_url: '/stub.pdf', proof_file_name: 'stub.pdf' } })] }));
     paymentBatchUpdate.mockResolvedValue({ id: 'batch-1', status: 'EXPORTED_TO_BANK' });
 
     await markPaymentBatchExported('batch-1', 'sup-1');
+    expect(billStubUpsert).not.toHaveBeenCalled();
 
     const updateCall = paymentBatchUpdate.mock.calls[0][0];
     expect(updateCall.where).toEqual({ id: 'batch-1' });
@@ -852,7 +912,13 @@ describe('markPaymentBatchExported', () => {
   it('rejects exporting a batch that is not REVIEWED', async () => {
     paymentBatchFindUnique.mockResolvedValue(makeBatch({ id: 'batch-1', status: 'DRAFT' }));
 
-    await expect(markPaymentBatchExported('batch-1', 'sup-1')).rejects.toThrow('Only a reviewed batch can be exported');
+    await expect(markPaymentBatchExported('batch-1', 'sup-1')).rejects.toThrow('Only a batch marked ready for payment can be exported');
+    expect(paymentBatchUpdate).not.toHaveBeenCalled();
+  });
+
+  it('rejects export when a payment has no uploaded bill-stub file', async () => {
+    paymentBatchFindUnique.mockResolvedValue(makeBatch({ id: 'batch-1', status: 'REVIEWED' }));
+    await expect(markPaymentBatchExported('batch-1', 'assoc-1')).rejects.toThrow('uploaded bill stub file');
     expect(paymentBatchUpdate).not.toHaveBeenCalled();
   });
 });
@@ -1064,7 +1130,7 @@ describe('autoBatchPaymentOnPost (posting → batch)', () => {
       'assoc-1'
     );
 
-    expect(result).toEqual({ batched: false, reason: 'HELD_BELOW_100' });
+    expect(result).toEqual({ batched: false, reason: 'MANUAL_HOLD' });
     expect(paymentBatchFindFirst).not.toHaveBeenCalled();
     expect(paymentBatchCreate).not.toHaveBeenCalled();
     expect(notificationCreate).not.toHaveBeenCalled();
@@ -1133,11 +1199,11 @@ describe('QB Pay Bills-style payment setup', () => {
     expect(paymentBatchUpdate).not.toHaveBeenCalled();
   });
 
-  it('blocks submit for supervisor review until the Pay Bills setup exists', async () => {
+  it('blocks marking a batch ready until the Pay Bills setup exists', async () => {
     paymentBatchFindUnique.mockResolvedValue({
       id: 'batch-1',
       status: 'DRAFT',
-      payments: [{ id: 'p1' }],
+      payments: [{ id: 'p1', invoice: { invoice_number: 'INV-1' }, bill_stub: { proof_file_url: '/stub.pdf' } }],
       payment_method: null,
       payment_date: null,
     });
@@ -1145,19 +1211,19 @@ describe('QB Pay Bills-style payment setup', () => {
     expect(paymentBatchUpdate).not.toHaveBeenCalled();
   });
 
-  it('allows submit once the payment method and date are saved', async () => {
+  it('marks the batch REVIEWED directly once setup and bill-stub files are saved', async () => {
     paymentBatchFindUnique.mockResolvedValue({
       id: 'batch-1',
       status: 'DRAFT',
-      payments: [{ id: 'p1' }],
+      payments: [{ id: 'p1', invoice: { invoice_number: 'INV-1' }, bill_stub: { proof_file_url: '/stub.pdf' } }],
       payment_method: 'WIRE',
       payment_date: new Date('2026-09-09'),
     });
-    paymentBatchUpdate.mockResolvedValue({ id: 'batch-1', status: 'PENDING_SUPERVISOR_REVIEW' });
+    paymentBatchUpdate.mockResolvedValue({ id: 'batch-1', status: 'REVIEWED' });
 
     const result = await submitPaymentBatchForReview('batch-1', 'user-1');
     expect(paymentBatchUpdate).toHaveBeenCalledTimes(1);
-    expect(result.status).toBe('PENDING_SUPERVISOR_REVIEW');
+    expect(result.status).toBe('REVIEWED');
   });
 
   it('pre-fills the QB Pay Bills defaults (EFT, next Wednesday) on auto-created batches', async () => {

@@ -64,6 +64,7 @@ export interface POAuditResult {
 }
 
 export interface POAuditInput {
+  invoice_number?: string;
   po_number?: string;
   mpo_number?: string;
   amount: number;
@@ -125,6 +126,7 @@ export class POAuditService {
       // Call NextGen compare service
       const nextGenService = NextGenService.getInstance();
       const result = await nextGenService.compareInvoiceWithPO({
+        invoice_number: invoiceData.invoice_number,
         po_number: invoiceData.po_number,
         mpo_number: invoiceData.mpo_number,
         amount: invoiceData.amount,

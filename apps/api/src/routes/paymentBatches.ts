@@ -24,20 +24,24 @@ router.post('/deselect', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_AD
 router.post('/payments/bulk-approve-for-payment', authorize(UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.bulkApprovePaymentsForPaymentController);
 router.post('/payments/:paymentId/remarks', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.setPaymentRemarksController);
 router.post('/payments/:paymentId/for-payment', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.markPaymentForPaymentController);
+router.post('/payments/:paymentId/hold', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.holdScheduledPaymentController);
 router.post('/payments/:paymentId/approve-for-payment', authorize(UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.approvePaymentForPaymentController);
 router.post('/payments/:paymentId/reject-for-payment', authorize(UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.rejectPaymentForPaymentController);
-router.post('/payments/:paymentId/approve-held', authorize(UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.approveHeldPaymentController);
+router.post('/payments/:paymentId/approve-held', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.approveHeldPaymentController);
 router.post('/:batchId/payment-setup', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.updatePaymentBillsSetupController);
 router.post('/:batchId/bank-charge', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.applyBankChargeController);
 router.delete('/:batchId/bank-charge/:paymentId', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.removeBankChargeController);
-router.post('/:batchId/payments/:paymentId/endorse', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), upload.single('stubFile'), paymentBatchController.endorseBillStubController);
-router.post('/:batchId/match-confirmation', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.matchPaymentConfirmationController);
-router.post('/bulk-confirmations', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), upload.single('file'), paymentBatchController.bulkMatchPaymentConfirmationsController);
+router.post('/:batchId/payments/:paymentId/endorse', authorize(UserRole.ACCOUNTING_ASSOCIATE), upload.single('stubFile'), paymentBatchController.endorseBillStubController);
+router.post('/:batchId/match-confirmation', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.matchPaymentConfirmationController);
+router.post('/bulk-confirmations', authorize(UserRole.ACCOUNTING_ASSOCIATE), upload.single('file'), paymentBatchController.bulkMatchPaymentConfirmationsController);
 router.post('/:batchId/submit', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.submitPaymentBatchController);
-router.post('/:batchId/review', authorize(UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.reviewPaymentBatchController);
-router.post('/:batchId/return', authorize(UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.returnPaymentBatchController);
-router.post('/:batchId/return-invoices', authorize(UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.returnInvoicesFromBatchController);
-router.post('/:batchId/export', authorize(UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.exportPaymentBatchController);
+// Retained only for legacy batches already carrying the old pending-review
+// status. New batches are marked REVIEWED directly by the Accounting Associate
+// through /submit; the Supervisor is no longer part of the payment-batch flow.
+router.post('/:batchId/review', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.reviewPaymentBatchController);
+router.post('/:batchId/return', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.returnPaymentBatchController);
+router.post('/:batchId/return-invoices', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.returnInvoicesFromBatchController);
+router.post('/:batchId/export', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.exportPaymentBatchController);
 router.get('/:batchId/export-per-vendor', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), paymentBatchController.exportBatchPerVendorController);
 router.post('/:batchId/process', authorize(UserRole.ACCOUNTING_ASSOCIATE), upload.single('proof'), paymentBatchController.processPaymentBatchController);
 router.post('/:batchId/cancel', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), paymentBatchController.cancelPaymentBatchController);

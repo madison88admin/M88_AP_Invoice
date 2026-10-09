@@ -87,6 +87,7 @@ export const uploadInvoice = async (
       try {
         const nextGenService = NextGenService.getInstance();
         const nextGenData = await nextGenService.compareInvoiceWithPO({
+          invoice_number: ocrResult.invoice_number,
           po_number: ocrResult.customer_po_number,
           mpo_number: ocrResult.mpo_number,
           amount: ocrResult.total_amount,
@@ -699,6 +700,7 @@ async function processSingleInvoice(
         try {
           const nextGenService = NextGenService.getInstance();
           const nextGenData = await nextGenService.compareInvoiceWithPO({
+            invoice_number: madisonResult.invoice_number || undefined,
             po_number: madisonResult.po_number || undefined,
             mpo_number: madisonResult.mpo_number || undefined,
             amount: madisonResult.amount || 0,
@@ -796,6 +798,7 @@ async function processSingleInvoice(
       poAuditService.scheduleAudit(
         poAuditId,
         {
+          invoice_number: madisonResult.invoice_number || undefined,
           po_number: madisonResult.po_number || undefined,
           mpo_number: madisonResult.mpo_number || undefined,
           amount: madisonResult.amount || 0,
@@ -815,6 +818,7 @@ async function processSingleInvoice(
             quantity: Number(line.quantity || 0),
             unit_price: Number(line.unit_price || line.unitPrice || 0),
             line_amount: Number(line.line_amount || line.extended_price || line.amount || 0),
+            invoice_number: line.invoice_number || madisonResult.invoice_number || undefined,
             size: line.size || null,
           })),
         },
@@ -824,6 +828,7 @@ async function processSingleInvoice(
       try {
         const nextGenService = NextGenService.getInstance();
         const nextGenData = await nextGenService.compareInvoiceWithPO({
+          invoice_number: madisonResult.invoice_number || undefined,
           po_number: madisonResult.po_number || undefined,
           mpo_number: madisonResult.mpo_number,
           amount: madisonResult.amount || 0,
@@ -843,6 +848,7 @@ async function processSingleInvoice(
             quantity: Number(line.quantity || 0),
             unit_price: Number(line.unit_price || line.unitPrice || 0),
             line_amount: Number(line.line_amount || line.extended_price || line.amount || 0),
+            invoice_number: line.invoice_number || madisonResult.invoice_number || undefined,
             size: line.size || null,
           })),
         });

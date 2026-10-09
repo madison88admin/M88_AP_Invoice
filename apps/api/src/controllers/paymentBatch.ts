@@ -29,7 +29,9 @@ import {
   removeBankCharge,
   endorseBillStub,
   matchPaymentConfirmation,
+  findPaymentBatchByConfirmationReference,
   approveHeldPayment,
+  holdScheduledPayment,
   getStuckBatches,
 } from '../services/paymentBatchService';
 import { exportPaymentReconciliation } from '../services/reconciliationExportService';
@@ -350,6 +352,20 @@ export const approveHeldPaymentController = async (
   }
 };
 
+export const holdScheduledPaymentController = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { paymentId } = req.params;
+    const result = await holdScheduledPayment(paymentId, req.user!.id, req.body?.reason);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const endorseBillStubController = async (
   req: AuthRequest,
   res: Response,
@@ -413,8 +429,10 @@ export const matchPaymentConfirmationController = async (
   }
 };
 
-/** Import bank confirmations from CSV/XLSX. Required columns: batch_number or
- * batch_id, reference; optional amount, paid_date, payment_ids (comma-separated). */
+/** Import bank confirmations from CSV/XLSX. A row may identify its target by
+ * batch_number/batch_id, or by a unique endorsed payment reference. Optional
+ * amount disambiguates repeated references; paid_date and payment_ids are
+ * also supported. */
 export const bulkMatchPaymentConfirmationsController = async (
   req: AuthRequest, res: Response, next: NextFunction
 ) => {
@@ -440,10 +458,15 @@ export const bulkMatchPaymentConfirmationsController = async (
           const found = await (await import('../services/paymentBatchService')).findPaymentBatchByNumber(batchNumber);
           resolvedBatchId = found?.id || '';
         }
-        if (!resolvedBatchId) throw new Error('batch_id or batch_number is required');
+        const confirmationAmount = amountRaw === '' || amountRaw == null ? undefined : Number(amountRaw);
+        if (!resolvedBatchId && reference) {
+          const found = await findPaymentBatchByConfirmationReference(reference, confirmationAmount);
+          resolvedBatchId = found?.id || '';
+        }
+        if (!resolvedBatchId) throw new Error('batch_id, batch_number, or a unique endorsed payment reference is required');
         const result = await matchPaymentConfirmation(resolvedBatchId, {
           reference: reference || undefined,
-          amount: amountRaw === '' || amountRaw == null ? undefined : Number(amountRaw),
+          amount: confirmationAmount,
           paidDate: paidDateRaw ? new Date(paidDateRaw as any).toISOString() : undefined,
           paymentIds: idsRaw ? idsRaw.split(',').map(x => x.trim()).filter(Boolean) : undefined,
         }, req.user!.id);

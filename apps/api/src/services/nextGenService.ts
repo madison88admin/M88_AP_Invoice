@@ -234,6 +234,9 @@ export interface NextGenPOData {
     selling_uom?: string;
     received_quantity?: number;
     remaining_quantity?: number;
+    /** Optional fields returned by some MPO line endpoints. */
+    invoice_number?: string;
+    status?: string;
   }>;
   /** False means the line endpoints failed; [] must not be treated as valid zero lines. */
   line_items_available?: boolean;
@@ -258,6 +261,7 @@ export type NextGenValidationStatus =
 
 export interface InvoiceComparisonLine {
   line_number?: number;
+  invoice_number?: string;
   mpo_order_sequence?: string;
   material_code?: string;
   material_name?: string;
@@ -275,7 +279,18 @@ export interface NextGenLineComparison {
   quantity?: { invoice: number; nextgen: number; difference: number; match: boolean };
   unit_price?: { invoice: number; nextgen: number; difference: number; match: boolean };
   amount?: { invoice: number; nextgen: number; difference: number; variance_pct: number; match: boolean };
+  invoice_number?: { invoice: string; nextgen: string; match: boolean; checked: boolean };
+  mpo_status?: { nextgen: string; allowed: boolean; checked: boolean };
   reason?: string;
+}
+
+function normalizeInvoiceReference(value: unknown): string {
+  return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+function isBlockedMPOStatus(value: unknown): boolean {
+  const status = String(value || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+  return new Set(['CANCELLED', 'CANCELED', 'VOID', 'REJECTED', 'DELETED', 'INACTIVE']).has(status);
 }
 
 /** Convert the actual NextGen MPO-line payload into stable AP validation fields. */
@@ -293,6 +308,12 @@ export function mapNextGenMPOLine(li: any) {
   const customerReference = String(li.CommodityCustomerReference ?? li.MaterialCustomerReference ?? '').trim();
   const itemCode = String(externalReference || customerReference || li.ItemCode || li.item_code || materialName).trim();
   const materialId = Number(li.CommodityId ?? li.MaterialId ?? li.material_id ?? 0) || undefined;
+  const invoiceNumber = String(
+    li.InvoiceNumber ?? li.InvoiceNo ?? li.SupplierInvoiceNumber ?? li.invoice_number ?? ''
+  ).trim();
+  const status = String(
+    li.LineStatusName ?? li.InvoiceStatusName ?? li.StatusName ?? li.Status ?? li.status ?? ''
+  ).trim();
 
   return {
     order_id: Number(li.OrderId ?? li.order_id ?? 0) || undefined,
@@ -313,6 +334,8 @@ export function mapNextGenMPOLine(li: any) {
     selling_uom: String(li.SellingUnitOfMeasureName ?? li.selling_uom ?? '').trim() || undefined,
     received_quantity: Number(li.Received ?? li.received_quantity ?? 0) || undefined,
     remaining_quantity: Number(li.Balance ?? li.remaining_quantity ?? 0) || undefined,
+    invoice_number: invoiceNumber || undefined,
+    status: status || undefined,
     color: li.ColourName || li.OptionColourName || '',
     size: li.SizeName || '',
   };
@@ -1780,6 +1803,7 @@ export class NextGenService {
   */
   async compareInvoiceWithPO(
     invoiceData: {
+      invoice_number?: string;
       po_number?: string;
       mpo_number?: string;
       amount: number;
@@ -1893,6 +1917,9 @@ export class NextGenService {
       match_level: hasLineSelector ? lineResolution.matchLevel : 'MPO_HEADER',
     };
     const lineComparisons: NextGenLineComparison[] = [];
+    const mpoStatusDifference = isBlockedMPOStatus(nextgenData.status)
+      ? `NextGen MPO has terminal status "${nextgenData.status}"`
+      : null;
     for (const invoiceLine of invoiceData.line_items || []) {
       const resolution = matchMPOLines(nextgenData.line_items || [], {
         orderSequence: invoiceLine.mpo_order_sequence,
@@ -1914,6 +1941,14 @@ export class NextGenService {
       }
 
       const nextGenLine = resolution.lines[0];
+      const nextGenLineInvoiceNumber = String(nextGenLine.invoice_number || '').trim();
+      const invoiceNumber = String(invoiceLine.invoice_number || invoiceData.invoice_number || '').trim();
+      const invoiceNumberChecked = Boolean(nextGenLineInvoiceNumber && invoiceNumber);
+      const invoiceNumberMatch = !invoiceNumberChecked
+        || normalizeInvoiceReference(invoiceNumber) === normalizeInvoiceReference(nextGenLineInvoiceNumber);
+      const lineStatus = String(nextGenLine.status || '').trim();
+      const lineStatusChecked = Boolean(lineStatus);
+      const lineStatusAllowed = !lineStatusChecked || !isBlockedMPOStatus(lineStatus);
       const quantityDifference = Number(invoiceLine.quantity || 0) - Number(nextGenLine.quantity || 0);
       const unitPriceDifference = Number(invoiceLine.unit_price || 0) - Number(nextGenLine.unit_price || 0);
       const amountDifference = Number(invoiceLine.line_amount || 0) - Number(nextGenLine.total_amount || 0);
@@ -1926,10 +1961,21 @@ export class NextGenService {
 
       lineComparisons.push({
         invoice_line_number: invoiceLine.line_number,
-        status: quantityMatch && unitPriceMatch && lineAmountMatch ? 'MATCH' : 'MISMATCH',
+        status: quantityMatch && unitPriceMatch && lineAmountMatch && invoiceNumberMatch && lineStatusAllowed ? 'MATCH' : 'MISMATCH',
         match_level: resolution.matchLevel,
         matched_mpo_line: nextGenLine.line_reference,
         matched_material: nextGenLine.item_code || nextGenLine.material_name,
+        invoice_number: {
+          invoice: invoiceNumber,
+          nextgen: nextGenLineInvoiceNumber,
+          match: invoiceNumberMatch,
+          checked: invoiceNumberChecked,
+        },
+        mpo_status: {
+          nextgen: lineStatus,
+          allowed: lineStatusAllowed,
+          checked: lineStatusChecked,
+        },
         quantity: {
           invoice: Number(invoiceLine.quantity || 0),
           nextgen: Number(nextGenLine.quantity || 0),
@@ -1949,9 +1995,13 @@ export class NextGenService {
           variance_pct: Number(amountVariance.toFixed(2)),
           match: lineAmountMatch,
         },
-        reason: quantityMatch && unitPriceMatch && lineAmountMatch
+        reason: quantityMatch && unitPriceMatch && lineAmountMatch && invoiceNumberMatch && lineStatusAllowed
           ? 'Invoice line matches NextGen quantity, unit price, and amount'
-          : 'One or more line values differ from NextGen',
+          : [
+            !invoiceNumberMatch ? `Invoice number ${invoiceNumber} differs from NextGen line ${nextGenLineInvoiceNumber}` : '',
+            !lineStatusAllowed ? `NextGen line status is ${lineStatus}` : '',
+            !(quantityMatch && unitPriceMatch && lineAmountMatch) ? 'One or more line values differ from NextGen' : '',
+          ].filter(Boolean).join('; '),
       });
     }
 
@@ -1985,6 +2035,7 @@ export class NextGenService {
         differences.push(`Line ${line.invoice_line_number ?? '?'}: ${line.reason || line.status}`);
       }
     }
+    if (mpoStatusDifference) differences.push(mpoStatusDifference);
 
     // Vendor comparison (fuzzy matching for full company names)
     const normalizeVendorName = (name: string): string => {
@@ -2041,6 +2092,7 @@ export class NextGenService {
     const hasLineNotFound = lineComparisons.some(line => line.status === 'LINE_NOT_FOUND');
     const hasLineMismatch = lineComparisons.some(line => line.status === 'MISMATCH');
     const isMatch = amountMatch && currencyMatch && vendorMatch && brandMatch && seasonMatch && orderTypeMatch
+      && !mpoStatusDifference
       && lineComparisons.every(line => line.status === 'MATCH');
     const status: NextGenValidationStatus = hasManualReview
       ? 'MANUAL_REVIEW'

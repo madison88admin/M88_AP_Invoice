@@ -92,33 +92,27 @@ describe('posting document mappings', () => {
   });
 });
 
-describe('schedulePayment — sub-$100 hold (item 8)', () => {
-  it('holds payments under the threshold as HELD_BELOW_100 and notifies Accounting', async () => {
-    invoiceFindUnique.mockResolvedValue(makeInvoice({ total_amount: 59.67 }));
-    paymentCreate.mockResolvedValue({ id: 'pay-held', status: 'HELD_BELOW_100' });
+describe('schedulePayment — Accounting-controlled holds', () => {
+  it('schedules payments below $50 without an automatic hold', async () => {
+    invoiceFindUnique.mockResolvedValue(makeInvoice({ total_amount: 49.67 }));
+    paymentCreate.mockResolvedValue({ id: 'pay-scheduled', status: 'SCHEDULED' });
 
     const payment = await schedulePayment('inv-1', undefined, 'assoc-1');
 
     expect(paymentCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
-        status: 'HELD_BELOW_100',
+        status: 'SCHEDULED',
         payment_date_source: 'DUE_DATE',
       }),
     }));
-    expect(payment.status).toBe('HELD_BELOW_100');
+    expect(payment.status).toBe('SCHEDULED');
+    expect(notificationCreate).not.toHaveBeenCalled();
 
-    // Accounting owns payment holds and release approval.
-    const holdNotification = notificationCreate.mock.calls[0][0];
-    expect(holdNotification.target_role).toBe('ACCOUNTING_SUPERVISOR');
-    expect(holdNotification.type).toBe('warning');
-    expect(holdNotification.category).toBe('payment');
-    expect(holdNotification.title).toContain('held');
-
-    // Audit note documents the hold + Purchasing notification.
+    // Audit note documents that no amount-based hold was applied.
     expect(auditLogCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         action: 'PAYMENT_SCHEDULED',
-        note: expect.stringContaining('HELD_BELOW_100'),
+        note: expect.stringContaining('no automatic amount-based hold'),
       }),
     }));
   });
@@ -137,15 +131,15 @@ describe('schedulePayment — sub-$100 hold (item 8)', () => {
     expect(notificationCreate).not.toHaveBeenCalled();
   });
 
-  it('uses the manual payment date and records MANUAL source even when held', async () => {
-    invoiceFindUnique.mockResolvedValue(makeInvoice({ total_amount: 59.67 }));
-    paymentCreate.mockResolvedValue({ id: 'pay-held', status: 'HELD_BELOW_100' });
+  it('uses the manual payment date and records MANUAL source even for a low-value payment', async () => {
+    invoiceFindUnique.mockResolvedValue(makeInvoice({ total_amount: 49.67 }));
+    paymentCreate.mockResolvedValue({ id: 'pay-scheduled', status: 'SCHEDULED' });
 
     await schedulePayment('inv-1', new Date('2026-09-01'), 'assoc-1');
 
     expect(paymentCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
-        status: 'HELD_BELOW_100',
+        status: 'SCHEDULED',
         payment_date_source: 'MANUAL',
       }),
     }));
@@ -171,7 +165,7 @@ describe('schedulePayment — sub-$100 hold (item 8)', () => {
   });
 });
 
-describe('postInvoice — the sub-$100 hold lives at scheduling, not posting', () => {
+describe('postInvoice — payment holds are controlled by Accounting', () => {
   function makePostableInvoice(overrides: Record<string, any> = {}) {
     return {
       id: 'inv-post',
@@ -179,7 +173,7 @@ describe('postInvoice — the sub-$100 hold lives at scheduling, not posting', (
       invoice_type: 'INVOICE',
       invoice_date: new Date('2026-08-01'),
       due_date: new Date('2026-08-15'),
-      total_amount: 59.67,
+      total_amount: 49.67,
       currency: 'USD',
       mpo_number: null,
       po_number: null,
@@ -207,14 +201,14 @@ describe('postInvoice — the sub-$100 hold lives at scheduling, not posting', (
     };
   }
 
-  it('posts a sub-$100 invoice and holds its payment at scheduling (HELD_BELOW_100) instead of blocking on vendor cumulative', async () => {
+  it('posts a sub-$50 invoice and schedules its payment without an automatic hold', async () => {
     invoiceFindUnique
       .mockResolvedValueOnce(makePostableInvoice())
       .mockResolvedValueOnce(makePostableInvoice({ status: 'POSTED_TO_QB' }));
     invoiceUpdate.mockResolvedValue({});
     auditLogCreate.mockResolvedValue({});
     stageTimestampCreate.mockResolvedValue({});
-    paymentCreate.mockResolvedValue({ id: 'pay-held', status: 'HELD_BELOW_100' });
+    paymentCreate.mockResolvedValue({ id: 'pay-scheduled', status: 'SCHEDULED' });
 
     // postInvoice returns a union (ON_HOLD branch vs posted branch) — the posted
     // branch is what we expect here, so narrow it for the assertions.
@@ -225,9 +219,9 @@ describe('postInvoice — the sub-$100 hold lives at scheduling, not posting', (
     expect(invoiceUpdate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ status: 'POSTED_TO_QB' }),
     }));
-    // The payment reached scheduling and was held the correct way.
+    // The payment reached scheduling and remained batchable.
     expect(paymentCreate).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ status: 'HELD_BELOW_100' }),
+      data: expect.objectContaining({ status: 'SCHEDULED' }),
     }));
     // No vendor-cumulative auto-hold audit entry.
     expect(auditLogCreate.mock.calls.some((c: any) => c[0]?.data?.action === 'ACCOUNTING_AUTO_HOLD')).toBe(false);

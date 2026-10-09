@@ -3,6 +3,7 @@ import { hasPermission } from '../lib/roleAccess';
 import { getPendingApprovalsForUser } from '../lib/approvalQueue';
 import { InvoiceStatus } from '@ap-invoice/shared';
 import { CheckCircle, AlertTriangle, Send, Clock, FileText } from 'lucide-react';
+import { isCoordinatorQueueStatus } from '../lib/coordinatorQueue';
 
 interface MyTasksWidgetProps {
   user: { role: string; name: string; email: string } | null;
@@ -25,8 +26,8 @@ export default function MyTasksWidget({ user, invoices, onFilterClick }: MyTasks
     ? invoices.filter(inv => inv.status === InvoiceStatus.POSTED_TO_QB)
     : [];
 
-  const pendingExceptions = hasPermission(role, 'canEditInvoice')
-    ? invoices.filter(inv => inv.status === InvoiceStatus.EXCEPTION_FLAGGED)
+  const pendingCoordinator = hasPermission(role, 'canEditInvoice')
+    ? invoices.filter(inv => isCoordinatorQueueStatus(String(inv.status)))
     : [];
 
   const tasks = [
@@ -61,14 +62,14 @@ export default function MyTasksWidget({ user, invoices, onFilterClick }: MyTasks
       show: pendingPayments.length > 0,
     },
     {
-      label: 'Exceptions to Resolve',
-      count: pendingExceptions.length,
+      label: 'Pending Coordinator Review',
+      count: pendingCoordinator.length,
       icon: AlertTriangle,
       color: 'var(--accent-red)',
       bg: 'color-mix(in srgb, var(--accent-red) 10%, transparent)',
       border: 'color-mix(in srgb, var(--accent-red) 20%, transparent)',
-      status: InvoiceStatus.EXCEPTION_FLAGGED,
-      show: pendingExceptions.length > 0,
+      status: InvoiceStatus.PENDING_COORDINATOR,
+      show: pendingCoordinator.length > 0,
     },
   ].filter(t => t.show);
 

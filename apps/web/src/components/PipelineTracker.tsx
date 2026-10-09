@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { Clock, CheckCircle, Circle, AlertTriangle, ArrowRight, Hourglass } from 'lucide-react';
 import { calcWorkingHoursElapsed } from '@ap-invoice/shared';
 import { MockInvoice } from '../lib/mockData';
+import { isCoordinatorQueueStatus } from '../lib/coordinatorQueue';
 
 interface PipelineTrackerProps {
   invoice: MockInvoice;
@@ -10,8 +11,6 @@ interface PipelineTrackerProps {
 const STAGE_FLOW = [
   { stage: 'RECEIVED', label: 'Received', role: 'System' },
   { stage: 'OCR_PROCESSING', label: 'OCR Processing', role: 'System' },
-  { stage: 'VALIDATION_PENDING', label: 'Validation', role: 'Coordinator' },
-  { stage: 'EXCEPTION_FLAGGED', label: 'Exception', role: 'Coordinator' },
   { stage: 'PENDING_COORDINATOR', label: 'Coordinator Approval', role: 'Purchasing Coordinator' },
   { stage: 'PENDING_MANAGER', label: 'Manager Approval', role: 'Purchasing Manager' },
   { stage: 'PENDING_MLO_ACCOUNT_HOLDER', label: 'MLO Account Holder', role: 'MLO Account Holder' },
@@ -45,12 +44,16 @@ function formatTimestamp(dateStr: string): string {
 export default function PipelineTracker({ invoice }: PipelineTrackerProps) {
   const timestamps = (invoice as any).stage_timestamps || [];
   const signatures = (invoice as any).signatures || [];
-  const currentStatus = invoice.status;
+  // Validation and exception states are retained in the audit trail but are
+  // presented as one coordinator hand-off stage in the visible timeline.
+  const currentStatus = isCoordinatorQueueStatus(String(invoice.status))
+    ? 'PENDING_COORDINATOR'
+    : invoice.status;
 
   const stageMap = useMemo(() => {
     const map: Record<string, { entered_at: string; exited_at?: string; sla_hours: number; is_breached: boolean; occurrences: number }> = {};
     for (const ts of timestamps) {
-      const key = ts.stage;
+      const key = isCoordinatorQueueStatus(String(ts.stage)) ? 'PENDING_COORDINATOR' : ts.stage;
       if (!map[key]) {
         map[key] = { entered_at: ts.entered_at, exited_at: ts.exited_at, sla_hours: ts.sla_hours, is_breached: ts.is_breached, occurrences: 1 };
       } else {

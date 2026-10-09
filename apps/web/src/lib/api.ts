@@ -242,6 +242,7 @@ export const paymentBatchApi = {
   markForPayment: (paymentId: string) => api.post(`/api/payment-batches/payments/${paymentId}/for-payment`),
   approveForPayment: (paymentId: string, note?: string) => api.post(`/api/payment-batches/payments/${paymentId}/approve-for-payment`, note ? { note } : {}),
   rejectForPayment: (paymentId: string, reason: string) => api.post(`/api/payment-batches/payments/${paymentId}/reject-for-payment`, { reason }),
+  holdPayment: (paymentId: string, reason?: string) => api.post(`/api/payment-batches/payments/${paymentId}/hold`, reason ? { reason } : {}),
   bulkApproveForPayment: (paymentIds: string[], note?: string) => api.post('/api/payment-batches/payments/bulk-approve-for-payment', { paymentIds, note }),
   approveHeld: (paymentId: string) => api.post(`/api/payment-batches/payments/${paymentId}/approve-held`),
 };
@@ -276,6 +277,8 @@ export const vendorApi = {
   getById: (id: string) => api.get(`/api/vendors/${id}`),
   create: (data: any) => api.post('/api/vendors', data),
   update: (id: string, data: any) => api.patch(`/api/vendors/${id}`, data),
+  delete: (id: string) => api.delete(`/api/vendors/${id}`),
+  bulkDelete: (ids: string[]) => api.delete('/api/vendors/bulk', { data: { ids } }),
   getSuggestions: (search: string, limit?: number) =>
     api.get('/api/vendors/suggestions', { params: { search, limit } }),
   requestBankUpdate: (id: string, data: { bank_name?: string; swift_code?: string; account_number?: string; reason: string }) =>

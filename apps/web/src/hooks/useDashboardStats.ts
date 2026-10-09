@@ -1,6 +1,7 @@
 ﻿import { useQuery } from '@tanstack/react-query';
 import { invoiceApi } from '../lib/api';
 import { calcWorkingHoursElapsed } from '@ap-invoice/shared';
+import { isCoordinatorQueueStatus } from '../lib/coordinatorQueue';
 
 interface DashboardStats {
   pendingValidation: number;
@@ -36,7 +37,7 @@ export function useDashboardStats() {
       weekEnd.setDate(weekStart.getDate() + 6);
       weekEnd.setHours(23, 59, 59, 999);
 
-      const pendingValidation = invoices.filter((i: any) => i.status === 'VALIDATION_PENDING').length;
+      const pendingValidation = invoices.filter((i: any) => isCoordinatorQueueStatus(i.status)).length;
       const awaitingApproval = invoices.filter((i: any) =>
         ['PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_MLO_ACCOUNT_HOLDER', 'PENDING_MLO_PLANNING_MANAGER', 'PENDING_SR_MANAGER', 'PENDING_POLLY', 'PENDING_PRESIDENT'].includes(i.status)
       ).length;

@@ -122,8 +122,9 @@ export function determineApprovalRoute(
 /**
  * Check if an invoice qualifies for auto-approval (low-risk Planning Tier)
  * Criteria: Planning Tier (≤$2,000) + vendor bank verified + OCR confidence ≥90% + no exceptions + not duplicate
- * Note: The sub-$100 hold is applied at payment scheduling time (HELD_BELOW_100 +
- * Accounting Supervisor release approval), never during validation or approval — see schedulePayment.
+ * Note: payment holds are not applied automatically during validation or
+ * approval. Accounting Associate decides whether to hold or release a payment
+ * after it is scheduled.
  */
 async function isAutoApprovalEligible(invoice: any): Promise<{ eligible: boolean; reason?: string }> {
   // Auto-approval disabled: ALL invoices must go through Purchasing Coordinator for validation

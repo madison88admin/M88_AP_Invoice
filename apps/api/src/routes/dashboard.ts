@@ -24,10 +24,12 @@ router.get('/role', async (req: any, res) => {
         batchStatuses: ['DRAFT', 'RETURNED_FOR_CORRECTION', 'REVIEWED', 'EXPORTED_TO_BANK'],
       },
       [UserRole.ACCOUNTING_SUPERVISOR]: {
-        title: 'Supervisor review queue',
+        title: 'Accounting overview',
         primaryHref: '/payment-batches',
         statuses: [InvoiceStatus.PENDING_ACCOUNTING, InvoiceStatus.APPROVED, InvoiceStatus.PAYMENT_SCHEDULED],
-        batchStatuses: ['PENDING_SUPERVISOR_REVIEW'],
+        // Payment batches are owned end-to-end by the Accounting Associate;
+        // Supervisors no longer receive a batch-review queue.
+        batchStatuses: [],
       },
       [UserRole.PURCHASING_COORDINATOR]: {
         title: 'Purchasing validation queue',

@@ -1,4 +1,5 @@
 import { cn } from '../../lib/utils';
+import { isCoordinatorQueueStatus } from '../../lib/coordinatorQueue';
 
 interface StatusBadgeProps {
   status: string;
@@ -23,7 +24,7 @@ const statusMap: Record<string, { label: string; styleObj: React.CSSProperties }
     },
   },
   VALIDATION_PENDING: {
-    label: 'Validation Pending',
+    label: 'Pending Coordinator',
     styleObj: {
       background: 'color-mix(in srgb, var(--accent-blue) 8%, transparent)',
       color: 'var(--accent-blue)',
@@ -31,7 +32,7 @@ const statusMap: Record<string, { label: string; styleObj: React.CSSProperties }
     },
   },
   EXCEPTION_FLAGGED: {
-    label: 'Exception',
+    label: 'Pending Coordinator',
     styleObj: {
       background: 'color-mix(in srgb, var(--accent-red) 8%, transparent)',
       color: 'var(--accent-red)',
@@ -161,7 +162,7 @@ const statusMap: Record<string, { label: string; styleObj: React.CSSProperties }
 };
 
 export default function StatusBadge({ status, className }: StatusBadgeProps) {
-  const mapped = statusMap[status] || {
+  const mapped = statusMap[isCoordinatorQueueStatus(status) ? 'PENDING_COORDINATOR' : status] || {
     label: status.replace(/_/g, ' '),
     styleObj: {
       background: 'var(--bg-elevated)',

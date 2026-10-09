@@ -2,12 +2,13 @@ import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { InvoiceStatus } from '@ap-invoice/shared';
 import { HelpCircle, X, ChevronRight } from 'lucide-react';
+import { isCoordinatorQueueStatus } from '../lib/coordinatorQueue';
 
 const statusGuide: Record<InvoiceStatus, { label: string; description: string; nextSteps: string; color: string }> = {
   [InvoiceStatus.RECEIVED]: { label: 'Received', description: 'Invoice uploaded but not yet processed.', nextSteps: 'OCR will extract data, then validation runs.', color: 'bg-amber-500' },
   [InvoiceStatus.OCR_PROCESSING]: { label: 'OCR Processing', description: 'System is reading invoice data.', nextSteps: 'Wait for extraction to complete.', color: 'bg-purple-500' },
-  [InvoiceStatus.VALIDATION_PENDING]: { label: 'Validation Pending', description: 'Waiting for coordinator validation.', nextSteps: 'Coordinator reviews and runs validation.', color: 'bg-blue-500' },
-  [InvoiceStatus.EXCEPTION_FLAGGED]: { label: 'Exception Flagged', description: 'Validation found issues.', nextSteps: 'Resolve or waive all active exceptions. The system automatically re-validates and either advances the invoice or shows one consolidated updated list.', color: 'bg-red-500' },
+  [InvoiceStatus.VALIDATION_PENDING]: { label: 'Pending Coordinator', description: 'Invoice is waiting for Purchasing Coordinator review.', nextSteps: 'Coordinator validates, corrects any issues, and submits it to the next approval step.', color: 'bg-amber-500' },
+  [InvoiceStatus.EXCEPTION_FLAGGED]: { label: 'Pending Coordinator', description: 'Invoice requires coordinator attention before it can continue.', nextSteps: 'Coordinator resolves the issue, then validates and submits the invoice.', color: 'bg-amber-500' },
   [InvoiceStatus.ON_HOLD]: { label: 'On Hold', description: 'Held by batch threshold rule.', nextSteps: 'Another invoice for same vendor reaching $100 total releases this.', color: 'bg-yellow-500' },
   [InvoiceStatus.PENDING_COORDINATOR]: { label: 'Pending Coordinator', description: 'Awaiting coordinator approval.', nextSteps: 'Coordinator approves, then moves to manager.', color: 'bg-amber-500' },
   [InvoiceStatus.PENDING_MANAGER]: { label: 'Pending Manager', description: 'Awaiting purchasing manager approval.', nextSteps: 'Manager approves, then moves to MLO.', color: 'bg-amber-500' },
@@ -57,7 +58,7 @@ export default function StatusGuide() {
             <div className="p-5 space-y-3">
               {Object.values(InvoiceStatus).map((status) => {
                 const guide = statusGuide[status];
-                if (!guide) return null;
+                if (!guide || (isCoordinatorQueueStatus(status) && status !== InvoiceStatus.PENDING_COORDINATOR)) return null;
                 return (
                   <div key={status} className="p-3 rounded-xl" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}>
                     <div className="flex items-center gap-2">

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { vendorApi } from '../lib/api';
-import { Landmark, Search, Edit, Save, X, ArrowLeft, CheckCircle2, AlertCircle, Landmark as BankIcon } from 'lucide-react';
+import { Landmark, Search, Edit, Save, X, ArrowLeft, CheckCircle2, AlertCircle, Landmark as BankIcon, Plus } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 interface BankDetailsEntry {
@@ -28,6 +28,24 @@ interface BankDetailsEntry {
   invoice_count: number;
 }
 
+interface NewVendorBankData {
+  name: string;
+  beneficiary_name: string;
+  supplier_location: string;
+  classification: string;
+  bank_name: string;
+  swift_code: string;
+  account_number: string;
+  iban: string;
+  bank_address: string;
+  intermediary_bank_name: string;
+  intermediary_bank_swift: string;
+  has_multiple_accounts: boolean;
+  bank_name_alt: string;
+  swift_code_alt: string;
+  account_number_alt: string;
+}
+
 export default function BankDetailsMasterlist() {
   const { user } = useAuth();
   const { showToast } = useToast();
@@ -38,6 +56,13 @@ export default function BankDetailsMasterlist() {
   const [editingEntry, setEditingEntry] = useState<BankDetailsEntry | null>(null);
   const [editData, setEditData] = useState<Partial<BankDetailsEntry>>({});
   const [saving, setSaving] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [newVendorData, setNewVendorData] = useState<NewVendorBankData>({
+    name: '', beneficiary_name: '', supplier_location: '', classification: '',
+    bank_name: '', swift_code: '', account_number: '', iban: '', bank_address: '',
+    intermediary_bank_name: '', intermediary_bank_swift: '', has_multiple_accounts: false,
+    bank_name_alt: '', swift_code_alt: '', account_number_alt: '',
+  });
 
   const canEditBank = user && ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role);
 
@@ -107,6 +132,59 @@ export default function BankDetailsMasterlist() {
     setEditData({});
   };
 
+  const resetAddForm = () => {
+    setShowAddModal(false);
+    setNewVendorData({
+      name: '', beneficiary_name: '', supplier_location: '', classification: '',
+      bank_name: '', swift_code: '', account_number: '', iban: '', bank_address: '',
+      intermediary_bank_name: '', intermediary_bank_swift: '', has_multiple_accounts: false,
+      bank_name_alt: '', swift_code_alt: '', account_number_alt: '',
+    });
+  };
+
+  const handleAddCancel = () => {
+    if (saving) return;
+    resetAddForm();
+  };
+
+  const handleAddVendor = async () => {
+    if (!newVendorData.name.trim()) {
+      showToast('Vendor name is required', 'error');
+      return;
+    }
+    setSaving(true);
+    try {
+      const payload = {
+        name: newVendorData.name.trim(),
+        beneficiary_name: newVendorData.beneficiary_name.trim() || null,
+        supplier_location: newVendorData.supplier_location.trim() || null,
+        classification: newVendorData.classification.trim() || null,
+        invoice_template_type: 'INVOICE',
+        bank_name: newVendorData.bank_name.trim() || null,
+        swift_code: newVendorData.swift_code.trim() || null,
+        account_number: newVendorData.account_number.trim() || null,
+        iban: newVendorData.iban.trim() || null,
+        bank_address: newVendorData.bank_address.trim() || null,
+        intermediary_bank_name: newVendorData.intermediary_bank_name.trim() || null,
+        intermediary_bank_swift: newVendorData.intermediary_bank_swift.trim() || null,
+        has_multiple_accounts: newVendorData.has_multiple_accounts,
+        bank_name_alt: newVendorData.bank_name_alt.trim() ? [newVendorData.bank_name_alt.trim()] : [],
+        swift_code_alt: newVendorData.swift_code_alt.trim() ? [newVendorData.swift_code_alt.trim()] : [],
+        account_number_alt: newVendorData.account_number_alt.trim() ? [newVendorData.account_number_alt.trim()] : [],
+        name_aliases: [],
+        is_active: true,
+      };
+      await vendorApi.create(payload);
+      showToast('Vendor and bank details added successfully', 'success');
+      resetAddForm();
+      await loadBankDetails();
+    } catch (err: any) {
+      showToast(err.response?.data?.error?.message || err.response?.data?.message || 'Failed to add vendor', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const editField = (label: string, field: keyof BankDetailsEntry, type: string = 'text') => (
     <div>
       <label className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{label}</label>
@@ -135,9 +213,20 @@ export default function BankDetailsMasterlist() {
             </p>
           </div>
         </div>
-        <Link to="/" className="flex items-center gap-2 text-sm hover:opacity-80" style={{ color: 'var(--text-secondary)' }}>
-          <ArrowLeft className="h-4 w-4" /> Back to Dashboard
-        </Link>
+        <div className="flex items-center gap-3">
+          {canEditBank && (
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium"
+              style={{ background: 'var(--accent-lime)', color: 'var(--text-inverse)' }}
+            >
+              <Plus className="h-4 w-4" /> Add Vendor &amp; Bank Details
+            </button>
+          )}
+          <Link to="/" className="flex items-center gap-2 text-sm hover:opacity-80" style={{ color: 'var(--text-secondary)' }}>
+            <ArrowLeft className="h-4 w-4" /> Back to Dashboard
+          </Link>
+        </div>
       </div>
 
       {/* Search */}
@@ -161,7 +250,7 @@ export default function BankDetailsMasterlist() {
         <div className="flex items-center gap-2 p-3 rounded-lg text-sm" style={{ background: 'color-mix(in srgb, var(--accent-blue) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-blue) 20%, transparent)' }}>
           <CheckCircle2 className="h-4 w-4" style={{ color: 'var(--accent-blue)' }} />
           <span style={{ color: 'var(--text-secondary)' }}>
-            Click the <strong>Edit</strong> button on any vendor row to update bank details. Changes will propagate to all linked invoices.
+            Use <strong>Add Vendor &amp; Bank Details</strong> for a new supplier, or <strong>Edit Bank</strong> to update an existing record. Duplicate vendor names are blocked automatically.
           </span>
         </div>
       )}
@@ -363,6 +452,68 @@ export default function BankDetailsMasterlist() {
                 <Save className="h-4 w-4" />
                 {saving ? 'Saving...' : 'Save Changes'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Vendor + Bank Details Modal */}
+      {showAddModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.5)' }}
+          onClick={handleAddCancel}
+        >
+          <div
+            className="rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto"
+            style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 border-b" style={{ borderColor: 'var(--border-color)' }}>
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-blue), var(--accent-purple))' }}>
+                  <Plus className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold">Add Vendor &amp; Bank Details</h2>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>The vendor will be available for invoice intake after saving.</p>
+                </div>
+              </div>
+              <button onClick={handleAddCancel} className="p-2 rounded-lg hover:opacity-80" style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}>
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-5">
+              <div>
+                <h3 className="text-sm font-semibold mb-3">Vendor information</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {(['name', 'beneficiary_name', 'supplier_location', 'classification'] as const).map((field) => {
+                    const labels: Record<string, string> = { name: 'Vendor name *', beneficiary_name: 'Beneficiary name', supplier_location: 'Supplier location', classification: 'Classification' };
+                    return <div key={field}><label className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{labels[field]}</label><input value={newVendorData[field]} onChange={(e) => setNewVendorData({ ...newVendorData, [field]: e.target.value })} className="w-full p-2 rounded-lg text-sm mt-1" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }} /></div>;
+                  })}
+                </div>
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold mb-3">Primary bank account</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {(['bank_name', 'swift_code', 'account_number', 'iban', 'bank_address', 'intermediary_bank_name', 'intermediary_bank_swift'] as const).map((field) => {
+                    const labels: Record<string, string> = { bank_name: 'Bank name', swift_code: 'SWIFT code', account_number: 'Account number', iban: 'IBAN', bank_address: 'Bank address', intermediary_bank_name: 'Intermediary bank name', intermediary_bank_swift: 'Intermediary SWIFT code' };
+                    return <div key={field}><label className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{labels[field]}</label><input value={newVendorData[field]} onChange={(e) => setNewVendorData({ ...newVendorData, [field]: e.target.value })} className="w-full p-2 rounded-lg text-sm mt-1" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }} /></div>;
+                  })}
+                </div>
+              </div>
+              <div>
+                <div className="flex items-center gap-2 mb-3"><input id="multiple-bank-accounts" type="checkbox" checked={newVendorData.has_multiple_accounts} onChange={(e) => setNewVendorData({ ...newVendorData, has_multiple_accounts: e.target.checked })} /><label htmlFor="multiple-bank-accounts" className="text-sm font-semibold">Vendor has an alternate bank account</label></div>
+                {newVendorData.has_multiple_accounts && <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {(['bank_name_alt', 'swift_code_alt', 'account_number_alt'] as const).map((field) => <input key={field} placeholder={field === 'bank_name_alt' ? 'Alternate bank name' : field === 'swift_code_alt' ? 'Alternate SWIFT code' : 'Alternate account number'} value={newVendorData[field]} onChange={(e) => setNewVendorData({ ...newVendorData, [field]: e.target.value })} className="p-2 rounded-lg text-sm" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }} />)}
+                </div>}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 p-4 border-t" style={{ borderColor: 'var(--border-color)' }}>
+              <button onClick={handleAddCancel} disabled={saving} className="px-4 py-2 rounded-lg text-sm font-medium" style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}>Cancel</button>
+              <button onClick={handleAddVendor} disabled={saving} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium" style={{ background: saving ? 'var(--bg-elevated)' : 'var(--accent-lime)', color: saving ? 'var(--text-muted)' : 'var(--text-inverse)' }}><Save className="h-4 w-4" />{saving ? 'Saving...' : 'Add Vendor'}</button>
             </div>
           </div>
         </div>

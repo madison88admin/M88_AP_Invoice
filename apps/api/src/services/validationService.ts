@@ -135,6 +135,17 @@ function buildFinanceValidationResult(invoice: any): ValidationResult {
   };
 }
 
+/** Normalize invoice references before comparing values from OCR, AP, and NextGen. */
+function normalizeInvoiceReference(value: unknown): string {
+  return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+/** Only explicit terminal MPO states block a line; unknown statuses are deferred. */
+function isBlockedMPOStatus(value: unknown): boolean {
+  const status = String(value || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+  return new Set(['CANCELLED', 'CANCELED', 'VOID', 'REJECTED', 'DELETED', 'INACTIVE']).has(status);
+}
+
 // Late submission thresholds
 const LATE_SUBMISSION_WARNING_DAYS = 7;
 const LATE_SUBMISSION_ERROR_DAYS = 14;
@@ -1364,6 +1375,16 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
       };
     }
 
+    // A cancelled/voided MPO must not be used for a new invoice. NextGen does
+    // not expose a stable status vocabulary across environments, so only
+    // explicit terminal states block; unknown states remain visible but are
+    // not treated as a false mismatch.
+    const mpoStatus = String(po.status || '').trim();
+    const lineControlDifferences: string[] = [];
+    if (isBlockedMPOStatus(mpoStatus)) {
+      lineControlDifferences.push(`MPO ${baseMpo} has terminal status "${mpoStatus}".`);
+    }
+
     // Auto-fill the invoice's material from the MPO line list when the invoice
     // has an MPO but no material (code or name). Never breaks the validation.
     if (!invoice.material_code && !invoice.material_name && Array.isArray(po.line_items)) {
@@ -1377,7 +1398,6 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
     // Resolve and persist every DB invoice line independently. This is the
     // authoritative multi-MPO path: a header match can never satisfy another
     // MPO line, and cumulative balances are derived from prior AP invoices.
-    const lineControlDifferences: string[] = [];
     const dbInvoiceLines = Array.isArray((invoice as any).invoice_lines) ? (invoice as any).invoice_lines : [];
     const poByBaseMpo = new Map<string, any>([[String(baseMpo).trim().toUpperCase(), po]]);
     for (const invLine of dbInvoiceLines) {
@@ -1420,6 +1440,19 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
         continue;
       }
       const matched = lineResolution.lines[0];
+      const lineInvoiceNumber = String((matched as any).invoice_number || '').trim();
+      const lineStatus = String((matched as any).status || '').trim();
+      const invoiceNumberMatches = !lineInvoiceNumber
+        || normalizeInvoiceReference(lineInvoiceNumber) === normalizeInvoiceReference(invoice.invoice_number);
+      const lineStatusAllowed = !lineStatus || !isBlockedMPOStatus(lineStatus);
+      if (!invoiceNumberMatches) {
+        lineControlDifferences.push(
+          `Line ${lineNumber}: invoice number "${invoice.invoice_number}" does not match NextGen line invoice "${lineInvoiceNumber}".`
+        );
+      }
+      if (!lineStatusAllowed) {
+        lineControlDifferences.push(`Line ${lineNumber}: NextGen line has terminal status "${lineStatus}".`);
+      }
       const prior = await prisma.invoiceLine.aggregate({
         where: {
           id: { not: invLine.id },
@@ -1448,7 +1481,9 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
       const priceMatches = Math.abs(Number(invLine.unit_price || 0) - Number(matched.unit_price || 0)) <= policy.lineRoundingTolerance;
       const balanceMatches = !receivedKnown
         || (quantity <= (remainingQuantity as number) && lineAmount <= (remainingAmount as number) + policy.lineRoundingTolerance);
-      const matchStatus = priceMatches && balanceMatches ? 'MATCHED' : 'MISMATCH';
+      const matchStatus = priceMatches && balanceMatches && invoiceNumberMatches && lineStatusAllowed
+        ? 'MATCHED'
+        : 'MISMATCH';
       await prisma.invoiceLine.update({
         where: { id: invLine.id },
         data: {

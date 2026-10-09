@@ -128,7 +128,7 @@ export default function OnHoldQueue() {
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <SummaryCard label="Total Queue (Holds + Exceptions)" value={summary?.total?.toString() || '0'} icon={Pause} color="var(--accent-amber)" />
           <SummaryCard label="On Hold" value={summary?.on_hold?.toString() || '0'} icon={Clock} color="var(--accent-amber)" />
-          <SummaryCard label="Exception Flagged" value={summary?.exception_flagged?.toString() || '0'} icon={AlertTriangle} color="var(--accent-red)" />
+          <SummaryCard label="Pending Coordinator" value={summary?.exception_flagged?.toString() || '0'} icon={AlertTriangle} color="var(--accent-amber)" />
           <SummaryCard label="Total Amount" value={formatCurrency(summary?.total_amount || 0, 'USD')} icon={AlertTriangle} color="var(--accent-purple)" />
           <SummaryCard label="Oldest Hold" value={summary ? formatHours(summary.oldest_hold_hours) : 'N/A'} icon={Clock} color="var(--accent-red)" />
         </div>
@@ -138,7 +138,7 @@ export default function OnHoldQueue() {
           {[
             { key: 'ALL', label: 'All' },
             { key: 'ON_HOLD', label: 'On Hold' },
-            { key: 'EXCEPTION_FLAGGED', label: 'Exception Flagged' },
+            { key: 'EXCEPTION_FLAGGED', label: 'Pending Coordinator' },
           ].map((tab) => (
             <button
               key={tab.key}
@@ -191,7 +191,7 @@ export default function OnHoldQueue() {
                             : 'color-mix(in srgb, var(--accent-amber) 10%, transparent)',
                           color: item.status === 'EXCEPTION_FLAGGED' ? 'var(--accent-red)' : 'var(--accent-amber)'
                         }}>
-                          {item.status === 'EXCEPTION_FLAGGED' ? 'Exception' : 'On Hold'}
+                          {item.status === 'EXCEPTION_FLAGGED' ? 'Pending Coordinator' : 'On Hold'}
                         </span>
                       </td>
                       <td className="p-3 text-sm" style={{ color: 'var(--text-secondary)' }}>

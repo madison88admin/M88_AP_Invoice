@@ -8,7 +8,7 @@ import { MockVendor } from '../lib/mockData';
 import { vendorApi } from '../lib/api';
 
 export default function VendorManagement() {
-  const { vendors } = useMockData();
+  const { vendors, refresh } = useMockData();
   const { user } = useAuth();
   const { showToast } = useToast();
   const [loading, setLoading] = useState(true);
@@ -24,10 +24,12 @@ export default function VendorManagement() {
   const [showBankRequestModal, setShowBankRequestModal] = useState(false);
   const [bankRequestData, setBankRequestData] = useState({ bank_name: '', swift_code: '', account_number: '', reason: '' });
   const [submittingRequest, setSubmittingRequest] = useState(false);
+  const [selectedVendorIds, setSelectedVendorIds] = useState<string[]>([]);
 
   const canAddVendor = user && ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role);
   const canEditBankInfo = user && ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role);
   const canEditVendor = user && ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role);
+  const canDeleteVendor = user && ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'].includes(user.role);
 
   const handleAdd = () => {
     setIsAddMode(true);
@@ -63,6 +65,40 @@ export default function VendorManagement() {
     const matchesStatus = statusFilter === 'all' || (statusFilter === 'active' ? vendor.is_active !== false : vendor.is_active === false);
     return matchesSearch && matchesLocation && matchesClassification && matchesStatus;
   });
+
+  const allVisibleSelected = filteredVendors.length > 0 && filteredVendors.every((vendor) => selectedVendorIds.includes(vendor.id));
+
+  const toggleVendorSelection = (id: string) => {
+    setSelectedVendorIds((current) => current.includes(id) ? current.filter((selectedId) => selectedId !== id) : [...current, id]);
+  };
+
+  const toggleSelectAllVisible = () => {
+    if (allVisibleSelected) {
+      const visibleIds = new Set(filteredVendors.map((vendor) => vendor.id));
+      setSelectedVendorIds((current) => current.filter((id) => !visibleIds.has(id)));
+    } else {
+      setSelectedVendorIds((current) => [...new Set([...current, ...filteredVendors.map((vendor) => vendor.id)])]);
+    }
+  };
+
+  const handleDeleteVendors = async (ids: string[]) => {
+    if (!ids.length) return;
+    const noun = ids.length === 1 ? 'vendor' : 'vendors';
+    if (!window.confirm(`Delete ${ids.length} ${noun}? This will archive the vendor(s) from active intake and keep linked invoice history.`)) return;
+    try {
+      setSaving(true);
+      const response = ids.length === 1 ? await vendorApi.delete(ids[0]) : await vendorApi.bulkDelete(ids);
+      showToast(response.data?.message || `${ids.length} vendor(s) archived`, 'success');
+      setSelectedVendorIds((current) => current.filter((id) => !ids.includes(id)));
+      if (selectedVendor && ids.includes(selectedVendor.id)) setSelectedVendor(null);
+      await refresh(true);
+    } catch (error: any) {
+      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to delete vendor(s)';
+      showToast(msg, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleEdit = (vendor: MockVendor) => {
     setIsAddMode(false);
@@ -247,6 +283,14 @@ export default function VendorManagement() {
                 </button>
               )}
             </div>
+            {canDeleteVendor && selectedVendorIds.length > 0 && (
+              <div className="flex items-center justify-between gap-3 mt-4 px-3 py-2 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-red) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}>
+                <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>{selectedVendorIds.length} vendor(s) selected</span>
+                <button onClick={() => handleDeleteVendors(selectedVendorIds)} disabled={saving} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium" style={{ background: 'var(--accent-red)', color: 'var(--text-inverse)' }}>
+                  <Trash2 className="h-4 w-4" /> Delete selected
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Vendor List */}
@@ -255,6 +299,12 @@ export default function VendorManagement() {
               <div className="px-6 py-12 text-center" style={{ color: 'var(--text-muted)' }}>Loading vendors...</div>
             ) : (
               <div>
+                {canDeleteVendor && filteredVendors.length > 0 && (
+                  <div className="flex items-center gap-3 px-6 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                    <input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAllVisible} aria-label="Select all visible vendors" />
+                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Select all visible vendors</span>
+                  </div>
+                )}
                 {filteredVendors.map((vendor, idx) => (
                   <div
                     key={vendor.id}
@@ -266,6 +316,15 @@ export default function VendorManagement() {
                   >
                     <div className="flex items-center justify-between gap-4">
                       <div className="flex items-center gap-4 min-w-0">
+                        {canDeleteVendor && (
+                          <input
+                            type="checkbox"
+                            checked={selectedVendorIds.includes(vendor.id)}
+                            onChange={() => toggleVendorSelection(vendor.id)}
+                            onClick={(e) => e.stopPropagation()}
+                            aria-label={`Select ${vendor.name}`}
+                          />
+                        )}
                         <div className="p-3 rounded-xl shrink-0" style={{ background: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-purple) 20%, transparent)' }}>
                           <Building className="h-5 w-5" style={{ color: 'var(--accent-purple)' }} strokeWidth={1.75} />
                         </div>
@@ -299,6 +358,17 @@ export default function VendorManagement() {
                         >
                           <Edit className="h-4 w-4" strokeWidth={1.75} />
                         </button>
+                        )}
+                        {canDeleteVendor && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleDeleteVendors([vendor.id]); }}
+                            disabled={saving}
+                            className="p-2 rounded-lg transition-colors"
+                            style={{ color: 'var(--accent-red)' }}
+                            title="Delete vendor"
+                          >
+                            <Trash2 className="h-4 w-4" strokeWidth={1.75} />
+                          </button>
                         )}
                       </div>
                     </div>

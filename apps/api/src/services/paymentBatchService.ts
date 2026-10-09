@@ -148,8 +148,14 @@ export async function getScheduledPaymentsForBatch(filters: ScheduledPaymentFilt
     } : {}),
   };
 
-  // Apply explicit status filter or default to accounting-stage invoices
-  const invoiceWhere = filters.status
+  // Payment queue status filters apply to the payment row, not the invoice
+  // lifecycle status. Keeping this distinction is important for manual holds:
+  // a held payment still belongs to a PAYMENT_SCHEDULED invoice.
+  const paymentStatusValues = new Set(['SCHEDULED', 'FOR_PAYMENT', 'APPROVED_FOR_PAYMENT', 'HELD_BELOW_100', 'AWAITING_POSTING']);
+  const paymentStatusFilter = filters.status && paymentStatusValues.has(filters.status)
+    ? { status: filters.status }
+    : { status: { notIn: ['CANCELLED', 'VOIDED'] } };
+  const invoiceWhere = filters.status && !paymentStatusValues.has(filters.status)
     ? { ...invoiceBaseWhere, status: filters.status }
     : { ...invoiceBaseWhere, status: defaultInvoiceStatuses };
 
@@ -159,7 +165,7 @@ export async function getScheduledPaymentsForBatch(filters: ScheduledPaymentFilt
     include: {
       vendor: true,
       payments: {
-        where: { status: { notIn: ['CANCELLED', 'VOIDED'] } },
+        where: { ...paymentStatusFilter, batch_id: null },
       },
       signatures: {
         where: {
@@ -321,7 +327,9 @@ export async function selectPaymentsForBatch(paymentIds: string[], userId: strin
   const payments = await prisma.payment.findMany({
     where: {
       id: { in: paymentIds },
-      status: { in: ['SCHEDULED', 'APPROVED_FOR_PAYMENT'] },
+      // FOR_PAYMENT is retained only for legacy rows created before the
+      // payment-level supervisor approval step was removed.
+      status: { in: ['SCHEDULED', 'FOR_PAYMENT', 'APPROVED_FOR_PAYMENT'] },
       batch_id: null,
       OR: [
         { selected_for_batch: false },
@@ -334,6 +342,11 @@ export async function selectPaymentsForBatch(paymentIds: string[], userId: strin
   if (payments.length !== paymentIds.length) {
     throw new AppError('Some payments are not found, already in a batch, or not in SCHEDULED status', 400);
   }
+
+  await prisma.payment.updateMany({
+    where: { id: { in: paymentIds }, status: 'FOR_PAYMENT' },
+    data: { status: 'SCHEDULED' },
+  });
 
   await prisma.payment.updateMany({
     where: { id: { in: paymentIds } },
@@ -394,8 +407,9 @@ export async function setPaymentRemarks(paymentId: string, remarks: string | nul
 }
 
 /**
- * Accounting Associate marks a payment "for payment" → goes to the Accounting
- * Supervisor's review queue (status FOR_PAYMENT).
+ * Legacy compatibility endpoint. The payment-level Associate → Supervisor
+ * approval step is retired; new payments remain SCHEDULED and are selected
+ * directly for batching by the Accounting Associate.
  */
 export async function markPaymentForPayment(paymentId: string, userId: string) {
   const payment = await prisma.payment.findUnique({ where: { id: paymentId } });
@@ -409,7 +423,7 @@ export async function markPaymentForPayment(paymentId: string, userId: string) {
   const updated = await prisma.payment.update({
     where: { id: paymentId },
     data: {
-      status: 'FOR_PAYMENT',
+      status: 'SCHEDULED',
       selected_for_batch: false,
       selected_by: null,
       selected_at: null,
@@ -418,18 +432,17 @@ export async function markPaymentForPayment(paymentId: string, userId: string) {
   await prisma.auditLog.create({
     data: {
       invoice_id: payment.invoice_id,
-      action: 'PAYMENT_MARKED_FOR_PAYMENT',
+      action: 'PAYMENT_READY_FOR_BATCH',
       performed_by: userId,
-      note: 'Payment marked for payment (FOR_PAYMENT) — queued for supervisor review',
+      note: 'Legacy payment-review action requested; payment remains SCHEDULED and is ready for Associate batch selection',
     },
   });
   return updated;
 }
 
 /**
- * Accounting Supervisor approves the release of a sub-$100 HELD payment → it
- * becomes SCHEDULED and batchable (may proceed for payment or consolidation).
- * The Associate is notified.
+ * Accounting Associate (or Supervisor for legacy records) releases a payment
+ * that was manually held. Low-value payments are no longer auto-held.
  */
 export async function approveHeldPayment(paymentId: string, userId: string) {
   const payment = await prisma.payment.findUnique({
@@ -438,7 +451,7 @@ export async function approveHeldPayment(paymentId: string, userId: string) {
   });
   if (!payment) throw new AppError('Payment not found', 404);
   if (payment.status !== 'HELD_BELOW_100') {
-    throw new AppError('Only a held payment (below $100) can be released by Accounting', 400);
+    throw new AppError('Only a manually held payment can be released by Accounting', 400);
   }
 
   const updated = await prisma.payment.update({
@@ -449,9 +462,9 @@ export async function approveHeldPayment(paymentId: string, userId: string) {
   await prisma.auditLog.create({
     data: {
       invoice_id: payment.invoice_id,
-      action: 'HELD_BELOW_100_APPROVED',
+      action: 'PAYMENT_HOLD_RELEASED',
       performed_by: userId,
-      note: 'Accounting approved release of sub-$100 payment — may proceed for payment or consolidation',
+      note: 'Accounting Associate released a manually held payment — may proceed for payment or consolidation',
     },
   });
 
@@ -459,14 +472,56 @@ export async function approveHeldPayment(paymentId: string, userId: string) {
     invoice_id: payment.invoice_id,
     invoice_number: payment.invoice?.invoice_number,
     vendor_name: payment.invoice?.vendor?.name,
-    title: `Sub-$100 hold released (${payment.invoice?.invoice_number || ''})`,
-    message: 'Accounting approved the held payment — it is now SCHEDULED and can be batched.',
+    title: `Payment hold released (${payment.invoice?.invoice_number || ''})`,
+    message: 'Accounting released the manually held payment — it is now SCHEDULED and can be batched.',
     type: 'success',
     category: 'payment',
     target_role: UserRole.ACCOUNTING_ASSOCIATE,
   });
 
-  logger.info(`[PaymentBatch] Accounting approved release of held payment ${paymentId}`);
+  logger.info(`[PaymentBatch] Accounting released manually held payment ${paymentId}`);
+  return updated;
+}
+
+/**
+ * Accounting Associate explicitly places a scheduled payment on hold.
+ * This replaces the old amount-based automatic hold and keeps the decision
+ * with the person managing the payment queue.
+ */
+export async function holdScheduledPayment(paymentId: string, userId: string, reason?: string) {
+  const payment = await prisma.payment.findUnique({
+    where: { id: paymentId },
+    include: { invoice: { include: { vendor: true } } },
+  });
+  if (!payment) throw new AppError('Payment not found', 404);
+  if (payment.status !== 'SCHEDULED') {
+    throw new AppError('Only a scheduled payment can be placed on hold', 400);
+  }
+  if (payment.batch_id) {
+    throw new AppError('Remove the payment from its batch before placing it on hold', 400);
+  }
+
+  const holdReason = reason?.trim() || 'Accounting Associate placed the payment on hold for review';
+  const updated = await prisma.payment.update({
+    where: { id: paymentId },
+    data: {
+      status: 'HELD_BELOW_100',
+      selected_for_batch: false,
+      selected_by: null,
+      selected_at: null,
+      remarks: holdReason,
+    },
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      invoice_id: payment.invoice_id,
+      action: 'PAYMENT_HOLD_PLACED',
+      performed_by: userId,
+      note: `Payment manually placed on hold by Accounting Associate: ${holdReason}`,
+    },
+  });
+
   return updated;
 }
 
@@ -717,6 +772,26 @@ export interface BillStubInput {
 }
 
 /**
+ * A payment batch cannot move forward without the actual bill-stub document.
+ * Metadata-only/system-generated stubs are intentionally not sufficient: the
+ * uploaded file is the accounting evidence that must travel with the batch.
+ */
+function missingBillStubFilePayments(payments: any[]): any[] {
+  return payments.filter((payment) => !String(payment?.bill_stub?.proof_file_url || '').trim());
+}
+
+function requireBillStubFiles(payments: any[], action: string): void {
+  const missing = missingBillStubFilePayments(payments);
+  if (missing.length === 0) return;
+  const labels = missing.slice(0, 5).map((payment) => payment.invoice?.invoice_number || payment.id);
+  const suffix = missing.length > labels.length ? ` and ${missing.length - labels.length} more` : '';
+  throw new AppError(
+    `Cannot ${action} this payment batch until every payment has an uploaded bill stub file. Missing: ${labels.join(', ')}${suffix}`,
+    400,
+  );
+}
+
+/**
  * Accounting Associate (or Supervisor) endorses a bill stub for ONE payment in
  * the batch — tagging the invoice as in the payment process. The payment goes
  * to ENDORSED (NOT paid — bank endorsement is not a completed payment).
@@ -733,14 +808,17 @@ export async function endorseBillStub(
 ) {
   const batch = await prisma.paymentBatch.findUnique({
     where: { id: batchId },
-    include: { payments: true },
+    include: { payments: { include: { bill_stub: true } } },
   });
   if (!batch) throw new AppError('Payment batch not found', 404);
-  if (![PaymentBatchStatus.REVIEWED, PaymentBatchStatus.EXPORTED_TO_BANK].includes(batch.status as any)) {
-    throw new AppError('A bill stub can only be endorsed after the batch is reviewed and exported to the bank', 400);
+  if (![PaymentBatchStatus.DRAFT, PaymentBatchStatus.RETURNED_FOR_CORRECTION, PaymentBatchStatus.REVIEWED, PaymentBatchStatus.EXPORTED_TO_BANK].includes(batch.status as any)) {
+    throw new AppError('A bill stub can only be uploaded while the batch is being prepared or after it is ready for payment', 400);
   }
   const target = batch.payments.find((p: any) => p.id === paymentId);
   if (!target) throw new AppError('Payment is not part of this batch', 400);
+  if (!String(input.proofFileUrl || target.bill_stub?.proof_file_url || '').trim()) {
+    throw new AppError('Bill stub file is required before the payment can proceed', 400);
+  }
   if (!['SCHEDULED', 'APPROVED_FOR_PAYMENT'].includes(target.status)) {
     throw new AppError('Only a scheduled or supervisor-approved payment in the batch can be endorsed', 400);
   }
@@ -759,8 +837,8 @@ export async function endorseBillStub(
     balance: input.balance != null ? Number(input.balance) : null,
     discount: input.discount != null ? Number(input.discount) : null,
     paid_amount: paidAmount,
-    proof_file_url: input.proofFileUrl || null,
-    proof_file_name: input.proofFileName || null,
+    proof_file_url: input.proofFileUrl ?? target.bill_stub?.proof_file_url ?? null,
+    proof_file_name: input.proofFileName ?? target.bill_stub?.proof_file_name ?? null,
     created_by: userId,
   };
 
@@ -770,22 +848,31 @@ export async function endorseBillStub(
     update: data,
   });
 
-  await prisma.payment.update({
-    where: { id: paymentId },
-    data: { status: 'ENDORSED' },
-  });
+  // Uploading the required bill-stub evidence during preparation must not
+  // prematurely move the payment out of SCHEDULED. Once the batch has been
+  // exported, the existing endorsement/matching flow still applies.
+  const paymentStatus = [PaymentBatchStatus.DRAFT, PaymentBatchStatus.RETURNED_FOR_CORRECTION].includes(batch.status as any)
+    ? target.status
+    : 'ENDORSED';
+  if (paymentStatus !== target.status) {
+    await prisma.payment.update({ where: { id: paymentId }, data: { status: paymentStatus } });
+  }
 
   await prisma.auditLog.create({
     data: {
       invoice_id: target.invoice_id,
       action: 'BILL_STUB_ENDORSED',
       performed_by: userId,
-      note: `Bill stub endorsed for payment ${paymentId} in batch ${batch.batch_number}${input.reference ? ` — ref ${input.reference.trim()}` : ''}. Tagged ENDORSED (in payment process, not paid).`,
+      note: `Bill stub file uploaded for payment ${paymentId} in batch ${batch.batch_number}${input.reference ? ` — ref ${input.reference.trim()}` : ''}.${paymentStatus === 'ENDORSED' ? ' Tagged ENDORSED (in payment process, not paid).' : ' Payment remains SCHEDULED until the batch is exported.'}`,
     },
   });
 
   logger.info(`[PaymentBatch] Bill stub endorsed for ${paymentId} in batch ${batch.batch_number}`);
-  return { ...stub, payment_status: 'ENDORSED' };
+  return { ...stub, payment_status: paymentStatus };
+}
+
+function normalizePaymentReference(value: unknown): string {
+  return String(value ?? '').trim().toUpperCase().replace(/\s+/g, '');
 }
 
 /**
@@ -803,7 +890,7 @@ export async function matchPaymentConfirmation(
 ) {
   const batch = await prisma.paymentBatch.findUnique({
     where: { id: batchId },
-    include: { payments: { include: { bill_stub: true } } },
+    include: { payments: { include: { bill_stub: true, invoice: { include: { vendor: true } } } } },
   });
   if (!batch) throw new AppError('Payment batch not found', 404);
 
@@ -822,7 +909,8 @@ export async function matchPaymentConfirmation(
   } else {
     const ref = input.reference?.trim();
     if (!ref) throw new AppError('Payment confirmation reference is required to match', 400);
-    matched = endorsed.filter((p) => p.bill_stub?.reference === ref || p.reference === ref);
+    const normalizedRef = normalizePaymentReference(ref);
+    matched = endorsed.filter((p) => normalizePaymentReference(p.bill_stub?.reference) === normalizedRef || normalizePaymentReference(p.reference) === normalizedRef);
     if (matched.length === 0) {
       throw new AppError(`No endorsed payment matches reference "${ref}"`, 400);
     }
@@ -846,7 +934,9 @@ export async function matchPaymentConfirmation(
       data: {
         status: 'PAID',
         paid_at: paidAt,
-        reference: payment.bill_stub?.reference || payment.reference || confirmationRef,
+        // Preserve the bank confirmation reference that actually matched so
+        // reconciliation and later bulk imports can see the exact value.
+        reference: confirmationRef,
       },
     });
     await prisma.invoice.update({
@@ -861,6 +951,14 @@ export async function matchPaymentConfirmation(
         note: `Payment matched by confirmation (ref ${confirmationRef}) and tagged PAID in batch ${batch.batch_number}`,
       },
     });
+    await inAppNotificationService.notifyStageTransition(
+      payment.invoice_id,
+      payment.invoice?.invoice_number || '',
+      payment.invoice?.vendor?.name || 'Unknown',
+      'PAYMENT_SCHEDULED',
+      'PAID',
+      UserRole.PURCHASING_COORDINATOR,
+    );
   }
 
   // If every payment in the batch is now PAID, mark the batch PROCESSED
@@ -894,6 +992,38 @@ export async function matchPaymentConfirmation(
     payment_ids: matched.map((p) => p.id),
     batch_processed: batchProcessed,
   };
+}
+
+/**
+ * Resolve a confirmation row to its batch using the payment/bill reference.
+ * This is used by bulk imports when the bank file does not include a batch
+ * number. References are compared case-insensitively and with whitespace
+ * removed, which handles the formatting used by bank exports without making
+ * a fuzzy or unsafe match.
+ */
+export async function findPaymentBatchByConfirmationReference(reference: string, amount?: number) {
+  const normalizedRef = normalizePaymentReference(reference);
+  if (!normalizedRef) return null;
+
+  const payments = await prisma.payment.findMany({
+    where: { status: 'ENDORSED' },
+    include: { bill_stub: true, batch: true },
+  });
+  let matches = (payments as any[]).filter((payment) =>
+    normalizePaymentReference(payment.bill_stub?.reference) === normalizedRef ||
+    normalizePaymentReference(payment.reference) === normalizedRef
+  );
+
+  if (matches.length > 1 && amount != null && isFinite(Number(amount))) {
+    const numericAmount = Number(amount);
+    matches = matches.filter((payment) => Math.abs(Number(payment.amount) - numericAmount) < 0.005);
+  }
+  if (matches.length === 0) return null;
+  if (matches.length > 1) {
+    throw new AppError(`Confirmation reference "${reference}" matches multiple payments. Include batch_number or payment_ids, or provide the amount to disambiguate.`, 400);
+  }
+  const match = matches[0];
+  return match.batch_id ? { id: match.batch_id, batch_number: match.batch?.batch_number || null, payment_id: match.id } : null;
 }
 
 export async function findPaymentBatchByNumber(batchNumber: string) {
@@ -1134,13 +1264,13 @@ export async function createGroupedPaymentBatches(paymentIds: string[], userId: 
 /**
  * Auto-surface a payment as a payment batch the moment its invoice is posted
  * to accounting — the batch shows up in Payment Batches immediately and is
- * processed there (submit → supervisor review → export → endorse → payment
- * confirmation) without a separate select-and-create step.
+ * processed there (Pay Bills setup → bill-stub upload → mark ready → export →
+ * payment confirmation) without a separate select-and-create step.
  *
  * The payment joins the poster's most recent still-open DRAFT batch of the
  * same currency, so consecutive postings consolidate into a single batch;
- * otherwise a fresh DRAFT batch is created. Sub-$100 HELD_BELOW_100 payments
- * are skipped — they only batch after Accounting releases them.
+ * otherwise a fresh DRAFT batch is created. Manually held payments remain
+ * excluded until the Accounting Associate releases them.
  *
  * The Accounting team (Associate + Supervisor) is notified each time so they
  * know a new batch is ready to process.
@@ -1154,7 +1284,7 @@ export async function autoBatchPaymentOnPost(
   if (payment.status !== 'SCHEDULED') {
     return {
       batched: false,
-      reason: payment.status === 'HELD_BELOW_100' ? 'HELD_BELOW_100' : `NOT_SCHEDULED (${payment.status})`,
+      reason: payment.status === 'HELD_BELOW_100' ? 'MANUAL_HOLD' : `NOT_SCHEDULED (${payment.status})`,
     };
   }
 
@@ -1308,7 +1438,7 @@ export async function processPaymentBatch(
   const batch = await prisma.paymentBatch.findUnique({
     where: { id: batchId },
     include: {
-      payments: true,
+      payments: { include: { bill_stub: true, invoice: true } },
     },
   });
 
@@ -1317,14 +1447,9 @@ export async function processPaymentBatch(
   }
 
   if (![PaymentBatchStatus.REVIEWED, PaymentBatchStatus.EXPORTED_TO_BANK].includes(batch.status as any)) {
-    throw new AppError('Batch must be reviewed by Accounting Supervisor before processing', 400);
+    throw new AppError('Batch must be marked ready for payment before processing', 400);
   }
-  if (batch.created_by === userId || batch.submitted_by === userId) {
-    throw new AppError('Payment batch preparer cannot execute the same batch', 403);
-  }
-  if (batch.reviewed_by === userId) {
-    throw new AppError('Payment batch reviewer cannot execute the same batch', 403);
-  }
+  requireBillStubFiles(batch.payments as any[], 'process');
 
   await prisma.paymentBatch.update({ where: { id: batchId }, data: { status: PaymentBatchStatus.PROCESSING as any } });
 
@@ -1361,7 +1486,7 @@ export async function processPaymentBatch(
     data: {
       action: 'PAYMENT_BATCH_PROCESSED',
       performed_by: userId,
-      note: `Payment batch ${batch.batch_number} executed by Accounting Supervisor. ${batch.payments.length} payments processed, invoices marked as PAID, remittance advice sent.`,
+    note: `Payment batch ${batch.batch_number} processed by Accounting Associate. ${batch.payments.length} payments processed, invoices marked as PAID, remittance advice sent.`,
     },
   });
 
@@ -1433,7 +1558,7 @@ export async function updatePaymentBillsSetup(
 }
 
 export async function submitPaymentBatchForReview(batchId: string, userId: string) {
-  const batch = await prisma.paymentBatch.findUnique({ where: { id: batchId }, include: { payments: true } });
+  const batch = await prisma.paymentBatch.findUnique({ where: { id: batchId }, include: { payments: { include: { bill_stub: true, invoice: true } } } });
   if (!batch) throw new AppError('Payment batch not found', 404);
   if (![PaymentBatchStatus.DRAFT, PaymentBatchStatus.RETURNED_FOR_CORRECTION].includes(batch.status as any)) {
     throw new AppError('Only draft or returned batches can be submitted', 400);
@@ -1442,14 +1567,21 @@ export async function submitPaymentBatchForReview(batchId: string, userId: strin
   // QB "Pay Bills" gate: a batch cannot leave the draft stage without the
   // payment setup (method + payment date at minimum) chosen by the Associate.
   if (!batch.payment_method || !batch.payment_date) {
-    throw new AppError('Complete the Pay Bills payment setup first — payment method and payment date are required before submitting for review.', 400);
+    throw new AppError('Complete the Pay Bills payment setup first — payment method and payment date are required before marking the batch ready.', 400);
   }
+  requireBillStubFiles(batch.payments as any[], 'mark ready');
   return prisma.paymentBatch.update({
     where: { id: batchId },
     data: {
-      status: PaymentBatchStatus.PENDING_SUPERVISOR_REVIEW as any,
+      // Accounting Associate now owns the batch end-to-end. REVIEWED is kept
+      // as the existing downstream-ready status for export/process screens;
+      // no supervisor approval or handoff is required.
+      status: PaymentBatchStatus.REVIEWED as any,
       submitted_by: userId,
       submitted_at: new Date(),
+      reviewed_by: userId,
+      reviewed_at: new Date(),
+      review_note: 'Marked ready by Accounting Associate — supervisor review is not required.',
       return_reason: null,
       returned_at: null,
       returned_by: null,
@@ -1462,9 +1594,6 @@ export async function reviewPaymentBatch(batchId: string, userId: string, note?:
   if (!batch) throw new AppError('Payment batch not found', 404);
   if (batch.status !== PaymentBatchStatus.PENDING_SUPERVISOR_REVIEW) {
     throw new AppError('Batch is not pending supervisor review', 400);
-  }
-  if (batch.created_by === userId || batch.submitted_by === userId) {
-    throw new AppError('Payment batch preparer cannot review their own batch', 403);
   }
   return prisma.paymentBatch.update({
     where: { id: batchId },
@@ -1493,9 +1622,12 @@ export async function returnPaymentBatch(batchId: string, userId: string, reason
 }
 
 export async function markPaymentBatchExported(batchId: string, userId: string) {
-  const batch = await prisma.paymentBatch.findUnique({ where: { id: batchId }, include: { payments: { include: { invoice: true } } } });
+  const batch = await prisma.paymentBatch.findUnique({ where: { id: batchId }, include: { payments: { include: { invoice: true, bill_stub: true } } } });
   if (!batch) throw new AppError('Payment batch not found', 404);
-  if (batch.status !== PaymentBatchStatus.REVIEWED) throw new AppError('Only a reviewed batch can be exported', 400);
+  if (batch.status !== PaymentBatchStatus.REVIEWED) throw new AppError('Only a batch marked ready for payment can be exported', 400);
+  requireBillStubFiles(batch.payments as any[], 'export');
+  // Payment-level bill-stub files were validated above. Export only records
+  // the bank handoff; it never fabricates a metadata-only stub.
   // Create one vendor-level stub per vendor on export. Existing payment-level
   // stubs remain untouched for backward compatibility and reconciliation.
   const groups = new Map<string, any[]>();

@@ -6,7 +6,6 @@ import InvoiceTable from './InvoiceTable';
 import UploadInvoiceModal from './UploadInvoiceModal';
 import BottleneckView from './BottleneckView';
 import AuditLogViewer from './AuditLogViewer';
-import InvoiceComments from './InvoiceComments';
 import PipelineTracker from './PipelineTracker';
 import MyTasksWidget from './MyTasksWidget';
 import StatusGuide from './StatusGuide';
@@ -988,6 +987,7 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
       customer_po_number: invoice.customer_po_number || '',
       season: invoice.season || '',
       order_type: invoice.order_type || '',
+      order_type_detail: (invoice as any).order_type_detail || '',
       invoice_type: invoice.invoice_type || '',
       category: invoice.category || '',
       bill_to_entity: invoice.bill_to_entity || '',
@@ -1099,6 +1099,7 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
         brand_tier: canEditAll ? parseString(editFormData.brand_tier) : undefined,
         season: canEditAll ? parseString(editFormData.season) : undefined,
         order_type: canEditAll ? parseString(editFormData.order_type) : undefined,
+        order_type_detail: canEditAll && editFormData.order_type === 'OTHER' ? parseString(editFormData.order_type_detail) : (canEditAll ? null : undefined),
         customer_po_number: canEditAll ? parseString(editFormData.customer_po_number) : undefined,
         mpo_number: canEditAll ? parseString(editFormData.mpo_number) : undefined,
         mpo_base_number: canEditAll ? parseString(editFormData.mpo_base_number) : undefined,
@@ -3084,10 +3085,6 @@ ${dataRows}
             {/* Overview Tab */}
             {detailTab === 'overview' && (
             <div className="space-y-4">
-              <InvoiceComments
-                invoice={selectedInvoice}
-                onCommentAdded={(comment) => setSelectedInvoice((current) => current ? { ...current, audit_logs: [...(current.audit_logs || []), comment] } : current)}
-              />
               {/* Match the approval quick-view affordance: the source PDF is
                   always the first, prominent action in the invoice view. */}
               <button
@@ -4532,6 +4529,14 @@ ${dataRows}
                     { value: 'BULK', label: 'Bulk' },
                     { value: 'SMS', label: 'SMS' },
                     { value: 'SAMPLE', label: 'Sample' },
+                    { value: 'OTHER', label: 'Others' },
+                  ] },
+                  { label: 'Combined shipment type', field: 'order_type_detail', type: 'select', showWhen: 'OTHER', options: [
+                    { value: '', label: '— Select combined type —' },
+                    { value: 'COMBINED_BULK_SMS', label: 'Combined - bulk & sms' },
+                    { value: 'COMBINED_SMS_SAMPLE', label: 'Combined - sms & sample' },
+                    { value: 'COMBINED_BULK_SAMPLE', label: 'Combined - bulk & sample' },
+                    { value: 'COMBINED_ALL', label: 'Combined - all' },
                   ] },
                   { label: 'Category', field: 'category', type: 'select', options: [
                     { value: '', label: '— Select —' },
@@ -4611,7 +4616,7 @@ ${dataRows}
                   {!isCollapsed && (
                     <>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
-                      {section.fields.map(({ label, field, type, options, required }: any) => {
+                      {section.fields.filter((definition: any) => !definition.showWhen || editFormData.order_type === definition.showWhen).map(({ label, field, type, options, required }: any) => {
                         const fieldIsReadOnly = isReadOnly && !(canEditVendor && (field === 'vendor_id' || field === 'new_vendor_name'));
                         return (
                         <div key={field}>
@@ -4631,7 +4636,12 @@ ${dataRows}
                                     new_vendor_name: '',
                                   });
                                 } else {
-                                  handleEditChange(field, e.target.value);
+                                  if (field === 'order_type') {
+                                    handleEditChange(field, e.target.value);
+                                    if (e.target.value !== 'OTHER') handleEditChange('order_type_detail', '');
+                                  } else {
+                                    handleEditChange(field, e.target.value);
+                                  }
                                 }
                               }}
                               disabled={fieldIsReadOnly}

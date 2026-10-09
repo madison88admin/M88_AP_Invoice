@@ -60,11 +60,7 @@ export default function InvoiceComments({ invoice, onCommentAdded }: InvoiceComm
       </div>
 
       <div className="mt-3 max-h-52 space-y-2 overflow-y-auto pr-1">
-        {localComments.length === 0 ? (
-          <p className="rounded-lg p-3 text-xs" style={{ background: 'var(--bg-elevated)', color: 'var(--text-muted)' }}>
-            No comments yet. Add a callout for the next reviewer before submitting.
-          </p>
-        ) : localComments.map((comment) => (
+        {localComments.map((comment) => (
           <div key={comment.id} className="rounded-lg p-3" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}>
             <div className="flex items-center justify-between gap-3">
               <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>{comment.actor_name || comment.performed_by || 'Workflow user'}</span>

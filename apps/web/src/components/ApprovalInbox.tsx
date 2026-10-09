@@ -6,7 +6,6 @@ import { CheckCircle, XCircle, Clock, ArrowLeft, Loader2, ExternalLink, FileText
 import { MockInvoice } from '../lib/mockData';
 import { invoiceApi } from '../lib/api';
 import { Skeleton } from './ui/Skeleton';
-import InvoiceComments from './InvoiceComments';
 import {
   orderedSignatures,
   getCoordinatorSubmissionDate,
@@ -44,6 +43,7 @@ const QUICK_VIEW_SECTIONS: Array<{ title: string; fields: QuickViewField[] }> = 
       { label: 'Brand Tier', field: 'brand_tier' },
       { label: 'Season', field: 'season' },
       { label: 'Order Type', field: 'order_type' },
+      { label: 'Combined Shipment Type', field: 'order_type_detail' },
       { label: 'Category', field: 'category' },
       { label: 'Bill To Entity', field: 'bill_to_entity' },
     ],
@@ -52,7 +52,7 @@ const QUICK_VIEW_SECTIONS: Array<{ title: string; fields: QuickViewField[] }> = 
     title: 'PO & Material',
     fields: [
       { label: 'PO Number', field: 'po_number' },
-      { label: 'Customer PO Number', field: 'customer_po_number' },
+      { label: 'M88 PO Number', field: 'customer_po_number' },
       { label: 'MPO Number', field: 'mpo_number' },
       { label: 'Base MPO', field: 'mpo_base_number' },
       { label: 'Order Sequence', field: 'mpo_order_sequence' },
@@ -125,7 +125,17 @@ function formatQuickViewValue(invoice: MockInvoice, field: QuickViewField): stri
       ? `${invoice.currency || ''} ${numeric.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`.trim()
       : String(value);
   }
-  return String(value);
+  if (field.field === 'order_type' && value === 'OTHER') return 'Others';
+  if (field.field === 'order_type_detail') {
+    const labels: Record<string, string> = {
+      COMBINED_BULK_SMS: 'Combined - bulk & sms',
+      COMBINED_SMS_SAMPLE: 'Combined - sms & sample',
+      COMBINED_BULK_SAMPLE: 'Combined - bulk & sample',
+      COMBINED_ALL: 'Combined - all',
+    };
+    return labels[String(value)] || String(value).replace(/_/g, ' ');
+  }
+  return String(value).replace(/_/g, ' ');
 }
 
 export default function ApprovalInbox() {
@@ -632,21 +642,6 @@ export default function ApprovalInbox() {
                         {approving ? 'Approving...' : 'Approve'}
                       </button>
                       <button
-                        onClick={() => setShowRejectModal(true)}
-                        disabled={rejecting}
-                        className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                        style={{
-                          background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)',
-                          color: 'var(--accent-red)',
-                          border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)',
-                        }}
-                        onMouseEnter={(e) => { if (!rejecting) e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-red) 20%, transparent)'; }}
-                        onMouseLeave={(e) => { if (!rejecting) e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-red) 10%, transparent)'; }}
-                      >
-                        <XCircle className="h-4 w-4 mr-2" strokeWidth={1.75} />
-                        Reject
-                      </button>
-                      <button
                         onClick={() => setShowReturnModal(true)}
                         disabled={returning}
                         className="w-full flex items-center justify-center px-4 py-2.5 rounded-xl transition-all font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
@@ -683,12 +678,6 @@ export default function ApprovalInbox() {
             </div>
 
             <div className="overflow-y-auto p-6">
-              <div className="mb-5">
-                <InvoiceComments
-                  invoice={selectedInvoice}
-                  onCommentAdded={(comment) => setSelectedInvoice((current) => current ? { ...current, audit_logs: [...(current.audit_logs || []), comment] } : current)}
-                />
-              </div>
               <button type="button" onClick={handleViewDocument} className="mb-5 flex w-full items-center justify-between rounded-xl p-4 text-left" style={{ background: 'color-mix(in srgb, var(--accent-blue) 9%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-blue) 24%, transparent)' }}>
                 <span><span className="block text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Actual invoice PDF</span><span className="mt-1 block text-xs" style={{ color: 'var(--text-muted)' }}>Open the document in a separate preview modal.</span></span>
                 <FileText className="h-5 w-5" style={{ color: 'var(--accent-blue)' }} />
@@ -781,7 +770,6 @@ export default function ApprovalInbox() {
             <div className="sticky bottom-0 flex flex-col gap-2 px-6 py-4 sm:flex-row sm:items-center sm:justify-end" style={{ borderTop: '1px solid var(--border-color)', background: 'var(--bg-card)' }}>
               <button type="button" onClick={closeInvoicePreview} className="rounded-xl px-4 py-2.5 text-sm font-medium" style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>Close</button>
               <button type="button" onClick={() => setShowReturnModal(true)} className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-amber) 12%, transparent)', color: 'var(--accent-amber)', border: '1px solid color-mix(in srgb, var(--accent-amber) 28%, transparent)' }}><RotateCcw className="h-4 w-4" /> Return</button>
-              <button type="button" onClick={() => setShowRejectModal(true)} className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', color: 'var(--accent-red)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}><XCircle className="h-4 w-4" /> Reject</button>
               <button type="button" onClick={handleApprove} disabled={approving} className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold" style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}>
                 {approving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
                 {approving ? 'Approving…' : 'Approve (A)'}

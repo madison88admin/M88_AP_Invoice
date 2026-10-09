@@ -126,8 +126,9 @@ export default function AccountingInvoiceArchive({ mode }: AccountingInvoiceArch
         {rows.length === 0 ? (
           <div className="p-12 text-center text-sm" style={{ color: 'var(--text-muted)' }}>No {mode} invoices match the current filters.</div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-[900px] w-full">
+          <>
+          <div className="hidden overflow-x-auto md:block">
+            <table className="w-full table-fixed">
               <thead style={{ background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border-subtle)' }}>
                 <tr>{['Invoice #', 'Vendor', 'Amount', 'Status', isApprovedView ? 'Updated' : 'Reason', ''].map(heading => <th key={heading} className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>{heading}</th>)}</tr>
               </thead>
@@ -137,10 +138,10 @@ export default function AccountingInvoiceArchive({ mode }: AccountingInvoiceArch
                   return (
                     <tr key={invoice.id} onClick={() => setSelectedInvoice(invoice)} className="cursor-pointer" style={{ borderTop: '1px solid var(--border-subtle)' }}>
                       <td className="px-5 py-4 align-top"><button type="button" onClick={event => { event.stopPropagation(); setSelectedInvoice(invoice); }} className="text-left text-sm font-semibold hover:underline" style={{ color: 'var(--accent-purple)' }}>{invoice.invoice_number || 'Unnamed invoice'}</button><p className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>{invoice.invoice_type || 'Invoice'}</p></td>
-                      <td className="max-w-[260px] px-5 py-4 align-top text-sm" style={{ color: 'var(--text-secondary)' }}>{invoice.vendor_name || 'Unknown vendor'}</td>
+                      <td className="px-5 py-4 align-top text-sm" style={{ color: 'var(--text-secondary)' }}><span className="block truncate" title={invoice.vendor_name || 'Unknown vendor'}>{invoice.vendor_name || 'Unknown vendor'}</span></td>
                       <td className="whitespace-nowrap px-5 py-4 align-top text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{invoice.currency || ''} {Number(invoice.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                       <td className="px-5 py-4 align-top"><span className="inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-[10px] font-semibold" style={{ background: isApprovedView ? 'color-mix(in srgb, var(--accent-lime) 12%, transparent)' : 'color-mix(in srgb, var(--accent-red) 12%, transparent)', color: isApprovedView ? 'var(--accent-lime)' : 'var(--accent-red)' }}>{formatStatus(String(invoice.status))}</span></td>
-                      <td className="max-w-[360px] px-5 py-4 align-top text-xs" style={{ color: 'var(--text-secondary)' }}>{isApprovedView ? (invoice.updated_at ? new Date(invoice.updated_at).toLocaleDateString('en-US') : 'N/A') : <span className="line-clamp-2">{decision?.note || 'No rejection reason was recorded.'}</span>}</td>
+                      <td className="px-5 py-4 align-top text-xs" style={{ color: 'var(--text-secondary)' }}>{isApprovedView ? (invoice.updated_at ? new Date(invoice.updated_at).toLocaleDateString('en-US') : 'N/A') : <span className="line-clamp-2">{decision?.note || 'No rejection reason was recorded.'}</span>}</td>
                       <td className="px-5 py-4 align-top"><button type="button" onClick={event => { event.stopPropagation(); void openInvoicePdf(invoice); }} disabled={openingDocument} className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium" style={{ background: 'var(--bg-elevated)', color: 'var(--accent-blue)', border: '1px solid var(--border-color)' }}><FileText className="h-3.5 w-3.5" /> PDF</button></td>
                     </tr>
                   );
@@ -148,6 +149,17 @@ export default function AccountingInvoiceArchive({ mode }: AccountingInvoiceArch
               </tbody>
             </table>
           </div>
+          <div className="divide-y md:hidden" style={{ borderColor: 'var(--border-subtle)' }}>
+            {rows.map(invoice => {
+              const decision = latestDecision(invoice);
+              return <button key={invoice.id} type="button" onClick={() => setSelectedInvoice(invoice)} className="block w-full p-4 text-left" style={{ borderColor: 'var(--border-subtle)' }}>
+                <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-sm font-semibold" style={{ color: 'var(--accent-purple)' }}>{invoice.invoice_number || 'Unnamed invoice'}</p><p className="mt-1 truncate text-xs" style={{ color: 'var(--text-secondary)' }}>{invoice.vendor_name || 'Unknown vendor'}</p></div><span className="inline-flex shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-[10px] font-semibold" style={{ background: isApprovedView ? 'color-mix(in srgb, var(--accent-lime) 12%, transparent)' : 'color-mix(in srgb, var(--accent-red) 12%, transparent)', color: isApprovedView ? 'var(--accent-lime)' : 'var(--accent-red)' }}>{formatStatus(String(invoice.status))}</span></div>
+                <div className="mt-3 flex items-center justify-between gap-3"><span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{invoice.currency || ''} {Number(invoice.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span><span className="text-xs" style={{ color: 'var(--text-muted)' }}>{isApprovedView ? (invoice.updated_at ? new Date(invoice.updated_at).toLocaleDateString('en-US') : 'N/A') : (decision?.note || 'No rejection reason recorded.').slice(0, 72)}</span></div>
+                <span className="mt-3 inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium" style={{ background: 'var(--bg-elevated)', color: 'var(--accent-blue)', border: '1px solid var(--border-color)' }}><FileText className="h-3.5 w-3.5" /> Open invoice</span>
+              </button>;
+            })}
+          </div>
+          </>
         )}
         <div className="border-t px-5 py-3 text-xs" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}>Accounting-only archive · {rows.length} {mode} invoice{rows.length === 1 ? '' : 's'}</div>
       </div>

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { vendorApi } from '../lib/api';
-import { Landmark, Search, Edit, Save, X, ArrowLeft, CheckCircle2, AlertCircle, Landmark as BankIcon, Plus } from 'lucide-react';
+import { Landmark, Search, Edit, Save, X, ArrowLeft, CheckCircle2, AlertCircle, Landmark as BankIcon, Plus, Trash2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 interface BankDetailsEntry {
@@ -12,12 +12,12 @@ interface BankDetailsEntry {
   classification: string | null;
   supplier_location: string | null;
   bank_name: string | null;
-  bank_name_alt: string | null;
+  bank_name_alt: string[];
   bank_address: string | null;
   swift_code: string | null;
-  swift_code_alt: string | null;
+  swift_code_alt: string[];
   account_number: string | null;
-  account_number_alt: string | null;
+  account_number_alt: string[];
   iban: string | null;
   sort_code: string | null;
   aba_routing_number: string | null;
@@ -56,6 +56,7 @@ export default function BankDetailsMasterlist() {
   const [editingEntry, setEditingEntry] = useState<BankDetailsEntry | null>(null);
   const [editData, setEditData] = useState<Partial<BankDetailsEntry>>({});
   const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newVendorData, setNewVendorData] = useState<NewVendorBankData>({
     name: '', beneficiary_name: '', supplier_location: '', classification: '',
@@ -113,7 +114,18 @@ export default function BankDetailsMasterlist() {
     if (!editingEntry) return;
     setSaving(true);
     try {
-      const res = await vendorApi.updateBankDetails(editingEntry.id, editData);
+      const asText = (value: unknown) => Array.isArray(value) ? value.join(', ') : String(value ?? '').trim();
+      const asTextArray = (value: unknown) => asText(value)
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+      const payload = {
+        ...editData,
+        bank_name_alt: asTextArray(editData.bank_name_alt),
+        swift_code_alt: asTextArray(editData.swift_code_alt),
+        account_number_alt: asTextArray(editData.account_number_alt),
+      };
+      const res = await vendorApi.updateBankDetails(editingEntry.id, payload);
       showToast(res.data.message, 'success');
       setShowEditModal(false);
       setEditingEntry(null);
@@ -130,6 +142,24 @@ export default function BankDetailsMasterlist() {
     setShowEditModal(false);
     setEditingEntry(null);
     setEditData({});
+  };
+
+  const handleDelete = async (entry: BankDetailsEntry) => {
+    const linkedInvoiceWarning = entry.invoice_count > 0
+      ? ` This vendor has ${entry.invoice_count} linked invoice${entry.invoice_count === 1 ? '' : 's'}; invoice history will be preserved.`
+      : '';
+    if (!window.confirm(`Delete ${entry.name} from the active bank details masterlist?${linkedInvoiceWarning} The vendor will be archived and can no longer be used for new intake.`)) return;
+
+    setDeletingId(entry.id);
+    try {
+      const response = await vendorApi.delete(entry.id);
+      showToast(response.data?.message || 'Vendor archived successfully', 'success');
+      await loadBankDetails();
+    } catch (err: any) {
+      showToast(err.response?.data?.error?.message || err.response?.data?.message || 'Failed to delete vendor', 'error');
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   const resetAddForm = () => {
@@ -190,7 +220,7 @@ export default function BankDetailsMasterlist() {
       <label className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{label}</label>
       <input
         type={type}
-        value={(editData[field] as string) || ''}
+        value={Array.isArray(editData[field]) ? editData[field]!.join(', ') : String(editData[field] ?? '')}
         onChange={(e) => setEditData({ ...editData, [field]: e.target.value })}
         className="w-full p-2 rounded-lg text-sm mt-1"
         style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
@@ -250,7 +280,7 @@ export default function BankDetailsMasterlist() {
         <div className="flex items-center gap-2 p-3 rounded-lg text-sm" style={{ background: 'color-mix(in srgb, var(--accent-blue) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-blue) 20%, transparent)' }}>
           <CheckCircle2 className="h-4 w-4" style={{ color: 'var(--accent-blue)' }} />
           <span style={{ color: 'var(--text-secondary)' }}>
-            Use <strong>Add Vendor &amp; Bank Details</strong> for a new supplier, or <strong>Edit Bank</strong> to update an existing record. Duplicate vendor names are blocked automatically.
+            Use <strong>Add Vendor &amp; Bank Details</strong> for a new supplier, <strong>Edit Bank</strong> to update an existing record, or <strong>Delete</strong> to archive an obsolete vendor. Linked invoice history is preserved.
           </span>
         </div>
       )}
@@ -334,20 +364,29 @@ export default function BankDetailsMasterlist() {
                     )}
                   </td>
 
-                  {/* Action button — prominent Edit button */}
+                  {/* Actions */}
                   {canEditBank && (
                     <td className="p-3 text-center">
-                      <button
-                        onClick={() => handleEdit(entry)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
-                        style={{
-                          background: 'var(--accent-blue)',
-                          color: 'var(--text-inverse)',
-                        }}
-                      >
-                        <Edit className="h-3.5 w-3.5" />
-                        Edit Bank
-                      </button>
+                      <div className="flex items-center justify-center gap-2">
+                        <button
+                          onClick={() => handleEdit(entry)}
+                          className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all"
+                          style={{ background: 'var(--accent-blue)', color: 'var(--text-inverse)' }}
+                        >
+                          <Edit className="h-3.5 w-3.5" />
+                          Edit Bank
+                        </button>
+                        <button
+                          onClick={() => void handleDelete(entry)}
+                          disabled={deletingId === entry.id}
+                          className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all disabled:cursor-not-allowed disabled:opacity-50"
+                          style={{ background: 'color-mix(in srgb, var(--accent-red) 12%, transparent)', color: 'var(--accent-red)', border: '1px solid color-mix(in srgb, var(--accent-red) 28%, transparent)' }}
+                          title="Archive vendor from active bank details"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          {deletingId === entry.id ? 'Deleting...' : 'Delete'}
+                        </button>
+                      </div>
                     </td>
                   )}
                 </tr>

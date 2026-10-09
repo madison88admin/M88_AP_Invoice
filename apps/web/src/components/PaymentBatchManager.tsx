@@ -285,6 +285,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
   const [showMoreFilters, setShowMoreFilters] = useState(false);
   const [vendorList, setVendorList] = useState<{ id: string; name: string }[]>([]);
   const [filteredTotals, setFilteredTotals] = useState<FilteredTotals[]>([]);
+  const initialPaymentsLoadedRef = useRef(false);
   const [remarksTarget, setRemarksTarget] = useState<ScheduledPayment | null>(null);
   const [remarksDraft, setRemarksDraft] = useState('');
   const [remarksSaving, setRemarksSaving] = useState(false);
@@ -629,7 +630,25 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
       setLoading(false);
     };
     init();
-  }, [loadBatches, loadScheduledPayments]);
+  // Keep the initial page bootstrap separate from filter changes. The previous
+  // dependency on loadScheduledPayments recreated this effect on every search
+  // keystroke, remounting the loading view and stealing the input focus.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadBatches]);
+
+  // Filter requests are debounced so typing stays in place and does not cause
+  // a full-page refresh for every character. The first request is made by the
+  // bootstrap effect above.
+  useEffect(() => {
+    if (!initialPaymentsLoadedRef.current) {
+      initialPaymentsLoadedRef.current = true;
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void loadScheduledPayments();
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [filters, loadScheduledPayments]);
 
   const handleToggleSelect = async (paymentId: string) => {
     const payment = scheduledPayments.find(p => p.id === paymentId);

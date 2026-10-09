@@ -25,6 +25,7 @@ const FULL_BANK_DETAIL_ROLES = [
   UserRole.ACCOUNTING_SUPERVISOR,
   UserRole.ACCOUNTING_ASSOCIATE,
   UserRole.IT_ADMIN,
+  UserRole.SUPERADMIN,
 ];
 const ACCOUNTING_ROLES = [UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN];
 
@@ -118,9 +119,12 @@ router.get('/bank-details/masterlist', authenticate, async (req: Request, res: R
       bank_address: v.bank_address,
       swift_code: v.swift_code,
       swift_code_alt: v.swift_code_alt,
-      account_number: maskBankAccount(v.account_number),
-      account_number_alt: v.account_number_alt.map(maskBankAccount),
-      iban: maskBankAccount(v.iban),
+      // Keep these raw until serializeVendorBankFields applies the role-aware
+      // mask exactly once. Double-masking here would make an authorized edit
+      // round-trip save the masked value back over the real account number.
+      account_number: v.account_number,
+      account_number_alt: v.account_number_alt,
+      iban: v.iban,
       sort_code: v.sort_code,
       aba_routing_number: v.aba_routing_number,
       intermediary_bank_name: v.intermediary_bank_name,
@@ -173,7 +177,7 @@ router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
   }
 });
 
-router.post('/', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), async (req: AuthRequest, res: Response, next: NextFunction) => {
+router.post('/', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN, UserRole.SUPERADMIN), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     // Phase 11: duplicate vendor check — block when an active vendor already
     // has the same normalized name (case/space-insensitive).
@@ -220,7 +224,7 @@ router.post('/', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_A
 // Vendor deletion is intentionally a soft delete. Historical invoices keep
 // their vendor relation, while the vendor is removed from active intake and
 // bank masterlists. Bulk deletion uses the same safe behavior.
-router.delete('/bulk', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), async (req: AuthRequest, res: Response, next: NextFunction) => {
+router.delete('/bulk', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN, UserRole.SUPERADMIN), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const rawIds: unknown[] = Array.isArray(req.body?.ids) ? req.body.ids : [];
     const ids: string[] = Array.from(new Set(
@@ -242,7 +246,7 @@ router.delete('/bulk', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUN
   }
 });
 
-router.delete('/:id', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), async (req: AuthRequest, res: Response, next: NextFunction) => {
+router.delete('/:id', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN, UserRole.SUPERADMIN), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const vendor = await prisma.vendor.findUnique({ where: { id: req.params.id } });
     if (!vendor) {
@@ -384,7 +388,7 @@ router.post('/:id/request-bank-update', authenticate, async (req: AuthRequest, r
 
 // ─── BANK DETAILS UPDATE (propagate to invoices) ────────────────────────────
 // Update vendor bank details AND propagate to all related invoices
-router.patch('/:id/bank-details', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), async (req: AuthRequest, res: Response, next: NextFunction) => {
+router.patch('/:id/bank-details', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN, UserRole.SUPERADMIN), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const vendorId = req.params.id;
     const { bank_name, swift_code, account_number, bank_name_alt, bank_address, account_number_alt, swift_code_alt, iban, sort_code, aba_routing_number, intermediary_bank_name, intermediary_bank_swift } = req.body;

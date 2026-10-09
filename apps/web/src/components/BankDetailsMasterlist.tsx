@@ -57,6 +57,7 @@ export default function BankDetailsMasterlist() {
   const [editData, setEditData] = useState<Partial<BankDetailsEntry>>({});
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [loadingBankDetailsId, setLoadingBankDetailsId] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newVendorData, setNewVendorData] = useState<NewVendorBankData>({
     name: '', beneficiary_name: '', supplier_location: '', classification: '',
@@ -108,6 +109,27 @@ export default function BankDetailsMasterlist() {
       intermediary_bank_swift: entry.intermediary_bank_swift,
     });
     setShowEditModal(true);
+    setLoadingBankDetailsId(entry.id);
+    void vendorApi.getBankDetailsById(entry.id).then((response) => {
+      const latest = response.data as BankDetailsEntry;
+      setEditingEntry(latest);
+      setEditData({
+        bank_name: latest.bank_name,
+        bank_name_alt: latest.bank_name_alt,
+        bank_address: latest.bank_address,
+        swift_code: latest.swift_code,
+        swift_code_alt: latest.swift_code_alt,
+        account_number: latest.account_number,
+        account_number_alt: latest.account_number_alt,
+        iban: latest.iban,
+        sort_code: latest.sort_code,
+        aba_routing_number: latest.aba_routing_number,
+        intermediary_bank_name: latest.intermediary_bank_name,
+        intermediary_bank_swift: latest.intermediary_bank_swift,
+      });
+    }).catch((err: any) => {
+      showToast(err.response?.data?.error?.message || 'Unable to load the complete bank details.', 'error');
+    }).finally(() => setLoadingBankDetailsId(null));
   };
 
   const handleSave = async () => {
@@ -480,16 +502,16 @@ export default function BankDetailsMasterlist() {
               </button>
               <button
                 onClick={handleSave}
-                disabled={saving}
+                disabled={saving || loadingBankDetailsId === editingEntry.id}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium"
                 style={{
-                  background: saving ? 'var(--bg-elevated)' : 'var(--accent-lime)',
-                  color: saving ? 'var(--text-muted)' : 'var(--text-inverse)',
-                  cursor: saving ? 'not-allowed' : 'pointer',
+                  background: saving || loadingBankDetailsId === editingEntry.id ? 'var(--bg-elevated)' : 'var(--accent-lime)',
+                  color: saving || loadingBankDetailsId === editingEntry.id ? 'var(--text-muted)' : 'var(--text-inverse)',
+                  cursor: saving || loadingBankDetailsId === editingEntry.id ? 'not-allowed' : 'pointer',
                 }}
               >
                 <Save className="h-4 w-4" />
-                {saving ? 'Saving...' : 'Save Changes'}
+                {loadingBankDetailsId === editingEntry.id ? 'Loading details...' : saving ? 'Saving...' : 'Save Changes'}
               </button>
             </div>
           </div>

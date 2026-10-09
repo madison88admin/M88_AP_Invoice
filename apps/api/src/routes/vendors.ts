@@ -140,6 +140,20 @@ router.get('/bank-details/masterlist', authenticate, async (req: Request, res: R
   }
 });
 
+// Return the complete bank record for the edit form. The serializer applies
+// the same role-aware masking policy as the masterlist, so authorized
+// Accounting/Purchasing users can see the real account number instead of
+// accidentally saving a masked display value back to the vendor.
+router.get('/:id/bank-details', authorize(...FULL_BANK_DETAIL_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const vendor = await prisma.vendor.findUnique({ where: { id: req.params.id } });
+    if (!vendor) throw new AppError('Vendor not found', 404);
+    res.json(serializeVendorBankFields(vendor, req.user?.role));
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { search, limit } = req.query;

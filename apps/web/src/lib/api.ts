@@ -284,6 +284,7 @@ export const vendorApi = {
   requestBankUpdate: (id: string, data: { bank_name?: string; swift_code?: string; account_number?: string; reason: string }) =>
     api.post(`/api/vendors/${id}/request-bank-update`, data),
   getBankDetails: () => api.get('/api/vendors/bank-details/masterlist'),
+  getBankDetailsById: (id: string) => api.get(`/api/vendors/${id}/bank-details`),
   updateBankDetails: (id: string, data: any) => api.patch(`/api/vendors/${id}/bank-details`, data),
 };
 

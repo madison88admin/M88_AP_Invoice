@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { authenticate } from '../middleware/auth';
 import { analyticsService } from '../services/analyticsService';
-import { evaluateExtractionBenchmark } from '../services/extractionBenchmarkService';
+import { compareExtractionBenchmarks, evaluateExtractionBenchmark } from '../services/extractionBenchmarkService';
 import { listExtractionPolicies } from '../services/extractionPolicyService';
 
 const router: Router = Router();
@@ -17,6 +17,30 @@ router.post('/extraction-benchmark', (req, res) => {
     res.json(evaluateExtractionBenchmark(req.body?.cases));
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Invalid benchmark dataset' });
+  }
+});
+
+/**
+ * Compare two precomputed extraction runs on the same labeled cases. This is
+ * deliberately an A/B harness: it never calls Gemini or another provider from
+ * a dashboard request and therefore cannot unexpectedly spend API credits.
+ */
+router.post('/extraction-ab', (req, res) => {
+  try {
+    const baselineCases = req.body?.baseline_cases;
+    const challengerCases = req.body?.challenger_cases;
+    if (!Array.isArray(baselineCases) || !Array.isArray(challengerCases) || baselineCases.length === 0 || challengerCases.length === 0) {
+      return res.status(400).json({ error: 'baseline_cases and challenger_cases must be non-empty arrays' });
+    }
+    if (baselineCases.length !== challengerCases.length) return res.status(400).json({ error: 'A/B runs must contain the same number of cases' });
+    const baselineIds = baselineCases.map((item: any, index: number) => item?.id || `case-${index + 1}`);
+    const challengerIds = challengerCases.map((item: any, index: number) => item?.id || `case-${index + 1}`);
+    if (baselineIds.some((id: string, index: number) => id !== challengerIds[index])) return res.status(400).json({ error: 'A/B cases must use the same case order and ids' });
+    const baseline = evaluateExtractionBenchmark(baselineCases);
+    const challenger = evaluateExtractionBenchmark(challengerCases);
+    return res.json({ ...compareExtractionBenchmarks(baseline, challenger), baseline_run: baseline, challenger_run: challenger });
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message || 'Invalid A/B benchmark dataset' });
   }
 });
 

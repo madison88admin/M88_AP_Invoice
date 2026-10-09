@@ -114,6 +114,74 @@ export function parseDate(dateStr: string, preferUS: boolean = false): string | 
   return null;
 }
 
+export interface NormalizedInvoiceDatePair {
+  invoice_date: string | null;
+  due_date: string | null;
+  corrected: boolean;
+  reason?: string;
+}
+
+function toIsoDateValue(value: unknown): string | null {
+  if (!value) return null;
+  if (value instanceof Date) {
+    return isNaN(value.getTime()) ? null : value.toISOString().slice(0, 10);
+  }
+  const raw = String(value).trim();
+  const iso = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (iso) return parseDate(iso[1]);
+  return parseDate(raw);
+}
+
+/**
+ * Correct the one dangerous locale failure we have seen in production:
+ * both invoice and due dates are numeric and the intake path interpreted a
+ * US document as DMY, making the due date earlier than the invoice date.
+ *
+ * We only correct when the labelled raw values support both interpretations,
+ * the current pair matches DMY, and the alternate MDY pair restores the
+ * normal invoice_date <= due_date ordering. Other ambiguous dates are left
+ * untouched for manual review rather than guessed.
+ */
+export function normalizeInvoiceDatePair(
+  invoiceDate: unknown,
+  dueDate: unknown,
+  rawText: string = '',
+): NormalizedInvoiceDatePair {
+  const currentInvoice = toIsoDateValue(invoiceDate);
+  const currentDue = toIsoDateValue(dueDate);
+  if (!currentInvoice || !currentDue || currentDue >= currentInvoice) {
+    return { invoice_date: currentInvoice, due_date: currentDue, corrected: false };
+  }
+
+  // OCR/PDF flattening can place an invoice number or column label between
+  // the date label and its value, so allow a bounded non-numeric gap.
+  const invoiceMatch = rawText.match(/(?:invoice|document)\s+date\b.{0,80}?(\d{1,2}[/.\-]\d{1,2}[/.\-]\d{4})/i);
+  const dueMatch = rawText.match(/(?:due|payment\s+due|invoice\s+due)\s+date\b.{0,80}?(\d{1,2}[/.\-]\d{1,2}[/.\-]\d{4})/i);
+  if (!invoiceMatch || !dueMatch) {
+    return { invoice_date: currentInvoice, due_date: currentDue, corrected: false };
+  }
+
+  const invoiceRaw = invoiceMatch[1];
+  const dueRaw = dueMatch[1];
+  const dmyInvoice = parseDate(invoiceRaw, false);
+  const dmyDue = parseDate(dueRaw, false);
+  const mdyInvoice = parseDate(invoiceRaw, true);
+  const mdyDue = parseDate(dueRaw, true);
+  const currentIsDmy = currentInvoice === dmyInvoice && currentDue === dmyDue;
+  const alternateRestoresOrder = Boolean(mdyInvoice && mdyDue && mdyDue >= mdyInvoice);
+
+  if (currentIsDmy && alternateRestoresOrder && (mdyInvoice !== dmyInvoice || mdyDue !== dmyDue)) {
+    return {
+      invoice_date: mdyInvoice,
+      due_date: mdyDue,
+      corrected: true,
+      reason: `Swapped numeric date locale from DMY to MDY because due date ${currentDue} preceded invoice date ${currentInvoice}`,
+    };
+  }
+
+  return { invoice_date: currentInvoice, due_date: currentDue, corrected: false };
+}
+
 /**
  * Compute due date from invoice date and payment terms.
  */

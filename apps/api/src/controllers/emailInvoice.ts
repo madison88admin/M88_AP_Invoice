@@ -4,8 +4,9 @@ import { checkEmailDuplicate, generateFileHash } from '../services/emailDuplicat
 import { createJob, completeJob, failJob, cleanupOldJobs } from '../services/jobStore';
 import { analyzeInvoice } from '../services/ocrService';
 import { matchVendor } from '../services/vendorMatchingService';
+import { getVendorPaymentTermDefault, preferExtractedPaymentTerms } from '../services/vendorDefaultsService';
 import { validateInvoice } from '../services/validationService';
-import { detectMultiInvoice, splitPdfByPageRanges } from '../services/multiInvoiceDetector';
+import { buildMultiInvoiceSourceMetadata, detectMultiInvoice, splitPdfByPageRanges } from '../services/multiInvoiceDetector';
 import { uploadToStorage } from '../services/supabaseStorageService';
 import { InvoiceStatus, InvoiceSource, InvoiceType, SignatureType, ExceptionReason, determineApprovalTier, BrandTier, isTop10Brand, TOP_10_BRANDS } from '@ap-invoice/shared';
 import { parseMPOReference } from '../utils/mpoReference';
@@ -55,6 +56,7 @@ async function processSingleEmailInvoice(
   emailMetadata: any,
   requestId: string,
   splitIndex?: number,
+  multiInvoiceSource?: any,
 ): Promise<{
   success: boolean;
   duplicate?: boolean;
@@ -196,6 +198,7 @@ async function processSingleEmailInvoice(
         subtotal: ocrResult.subtotal || undefined,
         invoice_type: (ocrResult.invoice_type || InvoiceType.INVOICE) as any,
         order_type: ocrResult.order_type as any,
+        order_type_detail: (ocrResult as any).order_type === 'OTHER' ? (ocrResult as any).order_type_detail : undefined,
         brand: ocrResult.brand,
         brand_code: ocrResult.brand_code,
         brand_tier: brand_tier,
@@ -218,6 +221,7 @@ async function processSingleEmailInvoice(
           email_received_date: emailMetadata.receivedDate,
           email_attachment_name: emailMetadata.attachmentName,
           multi_invoice_split_index: splitIndex,
+          multi_invoice_source: multiInvoiceSource,
         } as any,
         beneficiary_name: (ocrResult as any).bank_info?.beneficiary_name || (ocrResult as any).beneficiary_name || undefined,
         bank_name: (ocrResult as any).bank_info?.bank_name || (ocrResult as any).bank_name || undefined,
@@ -228,7 +232,7 @@ async function processSingleEmailInvoice(
         status: (vendorId ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,
         source: InvoiceSource.EMAIL as any,
         approval_tier: tier,
-        payment_terms: ocrResult.payment_terms,
+        payment_terms: preferExtractedPaymentTerms(ocrResult.payment_terms, await getVendorPaymentTermDefault(vendorId)),
         pdf_path: storagePath || undefined,
         raw_file_url: storagePath || undefined,
         // Persist line items to InvoiceLine table for line-level validation matching
@@ -320,6 +324,7 @@ async function processSingleManualInvoice(
   uploadedBy: string,
   requestId: string,
   splitIndex?: number,
+  multiInvoiceSource?: any,
 ): Promise<{
   success: boolean;
   duplicate?: boolean;
@@ -446,6 +451,7 @@ async function processSingleManualInvoice(
         additional_charges: ocrResult.additional_charges || 0,
         invoice_type: (ocrResult.invoice_type || InvoiceType.INVOICE) as any,
         order_type: ocrResult.order_type as any,
+        order_type_detail: (ocrResult as any).order_type === 'OTHER' ? (ocrResult as any).order_type_detail : undefined,
         brand: ocrResult.brand,
         brand_code: ocrResult.brand_code,
         brand_tier: brand_tier,
@@ -456,12 +462,12 @@ async function processSingleManualInvoice(
         is_duplicate: false,
         invoice_hash: fileHash,
         ocr_confidence_score: ocrResult.ocr_confidence_score || undefined,
-        ocr_raw_data: { ...ocrResult, manual_upload_by: uploadedBy, multi_invoice_split_index: splitIndex } as any,
+        ocr_raw_data: { ...ocrResult, manual_upload_by: uploadedBy, multi_invoice_split_index: splitIndex, multi_invoice_source: multiInvoiceSource } as any,
         qb_memo: qbMemo,
         status: (vendorId ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,
         source: 'MANUAL' as any,
         approval_tier: tier,
-        payment_terms: ocrResult.payment_terms,
+        payment_terms: preferExtractedPaymentTerms(ocrResult.payment_terms, await getVendorPaymentTermDefault(vendorId)),
         pdf_path: storagePath || undefined,
         raw_file_url: storagePath || undefined,
         // Persist line items to InvoiceLine table for line-level validation matching
@@ -604,6 +610,7 @@ export const emailInvoiceUpload = async (
                     emailMetadata,
                     requestId,
                     i,
+                    buildMultiInvoiceSourceMetadata(fileBuffer, detection.pageRanges[i], i, detection.pageRanges.length),
                   );
                   allResults.push({ split_index: i, ...result });
                 } catch (splitErr: any) {
@@ -730,6 +737,7 @@ export const manualInvoiceUpload = async (
                     uploadedBy,
                     requestId,
                     i,
+                    buildMultiInvoiceSourceMetadata(fileBuffer, detection.pageRanges[i], i, detection.pageRanges.length),
                   );
                   allResults.push({ split_index: i, ...result });
                 } catch (splitErr: any) {

@@ -26,7 +26,8 @@ import FinanceControlsDashboard from './components/FinanceControlsDashboard';
 import ProtectedRoute from './components/ProtectedRoute';
 import NotFound from './components/NotFound';
 import AppLayout from './components/AppLayout';
-import { FileText, CheckSquare, AlertTriangle, Building2, Package, BarChart3, FileSearch, Users, Settings, Upload, FileSearch as AuditIcon, LayoutDashboard, Landmark, CheckCircle, RotateCcw } from 'lucide-react';
+import { FileText, CheckSquare, AlertTriangle, Building2, Package, BarChart3, FileSearch, Users, Settings, Upload, FileSearch as AuditIcon, LayoutDashboard, Landmark, CheckCircle, RotateCcw, Clock3 } from 'lucide-react';
+import ValidationPendingQueue from './components/ValidationPendingQueue';
 
 function App() {
   return (
@@ -69,6 +70,13 @@ function App() {
                   <ProtectedRoute>
                     <AppLayout title="Approved Invoices" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-lime), var(--accent-green))' }}><CheckCircle className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
                       <ApprovedInvoices />
+                    </AppLayout>
+                  </ProtectedRoute>
+                } />
+                <Route path="/validation-pending" element={
+                  <ProtectedRoute>
+                    <AppLayout title="Validation Pending" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-blue), var(--accent-purple))' }}><Clock3 className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
+                      <ValidationPendingQueue />
                     </AppLayout>
                   </ProtectedRoute>
                 } />

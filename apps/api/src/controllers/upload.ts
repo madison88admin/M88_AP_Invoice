@@ -17,18 +17,21 @@ import { ollamaOCRService } from '../services/ollamaOCRService';
 import { qwenOCRService } from '../services/qwenOCRService';
 import { fieldDecisionEngine, EngineName } from '../services/fieldDecisionEngine';
 import { validateLineItems, formatLineItemValidation } from '../services/lineItemValidator';
+import { normalizeInvoiceDatePair } from '../services/extractors/dates';
 import { detectFraud } from '../services/fraudDetector';
 import { smartRetry } from '../services/smartRetry';
 import { runSelfValidation } from '../services/selfValidation';
 import { validateAgainstVendorHistory } from '../services/vendorHistoryValidator';
 import { activeLearningService, vendorTemplateService } from '../services/continuousLearningService';
-import { detectMultiInvoice, splitPdfByPageRanges } from '../services/multiInvoiceDetector';
+import { buildMultiInvoiceSourceMetadata, detectMultiInvoice, splitPdfByPageRanges } from '../services/multiInvoiceDetector';
 import {
   classifyInvoiceDocument,
   isStructuredInvoice,
   parseStructuredInvoice,
 } from '../services/structuredInvoiceService';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import { createChildLogger } from '../utils/logger';
 import { uploadToStorage } from '../services/supabaseStorageService';
 import { syncToHetzner } from '../services/hetznerStorageService';
@@ -642,7 +645,22 @@ async function processSingleInvoice(
       active_learning: activeLearningQuestions,
       field_predictions: fieldPredictions,
       layout_change: layoutChangeDetection,
+      multi_invoice_source: (req as any).body?.multi_invoice_source || undefined,
     };
+
+    // Normalize a numeric invoice/due-date pair once after field consensus so
+    // manual, SFTP, and email-style uploads all share the same locale guard.
+    const normalizedDatePair = normalizeInvoiceDatePair(
+      madisonResult.invoice_date,
+      madisonResult.due_date,
+      madisonRawResult.raw_text || '',
+    );
+    if (normalizedDatePair.corrected) {
+      logger.warn(`[${reqId}] ${normalizedDatePair.reason}`);
+      madisonResult.invoice_date = normalizedDatePair.invoice_date;
+      madisonResult.due_date = normalizedDatePair.due_date;
+      madisonResult.date_format_correction = normalizedDatePair;
+    }
 
     // If the Madison extractor mixed up two-column delivery/invoice addresses, prefer the LLM fallback result.
     if (fallbackResult?.ship_to) {
@@ -1080,7 +1098,10 @@ export const uploadMadisonInvoice = async (
                 file: { buffer: splitBuffers[i], originalname: `split_${i + 1}.pdf`, mimetype: mimeType },
                 user: (req as any).user,
                 headers: req.headers,
-                body: req.body,
+                body: {
+                  ...req.body,
+                  multi_invoice_source: buildMultiInvoiceSourceMetadata(fileBuffer, detection.pageRanges[i], i, detection.pageRanges.length),
+                },
               } as any;
 
               let splitResultData: any = null;
@@ -1169,6 +1190,7 @@ export const confirmOCR = async (
       invoice_type,
       category,
       order_type,
+      order_type_detail,
       brand,
       brand_code,
       season,
@@ -1255,6 +1277,7 @@ export const confirmOCR = async (
         invoice_type: sanitizeInvoiceType(invoice_type),
         category: sanitizeCategory(category),
         order_type,
+        order_type_detail,
         brand,
         brand_code,
         season,
@@ -1445,9 +1468,15 @@ export const uploadInvoicePdf = async (
       throw new AppError('Invoice not found', 404);
     }
 
-    const uploadedPath = await uploadToStorage(req.file.buffer, req.file.originalname, req.file.mimetype);
+    let uploadedPath = await uploadToStorage(req.file.buffer, req.file.originalname, req.file.mimetype);
+    // Local/VPS fallback: keep the PDF usable when Supabase storage keys are
+    // unavailable. The document downloader supports local-style paths.
     if (!uploadedPath) {
-      throw new AppError('Failed to upload PDF to storage — check storage configuration', 500);
+      const localDir = path.resolve(process.cwd(), 'data', 'invoices');
+      fs.mkdirSync(localDir, { recursive: true });
+      const safeName = String(req.file.originalname || 'invoice.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
+      uploadedPath = path.join(localDir, `${Date.now()}_${safeName}`);
+      fs.writeFileSync(uploadedPath, req.file.buffer);
     }
 
     await prisma.invoice.update({

@@ -40,6 +40,18 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
     expect(getPayableBlockReason({ document_type: 'UNKNOWN' })).toMatch(/UNKNOWN/);
   });
 
+  it('allows an OCR-misclassified statement when the header has invoice evidence', () => {
+    expect(getPayableBlockReason({
+      document_type: 'STATEMENT',
+      fileName: 'menryACI26003712-ACI26003712.pdf',
+      raw_text: 'AVERY DENNISON\nCOMMERCIAL INVOICE\nInvoice No: A/CI-26-003712\nInvoice Date: 10/06/2026\nTotal Amount: USD 1214.45',
+      invoice_number: 'A/CI-26-003712',
+      vendor_name: 'AVERY DENNISON (PT. AVERY INDONESIA.)',
+      invoice_date: '2026-10-06',
+      total_amount: 1214.45,
+    })).toBeNull();
+  });
+
   it('blocks when OCR flags is_non_invoice_document', () => {
     const reason = getPayableBlockReason({ document_type: 'INVOICE', is_non_invoice_document: true });
     expect(reason).toMatch(/shipping\/non-invoice/);

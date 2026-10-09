@@ -6,6 +6,7 @@ import {
   formatDate,
   extractInvoiceDate,
   extractDueDate,
+  normalizeInvoiceDatePair,
 } from './dates';
 
 describe('monthNameToNumber', () => {
@@ -83,6 +84,46 @@ describe('formatDate', () => {
 
   it('returns null for invalid dates', () => {
     expect(formatDate('invalid')).toBeNull();
+  });
+});
+
+describe('normalizeInvoiceDatePair', () => {
+  it('corrects a US invoice whose numeric dates were parsed as DMY', () => {
+    const result = normalizeInvoiceDatePair(
+      '2026-06-10',
+      '2026-05-11',
+      'Invoice Date : 10/06/2026\nDue Date: 11/05/2026',
+    );
+    expect(result).toMatchObject({
+      invoice_date: '2026-10-06',
+      due_date: '2026-11-05',
+      corrected: true,
+    });
+  });
+
+  it('does not change a valid DMY invoice/due-date pair', () => {
+    const result = normalizeInvoiceDatePair(
+      '2026-06-10',
+      '2026-07-10',
+      'Invoice Date: 10/06/2026\nDue Date: 10/07/2026',
+    );
+    expect(result.corrected).toBe(false);
+    expect(result.invoice_date).toBe('2026-06-10');
+    expect(result.due_date).toBe('2026-07-10');
+  });
+
+  it('does not guess without labelled source dates', () => {
+    const result = normalizeInvoiceDatePair('2026-06-10', '2026-05-11', 'Dates: 10/06/2026 11/05/2026');
+    expect(result.corrected).toBe(false);
+  });
+
+  it('handles flattened OCR labels with a column token before the date', () => {
+    const result = normalizeInvoiceDatePair(
+      '2026-06-10',
+      '2026-05-11',
+      'INVOICE DATE: INVOICE NO: IA00507257 10/06/2026 DUE DATE: 11/05/2026',
+    );
+    expect(result).toMatchObject({ invoice_date: '2026-10-06', due_date: '2026-11-05', corrected: true });
   });
 });
 

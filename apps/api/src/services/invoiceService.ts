@@ -1,5 +1,6 @@
 import prisma from '../config/database';
-import { InvoiceStatus, InvoiceType, InvoiceCategory, BrandTier, InvoiceSource, OrderType, BillToEntity, UserRole } from '@ap-invoice/shared';
+import { sendInvoiceTeamsNotification } from './teamsNotificationService';
+import { InvoiceStatus, InvoiceType, InvoiceCategory, BrandTier, InvoiceSource, OrderType, OrderTypeCombination, BillToEntity, UserRole } from '@ap-invoice/shared';
 import { AppError } from '../middleware/errorHandler';
 import { isTop10Brand, TOP_10_BRANDS } from '@ap-invoice/shared';
 import { logAudit, resolveAuditActorNames } from './auditLogService';
@@ -11,6 +12,7 @@ import fs from 'fs';
 import path from 'path';
 import { parseMPOReference } from '../utils/mpoReference';
 import { Prisma } from '@prisma/client';
+import { getVendorPaymentTermDefault, preferExtractedPaymentTerms } from './vendorDefaultsService';
 
 function safeDate(value: any): Date | null {
   if (!value || value === '') return null;
@@ -49,6 +51,13 @@ function safeOrderType(value: any): OrderType | null {
   const normalized = cleanOptionalString(value)?.toUpperCase();
   return normalized && Object.values(OrderType).includes(normalized as OrderType)
     ? normalized as OrderType
+    : null;
+}
+
+function safeOrderTypeDetail(value: any): OrderTypeCombination | null {
+  const normalized = cleanOptionalString(value)?.toUpperCase();
+  return normalized && Object.values(OrderTypeCombination).includes(normalized as OrderTypeCombination)
+    ? normalized as OrderTypeCombination
     : null;
 }
 
@@ -93,6 +102,7 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
     invoice_type,
     category,
     order_type,
+    order_type_detail,
     brand,
     brand_code,
     season,
@@ -199,6 +209,11 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
     }
   }
 
+  // Supplier-list terms are a fallback only. Never overwrite a term extracted
+  // from the invoice or entered by a user.
+  const masterPaymentTerms = await getVendorPaymentTermDefault(resolvedVendorId);
+  const effectivePaymentTerms = preferExtractedPaymentTerms(payment_terms, masterPaymentTerms);
+
   const existingInvoice = await prisma.invoice.findFirst({
     where: {
       invoice_number: {
@@ -230,7 +245,7 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
       invoice_currency_original,
       exchange_rate_to_usd: safeOptionalNumber(exchange_rate_to_usd),
       currency: currency || 'USD',
-      payment_terms: cleanOptionalString(payment_terms),
+      payment_terms: effectivePaymentTerms,
       incoterm: cleanOptionalString(incoterm),
       bank_charges: safeOptionalNumber(bank_charges) || 0,
       freight_charges: safeOptionalNumber(freight_charges) || 0,
@@ -242,7 +257,8 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
       sold_to: sold_to || null,
       invoice_type: invoice_type as any,
       category: category || 'TRIMS',
-      order_type: safeOrderType(order_type),
+      order_type: safeOrderType(order_type) as any,
+      order_type_detail: safeOrderType(order_type) === OrderType.OTHER ? safeOrderTypeDetail(order_type_detail) : null,
       brand,
       brand_code,
       brand_tier,
@@ -302,7 +318,7 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
           })),
         },
       } : {}),
-    },
+    } as any,
     include: {
       vendor: true,
       signatures: true,
@@ -582,10 +598,10 @@ export const addInvoiceComment = async (
   if (!text) throw new AppError('Comment is required', 400);
   if (text.length > 2000) throw new AppError('Comment must be 2,000 characters or fewer', 400);
 
-  const invoice = await prisma.invoice.findUnique({ where: { id: invoiceId }, select: { id: true } });
+  const invoice = await prisma.invoice.findUnique({ where: { id: invoiceId }, select: { id: true, invoice_number: true, vendor_name_raw: true, vendor: { select: { name: true } } } });
   if (!invoice) throw new AppError('Invoice not found', 404);
 
-  return prisma.auditLog.create({
+  const audit = await prisma.auditLog.create({
     data: {
       invoice_id: invoiceId,
       action: 'INVOICE_COMMENT',
@@ -595,6 +611,18 @@ export const addInvoiceComment = async (
       note: text,
     },
   });
+  // Keep the in-app audit/comment write authoritative. Teams delivery is best-effort
+  // and must never block the conversation or approval workflow.
+  void sendInvoiceTeamsNotification({
+    invoiceId,
+    invoiceNumber: invoice.invoice_number,
+    vendorName: invoice.vendor?.name || invoice.vendor_name_raw || 'Unknown vendor',
+    comment: text,
+    actorName: userName,
+    actorRole: userRole,
+    targetRole: userRole.includes('ACCOUNTING') ? 'PURCHASING_COORDINATOR' : undefined,
+  });
+  return audit;
 };
 
 export const updateInvoiceStatus = async (id: string, status: InvoiceStatus, userId: string) => {
@@ -815,9 +843,17 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     throw new AppError(`Invalid invoice type: ${data.invoice_type}`, 400);
   }
 
-  const validOrderTypes = ['BULK', 'SMS', 'SAMPLE'];
+  const validOrderTypes = Object.values(OrderType);
   if (data.order_type && !validOrderTypes.includes(data.order_type)) {
     throw new AppError(`Invalid order type: ${data.order_type}`, 400);
+  }
+
+  const validOrderTypeDetails = Object.values(OrderTypeCombination);
+  if (data.order_type_detail && !validOrderTypeDetails.includes(data.order_type_detail)) {
+    throw new AppError(`Invalid combined order type: ${data.order_type_detail}`, 400);
+  }
+  if (data.order_type !== OrderType.OTHER && data.order_type_detail !== undefined) {
+    data.order_type_detail = null;
   }
 
   const validBrandTiers = ['TOP_10', 'OTHER'];
@@ -872,7 +908,7 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     'payment_terms', 'customer_po_number', 'subtotal', 'tax_amount', 'discount_amount',
     'bank_charges', 'freight_charges', 'additional_charges', 'courier_charges', 'handling_fee',
     'tt_charge', 'setup_charge', 'sample_charge', 'min_order_charge', 'finance_surcharge',
-    'due_date', 'incoterm', 'bill_to_entity', 'category', 'invoice_lines'
+    'due_date', 'incoterm', 'bill_to_entity', 'category', 'order_type', 'order_type_detail', 'invoice_lines'
   ]);
   const materialChange = Object.keys(data).some((key) => materialFields.has(key) &&
     String((existing as any)[key] ?? '') !== String(data[key] ?? '')
@@ -904,7 +940,7 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
         status: 'VALIDATION_PENDING' as any,
         current_approver_role: null,
       } : {}),
-    },
+    } as any,
     include: {
       vendor: true,
       signatures: true,

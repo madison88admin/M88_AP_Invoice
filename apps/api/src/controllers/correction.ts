@@ -4,6 +4,7 @@ import { correctionLogService } from '../services/correctionLogService';
 import { fieldDecisionEngine } from '../services/fieldDecisionEngine';
 import { AppError } from '../middleware/errorHandler';
 import { logAudit } from '../services/auditLogService';
+import prisma from '../config/database';
 
 export const saveCorrection = async (
   req: AuthRequest,
@@ -28,6 +29,19 @@ export const saveCorrection = async (
       note,
       layout_fingerprint,
     });
+
+    if (corrected_fields.vendor_name && invoiceId) {
+      const invoice = await prisma.invoice.findUnique({ where: { id: invoiceId }, select: { ocr_raw_data: true } });
+      const raw = invoice?.ocr_raw_data && typeof invoice.ocr_raw_data === 'object' ? invoice.ocr_raw_data as Record<string, any> : {};
+      const correctedVendor = String(corrected_fields.vendor_name).trim();
+      await prisma.invoice.update({
+        where: { id: invoiceId },
+        data: {
+          vendor_name_raw: correctedVendor,
+          ocr_raw_data: { ...raw, vendor_name: correctedVendor, vendor_name_corrected: true, vendor_correction_source: 'human_review' } as any,
+        },
+      });
+    }
 
     await logAudit({
       invoice_id: invoiceId,

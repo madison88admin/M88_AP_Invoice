@@ -23,6 +23,7 @@ export interface IntakeControlResult {
     swift?: string;
     account?: string;
   };
+  dateOrder: { valid: boolean; invoiceDate: string | null; dueDate: string | null };
 }
 
 /** Stable comparisons for OCR outputs. These do not perform fuzzy matching. */
@@ -61,6 +62,13 @@ export function normalizeDate(value: unknown, locale?: 'MDY' | 'DMY' | 'YMD'): s
   const parsed = value instanceof Date ? value : new Date(String(value));
   if (Number.isNaN(parsed.getTime())) return null;
   return parsed.toISOString().slice(0, 10);
+}
+
+/** Shared invariant used by every intake path: a due date cannot precede the invoice date. */
+export function validateInvoiceDateOrder(invoiceDate: unknown, dueDate: unknown): { valid: boolean; invoiceDate: string | null; dueDate: string | null } {
+  const invoice = normalizeDate(invoiceDate);
+  const due = normalizeDate(dueDate);
+  return { valid: !invoice || !due || due >= invoice, invoiceDate: invoice, dueDate: due };
 }
 
 /** Normalize numeric values while rejecting ambiguous locale strings. */
@@ -191,6 +199,8 @@ export function compareEngineFields(primary: any, fallback: any): string[] {
 export function evaluateIntakeControls(result: any): IntakeControlResult {
   const reconciliation = reconcileInvoice(result);
   const reasons: string[] = [];
+  const dateOrder = validateInvoiceDateOrder(result?.invoice_date, result?.due_date);
+  if (!dateOrder.valid) reasons.push(`Due date ${dateOrder.dueDate} precedes invoice date ${dateOrder.invoiceDate}; date format or extraction requires review.`);
   if (hasReferencedAttachment(result) && result?.supporting_attachment_present !== true) {
     reasons.push('Invoice references an attachment/bank advice/debit note that was not included in the processed job.');
   }
@@ -213,5 +223,6 @@ export function evaluateIntakeControls(result: any): IntakeControlResult {
       swift: normalizeSwift(result?.swift_code || result?.bank_info?.swift_code) || undefined,
       account: normalizeBankAccount(result?.account_number || result?.bank_info?.account_number || result?.bank_info?.account_usd) || undefined,
     },
+    dateOrder,
   };
 }

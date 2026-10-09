@@ -629,12 +629,14 @@ export default function ExtractionDashboard() {
         </div>
         {benchmarkError && <div className="mt-3 text-sm" style={{ color: 'var(--accent-red)' }}>{benchmarkError}</div>}
         {benchmark && (
-          <div className="grid sm:grid-cols-3 gap-4 mt-5">
+          <div className="grid sm:grid-cols-3 lg:grid-cols-5 gap-4 mt-5">
             <KpiCard icon={<Gauge className="w-5 h-5" />} label="Measured Accuracy" value={`${benchmark.overall_accuracy}%`} subtitle={`${benchmark.case_count} test invoices`} />
+            <KpiCard icon={<Gauge className="w-5 h-5" />} label="Field F1" value={`${benchmark.f1 ?? 'N/A'}%`} subtitle={`Precision ${benchmark.precision ?? 'N/A'}% · Recall ${benchmark.recall ?? 'N/A'}%`} />
+            <KpiCard icon={<CheckCircle className="w-5 h-5" />} label="Evidence Coverage" value={`${benchmark.confidence_coverage ?? 'N/A'}%`} subtitle={`${benchmark.scored_fields ?? 0}/${benchmark.support ?? 0} labeled fields scored`} />
             <KpiCard icon={<CheckCircle className="w-5 h-5" />} label="Straight-through Rate" value={`${benchmark.straight_through_rate}%`} subtitle="No field corrections required" />
             <div className="rounded-xl p-4" style={{ background: 'var(--bg-elevated)' }}>
-              <div className="text-sm mb-2" style={{ color: 'var(--text-muted)' }}>Lowest-accuracy fields</div>
-              {(benchmark.per_field || []).slice(0, 4).map((field: any) => <div key={field.field} className="flex justify-between text-sm"><span>{field.field}</span><strong>{field.accuracy}%</strong></div>)}
+              <div className="text-sm mb-2" style={{ color: 'var(--text-muted)' }}>Lowest-F1 fields</div>
+              {(benchmark.per_field || []).slice(0, 4).map((field: any) => <div key={field.field} className="flex justify-between text-sm"><span>{field.field}</span><strong>{field.f1 ?? field.accuracy}%</strong></div>)}
             </div>
           </div>
         )}

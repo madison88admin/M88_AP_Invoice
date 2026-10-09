@@ -39,6 +39,14 @@ export enum OrderType {
   BULK = 'BULK',
   SMS = 'SMS',
   SAMPLE = 'SAMPLE',
+  OTHER = 'OTHER',
+}
+
+export enum OrderTypeCombination {
+  BULK_SMS = 'COMBINED_BULK_SMS',
+  SMS_SAMPLE = 'COMBINED_SMS_SAMPLE',
+  BULK_SAMPLE = 'COMBINED_BULK_SAMPLE',
+  ALL = 'COMBINED_ALL',
 }
 
 export enum InvoiceStatus {
@@ -200,6 +208,7 @@ export interface Invoice {
   invoice_template_type?: InvoiceTemplateType;
   category?: InvoiceCategory;
   order_type?: OrderType;
+  order_type_detail?: OrderTypeCombination;
   brand?: string;
   brand_code?: string;
   season?: string;
@@ -284,6 +293,8 @@ export interface Vendor {
   beneficiary_name?: string;
   supplier_location?: string;
   invoice_template_type: InvoiceTemplateType;
+  default_payment_terms?: string;
+  accepted_document_types?: string[];
   bank_name?: string;
   bank_address?: string;
   account_number?: string;
@@ -413,6 +424,7 @@ export interface OCRResult {
   invoice_template_type?: InvoiceTemplateType;
   category?: InvoiceCategory;
   order_type?: OrderType;
+  order_type_detail?: OrderTypeCombination;
   brand?: string;
   brand_code?: string;
   season?: string;

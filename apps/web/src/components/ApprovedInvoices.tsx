@@ -236,7 +236,9 @@ export default function ApprovedInvoices() {
                 ['Season', selectedInvoice.season || 'N/A'],
                 ['MPO', selectedInvoice.mpo_number || 'N/A'],
                 ['PO', selectedInvoice.customer_po_number || 'N/A'],
-                ['Order Type', String(selectedInvoice.order_type || 'N/A').replace(/_/g, ' ')],
+                ['Order Type', selectedInvoice.order_type === 'OTHER'
+                  ? `Others${selectedInvoice.order_type_detail ? ` · ${({ COMBINED_BULK_SMS: 'Combined - bulk & sms', COMBINED_SMS_SAMPLE: 'Combined - sms & sample', COMBINED_BULK_SAMPLE: 'Combined - bulk & sample', COMBINED_ALL: 'Combined - all' } as Record<string, string>)[selectedInvoice.order_type_detail] || selectedInvoice.order_type_detail}` : ''}`
+                  : String(selectedInvoice.order_type || 'N/A').replace(/_/g, ' ')],
               ].map(([label, value]) => (
                 <div key={label} className="flex justify-between text-sm" style={{ borderBottom: '1px solid var(--border-subtle)', paddingBottom: 6 }}>
                   <span style={{ color: 'var(--text-muted)' }}>{label}</span>

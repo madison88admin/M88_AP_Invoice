@@ -21,6 +21,7 @@ export interface MockInvoice {
   brand_tier?: BrandTier;
   season?: string;
   order_type?: string;
+  order_type_detail?: string;
   po_number?: string;
   customer_po_number?: string;
   mpo_number?: string;

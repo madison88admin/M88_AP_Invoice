@@ -3,10 +3,11 @@ import { ClientSecretCredential } from '@azure/identity';
 import { analyzeInvoice } from './ocrService';
 import { evaluateCurrencyPolicy, normalizeToUsd } from './currencyPolicyService';
 import { matchVendor, matchOrCreateVendor } from './vendorMatchingService';
+import { getVendorPaymentTermDefault, preferExtractedPaymentTerms } from './vendorDefaultsService';
 import { validateInvoice } from './validationService';
 import { uploadInvoiceToStructuredFolder } from './sharePointService';
 import { uploadToStorage } from './supabaseStorageService';
-import { detectMultiInvoice, splitPdfByPageRanges } from './multiInvoiceDetector';
+import { buildMultiInvoiceSourceMetadata, detectMultiInvoice, splitPdfByPageRanges } from './multiInvoiceDetector';
 import { InvoiceStatus, InvoiceType, InvoiceSource, SignatureType, ExceptionReason, determineApprovalTier, BrandTier } from '@ap-invoice/shared';
 import { isTop10Brand, TOP_10_BRANDS } from '@ap-invoice/shared';
 import { sanitizeInvoiceType, sanitizeCategory } from '../utils/enumSanitizer';
@@ -114,7 +115,12 @@ export function intakeReviewReason(ocrResult: any, fileName: string, subject = '
     type === 'DEBIT_NOTE' ||
     type === 'CREDIT_NOTE';
   const normalizedHaystack = `${fileName} ${subject}`.replace(/[_-]+/g, ' ');
-  if (type === 'STATEMENT' || (!typeLooksPayable && NON_INVOICE_HINTS.test(normalizedHaystack))) {
+  const invoiceHeaderSignals = /\b(?:commercial\s+invoice|tax\s+invoice|sales\s+invoice|invoice)\b/i.test(rawText)
+    && /\b(?:invoice\s*(?:no|number)|invoice\s*date|total(?:\s+amount)?|amount\s+due)\b/i.test(rawText)
+    && String(ocrResult?.invoice_number || '').trim()
+    && String(ocrResult?.vendor_name || '').trim()
+    && Number(ocrResult?.total_amount) > 0;
+  if ((type === 'STATEMENT' && !invoiceHeaderSignals) || (!typeLooksPayable && NON_INVOICE_HINTS.test(normalizedHaystack))) {
     return `Attachment appears to be a non-invoice document (${type || 'unclassified'}).`;
   }
   const amount = Number(ocrResult?.total_amount);
@@ -413,6 +419,7 @@ async function processAttachment(attachment: any, message: any): Promise<void> {
                 message,
                 i,
                 attachment.id,
+                buildMultiInvoiceSourceMetadata(buffer, detection.pageRanges[i], i, detection.pageRanges.length),
               );
             } catch (splitErr) {
               logger.error(`[EmailIntake] Error processing split ${i + 1} of ${attachment.name}:`, splitErr);
@@ -448,6 +455,7 @@ async function processSingleInvoiceAttachment(
   message: any,
   splitIndex?: number,
   attachmentId?: string,
+  multiInvoiceSource?: any,
 ): Promise<void> {
   try {
     // Keep obvious shipment/supporting documents out of storage/OCR. We retain
@@ -660,6 +668,7 @@ async function processSingleInvoiceAttachment(
         category: sanitizeCategory((ocrResult as any).category) as any,
         invoice_template_type: (ocrResult as any).invoice_template_type as any,
         order_type: ocrResult.order_type as any,
+        order_type_detail: (ocrResult as any).order_type === 'OTHER' ? (ocrResult as any).order_type_detail : undefined,
         brand: ocrResult.brand,
         brand_code: ocrResult.brand_code,
         brand_tier: brand_tier,
@@ -674,7 +683,7 @@ async function processSingleInvoiceAttachment(
         priority_pay_date: ocrResult.priority_pay_date ? new Date(ocrResult.priority_pay_date) : null,
         is_duplicate: false,
         ocr_confidence_score: ocrResult.ocr_confidence_score || undefined,
-        ocr_raw_data: { ...ocrResult, email_internet_message_id: message.id, attachment_file_hash: graphFileHash, intake_idempotency_key: graphIdempotencyKey } as any,
+        ocr_raw_data: { ...ocrResult, email_internet_message_id: message.id, attachment_file_hash: graphFileHash, intake_idempotency_key: graphIdempotencyKey, multi_invoice_split_index: splitIndex, multi_invoice_source: multiInvoiceSource } as any,
         invoice_hash: graphFileHash,
         beneficiary_name: (ocrResult as any).bank_info?.beneficiary_name || (ocrResult as any).beneficiary_name || undefined,
         bank_name: (ocrResult as any).bank_info?.bank_name || (ocrResult as any).bank_name || undefined,
@@ -685,7 +694,7 @@ async function processSingleInvoiceAttachment(
         status: (vendorId && !isLowConfidence ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,
         source: InvoiceSource.EMAIL as any,
         approval_tier: tier,
-        payment_terms: ocrResult.payment_terms,
+        payment_terms: preferExtractedPaymentTerms(ocrResult.payment_terms, await getVendorPaymentTermDefault(vendorId)),
         sharepoint_folder_url: sharepointUrl,
         sharepoint_filed_at: sharepointUrl ? new Date() : null,
         pdf_path: storagePath || undefined,
@@ -1009,6 +1018,7 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
         additional_charges: ocrResult.additional_charges || 0,
         invoice_type: (ocrResult.invoice_type || InvoiceType.INVOICE) as any,
         order_type: ocrResult.order_type as any,
+        order_type_detail: (ocrResult as any).order_type === 'OTHER' ? (ocrResult as any).order_type_detail : undefined,
         brand: ocrResult.brand,
         brand_code: ocrResult.brand_code,
         brand_tier: brand_tier,
@@ -1033,7 +1043,7 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
         status: (vendorId && !isLowConfidence ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,
         source: InvoiceSource.EMAIL as any,
         approval_tier: tier,
-        payment_terms: ocrResult.payment_terms,
+        payment_terms: preferExtractedPaymentTerms(ocrResult.payment_terms, await getVendorPaymentTermDefault(vendorId)),
         sharepoint_folder_url: data.sharepointUrl,
         sharepoint_filed_at: new Date(),
         pdf_path: storagePath || undefined,
@@ -1340,6 +1350,7 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
         additional_charges: ocrResult.additional_charges || 0,
         invoice_type: (ocrResult.invoice_type || InvoiceType.INVOICE) as any,
         order_type: ocrResult.order_type as any,
+        order_type_detail: (ocrResult as any).order_type === 'OTHER' ? (ocrResult as any).order_type_detail : undefined,
         brand: ocrResult.brand,
         brand_code: ocrResult.brand_code,
         brand_tier: brand_tier,
@@ -1364,7 +1375,7 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
         status: (vendorId && !isLowConfidence ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,
         source: InvoiceSource.EMAIL as any,
         approval_tier: tier,
-        payment_terms: ocrResult.payment_terms,
+        payment_terms: preferExtractedPaymentTerms(ocrResult.payment_terms, await getVendorPaymentTermDefault(vendorId)),
         sharepoint_folder_url: sharepointUrl,
         sharepoint_filed_at: sharepointUrl ? new Date() : null,
         pdf_path: storagePath || undefined,

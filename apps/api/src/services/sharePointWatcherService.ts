@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { logger } from '../utils/logger';
 import { analyzeInvoice } from './ocrService';
 import { matchVendor, matchOrCreateVendor } from './vendorMatchingService';
+import { getVendorPaymentTermDefault, preferExtractedPaymentTerms } from './vendorDefaultsService';
 import { validateInvoice } from './validationService';
 import { checkEmailDuplicate, generateFileHash } from './emailDuplicateService';
 import { uploadInvoiceToStructuredFolder } from './sharePointService';
@@ -224,6 +225,7 @@ async function processIncomingFile(file: { id: string; name: string; size: numbe
         category: ((ocrResult as any).category || 'TRIMS') as any,
         invoice_template_type: (ocrResult as any).invoice_template_type as any,
         order_type: ocrResult.order_type as any,
+        order_type_detail: (ocrResult as any).order_type === 'OTHER' ? (ocrResult as any).order_type_detail : undefined,
         brand: ocrResult.brand,
         brand_code: ocrResult.brand_code,
         brand_tier: brand_tier,
@@ -249,7 +251,7 @@ async function processIncomingFile(file: { id: string; name: string; size: numbe
         status: (vendorId ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,
         source: InvoiceSource.EMAIL as any,
         approval_tier: tier,
-        payment_terms: ocrResult.payment_terms,
+        payment_terms: preferExtractedPaymentTerms(ocrResult.payment_terms, await getVendorPaymentTermDefault(vendorId)),
         sharepoint_folder_url: sharepointUrl,
         sharepoint_filed_at: sharepointUrl ? new Date() : null,
         pdf_path: supabasePath || undefined,

@@ -99,16 +99,22 @@ const NON_PAYABLE_TEXT_HINTS =
  * stronger signal than that noisy flag, so use them as a narrow escape hatch.
  */
 export function isValidCommercialInvoice(doc: PayableCheckInput, docType: string): boolean {
-  if (!['COMMERCIAL', 'COMMERCIAL_INVOICE', 'INVOICE', 'SALES'].includes(docType)) return false;
+  // OCR engines occasionally call a real commercial invoice a STATEMENT when
+  // the page contains account/balance language.  Allow the stronger
+  // invoice-header evidence to correct that label, but only when all core
+  // payable fields are present.
+  if (!['COMMERCIAL', 'COMMERCIAL_INVOICE', 'INVOICE', 'SALES', 'STATEMENT', 'OTHER', 'UNKNOWN'].includes(docType)) return false;
   const invoiceNumber = String(doc.invoice_number || '').trim();
   const vendorName = String(doc.vendor_name || '').trim();
   const invoiceDate = String(doc.invoice_date || '').trim();
   const totalAmount = Number(String(doc.total_amount ?? '').replace(/[^0-9.-]/g, ''));
   const firstPage = String(doc.raw_text || '').replace(/\r\n?/g, '\n').slice(0, 1600);
-  const hasCommercialHeading = /\bcommercial\s+invoice\b/i.test(firstPage);
-  return Boolean(
-    invoiceNumber && vendorName && invoiceDate && Number.isFinite(totalAmount) && totalAmount > 0 && hasCommercialHeading
-  );
+  const hasCommercialHeading = /\b(?:commercial\s+invoice|tax\s+invoice|sales\s+invoice|invoice)\b/i.test(firstPage);
+  const hasInvoiceFieldLabels = /\b(?:invoice\s*(?:no|number)|invoice\s*date|total(?:\s+amount)?|amount\s+due)\b/i.test(firstPage);
+  const filename = String(doc.fileName || '');
+  const hasInvoiceFilename = /(?:^|[^a-z])(?:invoice|inv|a\/?ci|ci)\s*[-_]?\s*[a-z0-9]/i.test(filename);
+  return Boolean(invoiceNumber && vendorName && invoiceDate && Number.isFinite(totalAmount) && totalAmount > 0
+    && hasInvoiceFieldLabels && (hasCommercialHeading || hasInvoiceFilename));
 }
 
 /** Focused guard used by legacy intake review paths for the newly requested exclusions. */
@@ -216,7 +222,7 @@ export function getPayableBlockReason(
   if (text && hasStrongNonInvoiceHeading(text)) {
     return 'Document heading identifies an excluded non-invoice document';
   }
-  if (text && STATEMENT_TEXT_HINTS.test(text)) {
+  if (text && STATEMENT_TEXT_HINTS.test(text) && !validCommercialInvoice) {
     return 'Document contains statement-of-account markers (opening/closing balance) — not eligible for invoice creation';
   }
   const shipmentBillReason = getShipmentBillBlockReason(doc);

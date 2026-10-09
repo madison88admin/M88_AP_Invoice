@@ -61,6 +61,7 @@ interface OCRResult {
     signature_type: string;
   }>;
   order_type?: string;
+  order_type_detail?: string;
   ocr_confidence_score?: number;
   raw_data?: any;
   po_validation?: any;
@@ -219,6 +220,7 @@ export default function InvoiceUpload() {
         invoice_type: ocrResult.invoice_type,
         category: ocrResult.category,
         order_type: ocrResult.order_type,
+        order_type_detail: ocrResult.order_type === 'OTHER' ? ocrResult.order_type_detail : undefined,
         brand: ocrResult.brand,
         brand_code: ocrResult.brand_code,
         season: ocrResult.season,

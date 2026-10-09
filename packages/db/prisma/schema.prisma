@@ -15,6 +15,10 @@ model Vendor {
   supplier_location       String?
   invoice_template_type   InvoiceTemplateType
   classification          String?
+  // Supplier master defaults imported from the approved supplier list. These
+  // are fallbacks only; extracted/manual invoice values always take priority.
+  default_payment_terms   String?
+  accepted_document_types String[] @default([])
   
   // Bank details
   bank_name               String?
@@ -100,6 +104,7 @@ model Invoice {
   brand_tier            BrandTier?
   season                String?
   order_type            OrderType?
+  order_type_detail     OrderTypeCombination?
   qty_shipped           Int?
   incoterm              String?
   hs_code               String?
@@ -696,6 +701,14 @@ enum OrderType {
   BULK
   SMS
   SAMPLE
+  OTHER
+}
+
+enum OrderTypeCombination {
+  COMBINED_BULK_SMS
+  COMBINED_SMS_SAMPLE
+  COMBINED_BULK_SAMPLE
+  COMBINED_ALL
 }
 
 enum ExceptionReason {

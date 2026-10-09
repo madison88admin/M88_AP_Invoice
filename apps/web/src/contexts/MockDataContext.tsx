@@ -142,6 +142,7 @@ const apiInvoiceToMock = (invoice: any): MockInvoice => {
     brand_tier: invoice.brand_tier || undefined,
     season: invoice.season || undefined,
     order_type: invoice.order_type || undefined,
+    order_type_detail: invoice.order_type_detail || undefined,
     po_number: invoice.customer_po_number || invoice.po_number || undefined,
     customer_po_number: invoice.customer_po_number || invoice.po_number || undefined,
     mpo_number: invoice.mpo_number || invoice.mpo_base_number || undefined,

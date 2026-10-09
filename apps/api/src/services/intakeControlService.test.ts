@@ -8,6 +8,7 @@ import {
   normalizeInvoiceNumber,
   normalizeSwift,
   reconcileInvoice,
+  validateInvoiceDateOrder,
 } from './intakeControlService';
 import { classifySameNumberMatch } from './duplicateDetectionService';
 
@@ -23,6 +24,12 @@ describe('intake controls', () => {
     expect(normalizeDate('01/02/2026')).toBeNull();
     expect(normalizeDate('01/02/2026', 'MDY')).toBe('2026-01-02');
     expect(normalizeDate('01/02/2026', 'DMY')).toBe('2026-02-01');
+  });
+
+  it('flags due dates that precede invoice dates', () => {
+    expect(validateInvoiceDateOrder('2026-10-06', '2026-05-11').valid).toBe(false);
+    const result = evaluateIntakeControls({ invoice_date: '2026-10-06', due_date: '2026-05-11', total_amount: 10, subtotal: 10, tax_amount: 0, raw_text: '' });
+    expect(result.reasons.some(reason => reason.includes('precedes invoice date'))).toBe(true);
   });
 
   it('rejects ambiguous grouped amounts and preserves explicit currency rules', () => {

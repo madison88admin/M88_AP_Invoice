@@ -9,6 +9,7 @@ import { extractTextWithOpenDataLoader } from './openDataLoaderService';
 import { rapidOCRService } from './rapidOCRService';
 import { upstageOCRService } from './upstageOCRService';
 import { hasStrongNonInvoiceHeading } from './nonInvoiceSuppression';
+import { normalizeInvoiceDatePair } from './extractors/dates';
 
 export interface BankInfo {
   beneficiary_name?: string;
@@ -1672,6 +1673,17 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
     }
   }
 
+  const datePair = normalizeInvoiceDatePair(
+    extracted.invoice_date,
+    extracted.due_date,
+    classificationText,
+  );
+  if (datePair.corrected) {
+    logger.warn(`[OCR] ${datePair.reason}`);
+    extracted.invoice_date = datePair.invoice_date || extracted.invoice_date;
+    extracted.due_date = datePair.due_date || extracted.due_date;
+  }
+
   logger.info(`[OCR] Final extraction — engine: ${ocrEngine}, vendor: "${extracted.vendor_name}", invoice#: "${extracted.invoice_number}", amount: ${extracted.amount}`);
   // Deterministic non-invoice detection from the raw OCR text: DHL-style
   // "Shipment Airwaybill" paperwork carries declared values and airwaybill
@@ -1693,6 +1705,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
     invoice_date: extracted.invoice_date ? new Date(extracted.invoice_date) : new Date(),
     invoice_date_extracted: Boolean(extracted.invoice_date),
     due_date: extracted.due_date ? new Date(extracted.due_date) : undefined,
+    date_format_correction: datePair.corrected ? datePair : undefined,
     invoice_received_date: new Date(),
     vendor_name: extracted.vendor_name || '',
     total_amount: extracted.amount || 0,

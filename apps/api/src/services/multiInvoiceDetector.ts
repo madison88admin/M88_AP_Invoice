@@ -1,5 +1,6 @@
 import PDFParser from 'pdf2json';
 import { PDFDocument } from 'pdf-lib';
+import crypto from 'crypto';
 import { logger } from '../utils/logger';
 import { extractTextWithOpenDataLoader } from './openDataLoaderService';
 
@@ -17,6 +18,27 @@ export interface MultiInvoiceDetectionResult {
   invoiceCount: number;
   pageRanges: InvoicePageRange[];
   totalPages: number;
+}
+
+/** Stable lineage metadata persisted with each split invoice. */
+export interface MultiInvoiceSourceMetadata {
+  source_pdf_hash: string;
+  source_page_start: number;
+  source_page_end: number;
+  source_page_count: number;
+  split_index: number;
+  split_count: number;
+}
+
+export function buildMultiInvoiceSourceMetadata(fileBuffer: Buffer, range: InvoicePageRange, splitIndex: number, splitCount: number): MultiInvoiceSourceMetadata {
+  return {
+    source_pdf_hash: crypto.createHash('sha256').update(fileBuffer).digest('hex'),
+    source_page_start: range.startPage + 1,
+    source_page_end: range.endPage + 1,
+    source_page_count: range.endPage - range.startPage + 1,
+    split_index: splitIndex,
+    split_count: splitCount,
+  };
 }
 
 function normalizePageText(text: string): string {

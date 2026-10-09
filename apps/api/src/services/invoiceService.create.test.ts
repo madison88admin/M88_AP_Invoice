@@ -94,4 +94,24 @@ describe('createInvoice OCR input sanitation', () => {
       }),
     }));
   });
+
+  it('persists Others combined shipment selections', async () => {
+    await createInvoice({
+      invoice_number: 'SF-COURIER-TEST',
+      vendor_id: 'sml-private',
+      vendor_name_raw: 'S.F. Express',
+      total_amount: 273,
+      invoice_type: 'COMMERCIAL',
+      category: 'SHIPPING_FREIGHT',
+      order_type: 'OTHER',
+      order_type_detail: 'COMBINED_BULK_SAMPLE',
+    }, 'joy-user', 'PURCHASING_COORDINATOR');
+
+    expect(invoiceCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        order_type: 'OTHER',
+        order_type_detail: 'COMBINED_BULK_SAMPLE',
+      }),
+    }));
+  });
 });

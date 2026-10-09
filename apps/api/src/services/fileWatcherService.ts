@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { logger } from '../utils/logger';
 import { analyzeInvoice } from './ocrService';
 import { matchVendor, matchOrCreateVendor } from './vendorMatchingService';
+import { getVendorPaymentTermDefault, preferExtractedPaymentTerms } from './vendorDefaultsService';
 import { validateInvoice } from './validationService';
 import { checkEmailDuplicate, generateFileHash } from './emailDuplicateService';
 import { checkDuplicateInvoice } from './duplicateDetectionService';
@@ -184,7 +185,7 @@ export function intakeReviewReason(ocrResult: any, fileName = ''): string | null
     type === 'DEBIT_NOTE' ||
     type === 'CREDIT_NOTE';
   const normalizedFileName = fileName.replace(/[_-]+/g, ' ');
-  if (type === 'STATEMENT' || type === 'OTHER' || type === 'UNKNOWN' || (!typeLooksPayable && NON_INVOICE_HINTS.test(normalizedFileName))) {
+  if ((!validCommercialInvoice && (type === 'STATEMENT' || type === 'OTHER' || type === 'UNKNOWN')) || (!typeLooksPayable && NON_INVOICE_HINTS.test(normalizedFileName))) {
     return `Document type ${type || 'unknown'} is not eligible for automatic invoice creation`;
   }
   const invoiceNumber = String(ocrResult?.invoice_number || '').trim();
@@ -947,6 +948,7 @@ async function processSingleInvoiceBuffer(
         category: sanitizeCategory((ocrResult as any).category) as any,
         invoice_template_type: (ocrResult as any).invoice_template_type as any,
         order_type: ocrResult.order_type as any,
+        order_type_detail: (ocrResult as any).order_type === 'OTHER' ? (ocrResult as any).order_type_detail : undefined,
         brand: ocrResult.brand,
         brand_code: ocrResult.brand_code,
         brand_tier: brand_tier,
@@ -975,7 +977,7 @@ async function processSingleInvoiceBuffer(
         status: (vendorId ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,
         source: InvoiceSource.MANUAL_UPLOAD as any,
         approval_tier: tier,
-        payment_terms: ocrResult.payment_terms,
+        payment_terms: preferExtractedPaymentTerms(ocrResult.payment_terms, await getVendorPaymentTermDefault(vendorId)),
         ...(ocrResult.date_range_start ? { date_range_start: new Date(ocrResult.date_range_start) } : {}),
         ...(ocrResult.date_range_end ? { date_range_end: new Date(ocrResult.date_range_end) } : {}),
     };

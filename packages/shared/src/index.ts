@@ -15,5 +15,6 @@ export {
   InvoiceStatus,
   ExceptionReason,
   OrderType,
+  OrderTypeCombination,
   UserRole,
 } from './types';

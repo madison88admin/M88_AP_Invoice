@@ -49,7 +49,9 @@ export const invoiceApi = {
   uploadPdf: (id: string, file: File) => {
     const fd = new FormData();
     fd.append('file', file);
-    return api.post(`/api/invoices/${id}/upload-pdf`, fd);
+    return api.post(`/api/invoices/${id}/upload-pdf`, fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
   },
   getPaymentTerms: () => api.get('/api/invoices/metadata/payment-terms'),
   create: (data: any) => api.post('/api/invoices', data),
@@ -295,6 +297,7 @@ export const analyticsApi = {
   getPerformance: (days?: number) => api.get('/api/analytics/performance', { params: { days } }),
   getExtractionPolicies: () => api.get('/api/analytics/extraction-policies'),
   runExtractionBenchmark: (cases: any[]) => api.post('/api/analytics/extraction-benchmark', { cases }),
+  runExtractionABBenchmark: (baselineCases: any[], challengerCases: any[]) => api.post('/api/analytics/extraction-ab', { baseline_cases: baselineCases, challenger_cases: challengerCases }),
 };
 
 export const notificationApi = {

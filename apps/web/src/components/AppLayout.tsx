@@ -11,7 +11,7 @@ import {
   Package, BarChart3, FileSearch, Users, Settings, ChevronLeft,
   Menu, X, LogOut, Upload, Pause, Activity, Gauge, History,
   ClipboardList, Landmark,
-  RotateCcw,
+  RotateCcw, Clock3,
 } from 'lucide-react';
 
 interface AppLayoutProps {
@@ -56,6 +56,7 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
       label: 'Workflow',
       items: [
         { icon: CheckSquare, label: 'Approvals', path: '/approvals', roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'PLANNING_MANAGER', 'SR_MANAGER_GLOBAL_PRODUCTION', 'MS_POLLY', 'ACCOUNTING_SUPERVISOR'], badgeKey: 'approvals', badgeColor: 'red' },
+        { icon: Clock3, label: 'Validation Pending', path: '/validation-pending', roles: ['PURCHASING_MANAGER'], badgeKey: 'validationPending', badgeColor: 'blue' },
         { icon: History, label: 'Approved Invoices', path: '/approved-invoices', roles: ['PURCHASING_MANAGER'], badgeKey: 'approvedByMe', badgeColor: 'lime' },
         // Returned work is actionable for both sides of the purchasing
         // hand-off: managers can send an invoice back, and coordinators must
@@ -104,6 +105,7 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
     workbench: invoices.filter(i => ['VALIDATION_PENDING', 'EXCEPTION_FLAGGED'].includes(i.status)).length,
     // Per-user pending queue — must match the Approval Inbox page count.
     approvals: getPendingApprovalsForUser(invoices, user).length,
+    validationPending: invoices.filter(i => i.status === 'VALIDATION_PENDING').length,
     approvedByMe: getApprovedByUser(invoices, user).length,
     returned: getReturnedInvoicesForUser(invoices, user).length,
     exceptions: invoices.filter(i => i.exceptions.some(e => e.status === 'OPEN' || e.status === 'PENDING')).length,

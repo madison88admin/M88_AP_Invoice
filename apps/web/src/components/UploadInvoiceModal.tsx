@@ -38,7 +38,8 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
     brand: '',
     brandTier: '' as '' | 'TOP_10' | 'OTHER',
     season: '',
-    orderType: '' as '' | 'BULK' | 'SMS' | 'SAMPLE',
+    orderType: '' as '' | 'BULK' | 'SMS' | 'SAMPLE' | 'OTHER',
+    orderTypeDetail: '' as '' | 'COMBINED_BULK_SMS' | 'COMBINED_SMS_SAMPLE' | 'COMBINED_BULK_SAMPLE' | 'COMBINED_ALL',
     poNumber: '',
     mpoNumber: '',
     qtyShipped: '',
@@ -79,7 +80,8 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
         brand: extraction.brand || '',
         brandTier: (extraction.brand_tier || '') as '' | 'TOP_10' | 'OTHER',
         season: extraction.season || '',
-        orderType: (extraction.order_type || '') as '' | 'BULK' | 'SMS' | 'SAMPLE',
+        orderType: (extraction.order_type || '') as '' | 'BULK' | 'SMS' | 'SAMPLE' | 'OTHER',
+        orderTypeDetail: (extraction.order_type_detail || '') as '' | 'COMBINED_BULK_SMS' | 'COMBINED_SMS_SAMPLE' | 'COMBINED_BULK_SAMPLE' | 'COMBINED_ALL',
         poNumber: extraction.customer_po_number || extraction.po_number || extraction.po_reference || '',
         mpoNumber: extraction.mpo_number || extraction.mpo_base_number || '',
         qtyShipped: extraction.qty_shipped?.toString() || '',
@@ -205,6 +207,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
         brandTier: '',
         season: '',
         orderType: '',
+        orderTypeDetail: '',
         poNumber: '',
         mpoNumber: '',
         qtyShipped: '',
@@ -316,6 +319,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
           invoice_type: sourceInvoiceType,
           category: sourceForm.category || sourceExt.category || 'TRIMS',
           order_type: sourceForm.orderType || undefined,
+          order_type_detail: sourceForm.orderType === 'OTHER' ? sourceForm.orderTypeDetail || undefined : undefined,
           brand: sourceForm.brand || undefined,
           brand_code: sourceBrandCode || undefined,
           season: sourceForm.season || undefined,
@@ -420,6 +424,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
         invoice_type: invoiceType,
         category: formData.category || ext.category || 'TRIMS',
         order_type: formData.orderType || undefined,
+        order_type_detail: formData.orderType === 'OTHER' ? formData.orderTypeDetail || undefined : undefined,
         brand: formData.brand || undefined,
         brand_code: extractedBrandCode || undefined,
         season: formData.season || undefined,
@@ -491,6 +496,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
         brand_tier: originalFormData.brandTier,
         season: originalFormData.season,
         order_type: originalFormData.orderType,
+        order_type_detail: originalFormData.orderTypeDetail,
         po_number: originalFormData.poNumber,
         mpo_number: originalFormData.mpoNumber,
         qty_shipped: originalFormData.qtyShipped ? parseFloat(originalFormData.qtyShipped) : undefined,
@@ -514,6 +520,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
         brand_tier: formData.brandTier,
         season: formData.season,
         order_type: formData.orderType,
+        order_type_detail: formData.orderTypeDetail,
         po_number: formData.poNumber,
         mpo_number: formData.mpoNumber,
         qty_shipped: formData.qtyShipped ? parseFloat(formData.qtyShipped) : undefined,
@@ -569,6 +576,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
       brandTier: '',
       season: '',
       orderType: '',
+      orderTypeDetail: '',
       poNumber: '',
       mpoNumber: '',
       qtyShipped: '',
@@ -1348,7 +1356,10 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                     <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>Order Type</label>
                     <select
                       value={formData.orderType}
-                      onChange={(e) => setFormData({ ...formData, orderType: e.target.value as '' | 'BULK' | 'SMS' | 'SAMPLE' })}
+                      onChange={(e) => {
+                        const orderType = e.target.value as '' | 'BULK' | 'SMS' | 'SAMPLE' | 'OTHER';
+                        setFormData({ ...formData, orderType, orderTypeDetail: orderType === 'OTHER' ? formData.orderTypeDetail : '' });
+                      }}
                       style={{
                         width: '100%',
                         padding: '10px 14px',
@@ -1364,9 +1375,35 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
                       <option value="BULK" style={{ background: 'var(--input-bg)' }}>Bulk</option>
                       <option value="SMS" style={{ background: 'var(--input-bg)' }}>SMS</option>
                       <option value="SAMPLE" style={{ background: 'var(--input-bg)' }}>Sample</option>
+                      <option value="OTHER" style={{ background: 'var(--input-bg)' }}>Others</option>
                     </select>
                   </div>
                 </div>
+
+                {formData.orderType === 'OTHER' && (
+                  <div className="mt-4">
+                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-muted)' }}>Combined shipment type</label>
+                    <select
+                      value={formData.orderTypeDetail}
+                      onChange={(e) => setFormData({ ...formData, orderTypeDetail: e.target.value as typeof formData.orderTypeDetail })}
+                      style={{
+                        width: '100%',
+                        padding: '10px 14px',
+                        background: 'var(--input-bg)',
+                        border: '1px solid var(--input-border)',
+                        borderRadius: '10px',
+                        color: 'var(--text-primary)',
+                        outline: 'none',
+                      }}
+                    >
+                      <option value="" style={{ background: 'var(--input-bg)' }}>Select combined type</option>
+                      <option value="COMBINED_BULK_SMS" style={{ background: 'var(--input-bg)' }}>Combined - bulk &amp; sms</option>
+                      <option value="COMBINED_SMS_SAMPLE" style={{ background: 'var(--input-bg)' }}>Combined - sms &amp; sample</option>
+                      <option value="COMBINED_BULK_SAMPLE" style={{ background: 'var(--input-bg)' }}>Combined - bulk &amp; sample</option>
+                      <option value="COMBINED_ALL" style={{ background: 'var(--input-bg)' }}>Combined - all</option>
+                    </select>
+                  </div>
+                )}
 
                 {/* Row 7: PO Number | MPO Number */}
                 <div className="grid grid-cols-2 gap-4">

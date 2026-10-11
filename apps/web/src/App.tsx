@@ -89,7 +89,7 @@ function App() {
                   </ProtectedRoute>
                 } />
                 <Route path="/exceptions" element={
-                  <ProtectedRoute>
+                  <ProtectedRoute roles={['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN']}>
                     <AppLayout title="Exception Manager" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}><AlertTriangle className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
                       <ExceptionManager />
                     </AppLayout>

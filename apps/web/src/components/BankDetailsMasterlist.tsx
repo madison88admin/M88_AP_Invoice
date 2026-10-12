@@ -201,14 +201,14 @@ export default function BankDetailsMasterlist() {
 
   const handleDelete = async (entry: BankDetailsEntry) => {
     const linkedInvoiceWarning = entry.invoice_count > 0
-      ? ` This vendor has ${entry.invoice_count} linked invoice${entry.invoice_count === 1 ? '' : 's'}; invoice history will be preserved.`
+      ? ` This vendor has ${entry.invoice_count} linked invoice${entry.invoice_count === 1 ? '' : 's'}; permanent deletion will be blocked.`
       : '';
-    if (!window.confirm(`Delete ${entry.name} from the active bank details masterlist?${linkedInvoiceWarning} The vendor will be archived and can no longer be used for new intake.`)) return;
+    if (!window.confirm(`Permanently delete ${entry.name}?${linkedInvoiceWarning} This cannot be undone.`)) return;
 
     setDeletingId(entry.id);
     try {
       const response = await vendorApi.delete(entry.id);
-      showToast(response.data?.message || 'Vendor archived successfully', 'success');
+      showToast(response.data?.message || 'Vendor deleted permanently', 'success');
       await loadBankDetails();
     } catch (err: any) {
       showToast(err.response?.data?.error?.message || err.response?.data?.message || 'Failed to delete vendor', 'error');
@@ -223,18 +223,18 @@ export default function BankDetailsMasterlist() {
     const selectedEntries = filtered.filter((entry) => ids.includes(entry.id));
     const linkedInvoices = selectedEntries.reduce((total, entry) => total + (entry.invoice_count || 0), 0);
     const linkedWarning = linkedInvoices > 0
-      ? ` ${linkedInvoices} linked invoice${linkedInvoices === 1 ? '' : 's'} will be preserved.`
+      ? ` ${linkedInvoices} linked invoice${linkedInvoices === 1 ? '' : 's'} are attached; permanent deletion will be blocked.`
       : '';
-    if (!window.confirm(`Archive ${ids.length} selected vendor${ids.length === 1 ? '' : 's'} from the active bank details masterlist?${linkedWarning} They will no longer be available for new intake.`)) return;
+    if (!window.confirm(`Permanently delete ${ids.length} selected vendor${ids.length === 1 ? '' : 's'}?${linkedWarning} This cannot be undone.`)) return;
 
     setBulkDeleting(true);
     try {
       const response = await vendorApi.bulkDelete(ids);
-      showToast(response.data?.message || `${ids.length} vendor${ids.length === 1 ? '' : 's'} archived successfully`, 'success');
+      showToast(response.data?.message || `${ids.length} vendor${ids.length === 1 ? '' : 's'} deleted permanently`, 'success');
       setSelectedIds(new Set());
       await loadBankDetails();
     } catch (err: any) {
-      showToast(err.response?.data?.error?.message || err.response?.data?.message || 'Failed to archive selected vendors', 'error');
+      showToast(err.response?.data?.error?.message || err.response?.data?.message || 'Failed to permanently delete selected vendors', 'error');
     } finally {
       setBulkDeleting(false);
     }
@@ -335,7 +335,7 @@ export default function BankDetailsMasterlist() {
               }}
             >
               <Trash2 className="h-4 w-4" />
-              {bulkDeleting ? 'Archiving...' : selectedVisibleCount > 0 ? `Archive selected (${selectedVisibleCount})` : 'Archive selected'}
+              {bulkDeleting ? 'Deleting...' : selectedVisibleCount > 0 ? `Delete selected (${selectedVisibleCount})` : 'Delete selected'}
             </button>
           )}
           {canEditBank && (
@@ -374,7 +374,7 @@ export default function BankDetailsMasterlist() {
         <div className="flex items-center gap-2 p-3 rounded-lg text-sm" style={{ background: 'color-mix(in srgb, var(--accent-blue) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-blue) 20%, transparent)' }}>
           <CheckCircle2 className="h-4 w-4" style={{ color: 'var(--accent-blue)' }} />
           <span style={{ color: 'var(--text-secondary)' }}>
-            Use <strong>Add Vendor &amp; Bank Details</strong> for a new supplier, <strong>Edit Bank</strong> to update an existing record, or <strong>Delete</strong> to archive an obsolete vendor. Linked invoice history is preserved.
+            Use <strong>Add Vendor &amp; Bank Details</strong> for a new supplier, <strong>Edit Bank</strong> to update an existing record, or <strong>Delete</strong> to permanently remove an obsolete vendor. Vendors with linked invoices or vendor bill stubs cannot be deleted.
           </span>
         </div>
       )}

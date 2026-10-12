@@ -235,9 +235,9 @@ router.post('/', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_A
   }
 });
 
-// Vendor deletion is intentionally a soft delete. Historical invoices keep
-// their vendor relation, while the vendor is removed from active intake and
-// bank masterlists. Bulk deletion uses the same safe behavior.
+// Vendor deletion is permanent. It is deliberately blocked when dependent
+// invoice or vendor-bill-stub records exist so accounting history cannot be
+// deleted accidentally. Bank-change requests are allowed to cascade.
 router.delete('/bulk', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN, UserRole.SUPERADMIN), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const rawIds: unknown[] = Array.isArray(req.body?.ids) ? req.body.ids : [];
@@ -250,11 +250,43 @@ router.delete('/bulk', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUN
       throw new AppError('At least one vendor must be selected', 400);
     }
 
-    const result = await prisma.vendor.updateMany({
+    const vendors = await prisma.vendor.findMany({
       where: { id: { in: ids }, is_active: true },
-      data: { is_active: false, updated_at: new Date() },
+      select: {
+        id: true,
+        name: true,
+        _count: { select: { invoices: true, vendor_bill_stubs: true } },
+      },
     });
-    res.json({ message: `${result.count} vendor(s) archived`, archived_count: result.count });
+    if (vendors.length !== ids.length) {
+      throw new AppError('One or more selected vendors were not found or are already deleted', 404);
+    }
+
+    const blocked = vendors.filter((vendor) => vendor._count.invoices > 0 || vendor._count.vendor_bill_stubs > 0);
+    if (blocked.length > 0) {
+      const details = blocked.map((vendor) => {
+        const dependencies = [
+          vendor._count.invoices > 0 ? `${vendor._count.invoices} invoice(s)` : '',
+          vendor._count.vendor_bill_stubs > 0 ? `${vendor._count.vendor_bill_stubs} vendor bill stub(s)` : '',
+        ].filter(Boolean).join(' and ');
+        return `${vendor.name} (${dependencies})`;
+      }).join('; ');
+      return res.status(409).json({
+        error: {
+          message: `Permanent deletion is blocked for linked vendors: ${details}. Remove or reassign the dependent records first.`,
+          status: 409,
+        },
+        blocked_vendors: blocked.map((vendor) => ({
+          id: vendor.id,
+          name: vendor.name,
+          invoice_count: vendor._count.invoices,
+          vendor_bill_stub_count: vendor._count.vendor_bill_stubs,
+        })),
+      });
+    }
+
+    const result = await prisma.vendor.deleteMany({ where: { id: { in: ids } } });
+    res.json({ message: `${result.count} vendor(s) deleted permanently`, deleted_count: result.count });
   } catch (error) {
     next(error);
   }
@@ -262,19 +294,37 @@ router.delete('/bulk', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUN
 
 router.delete('/:id', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN, UserRole.SUPERADMIN), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const vendor = await prisma.vendor.findUnique({ where: { id: req.params.id } });
+    const vendor = await prisma.vendor.findUnique({
+      where: { id: req.params.id },
+      select: {
+        id: true,
+        name: true,
+        is_active: true,
+        _count: { select: { invoices: true, vendor_bill_stubs: true } },
+      },
+    });
     if (!vendor) {
       throw new AppError('Vendor not found', 404);
     }
     if (!vendor.is_active) {
-      return res.json({ message: 'Vendor is already archived', archived_count: 0 });
+      return res.json({ message: 'Vendor is already deleted', deleted_count: 0 });
     }
 
-    await prisma.vendor.update({
-      where: { id: req.params.id },
-      data: { is_active: false, updated_at: new Date() },
-    });
-    res.json({ message: 'Vendor archived successfully', archived_count: 1 });
+    if (vendor._count.invoices > 0 || vendor._count.vendor_bill_stubs > 0) {
+      const dependencies = [
+        vendor._count.invoices > 0 ? `${vendor._count.invoices} invoice(s)` : '',
+        vendor._count.vendor_bill_stubs > 0 ? `${vendor._count.vendor_bill_stubs} vendor bill stub(s)` : '',
+      ].filter(Boolean).join(' and ');
+      return res.status(409).json({
+        error: {
+          message: `Permanent deletion is blocked because ${vendor.name} has ${dependencies}. Remove or reassign the dependent records first.`,
+          status: 409,
+        },
+      });
+    }
+
+    await prisma.vendor.delete({ where: { id: req.params.id } });
+    res.json({ message: 'Vendor deleted permanently', deleted_count: 1 });
   } catch (error) {
     next(error);
   }

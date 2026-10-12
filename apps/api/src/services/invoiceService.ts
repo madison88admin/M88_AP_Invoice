@@ -919,10 +919,23 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     });
   }
 
+  // Prisma's checked InvoiceUpdateInput exposes the vendor relation as
+  // `vendor`, while some generated clients do not expose the scalar
+  // `vendor_id` on update (even though it is present on the model). Keep the
+  // scalar in `data` for validation/audit comparisons above, but use the
+  // relation connect form for the actual update so saves work consistently
+  // across regenerated and older live clients.
+  const persistedData: Record<string, any> = { ...data };
+  if (persistedData.vendor_id !== undefined) {
+    const vendorId = persistedData.vendor_id;
+    delete persistedData.vendor_id;
+    persistedData.vendor = { connect: { id: String(vendorId) } };
+  }
+
   const invoice = await prisma.invoice.update({
     where: { id },
     data: {
-      ...data,
+      ...persistedData,
       revision: nextRevision,
       ...(materialChange ? { po_validation: Prisma.DbNull } : {}),
       ...(materialChange && approvalStarted ? {

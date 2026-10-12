@@ -405,21 +405,24 @@ router.post('/:id/request-bank-update', authenticate, async (req: AuthRequest, r
 router.patch('/:id/bank-details', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN, UserRole.SUPERADMIN), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const vendorId = req.params.id;
-    const { bank_name, swift_code, account_number, bank_name_alt, bank_address, account_number_alt, swift_code_alt, iban, sort_code, aba_routing_number, intermediary_bank_name, intermediary_bank_swift } = req.body;
+    const { beneficiary_name, bank_name, swift_code, account_number, bank_name_alt, bank_address, account_number_alt, swift_code_alt, iban, sort_code, aba_routing_number, intermediary_bank_name, intermediary_bank_swift } = req.body;
 
     const vendor = await prisma.vendor.findUnique({ where: { id: vendorId } });
     if (!vendor) {
       throw new AppError('Vendor not found', 404);
     }
 
+    const bankFieldChangesRequested = BANK_FIELDS.some((field) => req.body[field] !== undefined);
+
     // Bank changes are locked while any linked invoice is in active review/payment.
+    // A beneficiary-only correction is safe and does not alter payment routing.
     // Users must use the bank-change request workflow so the snapshot and audit trail
     // cannot be changed underneath an in-flight payment.
     const activeInvoice = await prisma.invoice.findFirst({
       where: { vendor_id: vendorId, status: { in: ['PENDING_ACCOUNTING', 'APPROVED', 'PAYMENT_SCHEDULED', 'POSTED_TO_QB', 'PAYMENT_CONFIRMATION_SENT', 'PAID'] as any } },
       select: { invoice_number: true, status: true },
     });
-    if (activeInvoice) {
+    if (activeInvoice && bankFieldChangesRequested) {
       throw new AppError(`Bank details are locked while invoice ${activeInvoice.invoice_number} is ${activeInvoice.status}. Submit a bank-change request instead.`, 409);
     }
 
@@ -428,7 +431,7 @@ router.patch('/:id/bank-details', authorize(UserRole.ACCOUNTING_SUPERVISOR, User
     const pendingOwnRequest = await prisma.vendorBankChangeRequest.findFirst({
       where: { vendor_id: vendorId, status: 'PENDING', requested_by_id: req.user!.id },
     });
-    if (pendingOwnRequest) {
+    if (pendingOwnRequest && bankFieldChangesRequested) {
       throw new AppError('You cannot apply a bank change you requested. Ask another Accounting user to review and apply it.', 403);
     }
 
@@ -443,6 +446,10 @@ router.patch('/:id/bank-details', authorize(UserRole.ACCOUNTING_SUPERVISOR, User
 
     // Build update data for vendor
     const vendorUpdate: Record<string, any> = { updated_at: new Date() };
+    if (beneficiary_name !== undefined) {
+      const normalizedBeneficiary = String(beneficiary_name ?? '').trim();
+      vendorUpdate.beneficiary_name = normalizedBeneficiary || null;
+    }
     const bankUpdateFields = { bank_name, swift_code, account_number, bank_name_alt, bank_address, account_number_alt, swift_code_alt, iban, sort_code, aba_routing_number, intermediary_bank_name, intermediary_bank_swift };
     for (const [key, value] of Object.entries(bankUpdateFields)) {
       if (value !== undefined) {
@@ -493,16 +500,21 @@ router.patch('/:id/bank-details', authorize(UserRole.ACCOUNTING_SUPERVISOR, User
 
     // Create audit log
     const changedFields = Object.keys(vendorUpdate).filter(k => k !== 'updated_at');
+    const beneficiaryOnlyUpdate = changedFields.length === 1 && changedFields[0] === 'beneficiary_name';
     await prisma.auditLog.create({
       data: {
-        action: 'VENDOR_BANK_UPDATED',
+        action: changedFields.includes('beneficiary_name') && !changedFields.some((field) => BANK_FIELDS.includes(field))
+          ? 'VENDOR_BENEFICIARY_UPDATED'
+          : 'VENDOR_BANK_UPDATED',
         performed_by: req.user!.id,
-        note: `Vendor "${vendor.name}" bank details updated by ${req.user!.role}. Fields: ${changedFields.join(', ')}. Propagated to ${updatedInvoices} invoice(s).`,
+        note: `Vendor "${vendor.name}" ${beneficiaryOnlyUpdate ? 'beneficiary name' : 'bank details'} updated by ${req.user!.role}. Fields: ${changedFields.join(', ')}. Propagated to ${updatedInvoices} invoice(s).`,
       },
     }).catch(() => { /* audit log failure should not block the update */ });
 
     res.json({
-      message: `Bank details updated for vendor "${vendor.name}" and propagated to ${updatedInvoices} invoice(s)`,
+      message: beneficiaryOnlyUpdate
+        ? `Beneficiary name updated for vendor "${vendor.name}". Bank details were not changed.`
+        : `Bank details updated for vendor "${vendor.name}" and propagated to ${updatedInvoices} invoice(s)`,
       vendor_id: vendorId,
       updated_fields: changedFields,
       invoices_updated: updatedInvoices,

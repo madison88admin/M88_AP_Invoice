@@ -55,6 +55,39 @@ describe('vendor matching financial controls', () => {
     await expect(matchVendor('CHECKPOINT SYSTEMS LIMITED')).resolves.toBeNull();
   });
 
+  it('matches an invoice vendor using the beneficiary name without changing bank data', async () => {
+    vendorFindMany.mockResolvedValue([
+      vendor({
+        name: 'CANONICAL SUPPLIER LIMITED',
+        beneficiary_name: 'SUPPLIER PAYMENTS HK LIMITED',
+      }),
+    ]);
+
+    await expect(matchVendor('Supplier Payments HK Ltd.')).resolves.toMatchObject({
+      vendor_id: 'vendor-1',
+      vendor_name: 'CANONICAL SUPPLIER LIMITED',
+      match_type: 'beneficiary',
+      confidence: 0.98,
+    });
+    expect(vendorUpdate).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the extracted beneficiary when the OCR vendor header does not match', async () => {
+    vendorFindMany.mockResolvedValue([
+      vendor({
+        name: 'CANONICAL SUPPLIER LIMITED',
+        beneficiary_name: 'SUPPLIER PAYMENTS HK LIMITED',
+      }),
+    ]);
+
+    await expect(matchVendor('OCR HEADER UNKNOWN', 'Supplier Payments HK Ltd.')).resolves.toMatchObject({
+      vendor_id: 'vendor-1',
+      vendor_name: 'CANONICAL SUPPLIER LIMITED',
+      match_type: 'beneficiary',
+      confidence: 0.98,
+    });
+  });
+
   it('matches the exact PT SML legal entity before an overlapping alias on another bank record', async () => {
     vendorFindMany.mockResolvedValue([
       vendor({

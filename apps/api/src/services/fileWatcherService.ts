@@ -829,6 +829,7 @@ async function processSingleInvoiceBuffer(
   try {
     const bankInfo = (ocrResult as any).bank_info || {};
     const vendorResult = await matchOrCreateVendor(ocrResult.vendor_name, {
+      beneficiary_name: bankInfo.beneficiary_name || (ocrResult as any).beneficiary_name,
       bank_name: bankInfo.bank_name || (ocrResult as any).bank_name,
       swift_code: bankInfo.swift_code || (ocrResult as any).bank_swift,
       account_number: bankInfo.account_usd || bankInfo.account_number || (ocrResult as any).bank_account,

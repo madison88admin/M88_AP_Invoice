@@ -3,7 +3,7 @@ import prisma, { isDbEnabled } from '../config/database';
 export interface VendorMatchResult {
   vendor_id: string;
   vendor_name: string;
-  match_type: 'exact' | 'alias' | 'fuzzy' | 'partial' | 'none';
+  match_type: 'exact' | 'beneficiary' | 'alias' | 'fuzzy' | 'partial' | 'none';
   confidence: number;
 }
 
@@ -60,7 +60,7 @@ function selectSafeCandidate(candidates: any[], sourceName: string): any | null 
   return candidates[0];
 }
 
-export async function matchVendor(vendorName: string): Promise<VendorMatchResult | null> {
+async function matchVendorByName(vendorName: string): Promise<VendorMatchResult | null> {
   // Early return if DB is disabled
   if (!isDbEnabled()) {
     console.log('[VendorMatch] DB disabled, skipping vendor lookup');
@@ -94,7 +94,27 @@ export async function matchVendor(vendorName: string): Promise<VendorMatchResult
     }
     if (exactCandidates.length > 0) return null;
 
-    // Step 2: Exact match on Vendor.name_aliases array
+    // Step 2: Exact match on the vendor's beneficiary/account-holder name.
+    // Beneficiary names are a controlled vendor-master identifier because
+    // suppliers may invoice under the account-holder name while retaining the
+    // same bank account details.
+    const beneficiaryCandidates = rankedVendors.filter((vendor: any) =>
+      typeof vendor.beneficiary_name === 'string' &&
+      vendor.beneficiary_name.trim().length > 0 &&
+      normalizeVendorName(vendor.beneficiary_name) === normalizedInput
+    );
+    const beneficiaryVendor = selectSafeCandidate(beneficiaryCandidates, vendorName);
+    if (beneficiaryVendor) {
+      return {
+        vendor_id: beneficiaryVendor.id,
+        vendor_name: beneficiaryVendor.name,
+        match_type: 'beneficiary',
+        confidence: 0.98,
+      };
+    }
+    if (beneficiaryCandidates.length > 0) return null;
+
+    // Step 3: Exact match on Vendor.name_aliases array
     const aliasCandidates = rankedVendors.filter((vendor: any) =>
       (vendor.name_aliases || []).some((alias: string) => normalizeVendorName(alias) === normalizedInput)
     );
@@ -109,39 +129,49 @@ export async function matchVendor(vendorName: string): Promise<VendorMatchResult
     }
     if (aliasCandidates.length > 0) return null;
 
-    // Step 3: Fuzzy match (Levenshtein distance ≤ 3, case-insensitive)
+    // Step 4: Fuzzy match (Levenshtein distance ≤ 3, case-insensitive)
     for (const vendor of rankedVendors) {
-      const normalizedVendorName = normalizeVendorName(vendor.name);
-      const distance = levenshteinDistance(normalizedInput, normalizedVendorName);
-      if (distance <= 3) {
-        const confidence = 1 - (distance / Math.max(normalizedInput.length, normalizedVendorName.length));
-        return {
-          vendor_id: vendor.id,
-          vendor_name: vendor.name,
-          match_type: 'fuzzy',
-          confidence,
-        };
+      const candidateNames = [vendor.name, vendor.beneficiary_name].filter(
+        (value): value is string => typeof value === 'string' && value.trim().length > 0
+      );
+      for (const candidateName of candidateNames) {
+        const normalizedCandidate = normalizeVendorName(candidateName);
+        const distance = levenshteinDistance(normalizedInput, normalizedCandidate);
+        if (distance <= 3) {
+          const confidence = 1 - (distance / Math.max(normalizedInput.length, normalizedCandidate.length));
+          return {
+            vendor_id: vendor.id,
+            vendor_name: vendor.name,
+            match_type: 'fuzzy',
+            confidence,
+          };
+        }
       }
     }
 
-    // Step 4: Partial match on key tokens
+    // Step 5: Partial match on key tokens from either the canonical vendor or
+    // the beneficiary name.
     const inputTokens = normalizedInput.split(/\s+/).filter(t => t.length > 2);
     for (const vendor of rankedVendors) {
-      const normalizedVendorName = normalizeVendorName(vendor.name);
-      const vendorTokens = normalizedVendorName.split(/\s+/).filter(t => t.length > 2);
-      
-      const commonTokens = inputTokens.filter(token => 
-        vendorTokens.some(vToken => vToken.includes(token) || token.includes(vToken))
+      const candidateNames = [vendor.name, vendor.beneficiary_name].filter(
+        (value): value is string => typeof value === 'string' && value.trim().length > 0
       );
+      for (const candidateName of candidateNames) {
+        const normalizedCandidate = normalizeVendorName(candidateName);
+        const candidateTokens = normalizedCandidate.split(/\s+/).filter(t => t.length > 2);
+        const commonTokens = inputTokens.filter(token =>
+          candidateTokens.some(candidateToken => candidateToken.includes(token) || token.includes(candidateToken))
+        );
 
-      if (commonTokens.length >= 2) {
-        const confidence = commonTokens.length / Math.max(inputTokens.length, vendorTokens.length);
-        return {
-          vendor_id: vendor.id,
-          vendor_name: vendor.name,
-          match_type: 'partial',
-          confidence,
-        };
+        if (commonTokens.length >= 2) {
+          const confidence = commonTokens.length / Math.max(inputTokens.length, candidateTokens.length);
+          return {
+            vendor_id: vendor.id,
+            vendor_name: vendor.name,
+            match_type: 'partial',
+            confidence,
+          };
+        }
       }
     }
 
@@ -156,19 +186,38 @@ export async function matchVendor(vendorName: string): Promise<VendorMatchResult
 }
 
 /**
+ * Match an invoice to the vendor master using the OCR vendor name first and
+ * the extracted beneficiary/account-holder name as a safe fallback. This is
+ * intentionally read-only: matching never changes the vendor master.
+ */
+export async function matchVendor(vendorName: string | null | undefined, beneficiaryName?: string | null): Promise<VendorMatchResult | null> {
+  const primaryName = typeof vendorName === 'string' ? vendorName.trim() : '';
+  const fallbackName = typeof beneficiaryName === 'string' ? beneficiaryName.trim() : '';
+
+  if (primaryName) {
+    const primaryMatch = await matchVendorByName(primaryName);
+    if (primaryMatch || !fallbackName || normalizeVendorName(primaryName) === normalizeVendorName(fallbackName)) {
+      return primaryMatch;
+    }
+  }
+
+  return fallbackName ? matchVendorByName(fallbackName) : null;
+}
+
+/**
  * Try to match a vendor by name. Unknown vendors are never auto-created:
  * vendor-master creation is restricted to Accounting.
  */
 export async function matchOrCreateVendor(
-  vendorName: string,
-  _bankInfo?: { beneficiary_name?: string; bank_name?: string; swift_code?: string; account_number?: string }
+  vendorName: string | null | undefined,
+  bankInfo?: { beneficiary_name?: string; bank_name?: string; swift_code?: string; account_number?: string }
 ): Promise<{ vendor_id: string; vendor_name: string; auto_created: boolean } | null> {
   if (!isDbEnabled()) {
     return null;
   }
 
   // Try matching first
-  const match = await matchVendor(vendorName);
+  const match = await matchVendor(vendorName, bankInfo?.beneficiary_name);
   if (match) {
     // OCR/vendor matching is read-only. Beneficiary and bank fields are
     // financial master data and may only be changed through the controlled
@@ -176,7 +225,7 @@ export async function matchOrCreateVendor(
     return { vendor_id: match.vendor_id, vendor_name: match.vendor_name, auto_created: false };
   }
 
-  console.warn(`[VendorMatch] Unknown vendor "${vendorName}" requires Accounting master-list creation`);
+  console.warn(`[VendorMatch] Unknown vendor "${vendorName || bankInfo?.beneficiary_name || '未-identified'}" requires Accounting master-list creation`);
   return null;
 }
 
@@ -241,6 +290,12 @@ export async function getVendorSuggestions(searchTerm: string, limit: number = 5
           },
         },
         {
+          beneficiary_name: {
+            contains: searchTerm,
+            mode: 'insensitive',
+          },
+        },
+        {
           name_aliases: {
             hasSome: [searchTerm],
           },
@@ -260,12 +315,19 @@ export async function getVendorSuggestions(searchTerm: string, limit: number = 5
 
 function calculateMatchConfidence(searchTerm: string, vendor: any): number {
   const vendorName = vendor.name.toUpperCase();
+  const beneficiaryName = String(vendor.beneficiary_name || '').toUpperCase();
   
   if (vendorName === searchTerm) return 1.0;
+  if (beneficiaryName && beneficiaryName === searchTerm) return 0.98;
   if (vendor.name_aliases.some((alias: string) => alias.toUpperCase() === searchTerm)) return 0.95;
   
   const distance = levenshteinDistance(searchTerm, vendorName);
   if (distance <= 3) return 1 - (distance / Math.max(searchTerm.length, vendorName.length));
+
+  if (beneficiaryName) {
+    const beneficiaryDistance = levenshteinDistance(searchTerm, beneficiaryName);
+    if (beneficiaryDistance <= 3) return 0.98 - (beneficiaryDistance / Math.max(searchTerm.length, beneficiaryName.length));
+  }
   
   const searchTokens = searchTerm.split(/\s+/).filter((t: string) => t.length > 2);
   const vendorTokens = vendorName.split(/\s+/).filter((t: string) => t.length > 2);
@@ -275,6 +337,16 @@ function calculateMatchConfidence(searchTerm: string, vendor: any): number {
   
   if (commonTokens.length >= 2) {
     return commonTokens.length / Math.max(searchTokens.length, vendorTokens.length);
+  }
+
+  if (beneficiaryName) {
+    const beneficiaryTokens = beneficiaryName.split(/\s+/).filter((t: string) => t.length > 2);
+    const beneficiaryCommonTokens = searchTokens.filter((token: string) =>
+      beneficiaryTokens.some((beneficiaryToken: string) => beneficiaryToken.includes(token) || token.includes(beneficiaryToken))
+    );
+    if (beneficiaryCommonTokens.length >= 2) {
+      return beneficiaryCommonTokens.length / Math.max(searchTokens.length, beneficiaryTokens.length);
+    }
   }
   
   return 0;

@@ -665,6 +665,7 @@ export async function reExtractInvoice(
     try {
       const bankInfo = (decisionFinal as any).bank_info || {};
       const vendorResult = await matchOrCreateVendor(decisionFinal.vendor_name, {
+        beneficiary_name: bankInfo.beneficiary_name || (decisionFinal as any).beneficiary_name,
         bank_name: bankInfo.bank_name || (decisionFinal as any).bank_name,
         swift_code: bankInfo.swift_code || (decisionFinal as any).swift_code,
         account_number: bankInfo.account_usd || bankInfo.account_number || (decisionFinal as any).account_number,

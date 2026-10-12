@@ -95,6 +95,7 @@ export default function BankDetailsMasterlist() {
   const handleEdit = (entry: BankDetailsEntry) => {
     setEditingEntry(entry);
     setEditData({
+      beneficiary_name: entry.beneficiary_name,
       bank_name: entry.bank_name,
       bank_name_alt: entry.bank_name_alt,
       bank_address: entry.bank_address,
@@ -114,6 +115,7 @@ export default function BankDetailsMasterlist() {
       const latest = response.data as BankDetailsEntry;
       setEditingEntry(latest);
       setEditData({
+        beneficiary_name: latest.beneficiary_name,
         bank_name: latest.bank_name,
         bank_name_alt: latest.bank_name_alt,
         bank_address: latest.bank_address,
@@ -454,6 +456,17 @@ export default function BankDetailsMasterlist() {
 
             {/* Modal Body */}
             <div className="p-4 space-y-4">
+              {/* Vendor identity */}
+              <div>
+                <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Vendor Identity</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {editField('Beneficiary Name', 'beneficiary_name')}
+                </div>
+                <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
+                  Updating the beneficiary name does not change the bank account, bank name, or SWIFT code.
+                </p>
+              </div>
+
               {/* Primary Bank Account */}
               <div>
                 <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Primary Bank Account</h3>

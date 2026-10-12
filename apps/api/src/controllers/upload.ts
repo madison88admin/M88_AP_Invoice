@@ -182,7 +182,10 @@ export const uploadInvoice = async (
       console.log('[DEBUG] Using NextGen vendor_id from validation:', vendorId);
     } else {
       // Fallback to old vendor matching service if validation didn't match
-      const vendorMatch = await matchVendor(ocrResult.vendor_name);
+      const vendorMatch = await matchVendor(
+        ocrResult.vendor_name,
+        (ocrResult as any).bank_info?.beneficiary_name || (ocrResult as any).beneficiary_name
+      );
       if (vendorMatch) {
         vendorId = vendorMatch.vendor_id;
         requiresManualVendorAssignment = false;
@@ -190,6 +193,7 @@ export const uploadInvoice = async (
         // Auto-create vendor if no match and we have a valid vendor name
         const bankInfo = (ocrResult as any).bank_info || {};
         const vendorResult = await matchOrCreateVendor(ocrResult.vendor_name, {
+          beneficiary_name: bankInfo.beneficiary_name || (ocrResult as any).beneficiary_name,
           bank_name: bankInfo.bank_name || (ocrResult as any).bank_name,
           swift_code: bankInfo.swift_code || (ocrResult as any).bank_swift,
           account_number: bankInfo.account_usd || bankInfo.account_number || (ocrResult as any).bank_account,
@@ -949,7 +953,10 @@ async function processSingleInvoice(
 
     if (madisonResult.vendor_name) {
       // Fallback to old vendor matching service if validation didn't match
-      const vendorMatch = await matchVendor(madisonResult.vendor_name);
+      const vendorMatch = await matchVendor(
+        madisonResult.vendor_name,
+        (madisonResult as any).bank_info?.beneficiary_name || (madisonResult as any).beneficiary_name
+      );
       if (vendorMatch) {
         vendorId = vendorMatch.vendor_id;
         requiresManualVendorAssignment = false;
@@ -958,6 +965,7 @@ async function processSingleInvoice(
         // Auto-create vendor if no match and we have a valid vendor name
         const bankDetails = madisonResult.bank_details || {};
         const vendorResult = await matchOrCreateVendor(madisonResult.vendor_name, {
+          beneficiary_name: bankDetails.beneficiary_name || (madisonResult as any).beneficiary_name,
           bank_name: bankDetails.bank_name,
           swift_code: bankDetails.swift_code,
           account_number: bankDetails.account_number,
@@ -1047,8 +1055,15 @@ async function processStructuredInvoiceUpload(req: Request, res: Response) {
 
   let vendorMatch: any = null;
   if (extraction.vendor_name) {
-    vendorMatch = await matchVendor(extraction.vendor_name);
-    if (!vendorMatch) vendorMatch = await matchOrCreateVendor(extraction.vendor_name);
+    vendorMatch = await matchVendor(
+      extraction.vendor_name,
+      extraction.bank_info?.beneficiary_name || extraction.beneficiary_name
+    );
+    if (!vendorMatch) {
+      vendorMatch = await matchOrCreateVendor(extraction.vendor_name, {
+        beneficiary_name: extraction.bank_info?.beneficiary_name || extraction.beneficiary_name,
+      });
+    }
   }
 
   return res.status(200).json({

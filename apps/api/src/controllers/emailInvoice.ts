@@ -147,7 +147,10 @@ async function processSingleEmailInvoice(
     // Step 4: Vendor matching
     let vendorId: string | undefined;
     try {
-      const vendorMatch = await matchVendor(ocrResult.vendor_name);
+      const vendorMatch = await matchVendor(
+        ocrResult.vendor_name,
+        (ocrResult as any).bank_info?.beneficiary_name || (ocrResult as any).beneficiary_name
+      );
       vendorId = vendorMatch?.vendor_id;
     } catch {
       logger.warn(`[${requestId}] Vendor not found${partLabel}: ${ocrResult.vendor_name}`);
@@ -409,7 +412,10 @@ async function processSingleManualInvoice(
     // Vendor match
     let vendorId: string | undefined;
     try {
-      const vendorMatch = await matchVendor(ocrResult.vendor_name);
+      const vendorMatch = await matchVendor(
+        ocrResult.vendor_name,
+        (ocrResult as any).bank_info?.beneficiary_name || (ocrResult as any).beneficiary_name
+      );
       vendorId = vendorMatch?.vendor_id;
     } catch {
       logger.warn(`[${requestId}] Vendor not found${partLabel}: ${ocrResult.vendor_name}`);

@@ -32,7 +32,7 @@ import { analyzeWithRetry } from './intakeRetryService';
 import { hasStrongNonInvoiceHeading, isObviouslyNonInvoiceFilename, nonInvoiceSuppressionReason } from './nonInvoiceSuppression';
 import { PDFDocument } from 'pdf-lib';
 import { evaluateIntakeControls } from './intakeControlService';
-import { getShipmentBillBlockReason, isValidCommercialInvoice } from './payableDocumentGuard';
+import { getPayableBlockReason } from './payableDocumentGuard';
 import { replaceInvoicePdfByNumber } from './invoicePdfReplacementService';
 
 const INCOMING_DIR = process.env.WATCHER_INCOMING_DIR || '/incoming-invoices';
@@ -139,19 +139,7 @@ export function intakeReviewReason(ocrResult: any, fileName = ''): string | null
   const amount = Number(ocrResult?.total_amount ?? ocrResult?.amount);
   const currency = String(ocrResult?.currency || '').toUpperCase();
   const rawText = String(ocrResult?.raw_text || ocrResult?.raw_data?.raw_text || '');
-  const validCommercialInvoice = isValidCommercialInvoice({
-    document_type: ocrResult?.document_type,
-    invoice_type: ocrResult?.invoice_type,
-    source_document_type: ocrResult?.source_document_type,
-    document_classification: ocrResult?.document_classification || ocrResult?.raw_data?.document_classification,
-    raw_text: rawText,
-    fileName,
-    invoice_number: ocrResult?.invoice_number,
-    vendor_name: ocrResult?.vendor_name,
-    total_amount: ocrResult?.total_amount ?? ocrResult?.amount,
-    invoice_date: ocrResult?.invoice_date,
-  }, type);
-  const payableBlockReason = getShipmentBillBlockReason({
+  const payableBlockReason = getPayableBlockReason({
     document_type: ocrResult?.document_type,
     invoice_type: ocrResult?.invoice_type,
     source_document_type: ocrResult?.source_document_type,
@@ -164,11 +152,18 @@ export function intakeReviewReason(ocrResult: any, fileName = ''): string | null
     total_amount: ocrResult?.total_amount ?? ocrResult?.amount,
     invoice_date: ocrResult?.invoice_date,
   });
-  if (payableBlockReason) return payableBlockReason;
+  if (payableBlockReason) {
+    // Keep a clear, consistent reason for shipment/supporting documents while
+    // still using the shared guard for the actual blocking decision.
+    if (hasStrongNonInvoiceHeading(rawText)) {
+      return 'Document is a shipping/non-invoice document (packing list, AWB, delivery or shipment document) — not eligible for invoice creation';
+    }
+    return payableBlockReason;
+  }
   const hasPayableHeading = /\b(?:INVOICE|DEBIT\s+NOTE|CREDIT\s+NOTE)\b/i.test(rawText);
   const shipmentDocument = hasStrongNonInvoiceHeading(rawText) || (!hasPayableHeading && /(?:^|\n)\s*(?:PACKING\s+(?:LIST|SLIP)|AIR\s*WAY\s*BILL|SHIPMENT\s+AIRWAYBILL|BILL\s+OF\s+LADING|CARGO\s+MANIFEST|SHIPPING\s+DOCUMENT|SHIPMENT\s+DOCUMENT|DELIVERY\s+(?:NOTE|RECEIPT))\b/im.test(rawText));
 
-  if ((ocrResult?.is_non_invoice_document && !validCommercialInvoice) || ['AIRWAY_BILL', 'PACKING_LIST', 'TECH_PACK', 'TRIM_RECEIPT', 'FAKTUR_PAJAK', 'FORWARDER_BILLING_INVOICE', 'FORWARDERS_BILLING_INVOICE', 'EXPEDITOR_BILLING_INVOICE', 'EXPEDITORS_BILLING_INVOICE', 'FORWARDER_INVOICE', 'EXPEDITOR_INVOICE', 'EXPEDITORS_INVOICE'].includes(type) || shipmentDocument) {
+  if (['AIRWAY_BILL', 'PACKING_LIST', 'TECH_PACK', 'TRIM_RECEIPT', 'FAKTUR_PAJAK', 'FORWARDER_BILLING_INVOICE', 'FORWARDERS_BILLING_INVOICE', 'EXPEDITOR_BILLING_INVOICE', 'EXPEDITORS_BILLING_INVOICE', 'FORWARDER_INVOICE', 'EXPEDITOR_INVOICE', 'EXPEDITORS_INVOICE'].includes(type) || shipmentDocument) {
     return 'Document is a shipping/non-invoice document (packing list, AWB, delivery or shipment document) — not eligible for invoice creation';
   }
   // Filename hints are decisive ONLY when the document body did not yield a
@@ -185,7 +180,7 @@ export function intakeReviewReason(ocrResult: any, fileName = ''): string | null
     type === 'DEBIT_NOTE' ||
     type === 'CREDIT_NOTE';
   const normalizedFileName = fileName.replace(/[_-]+/g, ' ');
-  if ((!validCommercialInvoice && (type === 'STATEMENT' || type === 'OTHER' || type === 'UNKNOWN')) || (!typeLooksPayable && NON_INVOICE_HINTS.test(normalizedFileName))) {
+  if ((type === 'STATEMENT' || type === 'OTHER' || type === 'UNKNOWN') || (!typeLooksPayable && NON_INVOICE_HINTS.test(normalizedFileName))) {
     return `Document type ${type || 'unknown'} is not eligible for automatic invoice creation`;
   }
   const invoiceNumber = String(ocrResult?.invoice_number || '').trim();

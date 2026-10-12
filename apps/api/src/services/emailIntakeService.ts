@@ -20,7 +20,7 @@ import { hasStrongNonInvoiceHeading, isObviouslyNonInvoiceFilename, nonInvoiceSu
 import { PDFDocument } from 'pdf-lib';
 import { buildIntakeIdempotencyKey, evaluateIntakeControls } from './intakeControlService';
 import { checkEmailDuplicate, generateFileHash } from './emailDuplicateService';
-import { getShipmentBillBlockReason } from './payableDocumentGuard';
+import { getPayableBlockReason } from './payableDocumentGuard';
 import { replaceInvoicePdfByNumber, PdfReplacementResult } from './invoicePdfReplacementService';
 
 const clientId = process.env.GRAPH_API_CLIENT_ID || '';
@@ -90,7 +90,7 @@ export function intakeReviewReason(ocrResult: any, fileName: string, subject = '
   if (consensusReviewFields.length > 0) return `OCR engines disagreed on: ${consensusReviewFields.join(', ')}.`;
   const type = String(ocrResult?.invoice_type || '').toUpperCase();
   const rawText = String(ocrResult?.raw_text || ocrResult?.raw_data?.raw_text || '');
-  const payableBlockReason = getShipmentBillBlockReason({
+  const payableBlockReason = getPayableBlockReason({
     document_type: ocrResult?.document_type,
     invoice_type: ocrResult?.invoice_type,
     source_document_type: ocrResult?.source_document_type,

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { InvoiceStatus, InvoiceCategory, InvoiceType, calcWorkingHoursElapsed } from '@ap-invoice/shared';
+import { InvoiceStatus, InvoiceCategory, InvoiceType, calcWorkingHoursElapsed, normalizePaymentTerm } from '@ap-invoice/shared';
 import { invoiceApi, notificationApi, vendorApi, exceptionApi, aliasApi } from '../lib/api';
 import InvoiceTable from './InvoiceTable';
 import UploadInvoiceModal from './UploadInvoiceModal';
@@ -1158,6 +1158,15 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
         if (typeof expected === 'number') return Number(actual) !== expected;
         if (dateFields.has(field)) {
           return !String(actual || '').startsWith(String(expected));
+        }
+        // The API stores the approved canonical payment-term label. The edit
+        // form may submit an equivalent OCR/vendor variant (for example,
+        // "NET30 DAYS"), so compare normalized values rather than the raw
+        // display text and incorrectly reporting a successful save as failed.
+        if (field === 'payment_terms') {
+          const normalizedExpected = normalizePaymentTerm(expected) ?? String(expected ?? '');
+          const normalizedActual = normalizePaymentTerm(actual) ?? String(actual ?? '');
+          return normalizedActual !== normalizedExpected;
         }
         return String(actual ?? '') !== String(expected);
       });

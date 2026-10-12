@@ -1,5 +1,5 @@
 import prisma from '../config/database';
-import { CANONICAL_PAYMENT_TERMS } from '@ap-invoice/shared';
+import { CANONICAL_PAYMENT_TERMS, normalizePaymentTerm } from '@ap-invoice/shared';
 import { InvoiceStatus, InvoiceType, InvoiceCategory, BrandTier, InvoiceSource, OrderType, OrderTypeCombination, BillToEntity, UserRole } from '@ap-invoice/shared';
 import { AppError } from '../middleware/errorHandler';
 import { isTop10Brand, TOP_10_BRANDS } from '@ap-invoice/shared';
@@ -405,17 +405,10 @@ const ROLE_STAGE_ACCESS: Record<string, string[]> = {
 };
 
 export const getDistinctPaymentTerms = async (): Promise<string[]> => {
-  const results = await prisma.invoice.findMany({
-    where: { payment_terms: { not: null } },
-    select: { payment_terms: true },
-    distinct: ['payment_terms'],
-  });
-  // Filter out null/empty and sort
-  const terms = results
-    .map((r) => r.payment_terms)
-    .filter((t): t is string => !!t && t.trim().length > 0)
-    .sort((a, b) => a.localeCompare(b));
-  return [...new Set([...CANONICAL_PAYMENT_TERMS, ...terms])];
+  // Keep the edit/intake selector limited to the approved master list.
+  // Historical OCR/free-text values remain in invoice records for auditability,
+  // but must not become new selectable payment-term options.
+  return [...CANONICAL_PAYMENT_TERMS];
 };
 
 export const getDistinctBrands = async (): Promise<string[]> => {
@@ -855,7 +848,17 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     throw new AppError(`Invalid bill-to entity: ${data.bill_to_entity}`, 400);
   }
 
-  // payment_terms is a free-text String field, not an enum — no validation needed
+  if (data.payment_terms !== undefined) {
+    if (data.payment_terms === null || data.payment_terms === '') {
+      data.payment_terms = null;
+    } else {
+      const normalizedPaymentTerms = normalizePaymentTerm(data.payment_terms);
+      if (!normalizedPaymentTerms) {
+        throw new AppError('Payment terms must use an approved payment-term option', 400);
+      }
+      data.payment_terms = normalizedPaymentTerms;
+    }
+  }
 
   const dateFields = ['invoice_date', 'due_date', 'invoice_received_date', 'date_range_start', 'date_range_end', 'priority_pay_date'];
   for (const field of dateFields) {

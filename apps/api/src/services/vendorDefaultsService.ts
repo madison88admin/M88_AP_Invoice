@@ -1,4 +1,5 @@
 import prisma from '../config/database';
+import { normalizePaymentTerm } from '@ap-invoice/shared';
 
 /**
  * Returns the supplier-list default without replacing an extracted value.
@@ -23,10 +24,5 @@ export async function getVendorPaymentTermDefault(vendorId?: string | null): Pro
 }
 
 export function preferExtractedPaymentTerms(extracted: unknown, masterDefault: unknown): string | null {
-  const value = String(extracted ?? '').trim();
-  if (value && !['N/A', 'NA', 'NONE', 'UNKNOWN', 'UNSPECIFIED', 'UNDEFINED', 'NULL', '-'].includes(value.toUpperCase())) {
-    return value;
-  }
-  const fallback = String(masterDefault ?? '').trim();
-  return fallback || null;
+  return normalizePaymentTerm(extracted) || normalizePaymentTerm(masterDefault);
 }

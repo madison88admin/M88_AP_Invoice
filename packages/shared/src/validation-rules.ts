@@ -118,7 +118,6 @@ export const CANONICAL_PAYMENT_TERMS = [
   '30 Days',
   'Net 45',
   'Net 60',
-  'Net 90',
   'Payment in Advance',
   'Payment Before Delivery',
   'Payment Before Shipment',
@@ -133,6 +132,45 @@ export const CANONICAL_PAYMENT_TERMS = [
   'EVERY 20TH OF THE MONTH',
   'Net 30 (Columbia) / Payment before shipment (Skida)',
 ] as const;
+
+/**
+ * Convert common OCR/vendor variants to the approved payment-term label.
+ * Unknown text returns null so it can be sent to manual review instead of
+ * silently creating another free-text value in the master list.
+ */
+export function normalizePaymentTerm(value: unknown): string | null {
+  const raw = String(value ?? '').trim().replace(/\s+/g, ' ');
+  if (!raw || ['N/A', 'NA', 'NONE', 'UNKNOWN', 'UNSPECIFIED', 'UNDEFINED', 'NULL', '-'].includes(raw.toUpperCase())) {
+    return null;
+  }
+
+  const exact = CANONICAL_PAYMENT_TERMS.find((term) => term.toLowerCase() === raw.toLowerCase());
+  if (exact) return exact;
+
+  const upper = raw.toUpperCase();
+  if (upper === 'PBS') return 'Payment Before Shipment';
+  if (/^T\s*\/\s*T\s*100\s*%$/.test(upper)) return '100% BEFORE SHIPMENT';
+  if (/NET\s*30\s*TT\b/.test(upper)) return 'Net 30 TT';
+  if (/NET\s*(?:DUE\s*IN\s*)?30\s*DAYS?\b/.test(upper) || /30\s*DAYS?\s*NET\b/.test(upper) || /T\/T\s*NET\s*30\s*DAYS?/i.test(raw)) {
+    return 'Net 30 days';
+  }
+  if (/^NET\s*30$/.test(upper) || /^NET[_-]?30$/.test(upper) || /^NET30$/.test(upper)) return 'Net 30';
+  if (/^NET\s*45$/.test(upper) || /^NET45$/.test(upper)) return 'Net 45';
+  if (/^NET\s*60$/.test(upper) || /^NET60$/.test(upper)) return 'Net 60';
+  if (/PAYMENT\s*IN\s*ADVANCE|ADVANCE(?:D)?\s*PAYMENT|T\/T\s*IN\s*ADVANCE/i.test(raw)) return 'Payment in Advance';
+  if (/PAYMENT\s*BEFORE\s*DELIVERY/i.test(raw)) return 'Payment Before Delivery';
+  if (/PAY(?:MENT)?\s*BEFORE\s*SHIPMENT/i.test(raw)) return 'Payment Before Shipment';
+  if (/100\s*%?\s*(?:BEFORE|PRIOR)\s*SHIPMENT/i.test(raw)) return '100% BEFORE SHIPMENT';
+  if (/T\s*\/\s*T\s*(?:100\s*%\s*)?BEFORE\s*SHIPMENT|TT\s*BEFORE\s*SHIPMENT/i.test(raw)) return 'TT BEFORE SHIPMENT';
+  if (/^DUE\s*ON\s*RECEIPT$/i.test(raw)) return 'Due on receipt';
+  if (/^TT\s*UPON\s*SHIPMENT$/i.test(raw)) return 'TT Upon Shipment';
+  if (/^TT\s*PAYMENT$/i.test(raw)) return 'TT Payment';
+  if (/^CASH\s*ON\s*DELIVERY$/i.test(raw)) return 'Cash on Delivery';
+  if (/^PRIOR\s*SHIPMENT$/i.test(raw)) return 'PRIOR SHIPMENT';
+  if (/^EVERY\s*20TH\s*OF\s*THE\s*MONTH$/i.test(raw)) return 'EVERY 20TH OF THE MONTH';
+  if (/^PRE[- ]?PAID$/i.test(raw)) return 'PREPAID';
+  return null;
+}
 
 export const INCOTERMS = ['EXW', 'DAP', 'FOB', 'CIF', 'DDP'];
 
@@ -465,7 +503,7 @@ export function detectPaymentTerms(text: string): string {
   const upperText = text.toUpperCase();
   for (const pattern of PAYMENT_TERMS_PATTERNS) {
     if (upperText.includes(pattern.toUpperCase())) {
-      return pattern;
+      return normalizePaymentTerm(pattern) || 'Net 30';
     }
   }
   return 'Net 30';

@@ -21,6 +21,7 @@ const ACTION_OPTIONS = [
   'USER_LOGIN',
   'USER_LOGIN_DEMO',
   'INVOICE_CREATED',
+  'INVOICE_DELETED',
   'STATUS_UPDATED',
   'APPROVAL_REQUESTED',
   'INVOICE_APPROVED',
@@ -45,6 +46,9 @@ export default function AuditLog() {
   const [invoiceId, setInvoiceId] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const visibleActionOptions = ACTION_OPTIONS.filter((option) =>
+    option !== 'INVOICE_DELETED' || user?.role === 'SUPERADMIN'
+  );
 
   const fetchLogs = async () => {
     setLoading(true);
@@ -107,7 +111,7 @@ export default function AuditLog() {
           <div>
             <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Action</label>
             <select value={action} onChange={(e) => setAction(e.target.value)} className="w-full px-3 py-2 rounded-lg text-sm" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}>
-              {ACTION_OPTIONS.map((opt) => (
+              {visibleActionOptions.map((opt) => (
                 <option key={opt} value={opt}>{opt}</option>
               ))}
             </select>

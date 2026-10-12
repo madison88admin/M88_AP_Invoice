@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { authenticate, authorize } from '../middleware/auth';
 import { UserRole } from '@ap-invoice/shared';
 import { getAuditLogs } from '../services/auditLogService';
+import { AppError } from '../middleware/errorHandler';
 
 const router = Router() as Router;
 
@@ -14,6 +15,10 @@ router.use(authenticate);
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { invoiceId, action, performedBy, startDate, endDate, limit, offset } = req.query;
+
+    if (String(action || '').toUpperCase() === 'INVOICE_DELETED' && (req as any).user?.role !== UserRole.SUPERADMIN) {
+      throw new AppError('Only SUPERADMIN users may view invoice deletion audit logs', 403);
+    }
 
     const result = await getAuditLogs({
       invoiceId: invoiceId as string | undefined,

@@ -384,6 +384,12 @@ export interface POComparisonResult {
     season_match: boolean;
     order_type_match: boolean;
     currency_match?: boolean;
+    /** True when the invoice number was compared with populated NextGen MPO lines. */
+    invoice_number_match?: boolean;
+    /** False when NextGen did not return any invoice number to compare. */
+    invoice_number_checked?: boolean;
+    /** Populated NextGen line invoice numbers used for the comparison. */
+    nextgen_invoice_numbers?: string[];
     invoice_amount?: number;
     nextgen_amount?: number;
     amount_difference?: number;
@@ -2013,6 +2019,27 @@ export class NextGenService {
     let seasonMatch = false;
     let orderTypeMatch = false;
 
+    // Invoice number is an additional NextGen duplicate/consistency key. Some
+    // NextGen environments do not populate it on every line, so a missing
+    // NextGen value is explicitly treated as "not checked" rather than as a
+    // false mismatch. When values are present, the normalized invoice number
+    // must be found in the MPO lines returned for this comparison.
+    const invoiceNumber = String(invoiceData.invoice_number || '').trim();
+    const nextGenInvoiceNumbers = Array.from(new Set(
+      (nextgenData.line_items || [])
+        .map(line => String(line.invoice_number || '').trim())
+        .filter(Boolean)
+    ));
+    const invoiceNumberChecked = Boolean(invoiceNumber && nextGenInvoiceNumbers.length > 0);
+    const invoiceNumberMatch = !invoiceNumberChecked || nextGenInvoiceNumbers.some(value =>
+      normalizeInvoiceReference(value) === normalizeInvoiceReference(invoiceNumber)
+    );
+    if (invoiceNumberChecked && !invoiceNumberMatch) {
+      differences.push(
+        `Invoice number mismatch: Invoice "${invoiceNumber}" was not found in NextGen MPO lines (returned: ${nextGenInvoiceNumbers.join(', ')}).`
+      );
+    }
+
     // Amount comparison (2% warning, 5% blocking thresholds)
     const amountDiff = comparisonAmount > 0
       ? Math.abs(invoiceData.amount - comparisonAmount) / comparisonAmount
@@ -2092,6 +2119,7 @@ export class NextGenService {
     const hasLineNotFound = lineComparisons.some(line => line.status === 'LINE_NOT_FOUND');
     const hasLineMismatch = lineComparisons.some(line => line.status === 'MISMATCH');
     const isMatch = amountMatch && currencyMatch && vendorMatch && brandMatch && seasonMatch && orderTypeMatch
+      && invoiceNumberMatch
       && !mpoStatusDifference
       && lineComparisons.every(line => line.status === 'MATCH');
     const status: NextGenValidationStatus = hasManualReview
@@ -2117,6 +2145,9 @@ export class NextGenService {
         season_match: seasonMatch,
         order_type_match: orderTypeMatch,
         currency_match: currencyMatch,
+        invoice_number_match: invoiceNumberMatch,
+        invoice_number_checked: invoiceNumberChecked,
+        nextgen_invoice_numbers: nextGenInvoiceNumbers,
         invoice_amount: invoiceData.amount,
         nextgen_amount: comparisonAmount,
         amount_difference: invoiceData.amount - comparisonAmount,

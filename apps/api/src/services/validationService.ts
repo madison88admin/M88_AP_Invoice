@@ -2157,6 +2157,27 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
     }
   }
 
+  // Use the supplier invoice number as an additional NextGen consistency key.
+  // Only compare when NextGen actually returned invoice numbers; older MPO line
+  // payloads may omit that field and must remain "not checked", not mismatched.
+  const currentInvoiceNumber = String(invoice.invoice_number || '').trim();
+  const nextGenInvoiceNumbers = Array.from(new Set(
+    targetLines
+      .map((line: any) => String(line.invoice_number || '').trim())
+      .filter(Boolean)
+  ));
+  const invoiceNumberChecked = Boolean(currentInvoiceNumber && nextGenInvoiceNumbers.length > 0);
+  const invoiceNumberMatch = !invoiceNumberChecked || nextGenInvoiceNumbers.some(value =>
+    normalizeInvoiceReference(value) === normalizeInvoiceReference(currentInvoiceNumber)
+  );
+  if (invoiceNumberChecked && !invoiceNumberMatch) {
+    changes.push({
+      field: 'invoice_number_vs_nextgen',
+      old: currentInvoiceNumber,
+      new: nextGenInvoiceNumbers.join(', '),
+    });
+  }
+
   // Amount — net of charges, using the Finance-owned tolerance policy.
   const poAmount = matchLevel !== 'MPO_HEADER'
     ? targetLines.reduce((sum: number, li: any) => sum + Number(li.total_amount || 0), 0)
@@ -2239,7 +2260,7 @@ export async function checkNextGenChanges(invoiceId: string): Promise<{
 
   // Separate critical changes from informational changes
   const criticalChanges = changes.filter(c => 
-    ['amount', 'vendor_name', 'po_number', 'invoice_amount_vs_nextgen'].includes(c.field)
+    ['amount', 'vendor_name', 'po_number', 'invoice_amount_vs_nextgen', 'invoice_number_vs_nextgen'].includes(c.field)
   );
   const hasCriticalChanges = criticalChanges.length > 0;
 

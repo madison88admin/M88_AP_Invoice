@@ -179,6 +179,50 @@ describe('checkNextGenChanges — NextGen availability', () => {
     );
   });
 
+  it('checks the invoice number against populated NextGen MPO lines', async () => {
+    invoiceFindUnique.mockResolvedValue({
+      ...INVOICE,
+      invoice_number: 'INV-100',
+    });
+    getFullPOByMPO.mockResolvedValue({
+      amount: 100,
+      vendor_name: 'Vendor A',
+      po_number: 'PO1',
+      line_items: [{ quantity: 10, total_amount: 100, invoice_number: 'INV-999' }],
+    });
+
+    const result = await checkNextGenChanges('inv-1');
+
+    expect(result.changes).toContainEqual({
+      field: 'invoice_number_vs_nextgen',
+      old: 'INV-100',
+      new: 'INV-999',
+    });
+    expect(result.criticalChanges).toContainEqual(
+      expect.objectContaining({ field: 'invoice_number_vs_nextgen' })
+    );
+    expect(result.hasCriticalChanges).toBe(true);
+  });
+
+  it('does not fail invoice-number validation when NextGen does not return a line invoice number', async () => {
+    invoiceFindUnique.mockResolvedValue({
+      ...INVOICE,
+      invoice_number: 'INV-100',
+    });
+    getFullPOByMPO.mockResolvedValue({
+      amount: 100,
+      vendor_name: 'Vendor A',
+      po_number: 'PO1',
+      line_items: [{ quantity: 10, total_amount: 100 }],
+    });
+
+    const result = await checkNextGenChanges('inv-1');
+
+    expect(result.changes).not.toContainEqual(
+      expect.objectContaining({ field: 'invoice_number_vs_nextgen' })
+    );
+  });
+
   it('flags brand/season/order-type differences as informational on the first check', async () => {
     invoiceFindUnique.mockResolvedValue({
       ...INVOICE,

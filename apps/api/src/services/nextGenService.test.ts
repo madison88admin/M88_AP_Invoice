@@ -122,6 +122,46 @@ describe('mapNextGenMPOLine', () => {
     expect(() => service.assertReadOnly('/MaterialPurchaseOrder/Delete')).toThrow(/READ-ONLY/);
     expect(() => service.assertReadOnly('/MaterialPurchaseOrder/GetById?id=18544')).not.toThrow();
   });
+
+  it('uses invoice number as a NextGen MPO-line consistency/duplicate key', async () => {
+    const service = nextGenService as any;
+    vi.spyOn(service, 'fetchPOByMPO').mockResolvedValue({
+      po_number: 'PO1',
+      mpo_number: 'MPO123',
+      vendor_id: 'vendor-1',
+      vendor_name: 'Vendor A',
+      amount: 100,
+      currency: 'USD',
+      order_date: new Date(),
+      brand: '',
+      season: '',
+      order_type: '',
+      status: '',
+      line_items: [{
+        item_code: 'MAT-1',
+        description: 'Material',
+        quantity: 10,
+        unit_price: 10,
+        total_amount: 100,
+        invoice_number: 'NG-INV-999',
+      }],
+    });
+
+    const result = await service.compareInvoiceWithPO({
+      invoice_number: 'AP-INV-100',
+      mpo_number: 'MPO123',
+      amount: 100,
+      vendor_name: 'Vendor A',
+    });
+
+    expect(result.comparison.invoice_number_checked).toBe(true);
+    expect(result.comparison.invoice_number_match).toBe(false);
+    expect(result.comparison.nextgen_invoice_numbers).toEqual(['NG-INV-999']);
+    expect(result.status).toBe('MISMATCH');
+    expect(result.comparison.differences).toContain(
+      'Invoice number mismatch: Invoice "AP-INV-100" was not found in NextGen MPO lines (returned: NG-INV-999).'
+    );
+  });
 });
 
 describe('normalizeKendoFormBody', () => {

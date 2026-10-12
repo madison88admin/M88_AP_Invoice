@@ -19,7 +19,7 @@ export const errorHandler = (
   res: Response,
   next: NextFunction
 ) => {
-  logger.error(err.stack);
+  logger.error(err.stack || err.message, { method: req.method, path: req.originalUrl });
 
   if (err instanceof AppError) {
     return res.status(err.statusCode).json({
@@ -37,6 +37,29 @@ export const errorHandler = (
     return res.status(400).json({
       error: {
         message: 'One or more invoice fields contain an invalid value. Please review the extracted fields and try again.',
+        status: 400,
+      },
+    });
+  }
+
+  // express.json() throws a SyntaxError before a controller is reached when
+  // a client sends a truncated or otherwise invalid JSON body. Treat it as a
+  // client validation error instead of the generic HTTP 500 response.
+  if (err instanceof SyntaxError && 'body' in err) {
+    return res.status(400).json({
+      error: {
+        message: 'The request body is not valid JSON. Please retry the update.',
+        status: 400,
+      },
+    });
+  }
+
+  // Common Prisma constraint failures are caused by user input (for example,
+  // a stale vendor relation), so expose a safe actionable 400 response.
+  if (err.name === 'PrismaClientKnownRequestError') {
+    return res.status(400).json({
+      error: {
+        message: 'The invoice could not be saved because one of its values is no longer valid. Refresh the invoice and try again.',
         status: 400,
       },
     });

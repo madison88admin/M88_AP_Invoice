@@ -36,6 +36,9 @@ const ORDER_TYPE_DETAIL_VALUES: string[] = Object.values((OrderTypeCombination |
   BULK_SMS: 'COMBINED_BULK_SMS', SMS_SAMPLE: 'COMBINED_SMS_SAMPLE',
   BULK_SAMPLE: 'COMBINED_BULK_SAMPLE', ALL: 'COMBINED_ALL',
 }) as Record<string, string>);
+// Keep comparisons safe when the API and shared package are briefly on
+// different build revisions during a rolling deployment.
+const OTHER_ORDER_TYPE = String((OrderType as any)?.OTHER || 'OTHER') as OrderType;
 
 function safeDate(value: any): Date | null {
   if (!value || value === '') return null;
@@ -281,7 +284,7 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
       invoice_type: invoice_type as any,
       category: category || 'TRIMS',
       order_type: safeOrderType(order_type) as any,
-      order_type_detail: safeOrderType(order_type) === OrderType.OTHER ? safeOrderTypeDetail(order_type_detail) : null,
+      order_type_detail: safeOrderType(order_type) === OTHER_ORDER_TYPE ? safeOrderTypeDetail(order_type_detail) : null,
       brand,
       brand_code,
       brand_tier,
@@ -857,7 +860,7 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
   if (data.order_type_detail && !validOrderTypeDetails.includes(data.order_type_detail)) {
     throw new AppError(`Invalid combined order type: ${data.order_type_detail}`, 400);
   }
-  if (data.order_type !== OrderType.OTHER && data.order_type_detail !== undefined) {
+  if (data.order_type !== OTHER_ORDER_TYPE && data.order_type_detail !== undefined) {
     data.order_type_detail = null;
   }
 

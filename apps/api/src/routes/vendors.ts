@@ -450,16 +450,36 @@ router.post('/:id/request-bank-update', authenticate, async (req: AuthRequest, r
   }
 });
 
-// ─── BANK DETAILS UPDATE (propagate to invoices) ────────────────────────────
-// Update vendor bank details AND propagate to all related invoices
+// ─── BANK DETAILS UPDATE (new invoices only) ────────────────────────────────
+// Update the vendor master used by new intake. Existing invoice records keep
+// their confirmed bank-detail snapshots and are never overwritten here.
 router.patch('/:id/bank-details', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN, UserRole.SUPERADMIN), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const vendorId = req.params.id;
-    const { beneficiary_name, bank_name, swift_code, account_number, bank_name_alt, bank_address, account_number_alt, swift_code_alt, iban, sort_code, aba_routing_number, intermediary_bank_name, intermediary_bank_swift } = req.body;
+    const { name, beneficiary_name, bank_name, swift_code, account_number, bank_name_alt, bank_address, account_number_alt, swift_code_alt, iban, sort_code, aba_routing_number, intermediary_bank_name, intermediary_bank_swift } = req.body;
 
     const vendor = await prisma.vendor.findUnique({ where: { id: vendorId } });
     if (!vendor) {
       throw new AppError('Vendor not found', 404);
+    }
+
+    let normalizedName: string | undefined;
+    if (name !== undefined) {
+      normalizedName = String(name ?? '').trim();
+      if (!normalizedName) {
+        throw new AppError('Vendor name is required', 400);
+      }
+      if (normalizeVendorName(normalizedName) !== normalizeVendorName(vendor.name)) {
+        const dupes = await findDuplicateVendors(normalizedName, vendorId);
+        if (dupes.length > 0) {
+          return res.status(409).json({
+            error: {
+              message: `Duplicate vendor detected: "${dupes[0].name}" already exists (ID ${dupes[0].id}). Use the existing vendor or refine the name instead.`,
+              status: 409,
+            },
+          });
+        }
+      }
     }
 
     const bankFieldChangesRequested = BANK_FIELDS.some((field) => req.body[field] !== undefined);
@@ -496,6 +516,9 @@ router.patch('/:id/bank-details', authorize(UserRole.ACCOUNTING_SUPERVISOR, User
 
     // Build update data for vendor
     const vendorUpdate: Record<string, any> = { updated_at: new Date() };
+    if (normalizedName !== undefined) {
+      vendorUpdate.name = normalizedName;
+    }
     if (beneficiary_name !== undefined) {
       const normalizedBeneficiary = String(beneficiary_name ?? '').trim();
       vendorUpdate.beneficiary_name = normalizedBeneficiary || null;
@@ -507,26 +530,11 @@ router.patch('/:id/bank-details', authorize(UserRole.ACCOUNTING_SUPERVISOR, User
       }
     }
 
-    // Update vendor
+    // Update vendor master only. Existing invoices keep their own snapshots.
     await prisma.vendor.update({
       where: { id: vendorId },
       data: vendorUpdate,
     });
-
-    // Propagate bank changes to ALL invoices linked to this vendor
-    const invoiceUpdate: Record<string, any> = {};
-    if (bank_name !== undefined) invoiceUpdate.bank_name = bank_name;
-    if (swift_code !== undefined) invoiceUpdate.swift_code = swift_code;
-    if (account_number !== undefined) invoiceUpdate.account_number = account_number;
-
-    let updatedInvoices = 0;
-    if (Object.keys(invoiceUpdate).length > 0) {
-      const result = await prisma.invoice.updateMany({
-        where: { vendor_id: vendorId },
-        data: { ...invoiceUpdate, updated_at: new Date() },
-      });
-      updatedInvoices = result.count;
-    }
 
     // Phase 11: auto-approve pending requests from OTHER users whose requested
     // value matches the applied field (the requester != approver rule already
@@ -551,23 +559,28 @@ router.patch('/:id/bank-details', authorize(UserRole.ACCOUNTING_SUPERVISOR, User
     // Create audit log
     const changedFields = Object.keys(vendorUpdate).filter(k => k !== 'updated_at');
     const beneficiaryOnlyUpdate = changedFields.length === 1 && changedFields[0] === 'beneficiary_name';
+    const vendorNameOnlyUpdate = changedFields.length === 1 && changedFields[0] === 'name';
     await prisma.auditLog.create({
       data: {
-        action: changedFields.includes('beneficiary_name') && !changedFields.some((field) => BANK_FIELDS.includes(field))
+        action: vendorNameOnlyUpdate
+          ? 'VENDOR_NAME_UPDATED'
+          : changedFields.includes('beneficiary_name') && !changedFields.some((field) => BANK_FIELDS.includes(field))
           ? 'VENDOR_BENEFICIARY_UPDATED'
           : 'VENDOR_BANK_UPDATED',
         performed_by: req.user!.id,
-        note: `Vendor "${vendor.name}" ${beneficiaryOnlyUpdate ? 'beneficiary name' : 'bank details'} updated by ${req.user!.role}. Fields: ${changedFields.join(', ')}. Propagated to ${updatedInvoices} invoice(s).`,
+        note: `Vendor "${normalizedName || vendor.name}" ${vendorNameOnlyUpdate ? 'vendor name' : beneficiaryOnlyUpdate ? 'beneficiary name' : 'bank details'} updated by ${req.user!.role}. Fields: ${changedFields.join(', ')}. Existing invoice snapshots were not changed; the update applies to new invoices only.`,
       },
     }).catch(() => { /* audit log failure should not block the update */ });
 
     res.json({
-      message: beneficiaryOnlyUpdate
-        ? `Beneficiary name updated for vendor "${vendor.name}". Bank details were not changed.`
-        : `Bank details updated for vendor "${vendor.name}" and propagated to ${updatedInvoices} invoice(s)`,
+      message: vendorNameOnlyUpdate
+        ? `Vendor name updated to "${normalizedName}". Existing invoice records were not changed.`
+        : beneficiaryOnlyUpdate
+        ? `Beneficiary name updated for vendor "${normalizedName || vendor.name}". Existing invoice records were not changed.`
+        : `Vendor bank details updated for "${normalizedName || vendor.name}". The changes apply to new invoices only.`,
       vendor_id: vendorId,
       updated_fields: changedFields,
-      invoices_updated: updatedInvoices,
+      invoices_updated: 0,
     });
   } catch (error) {
     next(error);

@@ -126,6 +126,7 @@ export default function BankDetailsMasterlist() {
   const handleEdit = (entry: BankDetailsEntry) => {
     setEditingEntry(entry);
     setEditData({
+      name: entry.name,
       beneficiary_name: entry.beneficiary_name,
       bank_name: entry.bank_name,
       bank_name_alt: entry.bank_name_alt,
@@ -146,6 +147,7 @@ export default function BankDetailsMasterlist() {
       const latest = response.data as BankDetailsEntry;
       setEditingEntry(latest);
       setEditData({
+        name: latest.name,
         beneficiary_name: latest.beneficiary_name,
         bank_name: latest.bank_name,
         bank_name_alt: latest.bank_name_alt,
@@ -531,7 +533,7 @@ export default function BankDetailsMasterlist() {
                 <div>
                   <h2 className="text-lg font-bold">Edit Bank Details</h2>
                   <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                    {editingEntry.name} — changes will propagate to {editingEntry.invoice_count} invoice(s)
+                    Changes apply to new invoices only. Existing invoice bank-detail snapshots are not changed.
                   </p>
                 </div>
               </div>
@@ -550,10 +552,11 @@ export default function BankDetailsMasterlist() {
               <div>
                 <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Vendor Identity</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {editField('Vendor Name', 'name')}
                   {editField('Beneficiary Name', 'beneficiary_name')}
                 </div>
                 <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
-                  Updating the beneficiary name does not change the bank account, bank name, or SWIFT code.
+                  Updating the vendor or beneficiary name does not change existing invoice records or bank-detail snapshots.
                 </p>
               </div>
 

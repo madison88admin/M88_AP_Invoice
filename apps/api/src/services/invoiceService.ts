@@ -14,6 +14,29 @@ import { parseMPOReference } from '../utils/mpoReference';
 import { Prisma } from '@prisma/client';
 import { getVendorPaymentTermDefault, preferExtractedPaymentTerms } from './vendorDefaultsService';
 
+// Keep update/read endpoints safe during a rolling deploy where the API may
+// briefly load an older shared-package build.  Older builds did not export the
+// combined order-type enum or canonical payment-term list, and calling
+// Object.values/spread on an undefined export turned a normal edit into HTTP
+// 500.  The fallbacks are the same values defined in packages/shared.
+const APPROVED_PAYMENT_TERMS: readonly string[] = Array.isArray(CANONICAL_PAYMENT_TERMS)
+  ? CANONICAL_PAYMENT_TERMS
+  : [
+      'Net 30', 'Net 30 days', 'Net 30 TT', '30 Days', 'Net 45', 'Net 60',
+      'Payment in Advance', 'Payment Before Delivery', 'Payment Before Shipment',
+      '100% BEFORE SHIPMENT', 'TT BEFORE SHIPMENT', 'Due on receipt',
+      'TT Upon Shipment', 'TT Payment', 'PREPAID', 'Cash on Delivery',
+      'PRIOR SHIPMENT', 'EVERY 20TH OF THE MONTH',
+      'Net 30 (Columbia) / Payment before shipment (Skida)',
+    ];
+const ORDER_TYPE_VALUES: string[] = Object.values((OrderType || {
+  BULK: 'BULK', SMS: 'SMS', SAMPLE: 'SAMPLE', OTHER: 'OTHER',
+}) as Record<string, string>);
+const ORDER_TYPE_DETAIL_VALUES: string[] = Object.values((OrderTypeCombination || {
+  BULK_SMS: 'COMBINED_BULK_SMS', SMS_SAMPLE: 'COMBINED_SMS_SAMPLE',
+  BULK_SAMPLE: 'COMBINED_BULK_SAMPLE', ALL: 'COMBINED_ALL',
+}) as Record<string, string>);
+
 function safeDate(value: any): Date | null {
   if (!value || value === '') return null;
   const date = new Date(value);
@@ -49,14 +72,14 @@ function safeOptionalInteger(value: any): number | null {
 
 function safeOrderType(value: any): OrderType | null {
   const normalized = cleanOptionalString(value)?.toUpperCase();
-  return normalized && Object.values(OrderType).includes(normalized as OrderType)
+  return normalized && ORDER_TYPE_VALUES.includes(normalized)
     ? normalized as OrderType
     : null;
 }
 
 function safeOrderTypeDetail(value: any): OrderTypeCombination | null {
   const normalized = cleanOptionalString(value)?.toUpperCase();
-  return normalized && Object.values(OrderTypeCombination).includes(normalized as OrderTypeCombination)
+  return normalized && ORDER_TYPE_DETAIL_VALUES.includes(normalized)
     ? normalized as OrderTypeCombination
     : null;
 }
@@ -408,7 +431,7 @@ export const getDistinctPaymentTerms = async (): Promise<string[]> => {
   // Keep the edit/intake selector limited to the approved master list.
   // Historical OCR/free-text values remain in invoice records for auditability,
   // but must not become new selectable payment-term options.
-  return [...CANONICAL_PAYMENT_TERMS];
+  return [...APPROVED_PAYMENT_TERMS];
 };
 
 export const getDistinctBrands = async (): Promise<string[]> => {
@@ -825,12 +848,12 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     throw new AppError(`Invalid invoice type: ${data.invoice_type}`, 400);
   }
 
-  const validOrderTypes = Object.values(OrderType);
+  const validOrderTypes = ORDER_TYPE_VALUES;
   if (data.order_type && !validOrderTypes.includes(data.order_type)) {
     throw new AppError(`Invalid order type: ${data.order_type}`, 400);
   }
 
-  const validOrderTypeDetails = Object.values(OrderTypeCombination);
+  const validOrderTypeDetails = ORDER_TYPE_DETAIL_VALUES;
   if (data.order_type_detail && !validOrderTypeDetails.includes(data.order_type_detail)) {
     throw new AppError(`Invalid combined order type: ${data.order_type_detail}`, 400);
   }

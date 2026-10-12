@@ -57,6 +57,8 @@ export default function BankDetailsMasterlist() {
   const [editData, setEditData] = useState<Partial<BankDetailsEntry>>({});
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [loadingBankDetailsId, setLoadingBankDetailsId] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newVendorData, setNewVendorData] = useState<NewVendorBankData>({
@@ -91,6 +93,35 @@ export default function BankDetailsMasterlist() {
     (v.swift_code || '').toLowerCase().includes(search.toLowerCase()) ||
     (v.account_number || '').toLowerCase().includes(search.toLowerCase())
   );
+
+  const visibleIds = filtered.map((entry) => entry.id);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
+  const selectedVisibleCount = visibleIds.filter((id) => selectedIds.has(id)).length;
+
+  useEffect(() => {
+    setSelectedIds((current) => {
+      const next = new Set([...current].filter((id) => visibleIds.includes(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [search, bankDetails]);
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAllVisible = () => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (allVisibleSelected) visibleIds.forEach((id) => next.delete(id));
+      else visibleIds.forEach((id) => next.add(id));
+      return next;
+    });
+  };
 
   const handleEdit = (entry: BankDetailsEntry) => {
     setEditingEntry(entry);
@@ -186,6 +217,29 @@ export default function BankDetailsMasterlist() {
     }
   };
 
+  const handleBulkDelete = async () => {
+    const ids = Array.from(selectedIds).filter((id) => visibleIds.includes(id));
+    if (ids.length === 0) return;
+    const selectedEntries = filtered.filter((entry) => ids.includes(entry.id));
+    const linkedInvoices = selectedEntries.reduce((total, entry) => total + (entry.invoice_count || 0), 0);
+    const linkedWarning = linkedInvoices > 0
+      ? ` ${linkedInvoices} linked invoice${linkedInvoices === 1 ? '' : 's'} will be preserved.`
+      : '';
+    if (!window.confirm(`Archive ${ids.length} selected vendor${ids.length === 1 ? '' : 's'} from the active bank details masterlist?${linkedWarning} They will no longer be available for new intake.`)) return;
+
+    setBulkDeleting(true);
+    try {
+      const response = await vendorApi.bulkDelete(ids);
+      showToast(response.data?.message || `${ids.length} vendor${ids.length === 1 ? '' : 's'} archived successfully`, 'success');
+      setSelectedIds(new Set());
+      await loadBankDetails();
+    } catch (err: any) {
+      showToast(err.response?.data?.error?.message || err.response?.data?.message || 'Failed to archive selected vendors', 'error');
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
   const resetAddForm = () => {
     setShowAddModal(false);
     setNewVendorData({
@@ -268,6 +322,17 @@ export default function BankDetailsMasterlist() {
           </div>
         </div>
         <div className="flex items-center gap-3">
+          {canEditBank && selectedVisibleCount > 0 && (
+            <button
+              onClick={() => void handleBulkDelete()}
+              disabled={bulkDeleting}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+              style={{ background: 'color-mix(in srgb, var(--accent-red) 12%, transparent)', color: 'var(--accent-red)', border: '1px solid color-mix(in srgb, var(--accent-red) 28%, transparent)' }}
+            >
+              <Trash2 className="h-4 w-4" />
+              {bulkDeleting ? 'Archiving...' : `Archive selected (${selectedVisibleCount})`}
+            </button>
+          )}
           {canEditBank && (
             <button
               onClick={() => setShowAddModal(true)}
@@ -319,6 +384,16 @@ export default function BankDetailsMasterlist() {
           <table className="w-full text-sm">
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
+                {canEditBank && (
+                  <th className="w-12 text-center p-3 font-semibold">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all visible vendors"
+                      checked={allVisibleSelected}
+                      onChange={toggleSelectAllVisible}
+                    />
+                  </th>
+                )}
                 <th className="text-left p-3 font-semibold">Vendor</th>
                 <th className="text-left p-3 font-semibold">Bank Name</th>
                 <th className="text-left p-3 font-semibold">SWIFT Code</th>
@@ -331,6 +406,16 @@ export default function BankDetailsMasterlist() {
             <tbody>
               {filtered.map((entry) => (
                 <tr key={entry.id} style={{ borderBottom: '1px solid var(--border-color)' }} className="hover:opacity-80">
+                  {canEditBank && (
+                    <td className="w-12 text-center p-3">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${entry.name}`}
+                        checked={selectedIds.has(entry.id)}
+                        onChange={() => toggleSelected(entry.id)}
+                      />
+                    </td>
+                  )}
                   {/* Vendor name */}
                   <td className="p-3">
                     <div className="font-medium">{entry.name}</div>

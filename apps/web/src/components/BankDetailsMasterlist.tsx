@@ -322,15 +322,20 @@ export default function BankDetailsMasterlist() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {canEditBank && selectedVisibleCount > 0 && (
+          {canEditBank && (
             <button
               onClick={() => void handleBulkDelete()}
-              disabled={bulkDeleting}
+              disabled={bulkDeleting || selectedVisibleCount === 0}
               className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
-              style={{ background: 'color-mix(in srgb, var(--accent-red) 12%, transparent)', color: 'var(--accent-red)', border: '1px solid color-mix(in srgb, var(--accent-red) 28%, transparent)' }}
+              title={selectedVisibleCount === 0 ? 'Select vendors first' : 'Archive selected vendors'}
+              style={{
+                background: selectedVisibleCount > 0 ? 'color-mix(in srgb, var(--accent-red) 12%, transparent)' : 'var(--bg-elevated)',
+                color: selectedVisibleCount > 0 ? 'var(--accent-red)' : 'var(--text-muted)',
+                border: selectedVisibleCount > 0 ? '1px solid color-mix(in srgb, var(--accent-red) 28%, transparent)' : '1px solid var(--border-color)',
+              }}
             >
               <Trash2 className="h-4 w-4" />
-              {bulkDeleting ? 'Archiving...' : `Archive selected (${selectedVisibleCount})`}
+              {bulkDeleting ? 'Archiving...' : selectedVisibleCount > 0 ? `Archive selected (${selectedVisibleCount})` : 'Archive selected'}
             </button>
           )}
           {canEditBank && (

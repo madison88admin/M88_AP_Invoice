@@ -50,7 +50,7 @@ const UPLOAD_ONLY_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
 // successfully and still stall before review/creation (the historical
 // 5666715316.pdf failure did exactly that), so only terminal routing events
 // satisfy the upload-only guard.
-const UPLOAD_COMPLETION_STAGES = new Set(['REVIEW_REQUIRED', 'PDF_REPLACED', 'CREATED', 'SPLIT_COMPLETED', 'FAILED', 'RETRY_QUEUED']);
+const UPLOAD_COMPLETION_STAGES = new Set(['REVIEW_REQUIRED', 'PDF_REPLACED', 'DUPLICATE', 'CREATED', 'SPLIT_COMPLETED', 'FAILED', 'RETRY_QUEUED']);
 
 let watcherInterval: NodeJS.Timeout | null = null;
 let isProcessing = false;
@@ -61,8 +61,27 @@ type IntakeEventSummary = {
   file_name: string | null;
   stage: string;
   created_at: Date;
+  message_id?: string | null;
   metadata?: unknown;
 };
+
+export type SingleInvoiceOutcome = {
+  fileName: string;
+  terminalStage: 'CREATED' | 'PDF_REPLACED' | 'DUPLICATE' | 'REVIEW_REQUIRED' | 'FAILED';
+  invoiceId?: string;
+  invoiceNumber?: string;
+  error?: string;
+};
+
+export function summarizeSplitOutcomes(outcomes: readonly SingleInvoiceOutcome[], expectedCount: number) {
+  const failed = outcomes.filter((outcome) => outcome.terminalStage === 'FAILED');
+  return {
+    complete: outcomes.length === expectedCount && failed.length === 0,
+    completedCount: outcomes.length - failed.length,
+    failedCount: failed.length + Math.max(0, expectedCount - outcomes.length),
+    failedParts: failed.map((outcome) => ({ fileName: outcome.fileName, error: outcome.error || 'Unknown split failure' })),
+  };
+}
 
 type IntakeEventRecord = Parameters<typeof recordEmailIntakeEvent>[0];
 
@@ -82,10 +101,12 @@ async function recordWatcherIntakeEvent(intakeId: string, input: IntakeEventReco
 
 function eventIntakeId(event: IntakeEventSummary): string | undefined {
   const metadata = event.metadata;
-  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return undefined;
-  const value = (metadata as Record<string, unknown>).intake_id
-    || (metadata as Record<string, unknown>).idempotency_key;
-  return typeof value === 'string' && value.trim() ? value : undefined;
+  if (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) {
+    const value = (metadata as Record<string, unknown>).intake_id
+      || (metadata as Record<string, unknown>).idempotency_key;
+    if (typeof value === 'string' && value.trim()) return value;
+  }
+  return typeof event.message_id === 'string' && event.message_id.trim() ? event.message_id : undefined;
 }
 
 /**
@@ -476,6 +497,12 @@ async function processFileInternal(filePath: string, fileName: string, intakeId:
     fs.renameSync(filePath, processingPath);
   } catch (err) {
     logger.error(`[File Watcher] Failed to move ${fileName} to processing:`, err);
+    const detail = err instanceof Error ? err.message : String(err);
+    await recordWatcherIntakeEvent(intakeId, {
+      source: 'POWER_AUTOMATE', stage: 'FAILED', status: 'FAILED', fileName,
+      error: `Could not move attachment into processing: ${detail}`,
+      metadata: { failure_boundary: 'move_to_processing' },
+    });
     return;
   }
 
@@ -505,6 +532,12 @@ async function processFileInternal(filePath: string, fileName: string, intakeId:
       } catch (decodeErr) {
         logger.error(`[File Watcher] Base64 decode failed for ${fileName}:`, decodeErr);
         safeMove(processingPath, FAILED_DIR);
+        const detail = decodeErr instanceof Error ? decodeErr.message : String(decodeErr);
+        await recordWatcherIntakeEvent(intakeId, {
+          source: 'POWER_AUTOMATE', stage: 'FAILED', status: 'FAILED', fileName,
+          error: `Base64 PDF decode failed: ${detail}`,
+          metadata: { failure_boundary: 'base64_decode' },
+        });
         return;
       }
     }
@@ -548,6 +581,7 @@ async function processFileInternal(filePath: string, fileName: string, intakeId:
       logger.info(`[File Watcher] Multi-invoice PDF detected: ${detection.invoiceCount} invoices in ${fileName}. Splitting...`);
 
       const splitBuffers = await splitPdfByPageRanges(fileBuffer, detection.pageRanges);
+      const splitOutcomes: SingleInvoiceOutcome[] = [];
 
       for (let i = 0; i < splitBuffers.length; i++) {
         const partName = `${fileName}_part${i + 1}`;
@@ -568,11 +602,16 @@ async function processFileInternal(filePath: string, fileName: string, intakeId:
             error: `Could not persist split PDF: ${splitWriteErr instanceof Error ? splitWriteErr.message : String(splitWriteErr)}`,
             metadata: { parent_file: fileName, split_index: i },
           });
+          splitOutcomes.push({
+            fileName: partName,
+            terminalStage: 'FAILED',
+            error: `Could not persist split PDF: ${splitWriteErr instanceof Error ? splitWriteErr.message : String(splitWriteErr)}`,
+          });
           continue;
         }
         logger.info(`[File Watcher] Processing split invoice ${i + 1}/${splitBuffers.length} from ${fileName}`);
         try {
-          await processSingleInvoiceBuffer(splitBuffers[i], partName, splitProcessingPath, i, intakeId);
+          splitOutcomes.push(await processSingleInvoiceBuffer(splitBuffers[i], partName, splitProcessingPath, i, intakeId));
         } catch (splitErr) {
           logger.error(`[File Watcher] Error processing split ${i + 1} of ${fileName}:`, splitErr);
           if (fs.existsSync(splitProcessingPath)) safeMove(splitProcessingPath, FAILED_DIR);
@@ -584,17 +623,47 @@ async function processFileInternal(filePath: string, fileName: string, intakeId:
             error: `Split invoice processing failed: ${splitErr instanceof Error ? splitErr.message : String(splitErr)}`,
             metadata: { parent_file: fileName, split_index: i },
           });
+          splitOutcomes.push({
+            fileName: partName,
+            terminalStage: 'FAILED',
+            error: splitErr instanceof Error ? splitErr.message : String(splitErr),
+          });
         }
       }
 
-      // Move original to processed after all splits are done
+      const summary = summarizeSplitOutcomes(splitOutcomes, splitBuffers.length);
+      if (!summary.complete) {
+        const error = `${summary.failedCount} of ${splitBuffers.length} split invoice(s) did not reach a saved or reviewable terminal state.`;
+        safeMove(processingPath, FAILED_DIR);
+        await createAuditLog(null, 'WATCHER_SPLIT_FAILED', `${fileName}: ${error}`);
+        await recordWatcherIntakeEvent(intakeId, {
+          source: 'POWER_AUTOMATE',
+          stage: 'FAILED',
+          status: 'FAILED',
+          fileName,
+          error,
+          metadata: {
+            split_count: splitBuffers.length,
+            completed_count: summary.completedCount,
+            failed_count: summary.failedCount,
+            failed_parts: summary.failedParts,
+            child_outcomes: splitOutcomes,
+            parent_archived: false,
+          },
+        });
+        await alertEmailIntakeFailure({ source: 'Power Automate SFTP intake', fileName, error });
+        logger.error(`[File Watcher] ${fileName} → Failed (${summary.completedCount}/${splitBuffers.length} split invoices routed)`);
+        return;
+      }
+
+      // Archive the parent only after every child has a durable terminal result.
       safeMove(processingPath, PROCESSED_DIR);
       await recordWatcherIntakeEvent(intakeId, {
         source: 'POWER_AUTOMATE',
         stage: 'SPLIT_COMPLETED',
         status: 'SUCCESS',
         fileName,
-        metadata: { split_count: splitBuffers.length, parent_archived: true },
+        metadata: { split_count: splitBuffers.length, child_outcomes: splitOutcomes, parent_archived: true },
       });
       logger.info(`[File Watcher] ${fileName} → Processed (${detection.invoiceCount} invoices extracted) ✅`);
       return;
@@ -617,7 +686,7 @@ async function processSingleInvoiceBuffer(
   processingPath: string,
   splitIndex?: number,
   intakeId?: string,
-): Promise<void> {
+): Promise<SingleInvoiceOutcome> {
   const runIntakeId = intakeId || crypto.randomUUID();
   const partLabel = splitIndex !== undefined ? ` [part ${splitIndex + 1}]` : '';
   const currentProcessingPath = splitIndex !== undefined
@@ -676,7 +745,7 @@ async function processSingleInvoiceBuffer(
     await createAuditLog(null, 'WATCHER_OCR_FAILED', `OCR extraction failed for ${fileName}${partLabel}: ${err}`);
     await recordWatcherIntakeEvent(runIntakeId, { source: 'POWER_AUTOMATE', stage: 'FAILED', fileName, error: `OCR extraction failed: ${String(err)}` });
     await alertEmailIntakeFailure({ source: 'Power Automate SFTP intake', fileName, error: 'OCR extraction failed' });
-    return;
+    return { fileName, terminalStage: 'FAILED', error: `OCR extraction failed: ${String(err)}` };
   }
 
   // Recover invoice identifiers embedded in SFTP filenames before applying
@@ -696,7 +765,7 @@ async function processSingleInvoiceBuffer(
     safeMove(currentProcessingPath, MANUAL_REVIEW_DIR);
     await createAuditLog(null, 'WATCHER_REVIEW_REQUIRED', `${fileName}${partLabel}: ${reviewReason}`);
     await recordWatcherIntakeEvent(runIntakeId, { source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', fileName, error: reviewReason });
-    return;
+    return { fileName, terminalStage: 'REVIEW_REQUIRED', error: reviewReason };
   }
 
   const intakeControls = evaluateIntakeControls(ocrResult);
@@ -707,7 +776,7 @@ async function processSingleInvoiceBuffer(
     await createAuditLog(null, 'WATCHER_INTAKE_CONTROL_REVIEW', `${fileName}${partLabel}: ${reason}`);
     await recordWatcherIntakeEvent(runIntakeId, { source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', fileName, error: reason, metadata: { intake_controls: intakeControls } });
     await alertEmailIntakeFailure({ source: 'Power Automate intake control', fileName, error: reason });
-    return;
+    return { fileName, terminalStage: 'REVIEW_REQUIRED', error: reason };
   }
 
   // Step 3b: OCR confidence threshold check
@@ -732,7 +801,7 @@ async function processSingleInvoiceBuffer(
       error: `OCR confidence ${(ocrConfidence * 100).toFixed(1)}% below threshold ${(OCR_CONFIDENCE_THRESHOLD * 100).toFixed(0)}%`,
       metadata: { reason: 'LOW_OCR_CONFIDENCE', split_index: splitIndex ?? null },
     });
-    return;
+    return { fileName, terminalStage: 'REVIEW_REQUIRED', error: `OCR confidence ${(ocrConfidence * 100).toFixed(1)}% below threshold` };
   }
 
   // Step 3c: Recover the invoice number from the original filename when OCR missed it.
@@ -760,7 +829,7 @@ async function processSingleInvoiceBuffer(
     safeMove(currentProcessingPath, MANUAL_REVIEW_DIR);
     await createAuditLog(null, 'WATCHER_REVIEW_REQUIRED', reason);
     await recordWatcherIntakeEvent(runIntakeId, { source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', fileName, error: reason });
-    return;
+    return { fileName, terminalStage: 'REVIEW_REQUIRED', error: reason };
   }
   ocrResult.invoice_number = recoveredInvoiceNumber;
 
@@ -792,12 +861,17 @@ async function processSingleInvoiceBuffer(
         },
       });
       logger.info(`[File Watcher] ${fileName}${partLabel} → replaced PDF for ${replacement.invoice.invoice_number}`);
-      return;
+      return { fileName, terminalStage: 'PDF_REPLACED', invoiceId: replacement.invoice.id, invoiceNumber: replacement.invoice.invoice_number };
     }
     if (replacement.action === 'NOOP_DUPLICATE') {
       safeMove(currentProcessingPath, DUPLICATES_DIR);
       await createAuditLog(replacement.invoice.id, 'WATCHER_DUPLICATE', `Identical PDF for invoice ${replacement.invoice.invoice_number}: ${fileName}`);
-      return;
+      await recordWatcherIntakeEvent(runIntakeId, {
+        source: 'POWER_AUTOMATE', stage: 'DUPLICATE', status: 'COMPLETED', fileName,
+        invoiceId: replacement.invoice.id,
+        metadata: { invoice_number: replacement.invoice.invoice_number, duplicate_type: 'IDENTICAL_PDF' },
+      });
+      return { fileName, terminalStage: 'DUPLICATE', invoiceId: replacement.invoice.id, invoiceNumber: replacement.invoice.invoice_number };
     }
   }
 
@@ -836,7 +910,12 @@ async function processSingleInvoiceBuffer(
       'WATCHER_DUPLICATE',
       `Duplicate detected for ${fileName}: ${dupResult.detail}`
     );
-    return;
+    await recordWatcherIntakeEvent(runIntakeId, {
+      source: 'POWER_AUTOMATE', stage: 'DUPLICATE', status: 'COMPLETED', fileName,
+      invoiceId: dupResult.existingInvoiceId || undefined,
+      metadata: { invoice_number: dupResult.existingInvoiceNumber, duplicate_type: dupResult.level, detail: dupResult.detail },
+    });
+    return { fileName, terminalStage: 'DUPLICATE', invoiceId: dupResult.existingInvoiceId || undefined, invoiceNumber: dupResult.existingInvoiceNumber };
   }
 
   // Also check DB directly for existing invoice_number to prevent unique constraint errors.
@@ -851,7 +930,11 @@ async function processSingleInvoiceBuffer(
       logger.info(`[File Watcher] Duplicate invoice_number "${ocrResult.invoice_number}" already in DB: ${fileName}${partLabel}`);
       safeMove(currentProcessingPath, DUPLICATES_DIR);
       await createAuditLog(existing.id, 'WATCHER_DUPLICATE', `Duplicate invoice_number ${ocrResult.invoice_number} for ${fileName}`);
-      return;
+      await recordWatcherIntakeEvent(runIntakeId, {
+        source: 'POWER_AUTOMATE', stage: 'DUPLICATE', status: 'COMPLETED', fileName, invoiceId: existing.id,
+        metadata: { invoice_number: ocrResult.invoice_number, duplicate_type: 'INVOICE_NUMBER' },
+      });
+      return { fileName, terminalStage: 'DUPLICATE', invoiceId: existing.id, invoiceNumber: ocrResult.invoice_number };
     }
   }
 
@@ -899,7 +982,12 @@ async function processSingleInvoiceBuffer(
         logger.warn(`[File Watcher] Duplicate (${fuzzyDup.duplicate_type}) for ${fileName}${partLabel} → existing ${fuzzyDup.existing_invoice_number}: ${reason}`);
         safeMove(currentProcessingPath, DUPLICATES_DIR);
         await createAuditLog(fuzzyDup.existing_invoice_id, 'WATCHER_DUPLICATE', `Duplicate detected for ${fileName}: ${reason}`);
-        return;
+        await recordWatcherIntakeEvent(runIntakeId, {
+          source: 'POWER_AUTOMATE', stage: 'DUPLICATE', status: 'COMPLETED', fileName,
+          invoiceId: fuzzyDup.existing_invoice_id,
+          metadata: { invoice_number: fuzzyDup.existing_invoice_number, duplicate_type: fuzzyDup.duplicate_type, detail: reason },
+        });
+        return { fileName, terminalStage: 'DUPLICATE', invoiceId: fuzzyDup.existing_invoice_id, invoiceNumber: fuzzyDup.existing_invoice_number };
       }
     } catch (fuzzyErr) {
       logger.warn(`[File Watcher] Fuzzy duplicate check failed for ${fileName}${partLabel}:`, fuzzyErr);
@@ -1206,7 +1294,7 @@ async function processSingleInvoiceBuffer(
         if (!validationResult.passed && validationResult.exceptions.length > 0) {
           await safeMoveAndUpdatePdfPath(currentProcessingPath, MANUAL_REVIEW_DIR, invoiceId);
           logger.info(`[File Watcher] ${fileName}${partLabel} → ManualReview (validation exceptions)`);
-          return;
+          return { fileName, terminalStage: 'CREATED', invoiceId: invoice.id, invoiceNumber: invoice.invoice_number };
         }
       } catch (validationError) {
         logger.error(`[File Watcher] Validation failed for ${invoice.invoice_number}${partLabel}:`, validationError);
@@ -1223,7 +1311,7 @@ async function processSingleInvoiceBuffer(
           },
         });
         await safeMoveAndUpdatePdfPath(currentProcessingPath, MANUAL_REVIEW_DIR, invoiceId);
-        return;
+        return { fileName, terminalStage: 'CREATED', invoiceId: invoice.id, invoiceNumber: invoice.invoice_number };
       }
     }
 
@@ -1231,7 +1319,7 @@ async function processSingleInvoiceBuffer(
     if (isVendorUnknown) {
       await safeMoveAndUpdatePdfPath(currentProcessingPath, MANUAL_REVIEW_DIR, invoiceId);
       logger.info(`[File Watcher] ${fileName}${partLabel} → ManualReview (vendor not found, invoice saved as EXCEPTION_FLAGGED)`);
-      return;
+      return { fileName, terminalStage: 'CREATED', invoiceId: invoice.id, invoiceNumber: invoice.invoice_number };
     }
 
     // Step 9: Move the processed source. For split invoices the child was
@@ -1250,12 +1338,29 @@ async function processSingleInvoiceBuffer(
       await safeMoveAndUpdatePdfPath(currentProcessingPath, PROCESSED_DIR, invoiceId);
     }
     logger.info(`[File Watcher] ${fileName}${partLabel} → Processed ✅`);
+    return { fileName, terminalStage: 'CREATED', invoiceId: invoice.id, invoiceNumber: invoice.invoice_number };
   } catch (err) {
     logger.error(`[File Watcher] DB save failed for ${fileName}${partLabel}:`, err);
     safeMove(currentProcessingPath, FAILED_DIR);
+    const detail = err instanceof Error ? err.message : String(err);
     if (invoiceId) {
       await createAuditLog(invoiceId, 'WATCHER_DB_FAILED', `Database save failed for ${fileName}: ${err}`);
+      // The invoice row already exists and a CREATED event was emitted. Keep
+      // the child classified as created so a non-critical downstream failure
+      // cannot make the parent look unsaved.
+      return { fileName, terminalStage: 'CREATED', invoiceId, invoiceNumber: effectiveInvoiceNumber, error: detail };
     }
+    await createAuditLog(null, 'WATCHER_DB_FAILED', `Database save failed for ${fileName}${partLabel}: ${detail}`);
+    await recordWatcherIntakeEvent(runIntakeId, {
+      source: 'POWER_AUTOMATE',
+      stage: 'FAILED',
+      status: 'FAILED',
+      fileName,
+      error: `Database save failed: ${detail}`,
+      metadata: { failure_boundary: 'database_save', split_index: splitIndex ?? null, invoice_number: effectiveInvoiceNumber },
+    });
+    await alertEmailIntakeFailure({ source: 'Power Automate SFTP intake', fileName, error: `Database save failed: ${detail}` });
+    return { fileName, terminalStage: 'FAILED', invoiceNumber: effectiveInvoiceNumber, error: detail };
   }
 }
 
@@ -1306,9 +1411,9 @@ async function auditUploadOnlyIntake(): Promise<void> {
       where: {
         source: 'POWER_AUTOMATE',
         created_at: { gte: new Date(now - UPLOAD_ONLY_LOOKBACK_MS) },
-        stage: { in: ['UPLOADED', 'EXTRACTED', 'REVIEW_REQUIRED', 'PDF_REPLACED', 'CREATED', 'FAILED', 'RETRY_QUEUED'] },
+        stage: { in: ['UPLOADED', 'EXTRACTED', 'REVIEW_REQUIRED', 'PDF_REPLACED', 'DUPLICATE', 'CREATED', 'FAILED', 'RETRY_QUEUED'] },
       },
-      select: { file_name: true, stage: true, created_at: true, metadata: true },
+      select: { file_name: true, stage: true, created_at: true, message_id: true, metadata: true },
       orderBy: { created_at: 'asc' },
     }) as IntakeEventSummary[];
 

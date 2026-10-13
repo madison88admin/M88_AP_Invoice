@@ -14,6 +14,7 @@ export type EmailIntakeStage =
   | 'RETRY_QUEUED'
   | 'REVIEW_REQUIRED'
   | 'PDF_REPLACED'
+  | 'DUPLICATE'
   | 'CREATED'
   | 'SPLIT_COMPLETED'
   | 'FAILED';

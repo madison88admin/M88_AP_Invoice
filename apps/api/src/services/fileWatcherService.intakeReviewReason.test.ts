@@ -18,6 +18,7 @@ import {
   hasUploadCompletionEvent,
   intakeReviewReason,
   shouldTreatAsRevision,
+  summarizeSplitOutcomes,
 } from './fileWatcherService';
 
 describe('fileWatcherService.intakeReviewReason — body classification beats filename hints', () => {
@@ -246,5 +247,45 @@ describe('fileWatcherService upload-only recovery guard', () => {
       { file_name: 'same-name.pdf', stage: 'UPLOADED', created_at: uploadedAt, metadata: { intake_id: 'run-2' } },
       { file_name: 'different-name.pdf', stage: 'PDF_REPLACED', created_at: new Date('2026-09-30T07:51:00.000Z'), metadata: { intake_id: 'run-2' } },
     ], 'run-2')).toBe(true);
+  });
+
+  it('uses message_id as the stable intake ID for legacy Power Automate events', () => {
+    expect(hasUploadCompletionEvent('legacy.pdf', uploadedAt, [
+      { file_name: 'legacy.pdf', stage: 'UPLOADED', created_at: uploadedAt, message_id: 'attachment-2' },
+      { file_name: 'legacy.pdf', stage: 'CREATED', created_at: new Date('2026-09-30T07:51:00.000Z'), message_id: 'attachment-1' },
+    ], 'attachment-2')).toBe(false);
+
+    expect(hasUploadCompletionEvent('legacy.pdf', uploadedAt, [
+      { file_name: 'legacy.pdf', stage: 'UPLOADED', created_at: uploadedAt, message_id: 'attachment-2' },
+      { file_name: 'legacy.pdf_part1', stage: 'CREATED', created_at: new Date('2026-09-30T07:51:00.000Z'), message_id: 'attachment-2' },
+    ], 'attachment-2')).toBe(true);
+  });
+});
+
+describe('fileWatcherService split completion guard', () => {
+  it('does not complete a parent when any extracted child failed before database save', () => {
+    expect(summarizeSplitOutcomes([
+      { fileName: 'bundle.pdf_part1', terminalStage: 'CREATED', invoiceId: 'invoice-1' },
+      { fileName: 'bundle.pdf_part2', terminalStage: 'FAILED', error: 'normalizePaymentTerm is not a function' },
+    ], 2)).toEqual({
+      complete: false,
+      completedCount: 1,
+      failedCount: 1,
+      failedParts: [{ fileName: 'bundle.pdf_part2', error: 'normalizePaymentTerm is not a function' }],
+    });
+  });
+
+  it('completes a parent only after every child is routed to a durable terminal outcome', () => {
+    expect(summarizeSplitOutcomes([
+      { fileName: 'bundle.pdf_part1', terminalStage: 'CREATED', invoiceId: 'invoice-1' },
+      { fileName: 'bundle.pdf_part2', terminalStage: 'REVIEW_REQUIRED', error: 'Vendor review required' },
+      { fileName: 'bundle.pdf_part3', terminalStage: 'DUPLICATE', invoiceId: 'invoice-3' },
+    ], 3).complete).toBe(true);
+  });
+
+  it('does not complete when fewer child outcomes exist than expected', () => {
+    expect(summarizeSplitOutcomes([
+      { fileName: 'bundle.pdf_part1', terminalStage: 'CREATED', invoiceId: 'invoice-1' },
+    ], 2)).toMatchObject({ complete: false, completedCount: 1, failedCount: 1 });
   });
 });

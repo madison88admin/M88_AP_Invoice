@@ -41,6 +41,14 @@ function sanitizeSingleValue(val: string | undefined | null): string | undefined
   return trimmed || undefined;
 }
 
+/** Deterministic supplier recovery for invoice layouts where the buyer is at
+ * the top and the legal issuer appears only in the signature/footer block. */
+export function extractExplicitIssuerVendorName(text: string | undefined): string {
+  if (!text) return '';
+  if (/\bJ\s*[-–—]?\s*LONG\s+(?:LTD\.?|LIMITED)\b/i.test(text)) return 'J-LONG LTD.';
+  return '';
+}
+
 // Map AI-returned document_type strings to valid InvoiceType enum values
 const DOCUMENT_TYPE_MAP: Record<string, string> = {
   INVOICE: 'INVOICE',
@@ -67,6 +75,9 @@ function extractHeaderVendorName(text: string): string {
   // pdf2json may flatten the page in coordinate order, placing the bank
   // block before the supplier header. Use an explicit supplier anchor before
   // falling back to line-based header parsing so bank names cannot win.
+  const explicitIssuer = extractExplicitIssuerVendorName(text);
+  if (explicitIssuer) return explicitIssuer;
+
   const averyVietnam = text.match(/Avery\s+Dennison\s+RIS\s+Vietnam\s+Co\.?\s*,?\s*(?:Limited|Ltd\.?)\b/i);
   if (averyVietnam) return averyVietnam[0].replace(/\s+/g, ' ').trim();
 
@@ -1748,6 +1759,15 @@ export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
     } else {
       logger.info('[OCR] Docling fallback did not improve extraction — keeping primary result');
     }
+  }
+
+  // AI providers sometimes select MADISON 88 from the prominent "To" block
+  // on J-Long invoices. The issuer name printed in the legal footer is the
+  // authoritative vendor and must override that buyer-side extraction.
+  const explicitIssuerVendor = extractExplicitIssuerVendorName(classificationText);
+  if (explicitIssuerVendor && extracted.vendor_name !== explicitIssuerVendor) {
+    logger.info(`[OCR] Corrected buyer-side vendor "${extracted.vendor_name}" to explicit issuer "${explicitIssuerVendor}"`);
+    extracted.vendor_name = explicitIssuerVendor;
   }
 
   const datePair = normalizeInvoiceDatePair(

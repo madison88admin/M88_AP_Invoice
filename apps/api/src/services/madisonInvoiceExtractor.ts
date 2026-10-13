@@ -254,6 +254,12 @@ export function extractVendorName(text: string): string | null {
 
   const upperText = text.toUpperCase();
 
+  // J-Long templates put MADISON 88 in the prominent buyer block and the
+  // actual issuer in the legal footer. Prefer the explicit issuer identity.
+  if (/\bJ\s*[-–—]?\s*LONG\s+(?:LTD\.?|LIMITED)\b/i.test(text)) {
+    return 'J-LONG LTD.';
+  }
+
   // Header-first extraction prevents a bank/signature/footer company from
   // replacing the supplier.  It also keeps the full Avery legal entity.
   const headerVendor = extractHeaderVendorName(text);

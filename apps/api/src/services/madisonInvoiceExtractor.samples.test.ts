@@ -164,6 +164,11 @@ describe('Header-anchored vendor extraction', () => {
     expect(extractVendorName(`NILORN EAST ASIA LIMITED\nInvoice No: INVP-100\nBank: PT UWU JUMP INDONESIA`)).toMatch(/NILORN EAST ASIA LIMITED/i);
     expect(extractVendorName(`Vendor Name: MICRO-PAK INTERNATIONAL LTD\nInvoice No: MP-100\nBeneficiary: PT UWU JUMP INDONESIA`)).toMatch(/MICRO-PAK INTERNATIONAL LTD/i);
   });
+
+  it('uses the legal J-Long issuer instead of Madison 88 in the buyer block', () => {
+    const text = 'INVOICE\nTo: MADISON 88, LTD.\nInvoice No.: JINV/2026009207\nFor and on behalf of J - LONG LTD.';
+    expect(extractVendorName(text)).toBe('J-LONG LTD.');
+  });
 });
 
 describe('Paxar invoice sample', () => {

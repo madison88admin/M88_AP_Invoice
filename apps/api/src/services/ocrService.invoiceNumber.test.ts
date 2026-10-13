@@ -77,4 +77,10 @@ describe('extractInvoiceFields invoice-number extraction (proforma layout)', () 
     const result = await extractInvoiceFields(Buffer.from('fake'));
     expect(result.invoice_number).toBe('A40319');
   });
+
+  it('uses J-Long as issuer instead of Madison 88 from the buyer block', async () => {
+    state.text = 'INVOICE\nTo: MADISON 88, LTD.\nInvoice No.: JINV/2026009207\nDate: 2026/8/17\nNET AMOUNT USD 105.00\nFor and on behalf of J - LONG LTD.';
+    const result = await extractInvoiceFields(Buffer.from('fake'));
+    expect(result.vendor_name).toBe('J-LONG LTD.');
+  });
 });

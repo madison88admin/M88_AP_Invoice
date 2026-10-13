@@ -485,14 +485,17 @@ router.patch('/:id/bank-details', authorize(UserRole.ACCOUNTING_SUPERVISOR, User
     const bankFieldChangesRequested = BANK_FIELDS.some((field) => req.body[field] !== undefined);
 
     // Bank changes are locked while any linked invoice is in active review/payment.
-    // A beneficiary-only correction is safe and does not alter payment routing.
-    // Users must use the bank-change request workflow so the snapshot and audit trail
-    // cannot be changed underneath an in-flight payment.
+    // Accounting Associates are the operational owners of payment execution and
+    // may apply an audited override when a correction is urgent. The immutable
+    // payment snapshot on the invoice is still preserved, so this only changes
+    // the vendor master/default for future use and does not rewrite an in-flight
+    // payment's confirmed bank details.
     const activeInvoice = await prisma.invoice.findFirst({
       where: { vendor_id: vendorId, status: { in: ['PENDING_ACCOUNTING', 'APPROVED', 'PAYMENT_SCHEDULED', 'POSTED_TO_QB', 'PAYMENT_CONFIRMATION_SENT', 'PAID'] as any } },
       select: { invoice_number: true, status: true },
     });
-    if (activeInvoice && bankFieldChangesRequested) {
+    const accountingAssociateOverride = req.user?.role === UserRole.ACCOUNTING_ASSOCIATE;
+    if (activeInvoice && bankFieldChangesRequested && !accountingAssociateOverride) {
       throw new AppError(`Bank details are locked while invoice ${activeInvoice.invoice_number} is ${activeInvoice.status}. Submit a bank-change request instead.`, 409);
     }
 
@@ -530,11 +533,62 @@ router.patch('/:id/bank-details', authorize(UserRole.ACCOUNTING_SUPERVISOR, User
       }
     }
 
-    // Update vendor master only. Existing invoices keep their own snapshots.
+    // Update the vendor master. Accounting Associate edits also propagate the
+    // visible extracted vendor/bank fields to connected invoices, while the
+    // immutable payment authorization snapshot remains unchanged.
     await prisma.vendor.update({
       where: { id: vendorId },
       data: vendorUpdate,
     });
+
+    let invoicesUpdated = 0;
+    if (accountingAssociateOverride) {
+      const invoiceUpdate: Record<string, any> = {};
+      if (Object.prototype.hasOwnProperty.call(vendorUpdate, 'name')) invoiceUpdate.vendor_name_raw = vendorUpdate.name;
+      if (Object.prototype.hasOwnProperty.call(vendorUpdate, 'beneficiary_name')) invoiceUpdate.beneficiary_name = vendorUpdate.beneficiary_name;
+      if (Object.prototype.hasOwnProperty.call(vendorUpdate, 'bank_name')) invoiceUpdate.bank_name = vendorUpdate.bank_name;
+      if (Object.prototype.hasOwnProperty.call(vendorUpdate, 'swift_code')) invoiceUpdate.swift_code = vendorUpdate.swift_code;
+      if (Object.prototype.hasOwnProperty.call(vendorUpdate, 'account_number')) invoiceUpdate.account_number = vendorUpdate.account_number;
+
+      if (Object.keys(invoiceUpdate).length > 0) {
+        const connectedInvoices = await prisma.invoice.findMany({
+          where: { vendor_id: vendorId },
+          select: {
+            id: true,
+            invoice_number: true,
+            vendor_name_raw: true,
+            beneficiary_name: true,
+            bank_name: true,
+            swift_code: true,
+            account_number: true,
+          },
+        });
+        for (const invoice of connectedInvoices) {
+          const previousValues: Record<string, any> = {};
+          const nextValues: Record<string, any> = {};
+          for (const [field, value] of Object.entries(invoiceUpdate)) {
+            const previous = (invoice as any)[field];
+            if (String(previous ?? '') === String(value ?? '')) continue;
+            previousValues[field] = previous;
+            nextValues[field] = value;
+          }
+          if (Object.keys(nextValues).length === 0) continue;
+          await prisma.invoice.update({ where: { id: invoice.id }, data: invoiceUpdate });
+          await prisma.auditLog.create({
+            data: {
+              invoice_id: invoice.id,
+              action: 'INVOICE_VENDOR_DETAILS_PROPAGATED',
+              performed_by: req.user!.id,
+              actor_name: req.user!.name || 'Accounting Associate',
+              actor_role: req.user!.role,
+              note: `Accounting Associate propagated vendor-master changes to invoice ${invoice.invoice_number}. Payment authorization snapshot was preserved.`,
+              metadata: { previous_values: previousValues, new_values: nextValues, payment_snapshot_preserved: true },
+            },
+          });
+          invoicesUpdated += 1;
+        }
+      }
+    }
 
     // Phase 11: auto-approve pending requests from OTHER users whose requested
     // value matches the applied field (the requester != approver rule already
@@ -568,19 +622,19 @@ router.patch('/:id/bank-details', authorize(UserRole.ACCOUNTING_SUPERVISOR, User
           ? 'VENDOR_BENEFICIARY_UPDATED'
           : 'VENDOR_BANK_UPDATED',
         performed_by: req.user!.id,
-        note: `Vendor "${normalizedName || vendor.name}" ${vendorNameOnlyUpdate ? 'vendor name' : beneficiaryOnlyUpdate ? 'beneficiary name' : 'bank details'} updated by ${req.user!.role}. Fields: ${changedFields.join(', ')}. Existing invoice snapshots were not changed; the update applies to new invoices only.`,
+        note: `Vendor "${normalizedName || vendor.name}" ${vendorNameOnlyUpdate ? 'vendor name' : beneficiaryOnlyUpdate ? 'beneficiary name' : 'bank details'} updated by ${req.user!.role}. Fields: ${changedFields.join(', ')}.${invoicesUpdated > 0 ? ` Propagated to ${invoicesUpdated} connected invoice(s); payment authorization snapshots were preserved.` : ' No connected invoice fields were changed.'}`,
       },
     }).catch(() => { /* audit log failure should not block the update */ });
 
     res.json({
       message: vendorNameOnlyUpdate
-        ? `Vendor name updated to "${normalizedName}". Existing invoice records were not changed.`
+        ? `Vendor name updated to "${normalizedName}"${invoicesUpdated > 0 ? ` and propagated to ${invoicesUpdated} connected invoice(s)` : ''}. Payment authorization snapshots were preserved.`
         : beneficiaryOnlyUpdate
-        ? `Beneficiary name updated for vendor "${normalizedName || vendor.name}". Existing invoice records were not changed.`
-        : `Vendor bank details updated for "${normalizedName || vendor.name}". The changes apply to new invoices only.`,
+        ? `Beneficiary name updated for vendor "${normalizedName || vendor.name}"${invoicesUpdated > 0 ? ` and propagated to ${invoicesUpdated} connected invoice(s)` : ''}. Payment authorization snapshots were preserved.`
+        : `Vendor bank details updated for "${normalizedName || vendor.name}"${invoicesUpdated > 0 ? ` and propagated to ${invoicesUpdated} connected invoice(s)` : ''}. Payment authorization snapshots were preserved.`,
       vendor_id: vendorId,
       updated_fields: changedFields,
-      invoices_updated: 0,
+      invoices_updated: invoicesUpdated,
     });
   } catch (error) {
     next(error);

@@ -67,6 +67,7 @@ describe('email intake monitoring', () => {
       latest_poll_at: now,
       failures_24h: 1,
       events: [{ id: 'event-1' }],
+      recovery_queue: [],
     });
   });
 });

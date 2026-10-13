@@ -10,11 +10,11 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
     expect(getPayableBlockReason({ document_type: 'INVOICE' })).toBeNull();
   });
 
-  it('allows proforma, SALES, and DEBIT_NOTE documents', () => {
+  it('allows proforma and SALES but blocks DEBIT_NOTE documents', () => {
     expect(getPayableBlockReason({ document_type: 'PROFORMA_INVOICE' })).toBeNull();
     expect(getPayableBlockReason({ document_type: 'PROFORMA' })).toBeNull();
     expect(getPayableBlockReason({ document_type: 'SALES' })).toBeNull();
-    expect(getPayableBlockReason({ document_type: 'DEBIT_NOTE' })).toBeNull();
+    expect(getPayableBlockReason({ document_type: 'DEBIT_NOTE' })).toMatch(/DEBIT_NOTE/);
     expect(getPayableBlockReason({
       document_type: 'COMMERCIAL',
       invoice_number: 'CI-123',
@@ -51,6 +51,11 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
       invoice_date: '2026-10-06',
       total_amount: 1214.45,
     })).toBeNull();
+  });
+
+  it('blocks debit-note text or filenames when OCR misses the document type', () => {
+    expect(getPayableBlockReason({ raw_text: 'DEBIT NOTE DN-42 TOTAL USD 100.00' })).toMatch(/Debit notes/);
+    expect(getPayableBlockReason({ fileName: 'debit-note-DN-42.pdf' })).toMatch(/Debit notes/);
   });
 
   it('blocks when OCR flags is_non_invoice_document', () => {

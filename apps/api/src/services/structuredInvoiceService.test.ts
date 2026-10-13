@@ -30,6 +30,12 @@ describe('structuredInvoiceService', () => {
     expect(result.payable_candidate).toBe(true);
   });
 
+  it('parks debit notes as non-payable documents', () => {
+    const result = classifyInvoiceDocument({ fileName: 'debit-note.pdf', text: 'DEBIT NOTE DN-42 TOTAL USD 100.00' });
+    expect(result.document_type).toBe('DEBIT_NOTE');
+    expect(result.payable_candidate).toBe(false);
+  });
+
   it('parses UBL header and line values without OCR', () => {
     const xml = `<?xml version="1.0"?>
       <Invoice xmlns:cac="urn:cac" xmlns:cbc="urn:cbc">

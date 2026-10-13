@@ -48,6 +48,7 @@ export const NON_PAYABLE_DOCUMENT_TYPES = new Set<string>([
   'RECEIPT',
   'STATEMENT',
   'STATEMENT_OF_ACCOUNT',
+  'DEBIT_NOTE',
   'OTHER',
   'UNKNOWN',
   'TECH_PACK',
@@ -87,6 +88,9 @@ const HARD_EXCLUDED_FILENAME_HINTS =
 /** Strong headings for payment/shipment paperwork, even when OCR labels it INVOICE. */
 const NON_PAYABLE_TEXT_HINTS =
   /\b(?:shipment\s+receipt|bill\s+payment|payment\s+bill|payment\s+receipt)\b/i;
+
+/** Debit notes are never payable AP invoice records, even when OCR misses the document type. */
+const DEBIT_NOTE_HINTS = /\bDEBIT\s+(?:NOTE|MEMO)\b/i;
 
 /**
  * Commercial Invoice is a payable subtype, but only with core invoice data.
@@ -204,7 +208,7 @@ export function getPayableBlockReason(
   if (classification && classification.payable_candidate === false && !isProforma) {
     if (validCommercialInvoice) return null;
     const label = String(classification.document_type || docType || 'UNKNOWN').toUpperCase();
-    return `Document classification ${label} is not payable — only actual invoices, debit notes, and credit notes may enter the AP workflow`;
+    return `Document classification ${label} is not payable — debit notes and supporting documents cannot enter the AP workflow`;
   }
 
   // 1. Explicit non-invoice flag from OCR (DHL AWB detector etc.)
@@ -217,8 +221,15 @@ export function getPayableBlockReason(
     return `Document type ${docType} is not eligible for invoice creation`;
   }
 
+  // A debit-note heading is decisive even when structured OCR classification is missing.
+  const rawText = String(doc.raw_text || '');
+  const fileNameText = String(doc.fileName || '').replace(/[_-]+/g, ' ');
+  if (DEBIT_NOTE_HINTS.test(rawText) || DEBIT_NOTE_HINTS.test(fileNameText)) {
+    return 'Debit notes are not eligible for invoice creation';
+  }
+
   // 3. Statement-of-account text signals (even if type extraction failed)
-  const text = String(doc.raw_text || '');
+  const text = rawText;
   if (text && hasStrongNonInvoiceHeading(text)) {
     return 'Document heading identifies an excluded non-invoice document';
   }

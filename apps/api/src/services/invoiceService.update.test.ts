@@ -118,7 +118,7 @@ describe('updateInvoice persistence and re-approval controls', () => {
     expect(result._persisted_values.total_amount).toBe(125);
   });
 
-  it('accepts Debit Note as an editable document type', async () => {
+  it('rejects Debit Note as an editable document type', async () => {
     const existing = existingInvoice({ status: 'RECEIVED' });
     invoiceFindUnique.mockResolvedValue(existing);
     invoiceUpdate.mockImplementation(async ({ data }: any) => ({
@@ -137,7 +137,7 @@ describe('updateInvoice persistence and re-approval controls', () => {
       'coordinator-1',
       'PURCHASING_COORDINATOR',
       'April Joy Diasanta'
-    )).resolves.toMatchObject({ invoice_type: 'DEBIT_NOTE' });
+    )).rejects.toMatchObject({ statusCode: 422, message: expect.stringContaining('DEBIT_NOTE') });
   });
 
   it('accepts Proforma as an editable document type', async () => {

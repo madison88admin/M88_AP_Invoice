@@ -60,6 +60,7 @@ export class OllamaOCRService {
   private static instance: OllamaOCRService;
   private baseUrl: string | null = null;
   private model: string = 'qwen2.5:3b-instruct';
+  private visionModel: string = 'qwen2.5vl:3b';
   private timeout: number = 60000;
   private isConfigured: boolean = false;
 
@@ -72,9 +73,13 @@ export class OllamaOCRService {
 
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.model = process.env.OLLAMA_MODEL || 'qwen2.5:3b-instruct';
+    // Keep text extraction lightweight, but use a genuinely vision-capable
+    // local model for scanned/image-only invoices. Both models are free to
+    // run locally and can be installed with `ollama pull`.
+    this.visionModel = process.env.OLLAMA_VISION_MODEL || 'qwen2.5vl:3b';
     this.timeout = (Number(process.env.OLLAMA_TIMEOUT) || 60) * 1000;
     this.isConfigured = true;
-    logger.info(`Ollama OCR service initialized at ${this.baseUrl} with model ${this.model}`);
+    logger.info(`Ollama OCR service initialized at ${this.baseUrl} with text model ${this.model} and vision model ${this.visionModel}`);
   }
 
   static getInstance(): OllamaOCRService {
@@ -234,7 +239,7 @@ export class OllamaOCRService {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: this.model,
+          model: this.visionModel,
           messages: [
             { role: 'system', content: 'You are an invoice data extractor. Return ONLY valid JSON, no explanation.' },
             { role: 'user', content: EXTRACTION_PROMPT + userPrompt, images: [imageBase64] },

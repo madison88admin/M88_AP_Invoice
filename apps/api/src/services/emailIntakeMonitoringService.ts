@@ -21,7 +21,8 @@ export type EmailIntakeStage =
 type IntakeEventInput = {
   source: 'GRAPH' | 'POWER_AUTOMATE' | 'SHAREPOINT';
   stage: EmailIntakeStage;
-  status?: 'SUCCESS' | 'COMPLETED' | 'FAILED';
+  /** REVIEW_REQUIRED is a terminal routing outcome, not a system failure. */
+  status?: 'SUCCESS' | 'COMPLETED' | 'REVIEW_REQUIRED' | 'FAILED';
   mailbox?: string;
   messageId?: string;
   attachmentId?: string;
@@ -37,7 +38,13 @@ export async function recordEmailIntakeEvent(input: IntakeEventInput): Promise<v
       data: {
         source: input.source,
         stage: input.stage,
-        status: input.status || (input.stage === 'FAILED' || input.stage === 'POLL_FAILED' ? 'FAILED' : 'SUCCESS'),
+        status: input.status || (
+          input.stage === 'FAILED' || input.stage === 'POLL_FAILED'
+            ? 'FAILED'
+            : input.stage === 'REVIEW_REQUIRED'
+              ? 'REVIEW_REQUIRED'
+              : 'SUCCESS'
+        ),
         mailbox: input.mailbox,
         message_id: input.messageId,
         attachment_id: input.attachmentId,
@@ -102,5 +109,16 @@ export async function getEmailIntakeMonitor(limit = 100) {
     prisma.emailIntakeEvent.findFirst({ where: { source: 'GRAPH', stage: 'POLL_SUCCESS' }, orderBy: { created_at: 'desc' } }),
     prisma.emailIntakeEvent.count({ where: { status: 'FAILED', created_at: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } } }),
   ]);
-  return { latest_poll_at: latestPoll?.created_at || null, failures_24h: failures24h, events };
+  const recovery_queue = events
+    .filter((event: any) => event.stage === 'FAILED' || event.stage === 'REVIEW_REQUIRED')
+    .map((event: any) => {
+      const text = `${event.error || ''}`.toLowerCase();
+      const category = event.metadata?.upload_only_intake ? 'UPLOAD_ONLY'
+        : /ocr|provider|timeout|rate limit|429|object/.test(text) ? 'OCR_FAILED'
+          : /invoice number|amount|confidence/.test(text) ? 'EXTRACTION_REVIEW'
+            : /proforma|non-invoice|shipping|statement/.test(text) ? 'NON_INVOICE_REVIEW'
+              : /duplicate/.test(text) ? 'DUPLICATE_REVIEW' : 'FAILED';
+      return { ...event, category };
+    });
+  return { latest_poll_at: latestPoll?.created_at || null, failures_24h: failures24h, events, recovery_queue };
 }

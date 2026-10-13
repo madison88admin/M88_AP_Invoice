@@ -43,6 +43,8 @@ type IntakeEvent = {
   file_name?: string | null;
   invoice_id?: string | null;
   error?: string | null;
+  category?: string;
+  metadata?: Record<string, unknown> | null;
   created_at: string;
 };
 
@@ -50,6 +52,7 @@ type IntakeMonitor = {
   latest_poll_at?: string | null;
   failures_24h: number;
   events: IntakeEvent[];
+  recovery_queue?: IntakeEvent[];
 };
 
 const SEV_COLOR: Record<string, string> = {
@@ -184,6 +187,17 @@ export default function FinanceControlsDashboard() {
             </div>
           </div>
         </div>
+        {!!intakeMonitor?.recovery_queue?.length && (
+          <div className="px-4 py-3 border-b flex flex-wrap gap-2" style={{ borderColor: 'var(--border-subtle)' }}>
+            {Object.entries(intakeMonitor.recovery_queue.reduce<Record<string, number>>((acc, item) => {
+              const key = item.category || 'FAILED'; acc[key] = (acc[key] || 0) + 1; return acc;
+            }, {})).map(([category, count]) => (
+              <span key={category} className="text-xs px-2 py-1 rounded-full" style={{ background: 'var(--bg-elevated)', color: category === 'FAILED' ? 'var(--accent-red)' : 'var(--accent-amber)' }}>
+                {category.replace(/_/g, ' ')}: {count}
+              </span>
+            ))}
+          </div>
+        )}
         {!intakeMonitor ? (
           <div className="p-4 text-sm" style={{ color: 'var(--text-muted)' }}>Intake monitoring data is not available yet.</div>
         ) : intakeMonitor.events.length === 0 ? (
@@ -194,7 +208,7 @@ export default function FinanceControlsDashboard() {
               <div key={event.id} className="px-4 py-3 flex items-start gap-3 text-sm">
                 <span
                   className="mt-1 h-2 w-2 rounded-full shrink-0"
-                  style={{ background: event.status === 'FAILED' ? 'var(--accent-red)' : event.stage === 'CREATED' ? 'var(--accent-lime)' : 'var(--accent-blue)' }}
+                  style={{ background: event.status === 'FAILED' ? 'var(--accent-red)' : event.status === 'REVIEW_REQUIRED' || event.stage === 'REVIEW_REQUIRED' ? 'var(--accent-amber)' : event.stage === 'CREATED' ? 'var(--accent-lime)' : 'var(--accent-blue)' }}
                 />
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap gap-2 items-center">
@@ -202,7 +216,7 @@ export default function FinanceControlsDashboard() {
                     <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: 'var(--bg-elevated)', color: 'var(--text-muted)' }}>{event.source.replace(/_/g, ' ')}</span>
                     {event.file_name && <span className="truncate" style={{ color: 'var(--text-secondary)' }}>{event.file_name}</span>}
                   </div>
-                  {event.error && <div className="text-xs mt-1" style={{ color: 'var(--accent-red)' }}>{event.error}</div>}
+                  {event.error && <div className="text-xs mt-1" style={{ color: event.status === 'FAILED' ? 'var(--accent-red)' : 'var(--accent-amber)' }}>{event.error}</div>}
                 </div>
                 <span className="text-[11px] whitespace-nowrap" style={{ color: 'var(--text-subtle)' }}>{fmtDate(event.created_at)}</span>
               </div>

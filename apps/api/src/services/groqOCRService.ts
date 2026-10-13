@@ -211,9 +211,10 @@ Invoice text to extract from:
 export class GroqOCRService {
   private static instance: GroqOCRService;
   private client: Groq | null = null;
-  // llama-3.3-70b-versatile was retired by Groq (404 on every call) — compound-mini
-  // is the current flagship that returns clean JSON and fits on-demand tiers.
-  private model: string = 'groq/compound-mini';
+  // Groq Compound and Compound Mini were retired. Require an explicitly
+  // configured, currently supported model instead of silently calling a
+  // deprecated default and turning every invoice into a provider error.
+  private model: string | null = null;
   private isConfigured: boolean = false;
 
   private constructor() {
@@ -223,11 +224,17 @@ export class GroqOCRService {
       return;
     }
 
+    const configuredModel = process.env.GROQ_MODEL?.trim();
+    if (!configuredModel || /groq\/compound(?:-mini)?$/i.test(configuredModel)) {
+      logger.warn('GROQ_MODEL is missing or deprecated — Groq OCR fallback disabled. Configure a supported model explicitly.');
+      return;
+    }
+
     try {
       this.client = new Groq({ apiKey });
-      this.model = process.env.GROQ_MODEL || 'groq/compound-mini';
+      this.model = configuredModel;
       this.isConfigured = true;
-      logger.info('Groq OCR service initialized');
+      logger.info(`Groq OCR service initialized with model ${this.model}`);
     } catch (error) {
       logger.error('Failed to initialize Groq OCR:', error);
     }
@@ -248,7 +255,7 @@ export class GroqOCRService {
     rawText: string,
     context?: ExtractionContext
   ): Promise<ExtractedInvoiceData | null> {
-    if (!this.isConfigured || !this.client) {
+    if (!this.isConfigured || !this.client || !this.model) {
       logger.warn('Groq OCR not configured — skipping fallback');
       return null;
     }

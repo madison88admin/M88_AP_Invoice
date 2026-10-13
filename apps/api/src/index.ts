@@ -48,6 +48,8 @@ import { connectDatabase, disconnectDatabase, isDbConnected } from './config/dat
 import { geminiOCRService } from './services/geminiOCRService';
 import { groqOCRService } from './services/groqOCRService';
 import { ollamaOCRService } from './services/ollamaOCRService';
+import { openrouterOCRService } from './services/openrouterOCRService';
+import { mistralOCRService } from './services/mistralOCRService';
 import { qwenOCRService } from './services/qwenOCRService';
 import { checkAndSendSLAReminders } from './services/slaReminderService';
 import { startSharePointWatcher, stopSharePointWatcher } from './services/sharePointWatcherService';
@@ -187,6 +189,16 @@ app.get('/health/engines', async (req, res) => {
       groq: {
         available: groqOCRService.isAvailable(),
         configured: !!process.env.GROQ_API_KEY,
+        model: process.env.GROQ_MODEL || null,
+      },
+      openrouter: {
+        available: openrouterOCRService.isAvailable(),
+        configured: !!process.env.OPENROUTER_API_KEY,
+        model: process.env.OPENROUTER_MODEL || 'nvidia/nemotron-nano-12b-v2-vl:free',
+      },
+      mistral: {
+        available: mistralOCRService.isAvailable(),
+        configured: !!process.env.MISTRAL_API_KEY,
       },
       azure_form_recognizer: {
         configured: !!(process.env.AZURE_FORM_RECOGNIZER_ENDPOINT && process.env.AZURE_FORM_RECOGNIZER_KEY),
@@ -218,6 +230,8 @@ const startServer = async () => {
     const ollamaAvailable = ollamaOCRService.isAvailable();
     const ollamaConfigured = !!process.env.OLLAMA_BASE_URL;
     const ollamaHealthy = ollamaAvailable && await ollamaOCRService.healthCheck();
+    const openrouterAvailable = openrouterOCRService.isAvailable();
+    const mistralAvailable = mistralOCRService.isAvailable();
     const qwenAvailable = qwenOCRService.isAvailable();
     const qwenConfigured = !!(process.env.DASHSCOPE_API_KEY || process.env.QWEN_API_KEY);
     const nextgenConfigured = !!(process.env.NEXTGEN_USERNAME && process.env.NEXTGEN_PASSWORD);
@@ -235,15 +249,27 @@ const startServer = async () => {
     } else if (!groqAvailable) {
       logger.warn('⚠️  GROQ_API_KEY is set but Groq service failed to initialize. Check API key and model name.');
     } else {
-      logger.info(`✅ Groq OCR enabled (model: ${process.env.GROQ_MODEL || 'groq/compound-mini'})`);
+      logger.info(`✅ Groq OCR enabled (model: ${process.env.GROQ_MODEL})`);
     }
 
     if (!ollamaConfigured) {
-      logger.warn('⚠️  OLLAMA_BASE_URL is not set — Ollama OCR fallback disabled.');
+      logger.warn('⚠️  OLLAMA_BASE_URL is not set — free local Ollama OCR fallback disabled.');
     } else if (!ollamaHealthy) {
       logger.warn(`⚠️  OLLAMA_BASE_URL is set but Ollama server is not reachable at ${process.env.OLLAMA_BASE_URL}. Check the server and model.`);
     } else {
-      logger.info(`✅ Ollama OCR enabled (model: ${process.env.OLLAMA_MODEL || 'qwen2.5vl:latest'})`);
+      logger.info(`✅ Free local Ollama OCR enabled (text: ${process.env.OLLAMA_MODEL || 'qwen2.5:3b-instruct'}, vision: ${process.env.OLLAMA_VISION_MODEL || 'qwen2.5vl:3b'})`);
+    }
+
+    if (openrouterAvailable) {
+      logger.info(`✅ OpenRouter free-tier OCR enabled (model: ${process.env.OPENROUTER_MODEL || 'nvidia/nemotron-nano-12b-v2-vl:free'})`);
+    } else {
+      logger.warn('⚠️  OPENROUTER_API_KEY is not set — OpenRouter free-tier OCR disabled.');
+    }
+
+    if (mistralAvailable) {
+      logger.info(`✅ Mistral free-mode OCR enabled (model: ${process.env.MISTRAL_MODEL || 'mistral-large-latest'})`);
+    } else {
+      logger.warn('⚠️  MISTRAL_API_KEY is not set — Mistral free-mode OCR disabled.');
     }
 
     if (!qwenConfigured) {

@@ -61,7 +61,32 @@ type IntakeEventSummary = {
   file_name: string | null;
   stage: string;
   created_at: Date;
+  metadata?: unknown;
 };
+
+type IntakeEventRecord = Parameters<typeof recordEmailIntakeEvent>[0];
+
+/**
+ * SFTP/Power Automate watcher events do not have a message ID from Graph.
+ * Generate one intake ID at the start of the run and stamp every event with
+ * it so replacement/split events can be correlated without relying on a
+ * mutable filename.
+ */
+async function recordWatcherIntakeEvent(intakeId: string, input: IntakeEventRecord): Promise<void> {
+  await recordEmailIntakeEvent({
+    ...input,
+    messageId: input.messageId || intakeId,
+    metadata: { ...(input.metadata || {}), intake_id: intakeId },
+  });
+}
+
+function eventIntakeId(event: IntakeEventSummary): string | undefined {
+  const metadata = event.metadata;
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return undefined;
+  const value = (metadata as Record<string, unknown>).intake_id
+    || (metadata as Record<string, unknown>).idempotency_key;
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
 
 /**
  * An upload event for a multi-page PDF is followed by events for
@@ -72,9 +97,13 @@ export function hasUploadCompletionEvent(
   fileName: string,
   uploadedAt: Date,
   events: readonly IntakeEventSummary[],
+  intakeId?: string,
 ): boolean {
   return events.some((event) => {
     if (!event.file_name || event.created_at < uploadedAt || !UPLOAD_COMPLETION_STAGES.has(event.stage)) return false;
+    // New watcher runs are correlated by intake ID. This prevents a previous
+    // upload/replacement of the same filename from satisfying a later upload.
+    if (intakeId) return eventIntakeId(event) === intakeId;
     return event.file_name === fileName || event.file_name.startsWith(`${fileName}_part`);
   });
 }
@@ -412,15 +441,16 @@ function extractLabeledDateFromOcr(ocrResult: any): Date | null {
  * UPLOADED event could leave a file with no terminal intake event at all.
  */
 async function processFile(filePath: string, fileName: string): Promise<void> {
+  const intakeId = crypto.randomUUID();
   const processingPath = path.join(PROCESSING_DIR, fileName);
   try {
-    await processFileInternal(filePath, fileName);
+    await processFileInternal(filePath, fileName, intakeId);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     logger.error(`[File Watcher] Unhandled pipeline failure for ${fileName}:`, err);
     if (fs.existsSync(processingPath)) safeMove(processingPath, FAILED_DIR);
     await createAuditLog(null, 'WATCHER_PIPELINE_FAILED', `Unhandled watcher failure for ${fileName}: ${detail}`);
-    await recordEmailIntakeEvent({
+    await recordWatcherIntakeEvent(intakeId, {
       source: 'POWER_AUTOMATE',
       stage: 'FAILED',
       status: 'FAILED',
@@ -436,9 +466,9 @@ async function processFile(filePath: string, fileName: string): Promise<void> {
   }
 }
 
-async function processFileInternal(filePath: string, fileName: string): Promise<void> {
+async function processFileInternal(filePath: string, fileName: string, intakeId: string): Promise<void> {
   logger.info(`[File Watcher] Processing: ${fileName}`);
-  await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'ATTACHMENT_DETECTED', fileName, metadata: { channel: 'SFTP' } });
+  await recordWatcherIntakeEvent(intakeId, { source: 'POWER_AUTOMATE', stage: 'ATTACHMENT_DETECTED', fileName, metadata: { channel: 'SFTP' } });
 
   // Step 1: Move to Processing
   const processingPath = path.join(PROCESSING_DIR, fileName);
@@ -453,11 +483,11 @@ async function processFileInternal(filePath: string, fileName: string): Promise<
   let fileBuffer: Buffer;
   try {
     fileBuffer = fs.readFileSync(processingPath);
-    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'UPLOADED', fileName, metadata: { bytes: fileBuffer.length, channel: 'SFTP' } });
+    await recordWatcherIntakeEvent(intakeId, { source: 'POWER_AUTOMATE', stage: 'UPLOADED', fileName, metadata: { bytes: fileBuffer.length, channel: 'SFTP' } });
   } catch (err) {
     logger.error(`[File Watcher] Failed to read ${fileName}:`, err);
     safeMove(processingPath, FAILED_DIR);
-    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'FAILED', fileName, error: 'File could not be read from incoming folder' });
+    await recordWatcherIntakeEvent(intakeId, { source: 'POWER_AUTOMATE', stage: 'FAILED', fileName, error: 'File could not be read from incoming folder' });
     await alertEmailIntakeFailure({ source: 'Power Automate SFTP intake', fileName, error: 'File could not be read from incoming folder' });
     return;
   }
@@ -487,7 +517,7 @@ async function processFileInternal(filePath: string, fileName: string): Promise<
     logger.error(`[File Watcher] ${fileName}: ${error}`);
     safeMove(processingPath, FAILED_DIR);
     await createAuditLog(null, 'WATCHER_INVALID_PDF', `${fileName}: ${error}`);
-    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'FAILED', fileName, error, metadata: { bytes: fileBuffer.length } });
+    await recordWatcherIntakeEvent(intakeId, { source: 'POWER_AUTOMATE', stage: 'FAILED', fileName, error, metadata: { bytes: fileBuffer.length } });
     await alertEmailIntakeFailure({ source: 'Power Automate SFTP intake', fileName, error });
     return;
   }
@@ -500,10 +530,10 @@ async function processFileInternal(filePath: string, fileName: string): Promise<
     logger.info(`[File Watcher] ${fileName} → ManualReview without OCR: ${reason}`);
     safeMove(processingPath, MANUAL_REVIEW_DIR);
     await createAuditLog(null, 'WATCHER_NON_INVOICE_SUPPRESSED', reason);
-    await recordEmailIntakeEvent({
+    await recordWatcherIntakeEvent(intakeId, {
       source: 'POWER_AUTOMATE',
       stage: 'REVIEW_REQUIRED',
-      status: 'FAILED',
+      status: 'REVIEW_REQUIRED',
       fileName,
       error: reason,
       metadata: { suppressed_before_ocr: true, suppression_rule: 'obvious_filename_pattern' },
@@ -530,7 +560,7 @@ async function processFileInternal(filePath: string, fileName: string): Promise<
           fs.writeFileSync(splitProcessingPath, splitBuffers[i]);
         } catch (splitWriteErr) {
           logger.error(`[File Watcher] Could not persist split ${i + 1} of ${fileName}:`, splitWriteErr);
-          await recordEmailIntakeEvent({
+          await recordWatcherIntakeEvent(intakeId, {
             source: 'POWER_AUTOMATE',
             stage: 'FAILED',
             status: 'FAILED',
@@ -542,11 +572,11 @@ async function processFileInternal(filePath: string, fileName: string): Promise<
         }
         logger.info(`[File Watcher] Processing split invoice ${i + 1}/${splitBuffers.length} from ${fileName}`);
         try {
-          await processSingleInvoiceBuffer(splitBuffers[i], partName, splitProcessingPath, i);
+          await processSingleInvoiceBuffer(splitBuffers[i], partName, splitProcessingPath, i, intakeId);
         } catch (splitErr) {
           logger.error(`[File Watcher] Error processing split ${i + 1} of ${fileName}:`, splitErr);
           if (fs.existsSync(splitProcessingPath)) safeMove(splitProcessingPath, FAILED_DIR);
-          await recordEmailIntakeEvent({
+          await recordWatcherIntakeEvent(intakeId, {
             source: 'POWER_AUTOMATE',
             stage: 'FAILED',
             status: 'FAILED',
@@ -559,7 +589,7 @@ async function processFileInternal(filePath: string, fileName: string): Promise<
 
       // Move original to processed after all splits are done
       safeMove(processingPath, PROCESSED_DIR);
-      await recordEmailIntakeEvent({
+      await recordWatcherIntakeEvent(intakeId, {
         source: 'POWER_AUTOMATE',
         stage: 'SPLIT_COMPLETED',
         status: 'SUCCESS',
@@ -574,7 +604,7 @@ async function processFileInternal(filePath: string, fileName: string): Promise<
   }
 
   // Single invoice — process normally
-  await processSingleInvoiceBuffer(fileBuffer, fileName, processingPath);
+  await processSingleInvoiceBuffer(fileBuffer, fileName, processingPath, undefined, intakeId);
 }
 
 /**
@@ -585,8 +615,10 @@ async function processSingleInvoiceBuffer(
   fileBuffer: Buffer,
   fileName: string,
   processingPath: string,
-  splitIndex?: number
+  splitIndex?: number,
+  intakeId?: string,
 ): Promise<void> {
+  const runIntakeId = intakeId || crypto.randomUUID();
   const partLabel = splitIndex !== undefined ? ` [part ${splitIndex + 1}]` : '';
   const currentProcessingPath = splitIndex !== undefined
     ? path.join(PROCESSING_DIR, fileName)
@@ -599,7 +631,7 @@ async function processSingleInvoiceBuffer(
       () => analyzeInvoice(fileBuffer, 'application/pdf'),
       {
         label: `OCR ${fileName}`,
-        onRetry: (attempt, reason) => recordEmailIntakeEvent({
+        onRetry: (attempt, reason) => recordWatcherIntakeEvent(runIntakeId, {
           source: 'POWER_AUTOMATE',
           stage: 'RETRY_ATTEMPT',
           fileName,
@@ -637,12 +669,12 @@ async function processSingleInvoiceBuffer(
     const processedPages = Number.isFinite(rawProcessedPages) ? rawProcessedPages : inputPages;
     ocrResult.input_pages = inputPages;
     ocrResult.processed_pages = processedPages;
-    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'EXTRACTED', fileName, metadata: { documentType: ocrResult?.document_type, currency: ocrResult?.currency, input_pages: inputPages, processed_pages: processedPages, page_coverage_complete: inputPages === undefined || inputPages === processedPages } });
+    await recordWatcherIntakeEvent(runIntakeId, { source: 'POWER_AUTOMATE', stage: 'EXTRACTED', fileName, metadata: { documentType: ocrResult?.document_type, currency: ocrResult?.currency, input_pages: inputPages, processed_pages: processedPages, page_coverage_complete: inputPages === undefined || inputPages === processedPages } });
   } catch (err) {
     logger.error(`[File Watcher] OCR failed for ${fileName}${partLabel}:`, err);
     safeMove(currentProcessingPath, FAILED_DIR);
     await createAuditLog(null, 'WATCHER_OCR_FAILED', `OCR extraction failed for ${fileName}${partLabel}: ${err}`);
-    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'FAILED', fileName, error: `OCR extraction failed: ${String(err)}` });
+    await recordWatcherIntakeEvent(runIntakeId, { source: 'POWER_AUTOMATE', stage: 'FAILED', fileName, error: `OCR extraction failed: ${String(err)}` });
     await alertEmailIntakeFailure({ source: 'Power Automate SFTP intake', fileName, error: 'OCR extraction failed' });
     return;
   }
@@ -663,7 +695,7 @@ async function processSingleInvoiceBuffer(
     logger.info(`[File Watcher] ${fileName}${partLabel} → ManualReview: ${reviewReason}`);
     safeMove(currentProcessingPath, MANUAL_REVIEW_DIR);
     await createAuditLog(null, 'WATCHER_REVIEW_REQUIRED', `${fileName}${partLabel}: ${reviewReason}`);
-    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'FAILED', fileName, error: reviewReason });
+    await recordWatcherIntakeEvent(runIntakeId, { source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', fileName, error: reviewReason });
     return;
   }
 
@@ -673,7 +705,7 @@ async function processSingleInvoiceBuffer(
     logger.info(`[File Watcher] ${fileName}${partLabel} → ManualReview: ${reason}`);
     safeMove(currentProcessingPath, MANUAL_REVIEW_DIR);
     await createAuditLog(null, 'WATCHER_INTAKE_CONTROL_REVIEW', `${fileName}${partLabel}: ${reason}`);
-    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'FAILED', fileName, error: reason, metadata: { intake_controls: intakeControls } });
+    await recordWatcherIntakeEvent(runIntakeId, { source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', fileName, error: reason, metadata: { intake_controls: intakeControls } });
     await alertEmailIntakeFailure({ source: 'Power Automate intake control', fileName, error: reason });
     return;
   }
@@ -692,10 +724,10 @@ async function processSingleInvoiceBuffer(
       'WATCHER_LOW_OCR_CONFIDENCE',
       `OCR confidence ${(ocrConfidence * 100).toFixed(1)}% below threshold ${(OCR_CONFIDENCE_THRESHOLD * 100).toFixed(0)}% for ${fileName}${partLabel}. Routed to manual review.`
     );
-    await recordEmailIntakeEvent({
+    await recordWatcherIntakeEvent(runIntakeId, {
       source: 'POWER_AUTOMATE',
       stage: 'REVIEW_REQUIRED',
-      status: 'FAILED',
+      status: 'REVIEW_REQUIRED',
       fileName,
       error: `OCR confidence ${(ocrConfidence * 100).toFixed(1)}% below threshold ${(OCR_CONFIDENCE_THRESHOLD * 100).toFixed(0)}%`,
       metadata: { reason: 'LOW_OCR_CONFIDENCE', split_index: splitIndex ?? null },
@@ -727,7 +759,7 @@ async function processSingleInvoiceBuffer(
     logger.warn(`[File Watcher] ${fileName}${partLabel} → ManualReview: ${reason}`);
     safeMove(currentProcessingPath, MANUAL_REVIEW_DIR);
     await createAuditLog(null, 'WATCHER_REVIEW_REQUIRED', reason);
-    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'FAILED', fileName, error: reason });
+    await recordWatcherIntakeEvent(runIntakeId, { source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', fileName, error: reason });
     return;
   }
   ocrResult.invoice_number = recoveredInvoiceNumber;
@@ -747,7 +779,7 @@ async function processSingleInvoiceBuffer(
     });
     if (replacement.action === 'REPLACED') {
       safeMove(currentProcessingPath, PROCESSED_DIR);
-      await recordEmailIntakeEvent({
+      await recordWatcherIntakeEvent(runIntakeId, {
         source: 'POWER_AUTOMATE',
         stage: 'PDF_REPLACED',
         status: 'COMPLETED',
@@ -1037,7 +1069,7 @@ async function processSingleInvoiceBuffer(
     }
 
     logger.info(`[File Watcher] Saved invoice ${invoice.invoice_number} with ${invoice.invoice_lines?.length || 0} line items`);
-    await recordEmailIntakeEvent({
+    await recordWatcherIntakeEvent(runIntakeId, {
       source: 'POWER_AUTOMATE',
       stage: 'CREATED',
       fileName,
@@ -1276,20 +1308,23 @@ async function auditUploadOnlyIntake(): Promise<void> {
         created_at: { gte: new Date(now - UPLOAD_ONLY_LOOKBACK_MS) },
         stage: { in: ['UPLOADED', 'EXTRACTED', 'REVIEW_REQUIRED', 'PDF_REPLACED', 'CREATED', 'FAILED', 'RETRY_QUEUED'] },
       },
-      select: { file_name: true, stage: true, created_at: true },
+      select: { file_name: true, stage: true, created_at: true, metadata: true },
       orderBy: { created_at: 'asc' },
     }) as IntakeEventSummary[];
 
-    const latestUploads = new Map<string, Date>();
+    const latestUploads = new Map<string, { uploadedAt: Date; intakeId?: string }>();
     for (const event of events) {
       if (event.stage !== 'UPLOADED' || !event.file_name) continue;
       const previous = latestUploads.get(event.file_name);
-      if (!previous || event.created_at > previous) latestUploads.set(event.file_name, event.created_at);
+      if (!previous || event.created_at > previous.uploadedAt) {
+        latestUploads.set(event.file_name, { uploadedAt: event.created_at, intakeId: eventIntakeId(event) });
+      }
     }
 
-    for (const [fileName, uploadedAt] of latestUploads) {
+    for (const [fileName, upload] of latestUploads) {
+      const { uploadedAt, intakeId } = upload;
       if (now - uploadedAt.getTime() < UPLOAD_ONLY_MIN_AGE_MS) continue;
-      if (hasUploadCompletionEvent(fileName, uploadedAt, events)) continue;
+      if (hasUploadCompletionEvent(fileName, uploadedAt, events, intakeId)) continue;
 
       const location = findWatcherFile(fileName);
       // Files still in incoming/processing are handled by the normal poll and
@@ -1305,12 +1340,14 @@ async function auditUploadOnlyIntake(): Promise<void> {
         stage: 'FAILED',
         status: 'FAILED',
         fileName,
+        messageId: intakeId,
         error: `Upload-only intake recovery required: ${reason}`,
         metadata: {
           upload_only_intake: true,
           recovery_required: true,
           uploaded_at: uploadedAt.toISOString(),
           watcher_location: location,
+          ...(intakeId ? { intake_id: intakeId } : {}),
         },
       });
       logger.error(`[File Watcher] ${fileName}: ${reason}`);

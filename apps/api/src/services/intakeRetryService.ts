@@ -58,6 +58,28 @@ export function isRetryableExtractionError(error: unknown): boolean {
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, Math.max(0, ms)));
 
+/** Preserve provider/status/response details instead of collapsing objects to
+ * the unhelpful string "[object Object]" in intake logs. */
+export function describeIntakeError(error: unknown): string {
+  if (error instanceof Error) {
+    const detail = error as Error & { status?: number; response?: { status?: number; data?: unknown }; code?: string };
+    const status = detail.status ?? detail.response?.status;
+    const response = detail.response?.data;
+    const parts = [detail.message];
+    if (status) parts.push(`status=${status}`);
+    if (detail.code) parts.push(`code=${detail.code}`);
+    if (response && typeof response === 'object') {
+      const message = (response as any).error?.message || (response as any).message;
+      if (message) parts.push(`provider=${message}`);
+    }
+    return parts.filter(Boolean).join(' | ').slice(0, 1800);
+  }
+  if (error && typeof error === 'object') {
+    try { return JSON.stringify(error).slice(0, 1800); } catch { return 'Unknown provider error'; }
+  }
+  return String(error || 'Unknown provider error').slice(0, 1800);
+}
+
 /**
  * Run the complete OCR/fallback stack with bounded retries. The first good
  * result wins; an incomplete result is retained as a safe fallback if later
@@ -89,7 +111,7 @@ export async function analyzeWithRetry<T extends ExtractionLike>(
     } catch (error) {
       lastError = error;
       if (attempt >= maxAttempts || !isRetryableExtractionError(error)) throw error;
-      const reason = error instanceof Error ? error.message : String(error);
+      const reason = describeIntakeError(error);
       await options.onRetry?.(attempt + 1, reason);
       logger.warn(`[IntakeRetry] ${label} attempt ${attempt}/${maxAttempts} failed; retrying: ${reason}`);
       await sleep(baseDelayMs * attempt);

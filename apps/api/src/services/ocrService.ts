@@ -907,10 +907,71 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
  * The consensus wait is bounded by OPENROUTER_CONSENSUS_WAIT_MS so stragglers
  * never block the pipeline — engines that don't finish just don't vote.
  *
- * If consensus produces nothing usable, the sequential safety net runs:
- * Upstage (single-step PDF extraction) → Ollama (local, unlimited) → Gemini Vision → Mistral.
+ * If consensus produces only regex or nothing usable, the safety net first
+ * runs free/local engines (Ollama Qwen2.5-VL, Gemini AI Studio, Mistral free
+ * mode), then uses Upstage only when those engines are unavailable or fail.
  * Returns the merged result with engine name, or null if all engines fail.
  */
+/**
+ * Free/local fallback tier. Ollama is completely local; Gemini AI Studio and
+ * Mistral Studio both have free developer tiers, but remain opt-in through
+ * their existing API keys. This tier runs before paid/enterprise providers.
+ */
+async function tryFreeLocalFallbacks(
+  fileBuffer: Buffer,
+  rawText: string,
+  vendorName?: string,
+): Promise<any | null> {
+  // Local Ollama (text or Qwen2.5-VL image fallback)
+  try {
+    const ollamaOCR = (await import('./ollamaOCRService')).ollamaOCRService;
+    if (ollamaOCR.isAvailable()) {
+      if (rawText && rawText.length > 50) {
+        logger.info('[OCR] Free tier: trying local Ollama text extraction...');
+        const result = await ollamaOCR.extractFromText(rawText, { vendorName });
+        if (result && (result.vendor_name || result.invoice_number)) return { engine: 'ollama', ...result };
+      } else {
+        const images = convertPDFToImages(fileBuffer);
+        for (const [index, image] of images.entries()) {
+          logger.info(`[OCR] Free tier: trying local Ollama vision page ${index + 1}/${images.length}...`);
+          const result = await ollamaOCR.extractFromImage(image, { vendorName });
+          if (result && (result.vendor_name || result.invoice_number)) return { engine: 'ollama-vision', ...result };
+        }
+      }
+    }
+  } catch (error) {
+    logger.warn('[OCR] Free tier Ollama fallback failed:', error instanceof Error ? error.message : String(error));
+  }
+
+  // Gemini AI Studio free tier (vision-capable PDF extraction)
+  try {
+    const geminiOCR = (await import('./geminiOCRService')).geminiOCRService;
+    if (geminiOCR.isAvailable()) {
+      logger.info('[OCR] Free tier: trying Gemini Vision fallback...');
+      const result = await geminiOCR.extractFromPDF(fileBuffer, vendorName);
+      if (result && (result.vendor_name || result.invoice_number)) return { engine: 'gemini', ...result };
+    }
+  } catch (error) {
+    logger.warn('[OCR] Free tier Gemini fallback failed:', error instanceof Error ? error.message : String(error));
+  }
+
+  // Mistral Studio free mode (text-only structured extraction)
+  if (rawText && rawText.length > 50) {
+    try {
+      const mistralOCR = (await import('./mistralOCRService')).mistralOCRService;
+      if (mistralOCR.isAvailable()) {
+        logger.info('[OCR] Free tier: trying Mistral text extraction...');
+        const result = await mistralOCR.extractFromText(rawText, { vendorName } as any);
+        if (result && (result.vendor_name || result.invoice_number)) return { engine: 'mistral', ...result };
+      }
+    } catch (error) {
+      logger.warn('[OCR] Free tier Mistral fallback failed:', error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  return null;
+}
+
 async function tryAIFallbacks(
   fileBuffer: Buffer,
   rawText: string,
@@ -918,6 +979,7 @@ async function tryAIFallbacks(
 ): Promise<{ engine: string; vendor_name?: string; invoice_number?: string; invoice_date?: string; due_date?: string; total_amount?: number; subtotal?: number; currency?: string; po_number?: string; mpo_number?: string; brand?: string; brand_code?: string; season?: string; payment_terms?: string; ship_to?: string; sold_to?: string; qty_shipped?: number; document_type?: string; bank_name?: string; swift_code?: string; account_number?: string; bank_info?: { swift_code?: string; account_number?: string }; line_items?: any[]; signatures?: { signatory_name: string; signatory_role?: string; signed_date?: string }[]; bank_charges?: number; tt_charge?: number; freight_charges?: number; courier_charges?: number; handling_fee?: number; finance_surcharge?: number; tax_amount?: number; discount_amount?: number; setup_charge?: number; sample_charge?: number; min_order_charge?: number; additional_charges?: number } | null> {
   // ─── CONSENSUS PATH: strongest engines in parallel + per-field majority vote ───
   const consensusResults: EngineResult[] = [];
+  let regexFallback: Record<string, any> | null = null;
   const consensusWaitMs = Number(process.env.OPENROUTER_CONSENSUS_WAIT_MS) || 45000;
 
   const withTimeout = async (label: string, task: () => Promise<void>): Promise<void> => {
@@ -1002,7 +1064,8 @@ async function tryAIFallbacks(
   if (consensusResults.length > 0) {
     const merged = mergeEngineResults(consensusResults);
     const hasCore = merged.data.invoice_number || merged.data.vendor_name || merged.data.total_amount;
-    if (hasCore) {
+    const hasAiEngine = consensusResults.some(result => result.engine !== 'regex');
+    if (hasCore && hasAiEngine) {
       logger.info(`[OCR] Consensus result: base_engine=${merged.base_engine}, engines=[${merged.engines_used.join(', ')}], vendor="${merged.data.vendor_name}", invoice#="${merged.data.invoice_number}", amount=${merged.data.total_amount}`);
       return {
         engine: 'consensus',
@@ -1012,9 +1075,23 @@ async function tryAIFallbacks(
         consensus_review_required_fields: merged.review_required_fields,
       } as any;
     }
+    if (hasCore) {
+      // Regex is deterministic and useful as a last resort, but returning it
+      // immediately prevented the free/local AI fallbacks from running when
+      // Groq was invalid or OpenRouter was rate-limited. Keep it as a safe
+      // fallback while giving Ollama/Gemini/Mistral a chance to improve scans.
+      regexFallback = { engine: 'consensus-regex', ...merged.data };
+      logger.warn('[OCR] Consensus contains regex only; continuing to free/local AI fallbacks');
+    }
   }
 
   logger.warn('[OCR] Consensus produced no usable result — falling back to sequential engines');
+
+  const freeFirst = process.env.OCR_FREE_FIRST !== 'false';
+  if (freeFirst) {
+    const freeResult = await tryFreeLocalFallbacks(fileBuffer, rawText, vendorName);
+    if (freeResult) return freeResult;
+  }
 
   // 2nd priority: Upstage Info Extraction (single-step PDF → fields, 300 PPM, ~10-12s)
   // Directly extracts structured fields from PDF — no separate OCR step needed
@@ -1060,7 +1137,7 @@ async function tryAIFallbacks(
 
   // 3rd priority: Ollama (Qwen2.5 — local, no rate limits, ~73-88s on CPU)
   // Used when Groq/Upstage rate limits are hit
-  if (rawText && rawText.length > 50) {
+  if (!freeFirst && rawText && rawText.length > 50) {
     try {
       const ollamaOCR = (await import('./ollamaOCRService')).ollamaOCRService;
       if (ollamaOCR.isAvailable()) {
@@ -1074,7 +1151,7 @@ async function tryAIFallbacks(
     } catch (e) {
       logger.error('[OCR] Ollama (Qwen2.5) extraction failed:', e);
     }
-  } else {
+  } else if (!freeFirst) {
     logger.warn('[OCR] No raw text — trying PDF-to-image conversion for Ollama vision...');
     const imagesBase64 = convertPDFToImages(fileBuffer);
     if (imagesBase64.length > 0) {
@@ -1099,7 +1176,7 @@ async function tryAIFallbacks(
   // 4th fallback: Gemini Vision (sends PDF as file directly — best for scanned PDFs)
   try {
     const geminiOCR = (await import('./geminiOCRService')).geminiOCRService;
-    if (geminiOCR.isAvailable()) {
+    if (!freeFirst && geminiOCR.isAvailable()) {
       logger.info('[OCR] Trying Gemini Vision fallback (4th priority)...');
       const geminiResult = await geminiOCR.extractFromPDF(fileBuffer, vendorName);
       if (geminiResult && (geminiResult.vendor_name || geminiResult.invoice_number)) {
@@ -1112,7 +1189,7 @@ async function tryAIFallbacks(
   }
 
   // 5th fallback: Mistral (text-based, decent free-tier)
-  if (rawText && rawText.length > 50) {
+  if (!freeFirst && rawText && rawText.length > 50) {
     try {
       const mistralOCR = (await import('./mistralOCRService')).mistralOCRService;
       if (mistralOCR.isAvailable()) {
@@ -1128,7 +1205,7 @@ async function tryAIFallbacks(
     }
   }
 
-  return null;
+  return regexFallback as any;
 }
 
 // ─── REAL CONFIDENCE CALCULATION ───────────────────────────────────────────

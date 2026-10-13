@@ -224,4 +224,16 @@ describe('fileWatcherService upload-only recovery guard', () => {
       { file_name: 'corrected.pdf', stage: 'PDF_REPLACED', created_at: new Date('2026-09-30T07:53:00.000Z') },
     ])).toBe(true);
   });
+
+  it('uses the stable intake ID when present instead of matching an older same-name event', () => {
+    expect(hasUploadCompletionEvent('same-name.pdf', uploadedAt, [
+      { file_name: 'same-name.pdf', stage: 'UPLOADED', created_at: uploadedAt, metadata: { intake_id: 'run-2' } },
+      { file_name: 'same-name.pdf', stage: 'CREATED', created_at: new Date('2026-09-30T07:51:00.000Z'), metadata: { intake_id: 'run-1' } },
+    ], 'run-2')).toBe(false);
+
+    expect(hasUploadCompletionEvent('same-name.pdf', uploadedAt, [
+      { file_name: 'same-name.pdf', stage: 'UPLOADED', created_at: uploadedAt, metadata: { intake_id: 'run-2' } },
+      { file_name: 'different-name.pdf', stage: 'PDF_REPLACED', created_at: new Date('2026-09-30T07:51:00.000Z'), metadata: { intake_id: 'run-2' } },
+    ], 'run-2')).toBe(true);
+  });
 });

@@ -15,8 +15,8 @@ import prisma from '../config/database';
 import { logger } from '../utils/logger';
 import { AppError } from '../middleware/errorHandler';
 import { alertEmailIntakeFailure, recordEmailIntakeEvent } from './emailIntakeMonitoringService';
-import { analyzeWithRetry } from './intakeRetryService';
-import { hasStrongNonInvoiceHeading, isObviouslyNonInvoiceFilename, nonInvoiceSuppressionReason } from './nonInvoiceSuppression';
+import { analyzeWithRetry, describeIntakeError } from './intakeRetryService';
+import { hasStrongNonInvoiceHeading } from './nonInvoiceSuppression';
 import { PDFDocument } from 'pdf-lib';
 import { buildIntakeIdempotencyKey, evaluateIntakeControls } from './intakeControlService';
 import { checkEmailDuplicate, generateFileHash } from './emailDuplicateService';
@@ -208,22 +208,27 @@ async function analyzeIntakeWithRetry(
   source: 'GRAPH' | 'POWER_AUTOMATE' | 'SHAREPOINT',
   context: { mailbox?: string; messageId?: string; attachmentId?: string; intakeKey?: string } = {},
 ): Promise<any> {
-  const outcome = await analyzeWithRetry(
-    () => analyzeInvoice(buffer, contentType),
-    {
-      label: `OCR ${fileName}`,
-      onRetry: (attempt, reason) => recordEmailIntakeEvent({
-        source,
-        stage: 'RETRY_ATTEMPT',
-        mailbox: context.mailbox,
-        messageId: context.messageId || context.intakeKey,
-        attachmentId: context.attachmentId,
-        fileName,
-        metadata: { attempt, reason },
-      }),
-    },
-  );
-  return outcome.result;
+  try {
+    const outcome = await analyzeWithRetry(
+      () => analyzeInvoice(buffer, contentType),
+      {
+        label: `OCR ${fileName}`,
+        onRetry: (attempt, reason) => recordEmailIntakeEvent({
+          source,
+          stage: 'RETRY_ATTEMPT',
+          mailbox: context.mailbox,
+          messageId: context.messageId || context.intakeKey,
+          attachmentId: context.attachmentId,
+          fileName,
+          metadata: { attempt, reason, source, file_name: fileName },
+        }),
+      },
+    );
+    return outcome.result;
+  } catch (error) {
+    const detail = describeIntakeError(error);
+    throw new Error(`OCR provider failed for ${fileName}: ${detail}`);
+  }
 }
 
 export function isEmailPollerConfigured(): boolean {
@@ -458,25 +463,10 @@ async function processSingleInvoiceAttachment(
   multiInvoiceSource?: any,
 ): Promise<void> {
   try {
-    // Keep obvious shipment/supporting documents out of storage/OCR. We retain
-    // the intake event for auditability; only ambiguous documents go through
-    // OCR classification.
-    if (isObviouslyNonInvoiceFilename(fileName, message.subject || '')) {
-      const reason = nonInvoiceSuppressionReason(fileName, message.subject || '');
-      await recordEmailIntakeEvent({
-        source: 'GRAPH',
-        stage: 'REVIEW_REQUIRED',
-        status: 'FAILED',
-        mailbox: mailboxAddress,
-        messageId: message.id,
-        attachmentId,
-        fileName,
-        error: reason,
-        metadata: { suppressed_before_ocr: true, suppression_rule: 'obvious_filename_pattern' },
-      });
-      logger.info(`[Email Intake] ${fileName} suppressed before OCR: ${reason}`);
-      return;
-    }
+    // Filename patterns are advisory only. Always retain and OCR the
+    // attachment first; document classification decides whether it is an
+    // invoice or a review item. This prevents valid invoices with filenames
+    // containing "packing", "report", or "artwork" from disappearing.
     // Upload to VPS Supabase Storage FIRST (before OCR — ensures file is saved even if OCR fails)
     let storagePath: string | undefined;
     try {
@@ -494,6 +484,10 @@ async function processSingleInvoiceAttachment(
       const detail = storageError instanceof Error ? storageError.message : String(storageError);
       await recordEmailIntakeEvent({ source: 'GRAPH', stage: 'FAILED', status: 'FAILED', mailbox: mailboxAddress, messageId: message.id, attachmentId, fileName, error: `Storage upload failed: ${detail}` });
       await alertEmailIntakeFailure({ source: 'Microsoft Graph storage upload', fileName, error: detail });
+    }
+    if (!storagePath) {
+      await recordEmailIntakeEvent({ source: 'GRAPH', stage: 'FAILED', status: 'FAILED', mailbox: mailboxAddress, messageId: message.id, attachmentId, fileName, error: 'Durable storage upload failed; invoice creation was skipped.', metadata: { storage_required: true, retryable: true } });
+      return;
     }
 
     // Analyze invoice using OCR
@@ -513,7 +507,7 @@ async function processSingleInvoiceAttachment(
     const reviewReason = intakeReviewReason(ocrResult, fileName, message.subject || '');
     if (reviewReason) {
       await recordEmailIntakeEvent({
-        source: 'GRAPH', stage: 'REVIEW_REQUIRED', status: 'FAILED', mailbox: mailboxAddress,
+        source: 'GRAPH', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', mailbox: mailboxAddress,
         messageId: message.id, attachmentId, fileName,
         error: reviewReason,
         metadata: { invoice_type: ocrResult.invoice_type, amount: ocrResult.total_amount, currency: ocrResult.currency },
@@ -524,7 +518,7 @@ async function processSingleInvoiceAttachment(
     }
     if (graphControls.reasons.length > 0) {
       const controlReason = graphControls.reasons.join(' ');
-      await recordEmailIntakeEvent({ source: 'GRAPH', stage: 'REVIEW_REQUIRED', status: 'FAILED', mailbox: mailboxAddress, messageId: message.id, attachmentId, fileName, error: controlReason, metadata: graphControls.metadata });
+      await recordEmailIntakeEvent({ source: 'GRAPH', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', mailbox: mailboxAddress, messageId: message.id, attachmentId, fileName, error: controlReason, metadata: graphControls.metadata });
       await alertEmailIntakeFailure({ source: 'Invoice intake control', fileName, error: controlReason });
       logger.warn(`[Email Intake] ${fileName} routed to review: ${controlReason}`);
       return;
@@ -571,7 +565,7 @@ async function processSingleInvoiceAttachment(
     });
     if (graphDuplicate.isDuplicate) {
       const duplicateReason = `${graphDuplicate.detail}; retained as review-only and no duplicate invoice record was created.`;
-      await recordEmailIntakeEvent({ source: 'GRAPH', stage: 'REVIEW_REQUIRED', status: 'FAILED', mailbox: mailboxAddress, messageId: message.id, attachmentId, fileName, error: duplicateReason, metadata: { duplicate_level: graphDuplicate.level, existing_invoice_id: graphDuplicate.existingInvoiceId } });
+      await recordEmailIntakeEvent({ source: 'GRAPH', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', mailbox: mailboxAddress, messageId: message.id, attachmentId, fileName, error: duplicateReason, metadata: { duplicate_level: graphDuplicate.level, existing_invoice_id: graphDuplicate.existingInvoiceId } });
       await alertEmailIntakeFailure({ source: 'Invoice duplicate protection', fileName, error: duplicateReason });
       return;
     }
@@ -845,20 +839,8 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
     await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'RECEIVED', messageId: intakeKey, fileName: data.fileName, metadata: { from: data.fromAddress } });
     await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'ATTACHMENT_DETECTED', messageId: intakeKey, fileName: data.fileName });
 
-    if (isObviouslyNonInvoiceFilename(data.fileName, data.emailSubject || '')) {
-      const reason = nonInvoiceSuppressionReason(data.fileName, data.emailSubject || '');
-      await recordEmailIntakeEvent({
-        source: 'SHAREPOINT',
-        stage: 'REVIEW_REQUIRED',
-        status: 'FAILED',
-        messageId: intakeKey,
-        fileName: data.fileName,
-        error: reason,
-        metadata: { suppressed_before_ocr: true, suppression_rule: 'obvious_filename_pattern' },
-      });
-      logger.info(`[SharePoint Intake] ${data.fileName} suppressed before OCR: ${reason}`);
-      return { success: false, status: 'REVIEW_REQUIRED', error: reason };
-    }
+    // Filename patterns are advisory only; OCR/document classification makes
+    // the final decision so invoice-like attachments are never dropped.
 
     // Download file from SharePoint
     const client = await getGraphClient();
@@ -891,6 +873,10 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
       await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'FAILED', status: 'FAILED', messageId: intakeKey, fileName: data.fileName, error: `Storage upload failed: ${detail}` });
       await alertEmailIntakeFailure({ source: 'Power Automate/SharePoint storage upload', fileName: data.fileName, error: detail });
     }
+    if (!storagePath) {
+      await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'FAILED', status: 'FAILED', messageId: intakeKey, fileName: data.fileName, error: 'Durable storage upload failed; invoice creation was skipped.', metadata: { storage_required: true, retryable: true, intake_id: intakeKey } });
+      return { success: false, status: 'FAILED', error: 'Durable storage upload failed' };
+    }
 
     // Analyze invoice using OCR
     const ocrResult = await analyzeIntakeWithRetry(buffer, 'application/pdf', data.fileName, 'SHAREPOINT', { intakeKey });
@@ -901,14 +887,14 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
 
     const reviewReason = intakeReviewReason(ocrResult, data.fileName, data.emailSubject || '');
     if (reviewReason) {
-      await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'REVIEW_REQUIRED', status: 'FAILED', messageId: intakeKey, fileName: data.fileName, error: reviewReason });
+      await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', messageId: intakeKey, fileName: data.fileName, error: reviewReason });
       await alertEmailIntakeFailure({ source: 'SharePoint invoice intake review required', fileName: data.fileName, error: reviewReason });
       logger.warn(`[SharePoint Intake] ${data.fileName} routed to review: ${reviewReason}`);
       return { success: false, status: 'REVIEW_REQUIRED', error: reviewReason };
     }
     if (sharePointControls.reasons.length > 0) {
       const controlReason = sharePointControls.reasons.join(' ');
-      await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'REVIEW_REQUIRED', status: 'FAILED', messageId: intakeKey, fileName: data.fileName, error: controlReason, metadata: sharePointControls.metadata });
+      await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', messageId: intakeKey, fileName: data.fileName, error: controlReason, metadata: sharePointControls.metadata });
       await alertEmailIntakeFailure({ source: 'SharePoint invoice intake control', fileName: data.fileName, error: controlReason });
       logger.warn(`[SharePoint Intake] ${data.fileName} routed to review: ${controlReason}`);
       return { success: false, status: 'REVIEW_REQUIRED', error: controlReason };
@@ -930,7 +916,7 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
       await recordEmailIntakeEvent({
         source: 'SHAREPOINT',
         stage: replaced ? 'PDF_REPLACED' : 'REVIEW_REQUIRED',
-        status: replaced ? 'COMPLETED' : 'FAILED',
+        status: replaced ? 'COMPLETED' : 'REVIEW_REQUIRED',
         messageId: intakeKey,
         fileName: data.fileName,
         invoiceId: replacementInvoice.id,
@@ -952,7 +938,7 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
     });
     if (sharePointDuplicate.isDuplicate) {
       const duplicateReason = `${sharePointDuplicate.detail}; no duplicate invoice record was created.`;
-      await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'REVIEW_REQUIRED', status: 'FAILED', messageId: intakeKey, fileName: data.fileName, error: duplicateReason, metadata: { duplicate_level: sharePointDuplicate.level, existing_invoice_id: sharePointDuplicate.existingInvoiceId } });
+      await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', messageId: intakeKey, fileName: data.fileName, error: duplicateReason, metadata: { duplicate_level: sharePointDuplicate.level, existing_invoice_id: sharePointDuplicate.existingInvoiceId } });
       return { success: false, status: 'REVIEW_REQUIRED', error: duplicateReason };
     }
 
@@ -1166,29 +1152,22 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
   exceptions?: string[];
   error?: string;
 }> {
-  const intakeKey = `${data.fromAddress}|${data.receivedDateTime}|${data.fileName}`;
+  // The initial key is used for the receive event; once the payload is
+  // decoded, all processing events use a content-addressed intake ID so a
+  // repeated filename can never satisfy another attachment's completion.
+  const receiveKey = `${data.fromAddress}|${data.receivedDateTime}|${data.fileName}`;
+  let intakeKey = receiveKey;
   try {
     logger.info(`Processing Power Automate attachment: ${data.fileName} from ${data.fromAddress}`);
-    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'RECEIVED', messageId: intakeKey, fileName: data.fileName, metadata: { from: data.fromAddress, subject: data.emailSubject } });
-    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'ATTACHMENT_DETECTED', messageId: intakeKey, fileName: data.fileName });
+    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'RECEIVED', messageId: receiveKey, fileName: data.fileName, metadata: { from: data.fromAddress, subject: data.emailSubject } });
+    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'ATTACHMENT_DETECTED', messageId: receiveKey, fileName: data.fileName });
 
-    if (isObviouslyNonInvoiceFilename(data.fileName, data.emailSubject || '')) {
-      const reason = nonInvoiceSuppressionReason(data.fileName, data.emailSubject || '');
-      await recordEmailIntakeEvent({
-        source: 'POWER_AUTOMATE',
-        stage: 'REVIEW_REQUIRED',
-        status: 'FAILED',
-        messageId: intakeKey,
-        fileName: data.fileName,
-        error: reason,
-        metadata: { suppressed_before_ocr: true, suppression_rule: 'obvious_filename_pattern' },
-      });
-      logger.info(`[Power Automate] ${data.fileName} suppressed before OCR: ${reason}`);
-      return { success: false, status: 'REVIEW_REQUIRED', error: reason };
-    }
+    // Filename patterns are advisory only; OCR/document classification makes
+    // the final decision so invoice-like attachments are never dropped.
 
     // Convert base64 to buffer
     const buffer = Buffer.from(data.attachmentBase64, 'base64');
+    intakeKey = buildIntakeIdempotencyKey(receiveKey, generateFileHash(buffer));
 
     // Upload to VPS Supabase Storage FIRST (before OCR — ensures file is saved even if OCR fails)
     let storagePath: string | undefined;
@@ -1197,13 +1176,17 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
       if (uploadedPath) {
         storagePath = uploadedPath;
         logger.info(`[Power Automate] Invoice uploaded to VPS storage: ${storagePath}`);
-        await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'UPLOADED', messageId: intakeKey, fileName: data.fileName, metadata: { storage_path: storagePath } });
+        await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'UPLOADED', messageId: intakeKey, fileName: data.fileName, metadata: { storage_path: storagePath, intake_id: intakeKey } });
       }
     } catch (storageError) {
       logger.warn(`Failed to upload invoice to VPS storage for ${data.fileName}:`, storageError);
       const detail = storageError instanceof Error ? storageError.message : String(storageError);
       await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'FAILED', status: 'FAILED', messageId: intakeKey, fileName: data.fileName, error: `Storage upload failed: ${detail}` });
       await alertEmailIntakeFailure({ source: 'Power Automate storage upload', fileName: data.fileName, error: detail });
+    }
+    if (!storagePath) {
+      await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'FAILED', status: 'FAILED', messageId: intakeKey, fileName: data.fileName, error: 'Durable storage upload failed; invoice creation was skipped.', metadata: { storage_required: true, retryable: true, intake_id: intakeKey } });
+      return { success: false, status: 'FAILED', error: 'Durable storage upload failed' };
     }
 
     // Analyze invoice using OCR
@@ -1215,14 +1198,14 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
 
     const reviewReason = intakeReviewReason(ocrResult, data.fileName, data.emailSubject || '');
     if (reviewReason) {
-      await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'FAILED', messageId: intakeKey, fileName: data.fileName, error: reviewReason });
+      await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', messageId: intakeKey, fileName: data.fileName, error: reviewReason });
       await alertEmailIntakeFailure({ source: 'Power Automate invoice intake review required', fileName: data.fileName, error: reviewReason });
       logger.warn(`[Power Automate] ${data.fileName} routed to review: ${reviewReason}`);
       return { success: false, status: 'REVIEW_REQUIRED', error: reviewReason };
     }
     if (powerAutomateControls.reasons.length > 0) {
       const controlReason = powerAutomateControls.reasons.join(' ');
-      await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'FAILED', messageId: intakeKey, fileName: data.fileName, error: controlReason, metadata: powerAutomateControls.metadata });
+      await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', messageId: intakeKey, fileName: data.fileName, error: controlReason, metadata: powerAutomateControls.metadata });
       await alertEmailIntakeFailure({ source: 'Power Automate invoice intake control', fileName: data.fileName, error: controlReason });
       logger.warn(`[Power Automate] ${data.fileName} routed to review: ${controlReason}`);
       return { success: false, status: 'REVIEW_REQUIRED', error: controlReason };
@@ -1244,7 +1227,7 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
       await recordEmailIntakeEvent({
         source: 'POWER_AUTOMATE',
         stage: replaced ? 'PDF_REPLACED' : 'REVIEW_REQUIRED',
-        status: replaced ? 'COMPLETED' : 'FAILED',
+        status: replaced ? 'COMPLETED' : 'REVIEW_REQUIRED',
         messageId: intakeKey,
         fileName: data.fileName,
         invoiceId: replacementInvoice.id,
@@ -1266,7 +1249,7 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
     });
     if (powerAutomateDuplicate.isDuplicate) {
       const duplicateReason = `${powerAutomateDuplicate.detail}; no duplicate invoice record was created.`;
-      await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'FAILED', messageId: intakeKey, fileName: data.fileName, error: duplicateReason, metadata: { duplicate_level: powerAutomateDuplicate.level, existing_invoice_id: powerAutomateDuplicate.existingInvoiceId } });
+      await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', messageId: intakeKey, fileName: data.fileName, error: duplicateReason, metadata: { duplicate_level: powerAutomateDuplicate.level, existing_invoice_id: powerAutomateDuplicate.existingInvoiceId } });
       return { success: false, status: 'REVIEW_REQUIRED', error: duplicateReason };
     }
 

@@ -41,6 +41,26 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
     expect(getPayableBlockReason({ document_type: 'UNKNOWN' })).toMatch(/UNKNOWN/);
   });
 
+  it('blocks customs-only paperwork even when it has complete invoice fields', () => {
+    expect(getPayableBlockReason({
+      document_type: 'INVOICE',
+      invoice_number: '3109D246096',
+      vendor_name: 'SML (HONG KONG) LIMITED',
+      invoice_date: '2026-09-04',
+      total_amount: 4.68,
+      raw_text: 'INVOICE\nInvoice ID: 3109D246096\nTHIS IS FOR CUSTOMS PURPOSE ONLY.\nTotal amount: HKD 4.68',
+    })).toMatch(/customs\/shipping purposes only/);
+
+    expect(getPayableBlockReason({
+      document_type: 'COMMERCIAL_INVOICE',
+      invoice_number: 'HDH26091670',
+      vendor_name: 'PAXAR (CHINA) LIMITED',
+      invoice_date: '2026-09-16',
+      total_amount: 107.43,
+      raw_text: 'EXPORT INVOICE\nCOMMERCIAL INVOICE WILL BE ISSUED FOR BILLING PURPOSE\nTotal USD 107.43',
+    })).toMatch(/customs\/shipping purposes only/);
+  });
+
   it('allows an OCR-misclassified statement when the header has invoice evidence', () => {
     expect(getPayableBlockReason({
       document_type: 'STATEMENT',

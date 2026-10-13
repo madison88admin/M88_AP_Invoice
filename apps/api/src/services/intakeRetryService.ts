@@ -52,7 +52,7 @@ function completenessScore(result: ExtractionLike | null | undefined): number {
 
 /** Retry only errors that are commonly transient provider/network failures. */
 export function isRetryableExtractionError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = describeIntakeError(error);
   return /(timeout|timed out|429|rate limit|5\d\d|503|502|network|socket|fetch failed|econn|temporar|provider|quota|overloaded)/i.test(message);
 }
 
@@ -75,6 +75,20 @@ export function describeIntakeError(error: unknown): string {
     return parts.filter(Boolean).join(' | ').slice(0, 1800);
   }
   if (error && typeof error === 'object') {
+    const detail = error as Record<string, unknown> & {
+      response?: { status?: number; data?: unknown };
+      error?: { message?: string };
+    };
+    const status = detail.status ?? detail.response?.status;
+    const message = detail.message
+      ?? detail.error?.message
+      ?? (detail.response?.data as any)?.error?.message
+      ?? (detail.response?.data as any)?.message;
+    const provider = detail.provider ?? detail.model;
+    const parts = [message, status ? `status=${status}` : '', provider ? `provider=${provider}` : '']
+      .filter(Boolean)
+      .map(String);
+    if (parts.length > 0) return parts.join(' | ').slice(0, 1800);
     try { return JSON.stringify(error).slice(0, 1800); } catch { return 'Unknown provider error'; }
   }
   return String(error || 'Unknown provider error').slice(0, 1800);

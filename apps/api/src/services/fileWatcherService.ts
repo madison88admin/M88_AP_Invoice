@@ -28,7 +28,7 @@ import { sanitizeInvoiceType, sanitizeCategory } from '../utils/enumSanitizer';
 import { parseMPOReference } from '../utils/mpoReference';
 import { alertEmailIntakeFailure, recordEmailIntakeEvent } from './emailIntakeMonitoringService';
 import { evaluateCurrencyPolicy, normalizeToUsd } from './currencyPolicyService';
-import { analyzeWithRetry } from './intakeRetryService';
+import { analyzeWithRetry, describeIntakeError } from './intakeRetryService';
 import { hasStrongNonInvoiceHeading, isObviouslyNonInvoiceFilename, nonInvoiceSuppressionReason } from './nonInvoiceSuppression';
 import { PDFDocument } from 'pdf-lib';
 import { evaluateIntakeControls } from './intakeControlService';
@@ -740,12 +740,13 @@ async function processSingleInvoiceBuffer(
     ocrResult.processed_pages = processedPages;
     await recordWatcherIntakeEvent(runIntakeId, { source: 'POWER_AUTOMATE', stage: 'EXTRACTED', fileName, metadata: { documentType: ocrResult?.document_type, currency: ocrResult?.currency, input_pages: inputPages, processed_pages: processedPages, page_coverage_complete: inputPages === undefined || inputPages === processedPages } });
   } catch (err) {
+    const detail = describeIntakeError(err);
     logger.error(`[File Watcher] OCR failed for ${fileName}${partLabel}:`, err);
     safeMove(currentProcessingPath, FAILED_DIR);
-    await createAuditLog(null, 'WATCHER_OCR_FAILED', `OCR extraction failed for ${fileName}${partLabel}: ${err}`);
-    await recordWatcherIntakeEvent(runIntakeId, { source: 'POWER_AUTOMATE', stage: 'FAILED', fileName, error: `OCR extraction failed: ${String(err)}` });
-    await alertEmailIntakeFailure({ source: 'Power Automate SFTP intake', fileName, error: 'OCR extraction failed' });
-    return { fileName, terminalStage: 'FAILED', error: `OCR extraction failed: ${String(err)}` };
+    await createAuditLog(null, 'WATCHER_OCR_FAILED', `OCR extraction failed for ${fileName}${partLabel}: ${detail}`);
+    await recordWatcherIntakeEvent(runIntakeId, { source: 'POWER_AUTOMATE', stage: 'FAILED', fileName, error: `OCR extraction failed: ${detail}` });
+    await alertEmailIntakeFailure({ source: 'Power Automate SFTP intake', fileName, error: `OCR extraction failed: ${detail}` });
+    return { fileName, terminalStage: 'FAILED', error: `OCR extraction failed: ${detail}` };
   }
 
   // Recover invoice identifiers embedded in SFTP filenames before applying

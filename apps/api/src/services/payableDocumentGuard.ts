@@ -95,6 +95,11 @@ const DEBIT_NOTE_HINTS = /\bDEBIT\s+(?:NOTE|MEMO)\b/i;
 // example `...-DN-IX-2026.pdf`) even when OCR returns the generic INVOICE type.
 const DEBIT_NOTE_FILENAME_HINTS = /(?:^|[^A-Z0-9])(?:DEBIT[\s_-]*NOTE|DN)(?:[^A-Z0-9]|$)/i;
 
+/** Shipping/customs paperwork can contain complete invoice-like fields but is
+ * explicitly not the supplier's payable bill. These declarations must beat
+ * the generic commercial-invoice escape hatch. */
+const CUSTOMS_ONLY_HINTS = /\b(?:for\s+customs\s+(?:purpose|clearance)\s+only|customs\s+clearance\s+only|commercial\s+invoice\s+will\s+be\s+issued\s+for\s+billing\s+purpose)\b/i;
+
 /**
  * Commercial Invoice is a payable subtype, but only with core invoice data.
  *
@@ -206,6 +211,10 @@ export function getPayableBlockReason(
     classification?.document_type || doc.document_type || doc.source_document_type || doc.invoice_type || ''
   ).toUpperCase();
   const isProforma = docType === 'PROFORMA' || docType === 'PROFORMA_INVOICE';
+  const rawText = String(doc.raw_text || '');
+  if (CUSTOMS_ONLY_HINTS.test(rawText)) {
+    return 'Document is for customs/shipping purposes only and is not the supplier payable invoice';
+  }
   const validCommercialInvoice = isValidCommercialInvoice(doc, docType);
 
   if (classification && classification.payable_candidate === false && !isProforma) {
@@ -225,7 +234,6 @@ export function getPayableBlockReason(
   }
 
   // A debit-note heading is decisive even when structured OCR classification is missing.
-  const rawText = String(doc.raw_text || '');
   const fileNameText = String(doc.fileName || '').replace(/[_-]+/g, ' ');
   if (DEBIT_NOTE_HINTS.test(rawText)
     || DEBIT_NOTE_HINTS.test(fileNameText)

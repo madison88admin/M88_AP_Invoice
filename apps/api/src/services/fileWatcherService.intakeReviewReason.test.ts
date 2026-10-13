@@ -47,6 +47,17 @@ describe('fileWatcherService.intakeReviewReason — body classification beats fi
     expect(intakeReviewReason(baseValidInvoice, 'receipt acknowledgment INV-56.pdf')).toBeNull();
   });
 
+  it('allows a proforma invoice into the system for review', () => {
+    expect(intakeReviewReason({
+      ...baseValidInvoice,
+      invoice_type: 'PROFORMA',
+      document_type: 'PROFORMA_INVOICE',
+      document_classification: { document_type: 'PROFORMA_INVOICE', payable_candidate: true },
+      is_non_invoice_document: true,
+      raw_text: 'PROFORMA INVOICE\nInvoice No: PI-100\nTotal USD 100.00',
+    }, 'proforma-invoice-PI-100.pdf')).toBeNull();
+  });
+
   it('allows underscored invoice filenames (INV_100.pdf)', () => {
     expect(intakeReviewReason(baseValidInvoice, 'C&T_INV_100_2026.pdf')).toBeNull();
   });

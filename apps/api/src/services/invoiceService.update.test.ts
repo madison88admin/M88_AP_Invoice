@@ -139,4 +139,26 @@ describe('updateInvoice persistence and re-approval controls', () => {
       'April Joy Diasanta'
     )).resolves.toMatchObject({ invoice_type: 'DEBIT_NOTE' });
   });
+
+  it('accepts Proforma as an editable document type', async () => {
+    const existing = existingInvoice({ status: 'RECEIVED' });
+    invoiceFindUnique.mockResolvedValue(existing);
+    invoiceUpdate.mockImplementation(async ({ data }: any) => ({
+      ...existing,
+      ...data,
+      vendor: null,
+      signatures: [],
+      exceptions: [],
+      stage_timestamps: [],
+      status: 'PENDING_COORDINATOR',
+    }));
+
+    await expect(updateInvoice(
+      'inv-edit',
+      { invoice_type: 'PROFORMA', edit_reason: 'Correct document classification' },
+      'coordinator-1',
+      'PURCHASING_COORDINATOR',
+      'April Joy Diasanta'
+    )).resolves.toMatchObject({ invoice_type: 'PROFORMA' });
+  });
 });

@@ -24,6 +24,12 @@ describe('structuredInvoiceService', () => {
     expect(result.payable_candidate).toBe(true);
   });
 
+  it('keeps proforma invoices eligible for AP review', () => {
+    const result = classifyInvoiceDocument({ fileName: 'proforma-invoice.pdf', text: 'PROFORMA INVOICE PI-42 TOTAL USD 100.00' });
+    expect(result.document_type).toBe('PROFORMA_INVOICE');
+    expect(result.payable_candidate).toBe(true);
+  });
+
   it('parses UBL header and line values without OCR', () => {
     const xml = `<?xml version="1.0"?>
       <Invoice xmlns:cac="urn:cac" xmlns:cbc="urn:cbc">

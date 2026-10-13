@@ -18,8 +18,8 @@
  *   before creating an invoice record.
  * - Validation: `validatePayableDocument(invoice)` is RULE 20 and runs on every
  *   validateInvoice() so even manually-created records get caught.
- * - There is intentionally no override. Even SUPERADMIN cannot turn a
- *   document classified as non-payable into an invoice record.
+ * - Proforma invoices are allowed into the AP system for review and tracking,
+ *   but remain blocked from direct posting to QuickBooks by the posting guard.
  */
 
 import { InvoiceType, InvoiceSource } from '@ap-invoice/shared';
@@ -48,8 +48,6 @@ export const NON_PAYABLE_DOCUMENT_TYPES = new Set<string>([
   'RECEIPT',
   'STATEMENT',
   'STATEMENT_OF_ACCOUNT',
-  'PROFORMA_INVOICE',
-  'PROFORMA',
   'OTHER',
   'UNKNOWN',
   'TECH_PACK',
@@ -121,8 +119,9 @@ export function isValidCommercialInvoice(doc: PayableCheckInput, docType: string
 export function getShipmentBillBlockReason(doc: PayableCheckInput): string | null {
   const classification = doc.document_classification || undefined;
   const docType = String(classification?.document_type || doc.document_type || doc.source_document_type || doc.invoice_type || '').toUpperCase();
+  const isProforma = docType === 'PROFORMA' || docType === 'PROFORMA_INVOICE';
   const validCommercialInvoice = isValidCommercialInvoice(doc, docType);
-  if (classification && classification.payable_candidate === false && !validCommercialInvoice) {
+  if (classification && classification.payable_candidate === false && !validCommercialInvoice && !isProforma) {
     return `Document classification ${String(classification.document_type || docType || 'UNKNOWN').toUpperCase()} is not eligible for invoice creation`;
   }
   if (docType === 'SHIPMENT_RECEIPT' || docType === 'BILL_PAYMENT' || docType === 'PAYMENT_BILL' || docType === 'PAYMENT_RECEIPT') {
@@ -199,21 +198,22 @@ export function getPayableBlockReason(
   const docType = String(
     classification?.document_type || doc.document_type || doc.source_document_type || doc.invoice_type || ''
   ).toUpperCase();
+  const isProforma = docType === 'PROFORMA' || docType === 'PROFORMA_INVOICE';
   const validCommercialInvoice = isValidCommercialInvoice(doc, docType);
 
-  if (classification && classification.payable_candidate === false) {
+  if (classification && classification.payable_candidate === false && !isProforma) {
     if (validCommercialInvoice) return null;
     const label = String(classification.document_type || docType || 'UNKNOWN').toUpperCase();
     return `Document classification ${label} is not payable — only actual invoices, debit notes, and credit notes may enter the AP workflow`;
   }
 
   // 1. Explicit non-invoice flag from OCR (DHL AWB detector etc.)
-  if (doc.is_non_invoice_document && !validCommercialInvoice) {
+  if (doc.is_non_invoice_document && !validCommercialInvoice && !isProforma) {
     return 'Document is a shipping/non-invoice document (OCR detection) — not eligible for invoice creation';
   }
 
   // 2. Hard-blocked document types
-  if (NON_PAYABLE_DOCUMENT_TYPES.has(docType) && !validCommercialInvoice) {
+  if (NON_PAYABLE_DOCUMENT_TYPES.has(docType) && !validCommercialInvoice && !isProforma) {
     return `Document type ${docType} is not eligible for invoice creation`;
   }
 

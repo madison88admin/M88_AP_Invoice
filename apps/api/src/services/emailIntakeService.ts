@@ -89,6 +89,8 @@ export function intakeReviewReason(ocrResult: any, fileName: string, subject = '
   const consensusReviewFields = Array.isArray(ocrResult?.consensus_review_required_fields) ? ocrResult.consensus_review_required_fields : [];
   if (consensusReviewFields.length > 0) return `OCR engines disagreed on: ${consensusReviewFields.join(', ')}.`;
   const type = String(ocrResult?.invoice_type || '').toUpperCase();
+  const isProforma = type === 'PROFORMA' || type === 'PROFORMA_INVOICE'
+    || String(ocrResult?.document_type || '').toUpperCase() === 'PROFORMA_INVOICE';
   const rawText = String(ocrResult?.raw_text || ocrResult?.raw_data?.raw_text || '');
   const payableBlockReason = getPayableBlockReason({
     document_type: ocrResult?.document_type,
@@ -100,7 +102,7 @@ export function intakeReviewReason(ocrResult: any, fileName: string, subject = '
     fileName,
   });
   if (payableBlockReason) return payableBlockReason;
-  if (ocrResult?.is_non_invoice_document || hasStrongNonInvoiceHeading(rawText) || ['AIRWAY_BILL', 'PACKING_LIST', 'DELIVERY_RECEIPT', 'TECH_PACK', 'TRIM_RECEIPT', 'FAKTUR_PAJAK', 'FORWARDER_BILLING_INVOICE', 'FORWARDERS_BILLING_INVOICE', 'EXPEDITOR_BILLING_INVOICE', 'EXPEDITORS_BILLING_INVOICE', 'FORWARDER_INVOICE', 'EXPEDITOR_INVOICE', 'EXPEDITORS_INVOICE'].includes(type)) {
+  if ((!isProforma && ocrResult?.is_non_invoice_document) || hasStrongNonInvoiceHeading(rawText) || ['AIRWAY_BILL', 'PACKING_LIST', 'DELIVERY_RECEIPT', 'TECH_PACK', 'TRIM_RECEIPT', 'FAKTUR_PAJAK', 'FORWARDER_BILLING_INVOICE', 'FORWARDERS_BILLING_INVOICE', 'EXPEDITOR_BILLING_INVOICE', 'EXPEDITORS_BILLING_INVOICE', 'FORWARDER_INVOICE', 'EXPEDITOR_INVOICE', 'EXPEDITORS_INVOICE'].includes(type)) {
     return 'Document is a shipping/non-invoice document (packing list, AWB, delivery or shipment document) — not eligible for invoice creation.';
   }
   // Body classification wins over filename: only apply filename/subject hints

@@ -56,7 +56,9 @@ export function classifyInvoiceDocument(input: { fileName?: string; mimeType?: s
   const matches: Array<{ type: SourceDocumentType; patterns: RegExp[]; payable: boolean }> = [
     { type: 'CREDIT_NOTE', patterns: [/CREDIT\s+(?:NOTE|MEMO)/, /<CREDITNOTE\b/], payable: true },
     { type: 'DEBIT_NOTE', patterns: [/DEBIT\s+(?:NOTE|MEMO)/, /<DEBITNOTE\b/], payable: true },
-    { type: 'PROFORMA_INVOICE', patterns: [/PRO[ -]?FORMA\s+INVOICE/], payable: false },
+    // Proforma invoices are valid AP records for review/tracking. They are
+    // still prevented from direct QuickBooks posting by validationService.
+    { type: 'PROFORMA_INVOICE', patterns: [/PRO[ -]?FORMA\s+INVOICE/], payable: true },
     { type: 'PACKING_LIST', patterns: [/PACKING\s+LIST/, /PACKING\s+SLIP/], payable: false },
     { type: 'AIRWAY_BILL', patterns: [/AIR\s*WAY\s*BILL/, /SHIPMENT\s+AIRWAYBILL/], payable: false },
     { type: 'DELIVERY_RECEIPT', patterns: [/DELIVERY\s+(?:RECEIPT|NOTE)/, /GOODS\s+RECEIPT/], payable: false },

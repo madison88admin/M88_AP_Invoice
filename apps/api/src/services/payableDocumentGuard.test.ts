@@ -10,8 +10,9 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
     expect(getPayableBlockReason({ document_type: 'INVOICE' })).toBeNull();
   });
 
-  it('allows SALES / DEBIT_NOTE but blocks proforma documents', () => {
-    expect(getPayableBlockReason({ document_type: 'PROFORMA_INVOICE' })).toMatch(/PROFORMA_INVOICE/);
+  it('allows proforma, SALES, and DEBIT_NOTE documents', () => {
+    expect(getPayableBlockReason({ document_type: 'PROFORMA_INVOICE' })).toBeNull();
+    expect(getPayableBlockReason({ document_type: 'PROFORMA' })).toBeNull();
     expect(getPayableBlockReason({ document_type: 'SALES' })).toBeNull();
     expect(getPayableBlockReason({ document_type: 'DEBIT_NOTE' })).toBeNull();
     expect(getPayableBlockReason({
@@ -185,6 +186,16 @@ describe('payableDocumentGuard — validatePayableDocument (RULE 20 input shape)
       source_document_type: 'INVOICE',
       pdf_path: 'invoices/2026/09/123_INV-100.pdf',
       ocr_raw_data: {},
+    });
+    expect(result.passed).toBe(true);
+  });
+
+  it('passes a proforma invoice record for review and tracking', () => {
+    const result = validatePayableDocument({
+      invoice_type: 'PROFORMA',
+      source_document_type: 'PROFORMA_INVOICE',
+      pdf_path: 'invoices/2026/09/PI-100.pdf',
+      ocr_raw_data: { document_type: 'PROFORMA_INVOICE', is_non_invoice_document: true },
     });
     expect(result.passed).toBe(true);
   });

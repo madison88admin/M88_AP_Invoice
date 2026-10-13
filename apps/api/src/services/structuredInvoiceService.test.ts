@@ -36,6 +36,12 @@ describe('structuredInvoiceService', () => {
     expect(result.payable_candidate).toBe(false);
   });
 
+  it('detects abbreviated debit-note filenames when OCR text is generic', () => {
+    const result = classifyInvoiceDocument({ fileName: '044-UJI-DN-IX-2026_REVISE.pdf', text: 'INVOICE BSNINVUJI26030202 TOTAL USD 1914844.10' });
+    expect(result.document_type).toBe('DEBIT_NOTE');
+    expect(result.payable_candidate).toBe(false);
+  });
+
   it('parses UBL header and line values without OCR', () => {
     const xml = `<?xml version="1.0"?>
       <Invoice xmlns:cac="urn:cac" xmlns:cbc="urn:cbc">

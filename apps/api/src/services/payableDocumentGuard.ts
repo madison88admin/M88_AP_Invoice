@@ -91,6 +91,9 @@ const NON_PAYABLE_TEXT_HINTS =
 
 /** Debit notes are never payable AP invoice records, even when OCR misses the document type. */
 const DEBIT_NOTE_HINTS = /\bDEBIT\s+(?:NOTE|MEMO)\b/i;
+// Suppliers commonly abbreviate Debit Note as `DN` in the filename (for
+// example `...-DN-IX-2026.pdf`) even when OCR returns the generic INVOICE type.
+const DEBIT_NOTE_FILENAME_HINTS = /(?:^|[^A-Z0-9])(?:DEBIT[\s_-]*NOTE|DN)(?:[^A-Z0-9]|$)/i;
 
 /**
  * Commercial Invoice is a payable subtype, but only with core invoice data.
@@ -224,7 +227,9 @@ export function getPayableBlockReason(
   // A debit-note heading is decisive even when structured OCR classification is missing.
   const rawText = String(doc.raw_text || '');
   const fileNameText = String(doc.fileName || '').replace(/[_-]+/g, ' ');
-  if (DEBIT_NOTE_HINTS.test(rawText) || DEBIT_NOTE_HINTS.test(fileNameText)) {
+  if (DEBIT_NOTE_HINTS.test(rawText)
+    || DEBIT_NOTE_HINTS.test(fileNameText)
+    || DEBIT_NOTE_FILENAME_HINTS.test(String(doc.fileName || ''))) {
     return 'Debit notes are not eligible for invoice creation';
   }
 

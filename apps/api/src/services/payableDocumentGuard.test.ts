@@ -56,6 +56,7 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
   it('blocks debit-note text or filenames when OCR misses the document type', () => {
     expect(getPayableBlockReason({ raw_text: 'DEBIT NOTE DN-42 TOTAL USD 100.00' })).toMatch(/Debit notes/);
     expect(getPayableBlockReason({ fileName: 'debit-note-DN-42.pdf' })).toMatch(/Debit notes/);
+    expect(getPayableBlockReason({ document_type: 'INVOICE', fileName: '044-UJI-DN-IX-2026_REVISE.pdf' })).toMatch(/Debit notes/);
   });
 
   it('blocks when OCR flags is_non_invoice_document', () => {

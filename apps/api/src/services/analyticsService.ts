@@ -3,6 +3,19 @@ import { logger } from '../utils/logger';
 
 type RawRecord = Record<string, any>;
 const FIELD_NAMES = ['vendor_name', 'invoice_number', 'invoice_date', 'due_date', 'total_amount', 'currency', 'po_number', 'mpo_number', 'brand', 'season', 'payment_terms'];
+const FIELD_ALIASES: Record<string, string[]> = {
+  vendor_name: ['vendor_name', 'vendorName', 'supplier_name', 'supplierName'],
+  invoice_number: ['invoice_number', 'invoiceNumber', 'invoice_no', 'invoiceNo'],
+  invoice_date: ['invoice_date', 'invoiceDate'],
+  due_date: ['due_date', 'dueDate'],
+  total_amount: ['total_amount', 'totalAmount', 'amount', 'grand_total', 'grandTotal'],
+  currency: ['currency', 'invoice_currency', 'invoiceCurrency'],
+  po_number: ['po_number', 'poNumber', 'po_reference', 'poReference', 'customer_po_number', 'customerPoNumber', 'purchase_order_number', 'purchaseOrderNumber'],
+  mpo_number: ['mpo_number', 'mpoNumber', 'mpo', 'mpo_base_number', 'mpoBaseNumber'],
+  brand: ['brand', 'brand_name', 'brandName'],
+  season: ['season'],
+  payment_terms: ['payment_terms', 'paymentTerms', 'terms'],
+};
 const NON_INVOICE_TYPES = new Set(['PROFORMA', 'SALES', 'STATEMENT', 'PREPAID', 'PROTO_SAMPLE']);
 const TERMINAL_STATUSES = new Set(['APPROVED', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID', 'PAYMENT_CONFIRMATION_SENT']);
 const MANUAL_REVIEW_STATUSES = new Set(['RECEIVED', 'OCR_PROCESSING', 'VALIDATION_PENDING', 'EXCEPTION_FLAGGED', 'PENDING_COORDINATOR', 'PENDING_MANAGER', 'ON_HOLD', 'REJECTED']);
@@ -13,7 +26,78 @@ export function normalizeVendorKey(value: unknown): string { return String(value
 function canonicalVendor(inv: any): { key: string; name: string } { const name = inv.vendor?.name || inv.vendor_name_raw || 'Unknown'; const cleanName = String(name).replace(/\s+/g, ' ').trim() || 'Unknown'; return { key: normalizeVendorKey(cleanName) || inv.vendor_id || 'UNKNOWN', name: cleanName }; }
 function isNonInvoice(inv: any): boolean { return NON_INVOICE_TYPES.has(String(inv.invoice_type || '').toUpperCase()) || String(inv.source_document_type || '').toUpperCase() === 'WAYBILL'; }
 function isActualInvoice(inv: any): boolean { const type = String(inv.invoice_type || '').toUpperCase(); return (type === 'INVOICE' || type === 'COMMERCIAL' || type === 'COMMERCIAL_INVOICE') && inv.status !== 'CANCELLED' && !inv.is_duplicate; }
-function extractFieldConfidence(raw: RawRecord, field: string): number | null { for (const decision of [raw?.field_decision, raw?.decision, raw?.field_confidence]) { const candidate = decision?.fields?.[field] ?? decision?.[field]; const value = candidate && typeof candidate === 'object' ? (candidate.final_confidence ?? candidate.confidence ?? candidate.score) : candidate; const result = percent(value); if (result !== null) return result; } return null; }
+function isObject(value: unknown): value is RawRecord { return Boolean(value && typeof value === 'object' && !Array.isArray(value)); }
+function fieldNames(field: string): string[] { return FIELD_ALIASES[field] || [field]; }
+
+/**
+ * OCR payloads have changed shape over time (email intake, manual upload and
+ * the newer field-decision engine do not all persist the same wrapper). Keep
+ * analytics backwards-compatible by checking every supported confidence map.
+ */
+function confidenceMaps(raw: RawRecord): RawRecord[] {
+  const candidates = [
+    raw?.field_decision?.fields,
+    raw?.field_decision?.field_confidence,
+    raw?.decision?.fields,
+    raw?.decision?.field_confidence,
+    raw?.field_confidence,
+    raw?.extraction?.field_confidence,
+    raw?.extraction?.fields,
+    raw?.raw_data?.field_confidence,
+    raw?.raw_data?.fields,
+    raw?.raw_data?.decision?.fields,
+  ];
+  return candidates.filter(isObject);
+}
+
+function valueMaps(raw: RawRecord): RawRecord[] {
+  const candidates = [
+    raw?.decision?.final,
+    raw?.field_decision?.final,
+    raw?.extraction?.final,
+    raw?.raw_data,
+    raw?.extraction,
+    raw,
+  ];
+  return candidates.filter(isObject);
+}
+
+function lookupField(maps: RawRecord[], field: string): unknown {
+  for (const map of maps) {
+    for (const name of fieldNames(field)) {
+      if (Object.prototype.hasOwnProperty.call(map, name) && map[name] !== null && map[name] !== undefined && map[name] !== '') return map[name];
+    }
+  }
+  return null;
+}
+
+function extractFieldValue(raw: RawRecord, field: string): unknown { return lookupField(valueMaps(raw), field); }
+
+export function extractFieldConfidence(raw: RawRecord, field: string, fallbackValue?: unknown): number | null {
+  for (const map of confidenceMaps(raw)) {
+    for (const name of fieldNames(field)) {
+      if (!Object.prototype.hasOwnProperty.call(map, name)) continue;
+      const candidate = map[name];
+      const value = isObject(candidate)
+        ? (candidate.final_confidence ?? candidate.confidence ?? candidate.score ?? candidate.confidence_score)
+        : candidate;
+      const result = percent(value);
+      if (result !== null) return result;
+    }
+  }
+  // Legacy records often contain the extracted value and only one overall OCR
+  // score. Use that score for fields that are actually present, rather than
+  // reporting every field as N/A and making the chart appear broken.
+  return fallbackValue !== null && fallbackValue !== undefined && fallbackValue !== '' ? percent(fallbackValue) : null;
+}
+function extractOverallConfidence(raw: RawRecord, persistedScore?: unknown): number | null {
+  return percent(persistedScore)
+    ?? percent(raw?.decision?.overall_confidence)
+    ?? percent(raw?.field_decision?.overall_confidence)
+    ?? percent(raw?.overall_confidence)
+    ?? percent(raw?.ocr_confidence_score)
+    ?? percent(raw?.raw_data?.ocr_confidence_score);
+}
 function numericValue(value: unknown): number | null { if (value === null || value === undefined || value === '') return null; const n = Number(String(value).replace(/[^0-9.-]/g, '')); return Number.isFinite(n) ? n : null; }
 function rawAmount(raw: RawRecord): number | null { return numericValue(raw?.decision?.final?.total_amount ?? raw?.field_decision?.final?.total_amount ?? raw?.raw_data?.amount ?? raw?.amount ?? raw?.total_amount); }
 function addIssue(map: Map<string, { errors: number; warnings: number; sample: string }>, field: string, severity: 'ERROR' | 'WARNING', message: string) { const current = map.get(field) || { errors: 0, warnings: 0, sample: message }; if (severity === 'ERROR') current.errors++; else current.warnings++; map.set(field, current); }
@@ -28,15 +112,36 @@ export interface DashboardSummary { confidence: ConfidenceMetrics; vendors: Vend
 export class AnalyticsService {
   private static instance: AnalyticsService;
   static getInstance(): AnalyticsService { return AnalyticsService.instance || (AnalyticsService.instance = new AnalyticsService()); }
-  private async invoiceRows(startDate: Date) { return prisma.invoice.findMany({ where: { created_at: { gte: startDate } }, select: { id: true, invoice_number: true, invoice_type: true, status: true, is_duplicate: true, source_document_type: true, vendor_id: true, vendor_name_raw: true, vendor: { select: { id: true, name: true, name_aliases: true } }, ocr_confidence_score: true, ocr_raw_data: true, created_at: true, updated_at: true, total_amount: true, currency: true, invoice_currency_original: true }, orderBy: { created_at: 'desc' }, take: 5000 }); }
+  private async invoiceRows(startDate: Date) { return prisma.invoice.findMany({ where: { created_at: { gte: startDate } }, select: { id: true, invoice_number: true, invoice_type: true, status: true, is_duplicate: true, source_document_type: true, vendor_id: true, vendor_name_raw: true, vendor: { select: { id: true, name: true, name_aliases: true } }, ocr_confidence_score: true, ocr_raw_data: true, created_at: true, updated_at: true, invoice_date: true, due_date: true, total_amount: true, currency: true, invoice_currency_original: true, customer_po_number: true, mpo_number: true, brand: true, season: true, payment_terms: true }, orderBy: { created_at: 'desc' }, take: 5000 }); }
   async getDashboardSummary(days = 30): Promise<DashboardSummary> { const startDate = new Date(); startDate.setDate(startDate.getDate() - days); const [confidence, vendors, errors, timeline, performance] = await Promise.all([this.getConfidenceMetrics(startDate), this.getVendorAnalytics(startDate), this.getErrorAnalytics(startDate), this.getProcessingTimeline(startDate), this.getPerformanceMetrics(startDate)]); return { confidence, vendors, errors, timeline, performance, generated_at: new Date() }; }
 
   async getConfidenceMetrics(startDate: Date): Promise<ConfidenceMetrics> {
     try {
-      const rows = (await this.invoiceRows(startDate)).filter(isActualInvoice); const scores = rows.map(i => normalizeScore(i.ocr_confidence_score)).filter((v): v is number => v !== null); const distribution = { high: 0, medium: 0, low: 0, missing: 0 };
-      for (const row of rows) { const score = normalizeScore(row.ocr_confidence_score); if (score === null) distribution.missing++; else if (score >= .8) distribution.high++; else if (score >= .6) distribution.medium++; else if (score >= .3) distribution.low++; else distribution.missing++; }
-      const trendMap = new Map<string, { sum: number; count: number }>(); rows.forEach(row => { const score = normalizeScore(row.ocr_confidence_score); if (score !== null) { const d = row.created_at.toISOString().slice(0, 10); const x = trendMap.get(d) || { sum: 0, count: 0 }; x.sum += score; x.count++; trendMap.set(d, x); } });
-      const perField = FIELD_NAMES.map(field => { const values = rows.map(row => extractFieldConfidence((row.ocr_raw_data || {}) as RawRecord, field)).filter((v): v is number => v !== null); return { field, avg_confidence: values.length ? Math.round(values.reduce((a, b) => a + b, 0) / values.length) : null, low_confidence_count: values.filter(v => v < 60).length, total: values.length, coverage_rate: rows.length ? Math.round(values.length / rows.length * 100) : 0 }; });
+      const rows = (await this.invoiceRows(startDate)).filter(isActualInvoice); const scores = rows.map(i => extractOverallConfidence((i.ocr_raw_data || {}) as RawRecord, i.ocr_confidence_score)).filter((v): v is number => v !== null).map(v => v / 100); const distribution = { high: 0, medium: 0, low: 0, missing: 0 };
+      for (const row of rows) { const score = extractOverallConfidence((row.ocr_raw_data || {}) as RawRecord, row.ocr_confidence_score); if (score === null) distribution.missing++; else if (score >= 80) distribution.high++; else if (score >= 60) distribution.medium++; else if (score >= 30) distribution.low++; else distribution.missing++; }
+      const trendMap = new Map<string, { sum: number; count: number }>(); rows.forEach(row => { const score = extractOverallConfidence((row.ocr_raw_data || {}) as RawRecord, row.ocr_confidence_score); if (score !== null) { const d = row.created_at.toISOString().slice(0, 10); const x = trendMap.get(d) || { sum: 0, count: 0 }; x.sum += score / 100; x.count++; trendMap.set(d, x); } });
+      const perField = FIELD_NAMES.map(field => {
+        const values = rows.map(row => {
+          const raw = (row.ocr_raw_data || {}) as RawRecord;
+          const persistedValue: Record<string, unknown> = {
+            vendor_name: row.vendor_name_raw || row.vendor?.name,
+            invoice_number: row.invoice_number,
+            invoice_date: row.invoice_date,
+            due_date: row.due_date,
+            total_amount: row.total_amount,
+            currency: row.currency || row.invoice_currency_original,
+            po_number: row.customer_po_number,
+            mpo_number: row.mpo_number,
+            brand: row.brand,
+            season: row.season,
+            payment_terms: row.payment_terms,
+          };
+          const fieldValue = extractFieldValue(raw, field) ?? persistedValue[field];
+          const fallbackScore = extractOverallConfidence(raw, row.ocr_confidence_score);
+          return extractFieldConfidence(raw, field, fieldValue !== null && fieldValue !== undefined && fieldValue !== '' ? fallbackScore : undefined);
+        }).filter((v): v is number => v !== null);
+        return { field, avg_confidence: values.length ? Math.round(values.reduce((a, b) => a + b, 0) / values.length) : null, low_confidence_count: values.filter(v => v < 60).length, total: values.length, coverage_rate: rows.length ? Math.round(values.length / rows.length * 100) : 0 };
+      });
       return { overall_avg: scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length * 100) : null, scored_count: scores.length, total_actual_invoices: rows.length, coverage_rate: rows.length ? Math.round(scores.length / rows.length * 100) : 0, per_field: perField.sort((a, b) => (a.avg_confidence ?? 101) - (b.avg_confidence ?? 101)), trend: Array.from(trendMap.entries()).map(([date, x]) => ({ date, avg_confidence: Math.round(x.sum / x.count * 100), count: x.count })).sort((a, b) => a.date.localeCompare(b.date)), distribution };
     } catch (error) { logger.error('[Analytics] Confidence metrics failed:', error); return { overall_avg: null, scored_count: 0, total_actual_invoices: 0, coverage_rate: 0, per_field: [], trend: [], distribution: { high: 0, medium: 0, low: 0, missing: 0 } }; }
   }

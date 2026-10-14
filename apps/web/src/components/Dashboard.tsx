@@ -168,6 +168,23 @@ function deriveBaseMpo(value?: string | null): string {
   return match?.[0] || '';
 }
 
+/**
+ * AP Record IDs are permanent references, but older rows can still have a
+ * UUID (or no backfilled value) in the API response. Keep the UUID as the
+ * internal key and show a compact, readable AP reference to users.
+ */
+function displayApRecordId(invoice: any): string {
+  const stored = String(invoice?.ap_record_id || '').trim();
+  if (/^AP-\d{4}-[A-Z0-9]{12}$/.test(stored)) return stored;
+  const source = String(stored || invoice?.id || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+  const compact = source.slice(0, 12);
+  if (!compact) return '—';
+  const dateValue = invoice?.invoice_received_date || invoice?.created_at || invoice?.invoice_date;
+  const parsed = dateValue ? new Date(dateValue) : null;
+  const year = parsed && !Number.isNaN(parsed.getTime()) ? parsed.getFullYear() : new Date().getFullYear();
+  return `AP-${year}-${compact}`;
+}
+
 type QuickFilter = 'all' | 'returned' | 'urgent' | 'issues';
 
 /** True when a coordinator still needs to resolve a PO or vendor problem. */
@@ -3183,7 +3200,7 @@ ${dataRows}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>AP Record ID</p>
-                  <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{(selectedInvoice as any).ap_record_id || selectedInvoice.id}</p>
+                  <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{displayApRecordId(selectedInvoice)}</p>
                 </div>
                 <div>
                   <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Invoice Number</p>

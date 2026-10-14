@@ -101,6 +101,21 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
     })).toBeNull();
   });
 
+  it('blocks an Export Invoice header even when OCR returns payable fields', () => {
+    expect(getPayableBlockReason({
+      document_type: 'COMMERCIAL_INVOICE',
+      raw_text: 'EXPORT INVOICE\nInvoice No: EX-26001\nInvoice Date: 2026-10-14\nTotal Amount: USD 1200',
+      invoice_number: 'EX-26001',
+      vendor_name: 'Supplier Limited',
+      invoice_date: '2026-10-14',
+      total_amount: 1200,
+    })).toMatch(/Export Invoice.*not eligible/i);
+  });
+
+  it('blocks an explicit EXPORT_INVOICE document classification', () => {
+    expect(getPayableBlockReason({ document_type: 'EXPORT_INVOICE' })).toMatch(/EXPORT_INVOICE|Export Invoice/);
+  });
+
   it('blocks debit-note text or filenames when OCR misses the document type', () => {
     expect(getPayableBlockReason({ raw_text: 'DEBIT NOTE DN-42 TOTAL USD 100.00' })).toMatch(/Debit notes/);
     expect(getPayableBlockReason({ fileName: 'debit-note-DN-42.pdf' })).toMatch(/Debit notes/);

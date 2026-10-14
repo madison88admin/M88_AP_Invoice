@@ -62,6 +62,7 @@ export const NON_PAYABLE_DOCUMENT_TYPES = new Set<string>([
   'FORWARDER_INVOICE',
   'EXPEDITOR_INVOICE',
   'EXPEDITORS_INVOICE',
+  'EXPORT_INVOICE',
 ]);
 
 /**
@@ -101,6 +102,10 @@ const DEBIT_NOTE_FILENAME_HINTS = /(?:^|[^A-Z0-9])(?:DEBIT[\s_-]*NOTE|DN)(?:[^A-
  * explicitly not the supplier's payable bill. These declarations must beat
  * the generic commercial-invoice escape hatch. */
 const CUSTOMS_ONLY_HINTS = /\b(?:for\s+customs\s+(?:purpose|clearance)\s+only|customs\s+clearance\s+only|commercial\s+invoice\s+will\s+be\s+issued\s+for\s+billing\s+purpose)\b/i;
+// An "EXPORT INVOICE" header is a customs/shipping document, not the
+// supplier payable invoice. This must win even when OCR also returns complete
+// invoice-like fields or labels it as COMMERCIAL_INVOICE.
+const EXPORT_INVOICE_HEADING = /(?:^|\n)\s*export\s+invoice\b/i;
 
 /**
  * Commercial Invoice is a payable subtype, but only with core invoice data.
@@ -232,6 +237,9 @@ export function getPayableBlockReason(
   ).toUpperCase();
   const isProforma = docType === 'PROFORMA' || docType === 'PROFORMA_INVOICE';
   const rawText = String(doc.raw_text || '');
+  if (docType === 'EXPORT_INVOICE' || EXPORT_INVOICE_HEADING.test(rawText.slice(0, 1600))) {
+    return 'Export Invoice documents are customs/shipping purposes only and are not eligible for payable invoice creation';
+  }
   if (CUSTOMS_ONLY_HINTS.test(rawText)) {
     return 'Document is for customs/shipping purposes only and is not the supplier payable invoice';
   }

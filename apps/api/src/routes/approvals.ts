@@ -1,7 +1,6 @@
-import { Router, Request, Response, NextFunction } from 'express';
-import { authenticate, authorize } from '../middleware/auth';
+import { Router } from 'express';
+import { authenticate } from '../middleware/auth';
 import * as approvalController from '../controllers/approval';
-import { UserRole } from '@ap-invoice/shared';
 
 const router: Router = Router();
 

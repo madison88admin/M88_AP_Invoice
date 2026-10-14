@@ -40,8 +40,10 @@ import soaReconciliationRoutes from './routes/soaReconciliation';
 import testRoutes from './routes/test';
 import workbenchRoutes from './routes/workbench';
 import qbRoutes from './routes/qb';
+import qbReconciliationRoutes from './routes/qbReconciliation';
 import eventRoutes from './routes/events';
 import financeControlRoutes from './routes/financeControls';
+import retentionRoutes from './routes/retention';
 import { errorHandler } from './middleware/errorHandler';
 import { logger } from './utils/logger';
 import { connectDatabase, disconnectDatabase, isDbConnected } from './config/database';
@@ -58,8 +60,9 @@ import { invoiceUploadQueue } from './services/invoiceUploadQueue';
 import { runAnomalyScan, runFourWayReconciliation } from './services/financeControlRunService';
 import { runOcrDateSanityCheck } from './services/ocrDateSanityService';
 import { startDurableJobWorker, stopDurableJobWorker } from './services/durableJobWorker';
-import { isEmailPollerConfigured, startEmailPoller, stopEmailPoller } from './services/emailIntakeService';
+import { isEmailPollerConfigured, startEmailPoller, stopEmailPoller, recoverOrphanedEmailIntakes } from './services/emailIntakeService';
 import { checkEmailPollHealth } from './services/emailIntakeMonitoringService';
+import { runRetentionComplianceJob } from './services/retentionComplianceService';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -161,8 +164,10 @@ app.use('/api/citibusiness-export', citibusinessExportRoutes);
 app.use('/api/reprocess', reprocessRoutes);
 app.use('/api/soa-reconciliation', soaReconciliationRoutes);
 app.use('/api/qb', qbRoutes);
+app.use('/api/qb/reconciliation', qbReconciliationRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/finance-controls', financeControlRoutes);
+app.use('/api/retention', retentionRoutes);
 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_TEST_ROUTES === 'true') {
   app.use('/api/test', testRoutes);
 }
@@ -292,7 +297,12 @@ const startServer = async () => {
 
     server.setTimeout(600000); // 10 minutes
     const sideEffectsEnabled = process.env.DISABLE_SIDE_EFFECTS !== 'true';
-    await startDurableJobWorker();
+    const databaseConnected = await isDbConnected();
+    if (databaseConnected) {
+      await startDurableJobWorker();
+    } else {
+      logger.warn('Durable finance job worker disabled because the database is unavailable');
+    }
 
     // Power Automate is the primary intake path. Microsoft Graph polling is the
     // automatic fallback so attached invoices are still collected when the flow
@@ -317,6 +327,33 @@ const startServer = async () => {
         }, 5 * 60 * 1000)
       : undefined;
     emailPollHealthInterval?.unref();
+
+    // Recover Power Automate uploads that reached durable storage but never
+    // produced a CREATED/REVIEW_REQUIRED terminal event (for example after a
+    // transient OCR or database failure). This uses the stored intake_id and
+    // PDF path, so it is safe to run repeatedly and cannot duplicate records.
+    const emailRecoveryInterval = sideEffectsEnabled && databaseConnected
+      ? setInterval(() => {
+          recoverOrphanedEmailIntakes().then((result) => {
+            if (result.retried > 0) logger.info(`Email intake recovery: scanned ${result.scanned}, retried ${result.retried}, completed ${result.completed}`);
+          }).catch((err) => logger.error('Email intake recovery failed:', err));
+        }, 5 * 60 * 1000)
+      : undefined;
+    emailRecoveryInterval?.unref();
+    if (sideEffectsEnabled && databaseConnected) {
+      setTimeout(() => {
+        recoverOrphanedEmailIntakes().catch((err) => logger.error('Initial email intake recovery failed:', err));
+      }, 30_000).unref();
+      // Retention is evaluated daily. The job only creates/updates a
+      // controlled eligibility record; it never deletes documents by itself.
+      setTimeout(() => {
+        runRetentionComplianceJob().then((result) => logger.info(`Retention compliance scan: ${JSON.stringify(result)}`)).catch((err) => logger.error('Initial retention scan failed:', err));
+      }, 45_000).unref();
+      const retentionInterval = setInterval(() => {
+        runRetentionComplianceJob().then((result) => logger.info(`Retention compliance scan: ${JSON.stringify(result)}`)).catch((err) => logger.error('Retention scan failed:', err));
+      }, 24 * 60 * 60 * 1000);
+      retentionInterval.unref();
+    }
 
     // Start SharePoint folder watcher (polls IncomingInvoices every 30s)
     const watcherIntervalSec = parseInt(process.env.SHAREPOINT_WATCHER_INTERVAL_SEC || '30', 10);
@@ -442,6 +479,7 @@ const startServer = async () => {
       stopFileWatcher();
       stopEmailPoller();
       if (emailPollHealthInterval) clearInterval(emailPollHealthInterval);
+      if (emailRecoveryInterval) clearInterval(emailRecoveryInterval);
       if (slaInterval) clearInterval(slaInterval);
       if (mpoCacheSyncInterval) clearInterval(mpoCacheSyncInterval);
       if (initialSlaTimer) clearTimeout(initialSlaTimer);

@@ -196,6 +196,13 @@ export default function PurchasingWorkbench() {
                   <Doc title="Flagged document" invoice={pair.invoice} />
                   <Doc title="Possible match" invoice={pair.match} />
                 </div>
+                {pair.review && (
+                  <div className="mt-4 rounded-lg p-3 text-sm" style={{ background: 'color-mix(in srgb, var(--accent-amber) 12%, transparent)', color: 'var(--text-primary)' }}>
+                    <div className="font-semibold">Why it was flagged</div>
+                    <div>{pair.review.reason || 'Multiple duplicate/revision indicators matched.'}</div>
+                    {pair.review.matching_indicators && <pre className="mt-2 whitespace-pre-wrap text-xs">{JSON.stringify(pair.review.matching_indicators, null, 2)}</pre>}
+                  </div>
+                )}
                 <div className="flex flex-wrap gap-2 mt-4">
                   {['KEEP_BOTH', 'MARK_DUPLICATE', 'PROFORMA_TO_FINAL', 'REVISION_OF'].map((resolution) => (
                     <button key={resolution} onClick={() => resolve(pair, resolution)} className="px-3 py-2 rounded-lg" style={{ background: 'var(--bg-elevated)' }}>

@@ -97,7 +97,7 @@ export async function getSOAReconciliationStatistics(year: number, month: number
 /**
  * Mark a reconciliation item as reviewed
  */
-export async function markAsReviewed(invoiceId: string, userId: string, notes?: string) {
+export async function markAsReviewed(invoiceId: string, userId: string, _notes?: string) {
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
   });

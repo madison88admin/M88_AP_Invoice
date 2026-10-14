@@ -1,16 +1,15 @@
 import prisma from '../config/database';
-import { InvoiceStatus, ExceptionReason, ExceptionStatus } from '@ap-invoice/shared';
+import { InvoiceStatus } from '@ap-invoice/shared';
 import { AppError } from '../middleware/errorHandler';
 import { validateInvoice } from './validationService';
 import { createApprovalRequest } from './approvalService';
 import { logger } from '../utils/logger';
 import { getGraphClient } from './sharePointService';
 import { downloadFromStorage } from './supabaseStorageService';
-import { extractMadisonInvoiceFields, AST_SINGLE_SOURCE_MODE } from './madisonInvoiceExtractor';
+import { extractMadisonInvoiceFields } from './madisonInvoiceExtractor';
 import { analyzeInvoice } from './ocrService';
-import { matchVendor, matchOrCreateVendor } from './vendorMatchingService';
+import { matchOrCreateVendor } from './vendorMatchingService';
 import fs from 'fs';
-import path from 'path';
 import { fieldDecisionEngine } from './fieldDecisionEngine';
 import { geminiOCRService } from './geminiOCRService';
 import { qwenOCRService } from './qwenOCRService';
@@ -42,8 +41,8 @@ export async function verifyPdfMatchesInvoice(
     }
 
     // Also try without common separators (e.g., PI-123 vs PI123)
-    const stripped = normalizedInvoiceNum.replace(/[-\/\s]/g, '');
-    const pdfTextStripped = pdfText.replace(/[-\/\s]/g, '');
+    const stripped = normalizedInvoiceNum.replace(/[-/\s]/g, '');
+    const pdfTextStripped = pdfText.replace(/[-/\s]/g, '');
     if (stripped.length >= 4 && pdfTextStripped.includes(stripped)) {
       return { matches: true };
     }
@@ -517,7 +516,7 @@ export async function reExtractInvoice(
 
   // 5. Compute final values (same logic as upload controller)
   const cleanInvoiceNumber = (value: string | null | undefined) =>
-    value ? value.replace(/\s*([\-\\/])\s*/g, '$1').trim() : null;
+    value ? value.replace(/\s*([-\\/])\s*/g, '$1').trim() : null;
   const cleanPONumber = (value: string | null | undefined) => {
     if (!value) return null;
     const poMatch = value.match(/\bPO(\d{4,6})\b/i);
@@ -660,7 +659,7 @@ export async function reExtractInvoice(
     updateData.ocr_confidence_score = fieldDecision.overall_confidence;
   }
 
-  // 8. Re-match vendor (with auto-create)
+  // 8. Re-match vendor using the canonical master only; never create from OCR.
   if (decisionFinal.vendor_name) {
     try {
       const bankInfo = (decisionFinal as any).bank_info || {};

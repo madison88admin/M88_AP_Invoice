@@ -134,7 +134,7 @@ IMPORTANT RULES:
    - Pattern: "MPO015713" → extract "MPO015713"
    - Pattern: "MPO15767" → extract "MPO15767"
    - Pattern: just "15767" in Customer PO field → extract "MPO15767"
-   - Regex: /MPO(\d+)/i or if only digits found, prefix with "MPO"
+   - Regex: /MPO(d+)/i or if only digits found, prefix with "MPO"
    - If no MPO number is found, return null (do NOT make one up)
 3. total_amount must be a NUMBER only (e.g. 37.94 not "$37.94")
 4. For line_items: extract EVERY line item row from the invoice table. Each row has:

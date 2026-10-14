@@ -68,8 +68,8 @@ export function namesEquivalent(
     'h', 'k', 'hong', 'kong', 'international', 'industries', 'industrial',
     'enterprises', 'holdings', 'solutions', 'services', 'global',
   ]);
-  const wordsA = normA.split(/[\s,.&()\-]+/).filter(w => w.length > 2 && !stopWords.has(w));
-  const wordsB = normB.split(/[\s,.&()\-]+/).filter(w => w.length > 2 && !stopWords.has(w));
+  const wordsA = normA.split(/[\s,.&()-]+/).filter(w => w.length > 2 && !stopWords.has(w));
+  const wordsB = normB.split(/[\s,.&()-]+/).filter(w => w.length > 2 && !stopWords.has(w));
   // Require at least two significant shared tokens. A single generic word
   // (for example "Vendor" in "Vendor A" and "Vendor B") is not enough for a
   // financial master-data match; one-token variants must be explicitly mapped

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BrandTier, SignatoryRole } from '@ap-invoice/shared';
+import { SignatoryRole } from '@ap-invoice/shared';
 import { determineApprovalRoute } from './approvalService';
 
 describe('approval routing', () => {

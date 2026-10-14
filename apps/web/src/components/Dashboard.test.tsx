@@ -47,7 +47,10 @@ function renderDashboard() {
     <AuthProvider>
       <MockDataProvider>
         <ToastProvider>
-          <MemoryRouter initialEntries={['/dashboard']}>
+          <MemoryRouter
+            initialEntries={['/dashboard']}
+            future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+          >
             <Dashboard />
           </MemoryRouter>
         </ToastProvider>
@@ -67,7 +70,10 @@ function renderDashboardWithRoutes(initialEntry: string) {
       <AuthProvider>
         <MockDataProvider>
           <ToastProvider>
-            <MemoryRouter initialEntries={[initialEntry]}>
+            <MemoryRouter
+              initialEntries={[initialEntry]}
+              future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+            >
               <Routes>
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/repository" element={<Dashboard mode="repository" />} />

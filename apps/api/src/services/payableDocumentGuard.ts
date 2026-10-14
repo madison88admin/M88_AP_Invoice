@@ -22,7 +22,6 @@
  *   but remain blocked from direct posting to QuickBooks by the posting guard.
  */
 
-import { InvoiceType, InvoiceSource } from '@ap-invoice/shared';
 import { hasStrongNonInvoiceHeading } from './nonInvoiceSuppression';
 
 /** Document types that can never become an AP invoice record. */
@@ -49,6 +48,8 @@ export const NON_PAYABLE_DOCUMENT_TYPES = new Set<string>([
   'STATEMENT',
   'STATEMENT_OF_ACCOUNT',
   'DEBIT_NOTE',
+  'CREDIT_NOTE',
+  'CREDIT_MEMO',
   'OTHER',
   'UNKNOWN',
   'TECH_PACK',
@@ -91,6 +92,7 @@ const NON_PAYABLE_TEXT_HINTS =
 
 /** Debit notes are never payable AP invoice records, even when OCR misses the document type. */
 const DEBIT_NOTE_HINTS = /\bDEBIT\s+(?:NOTE|MEMO)\b/i;
+const CREDIT_NOTE_HINTS = /\bCREDIT\s+(?:NOTE|MEMO)\b/i;
 // Suppliers commonly abbreviate Debit Note as `DN` in the filename (for
 // example `...-DN-IX-2026.pdf`) even when OCR returns the generic INVOICE type.
 const DEBIT_NOTE_FILENAME_HINTS = /(?:^|[^A-Z0-9])(?:DEBIT[\s_-]*NOTE|DN)(?:[^A-Z0-9]|$)/i;
@@ -155,6 +157,24 @@ export function filenameIsHardExcluded(fileName: string): boolean {
 }
 
 /**
+ * Filename-only decisive block, evaluated by intake paths BEFORE upload/OCR.
+ *
+ * Only signals that getPayableBlockReason treats as decisive AFTER OCR are
+ * allowed here (currently: debit notes). Parking on these hints pre-OCR can
+ * therefore never change an end state — the same filenames are decisive after
+ * extraction regardless of OCR results — it only skips the OCR/retry cycle
+ * the guard would deterministically undo anyway (e.g. the Fjall Raven debit
+ * notes that paid two full OCR runs per delivery before parking).
+ */
+export function getFilenameOnlyBlockReason(fileName: string): string | null {
+  const normalized = String(fileName || '').replace(/[_-]+/g, ' ');
+  if (DEBIT_NOTE_HINTS.test(normalized) || DEBIT_NOTE_FILENAME_HINTS.test(String(fileName || ''))) {
+    return 'Debit notes are not eligible for invoice creation';
+  }
+  return null;
+}
+
+/**
  * Substring-level test used by the guard. Compromise between the strict word-
  * boundary regex above (avoids false positives like "recipient") and the need
  * to catch concatenated names like "ATXFreightPackingList_THK.pdf".
@@ -167,7 +187,7 @@ export function filenameLooksNonInvoice(fileName: string): boolean {
 }
 
 /** Filename hints that POSITIVELY identify an invoice document. */
-const INVOICE_FILENAME_HINTS =
+const _INVOICE_FILENAME_HINTS =
   /\b(?:invoice|inv\b|debit\s*note|credit\s*note|commercial|proforma|sales\s*invoice)\b|\b(?:invp|si|ci|pi)\d{4,}\b/i;
 
 /**
@@ -239,6 +259,9 @@ export function getPayableBlockReason(
     || DEBIT_NOTE_HINTS.test(fileNameText)
     || DEBIT_NOTE_FILENAME_HINTS.test(String(doc.fileName || ''))) {
     return 'Debit notes are not eligible for invoice creation';
+  }
+  if (CREDIT_NOTE_HINTS.test(rawText) || /(?:^|[^A-Z0-9])(?:CREDIT[\s_-]*(?:NOTE|MEMO))/.test(String(doc.fileName || '').toUpperCase())) {
+    return 'Credit memos are not standalone payable invoices; link them to the original invoice for accounting review';
   }
 
   // 3. Statement-of-account text signals (even if type extraction failed)

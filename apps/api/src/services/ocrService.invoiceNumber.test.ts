@@ -1,8 +1,8 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || 'test-key';
 
-const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+const _logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
 // Mutable text holder so each test can swap the OCR text; vi.mock factories
 // are hoisted above module scope, so they must read through this reference.

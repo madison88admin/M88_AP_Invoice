@@ -141,7 +141,7 @@ describe('requestVendorBankUpdate', () => {
   it('rejects an invalid bank field', async () => {
     vendorFindUnique.mockResolvedValue(VENDOR);
     await expect(
-      requestVendorBankUpdate('v-1', { field: 'name', requested_value: 'X', reason: 'r' }, 'u-1', 'Pamela')
+      requestVendorBankUpdate('v-1', { field: 'not_a_bank_field', requested_value: 'X', reason: 'r' }, 'u-1', 'Pamela')
     ).rejects.toThrow(/Invalid bank field/);
   });
 

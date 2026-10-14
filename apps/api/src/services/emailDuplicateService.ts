@@ -1,10 +1,11 @@
 import crypto from 'crypto';
 import prisma from '../config/database';
 import { logger } from '../utils/logger';
+import { buildDuplicateIndicators, normalizeInvoiceReference } from './accountingControlService';
 
 export interface EmailDuplicateResult {
   isDuplicate: boolean;
-  level: 'NONE' | 'EMAIL' | 'FILE_HASH' | 'BUSINESS';
+  level: 'NONE' | 'EMAIL' | 'FILE_HASH' | 'BUSINESS' | 'BUSINESS_ADVANCED';
   existingInvoiceId?: string;
   existingInvoiceNumber?: string;
   detail: string;
@@ -91,6 +92,90 @@ async function checkByBusinessKey(
 }
 
 /**
+ * Shared accounting duplicate/revision gate used by every email intake path.
+ * It deliberately queries the same fields as the file watcher so an email
+ * attachment cannot bypass normalized revision, MPO/PO, line-signature, or
+ * document-fingerprint checks.
+ */
+async function checkByAdvancedBusinessKey(input: {
+  vendorId?: string;
+  vendorName?: string;
+  invoiceNumber?: string;
+  amount?: number;
+  invoiceDate?: Date | string | null;
+  currency?: string;
+  mpoNumber?: string;
+  customerPoNumber?: string;
+  fileHash: string;
+  lineItemsSignature?: string;
+  documentLayoutFingerprint?: string;
+}): Promise<{ invoiceId: string; invoiceNumber: string; detail: string } | null> {
+  const normalized = normalizeInvoiceReference(input.invoiceNumber);
+  if (!normalized && !input.mpoNumber && !input.customerPoNumber && !input.fileHash) return null;
+  const refs = [input.mpoNumber, input.customerPoNumber].filter(Boolean).map(v => String(v).trim().toUpperCase());
+  const candidates = await prisma.invoice.findMany({
+    where: {
+      status: { not: 'CANCELLED' as any },
+      OR: [
+        ...(normalized ? [{ normalized_invoice_number: normalized }, { invoice_number: input.invoiceNumber }] : []),
+        ...(input.fileHash ? [{ invoice_hash: input.fileHash }] : []),
+        ...refs.flatMap(ref => [{ mpo_number: ref }, { mpo_base_number: ref }, { customer_po_number: ref }]),
+      ],
+    },
+    select: {
+      id: true,
+      invoice_number: true,
+      normalized_invoice_number: true,
+      vendor_id: true,
+      vendor_name_raw: true,
+      mpo_number: true,
+      customer_po_number: true,
+      invoice_date: true,
+      total_amount: true,
+      currency: true,
+      invoice_hash: true,
+      line_items_signature: true,
+      document_layout_fingerprint: true,
+    },
+    take: 50,
+  });
+  const incomingDate = input.invoiceDate ? new Date(input.invoiceDate) : null;
+  const incoming = {
+    vendor_id: input.vendorId || null,
+    invoice_number: input.invoiceNumber,
+    mpo_number: input.mpoNumber,
+    customer_po_number: input.customerPoNumber,
+    invoice_date: incomingDate,
+    total_amount: input.amount,
+    currency: input.currency,
+    invoice_hash: input.fileHash,
+    line_items_signature: input.lineItemsSignature,
+    document_layout_fingerprint: input.documentLayoutFingerprint,
+  };
+  for (const candidate of candidates) {
+    const indicators = buildDuplicateIndicators({ existing: candidate as any, incoming });
+    const sameVendorByName = Boolean(input.vendorName && candidate.vendor_name_raw
+      && String(input.vendorName).trim().toLowerCase() === String(candidate.vendor_name_raw).trim().toLowerCase());
+    const sameVendor = indicators.same_vendor || sameVendorByName;
+    const matched = [indicators.same_normalized_reference, indicators.same_mpo_po, indicators.same_date,
+      indicators.same_amount_currency, indicators.same_line_details, indicators.same_document_similarity,
+      indicators.same_file_hash].filter(Boolean).length;
+    const strongMatch = indicators.same_file_hash
+      || (sameVendor && indicators.same_normalized_reference)
+      || (indicators.same_normalized_reference && indicators.same_mpo_po)
+      || matched >= 3;
+    if (strongMatch) {
+      return {
+        invoiceId: candidate.id,
+        invoiceNumber: candidate.invoice_number,
+        detail: `Potential duplicate/revision of ${candidate.invoice_number}: ${indicators.reason}${sameVendor ? '' : '; vendor differs or is not yet matched'}.`,
+      };
+    }
+  }
+  return null;
+}
+
+/**
  * Run all 3 levels of duplicate detection.
  * Returns the first match found (most specific first).
  */
@@ -102,9 +187,15 @@ export async function checkEmailDuplicate(
   },
   businessData?: {
     vendorName?: string;
+    vendorId?: string;
     invoiceNumber?: string;
     amount?: number;
     invoiceDate?: Date | string | null;
+    currency?: string;
+    mpoNumber?: string;
+    customerPoNumber?: string;
+    lineItemsSignature?: string;
+    documentLayoutFingerprint?: string;
   }
 ): Promise<EmailDuplicateResult> {
   // Level 1: Email Message ID
@@ -153,6 +244,21 @@ export async function checkEmailDuplicate(
         detail: `Duplicate of existing invoice ${businessMatch.invoiceNumber} (same vendor + invoice number + amount)`,
       };
     }
+  }
+
+  const advancedMatch = await checkByAdvancedBusinessKey({
+    ...businessData,
+    fileHash: crypto.createHash('sha256').update(fileBuffer).digest('hex'),
+  });
+  if (advancedMatch) {
+    logger.info(`Duplicate/revision candidate detected (advanced accounting controls): ${advancedMatch.invoiceNumber}`);
+    return {
+      isDuplicate: true,
+      level: 'BUSINESS_ADVANCED',
+      existingInvoiceId: advancedMatch.invoiceId,
+      existingInvoiceNumber: advancedMatch.invoiceNumber,
+      detail: advancedMatch.detail,
+    };
   }
 
   return {

@@ -3,24 +3,13 @@ import path from 'path';
 import crypto from 'crypto';
 import { logger } from '../utils/logger';
 import { analyzeInvoice } from './ocrService';
-import { matchVendor, matchOrCreateVendor } from './vendorMatchingService';
+import { getUnknownVendorPlaceholder, matchOrCreateVendor } from './vendorMatchingService';
 import { getVendorPaymentTermDefault, preferExtractedPaymentTerms } from './vendorDefaultsService';
 import { validateInvoice } from './validationService';
 import { checkEmailDuplicate, generateFileHash } from './emailDuplicateService';
 import { checkDuplicateInvoice } from './duplicateDetectionService';
 import { uploadToStorage } from './supabaseStorageService';
-import {
-  InvoiceStatus,
-  InvoiceType,
-  InvoiceSource,
-  SignatureType,
-  ExceptionReason,
-  determineApprovalTier,
-  BrandTier,
-  isTop10Brand,
-  TOP_10_BRANDS,
-  UserRole,
-} from '@ap-invoice/shared';
+import { InvoiceStatus, InvoiceSource, SignatureType, ExceptionReason, determineApprovalTier, BrandTier, isTop10Brand, TOP_10_BRANDS, UserRole } from '@ap-invoice/shared';
 import prisma from '../config/database';
 import { inAppNotificationService } from './inAppNotificationService';
 import { detectMultiInvoice, splitPdfByPageRanges } from './multiInvoiceDetector';
@@ -34,6 +23,8 @@ import { PDFDocument } from 'pdf-lib';
 import { evaluateIntakeControls } from './intakeControlService';
 import { getPayableBlockReason } from './payableDocumentGuard';
 import { replaceInvoicePdfByNumber } from './invoicePdfReplacementService';
+import { buildDuplicateIndicators, createDuplicateRevisionReview, normalizeInvoiceReference } from './accountingControlService';
+import { ensureInvoiceBankSnapshot } from './invoiceBankSnapshotService';
 
 const INCOMING_DIR = process.env.WATCHER_INCOMING_DIR || '/incoming-invoices';
 const PROCESSING_DIR = process.env.WATCHER_PROCESSING_DIR || '/incoming-invoices/processing';
@@ -59,6 +50,7 @@ let lastUploadOnlyAuditAt = 0;
 
 type IntakeEventSummary = {
   file_name: string | null;
+  intake_id?: string | null;
   stage: string;
   created_at: Date;
   message_id?: string | null;
@@ -100,6 +92,7 @@ async function recordWatcherIntakeEvent(intakeId: string, input: IntakeEventReco
 }
 
 function eventIntakeId(event: IntakeEventSummary): string | undefined {
+  if (typeof event.intake_id === 'string' && event.intake_id.trim()) return event.intake_id;
   const metadata = event.metadata;
   if (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) {
     const value = (metadata as Record<string, unknown>).intake_id
@@ -434,7 +427,7 @@ function extractDateFromFilename(fileName: string): Date | null {
 /** Recover an explicitly labelled YYYY/M/D date from OCR text when date parsing missed it. */
 function extractLabeledDateFromOcr(ocrResult: any): Date | null {
   const text = String(ocrResult?.raw_text || ocrResult?.rawText || ocrResult?.raw_data?.raw_text || '');
-  const match = text.match(/(?:^|\n)\s*(?:INVOICE\s+DATE|DEBIT\s+NOTE\s+DATE|DOCUMENT\s+DATE|DATE)\s*[:#-]?\s*(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})/im);
+  const match = text.match(/(?:^|\n)\s*(?:INVOICE\s+DATE|DEBIT\s+NOTE\s+DATE|DOCUMENT\s+DATE|DATE)\s*[:#-]?\s*(\d{4})[/-](\d{1,2})[/-](\d{1,2})/im);
   if (!match) return null;
   const year = Number(match[1]);
   const month = Number(match[2]);
@@ -880,15 +873,31 @@ async function processSingleInvoiceBuffer(
   // not already exist. This prevents same-number corrections from creating
   // duplicate child records.
   let revisionParent: any = null;
+  let normalizedRevisionCandidate: any = null;
+  const normalizedIncomingReference = normalizeInvoiceReference(ocrResult.invoice_number);
   if (ocrResult.invoice_number) {
     const incomingVendorKey = normalizeVendorKey(ocrResult.vendor_name);
     const sameNumber = await prisma.invoice.findMany({
-      where: { invoice_number: ocrResult.invoice_number },
+      where: { OR: [{ invoice_number: ocrResult.invoice_number }, ...(normalizedIncomingReference ? [{ normalized_invoice_number: normalizedIncomingReference }] : [])] },
       orderBy: { revision: 'desc' },
-      select: { id: true, revision: true, status: true, vendor_name_raw: true, total_amount: true, invoice_date: true, invoice_hash: true },
+      select: { id: true, revision: true, status: true, vendor_id: true, vendor_name_raw: true, invoice_number: true, normalized_invoice_number: true, total_amount: true, currency: true, invoice_date: true, invoice_hash: true, mpo_number: true, customer_po_number: true, document_layout_fingerprint: true },
     });
     revisionParent = sameNumber.find((existing) => {
       return shouldTreatAsRevision(existing, { vendorName: incomingVendorKey, fileHash });
+    }) || null;
+    // A changed reference such as 0001-A/0001-REV is not automatically made
+    // payable. Keep it as an auditable review candidate until Purchasing
+    // classifies it as new, corrected, replacement, or duplicate.
+    normalizedRevisionCandidate = sameNumber.find((existing) => {
+      const existingRef = existing.normalized_invoice_number || normalizeInvoiceReference(existing.invoice_number);
+      if (!existingRef || existingRef !== normalizedIncomingReference || existing.invoice_number === ocrResult.invoice_number) return false;
+      if (normalizeVendorKey(existing.vendor_name_raw) !== incomingVendorKey) return false;
+      const sameMpo = Boolean(existing.mpo_number && ocrResult.mpo_number && String(existing.mpo_number).toUpperCase() === String(ocrResult.mpo_number).toUpperCase());
+      const sameAmount = Math.abs(Number(existing.total_amount || 0) - Number(ocrResult.total_amount || 0)) < 0.01;
+      const existingDate = existing.invoice_date ? new Date(existing.invoice_date).toISOString().slice(0, 10) : '';
+      const incomingDate = ocrResult.invoice_date ? new Date(ocrResult.invoice_date).toISOString().slice(0, 10) : '';
+      const sameDate = Boolean(existingDate && incomingDate && existingDate === incomingDate);
+      return sameMpo || sameAmount || sameDate;
     }) || null;
     if (revisionParent) {
       logger.info(`[File Watcher] Treating ${fileName} as revision ${revisionParent.revision + 1} of ${ocrResult.invoice_number}`);
@@ -939,9 +948,8 @@ async function processSingleInvoiceBuffer(
     }
   }
 
-  // Step 5: Vendor matching (with auto-create)
+  // Step 5: Vendor matching (read-only; OCR never creates a Vendor Master row)
   let vendorId: string | undefined;
-  let autoCreatedVendor = false;
   try {
     const bankInfo = (ocrResult as any).bank_info || {};
     const vendorResult = await matchOrCreateVendor(ocrResult.vendor_name, {
@@ -951,18 +959,15 @@ async function processSingleInvoiceBuffer(
       account_number: bankInfo.account_usd || bankInfo.account_number || (ocrResult as any).bank_account,
     });
     vendorId = vendorResult?.vendor_id;
-    autoCreatedVendor = vendorResult?.auto_created || false;
-    if (autoCreatedVendor) {
-      logger.info(`[File Watcher] Auto-created vendor: "${ocrResult.vendor_name}" (id: ${vendorId})`);
-    }
   } catch {
     logger.warn(`[File Watcher] No vendor match for "${ocrResult.vendor_name}"`);
     vendorId = undefined;
   }
 
-  // Fallback: use UNKNOWN VENDOR if no match and auto-create failed (vendor_id is required in DB schema)
-  const UNKNOWN_VENDOR_ID = '00000000-0000-0000-0000-000000000000';
-  const effectiveVendorId = vendorId || UNKNOWN_VENDOR_ID;
+  // Unknown suppliers use one system placeholder. Never create a new Vendor
+  // Master row from OCR text; the source name stays on vendor_name_raw for
+  // Accounting to map later.
+  const effectiveVendorId = vendorId || await getUnknownVendorPlaceholder() || undefined;
   const isVendorUnknown = !vendorId;
 
   // Step 5b: Fuzzy duplicate check — same vendor + amount + invoice date (±3 days).
@@ -970,7 +975,7 @@ async function processSingleInvoiceBuffer(
   // because the invoice number could not be extracted (OCR missed it AND the
   // filename has none). Only run for KNOWN vendors — matching against the UNKNOWN
   // vendor bucket would produce false positives.
-  if (!ocrResult.invoice_number && !isVendorUnknown && ocrResult.total_amount > 0 && ocrResult.invoice_date) {
+  if (effectiveVendorId && !ocrResult.invoice_number && !isVendorUnknown && ocrResult.total_amount > 0 && ocrResult.invoice_date) {
     try {
       const fuzzyDup = await checkDuplicateInvoice(
         '', // no number available — rely on fuzzy vendor/amount/date matching
@@ -1018,7 +1023,7 @@ async function processSingleInvoiceBuffer(
 
   // Step 7: Save to database
   let invoiceId: string | null = null;
-  let finalPdfPath: string | null = null;
+  const _finalPdfPath: string | null = null;
   try {
     // Parse MPO reference for base MPO, order sequence, and material code
     const headerParsedMpo = ocrResult.mpo_number ? parseMPOReference(ocrResult.mpo_number) : { baseMpo: null, orderSequence: null, materialCode: null };
@@ -1082,7 +1087,10 @@ async function processSingleInvoiceBuffer(
         priority_flag: ocrResult.is_urgent || false,
         priority_pay_date: ocrResult.priority_pay_date ? new Date(ocrResult.priority_pay_date) : null,
         is_duplicate: false,
+        duplicate_review_status: normalizedRevisionCandidate ? 'PENDING' : 'NOT_REVIEWED',
+        duplicate_review_reason: normalizedRevisionCandidate ? `Normalized invoice reference ${normalizeInvoiceReference(ocrResult.invoice_number)} matches ${normalizedRevisionCandidate.invoice_number}; Purchasing classification required.` : undefined,
         invoice_hash: fileHash,
+        normalized_invoice_number: normalizedIncomingReference || undefined,
         ocr_confidence_score: ocrResult.ocr_confidence_score || undefined,
         ocr_raw_data: ocrResult as any,
         beneficiary_name: (ocrResult as any).bank_info?.beneficiary_name || (ocrResult as any).beneficiary_name || undefined,
@@ -1135,7 +1143,33 @@ async function processSingleInvoiceBuffer(
       data: baseData,
       include: { vendor: true, invoice_lines: true },
     });
+    await ensureInvoiceBankSnapshot(invoice.id, 'power-automate-watcher');
     invoiceId = invoice.id;
+
+    if (normalizedRevisionCandidate) {
+      const indicators = buildDuplicateIndicators({
+        existing: normalizedRevisionCandidate,
+        incoming: {
+          vendor_id: effectiveVendorId,
+          invoice_number: ocrResult.invoice_number,
+          mpo_number: ocrResult.mpo_number,
+          customer_po_number: ocrResult.customer_po_number,
+          invoice_date: ocrResult.invoice_date ? new Date(ocrResult.invoice_date) : null,
+          total_amount: ocrResult.total_amount,
+          currency: ocrResult.currency,
+          invoice_hash: fileHash,
+          line_items_signature: Array.isArray((ocrResult as any).line_items) ? JSON.stringify((ocrResult as any).line_items) : null,
+          document_layout_fingerprint: (ocrResult as any).document_layout_fingerprint || null,
+        },
+      });
+      await createDuplicateRevisionReview({
+        invoiceId: invoice.id,
+        candidateInvoiceId: normalizedRevisionCandidate.id,
+        indicators,
+        reason: `Changed invoice reference ${ocrResult.invoice_number} resembles ${normalizedRevisionCandidate.invoice_number}; Purchasing classification required before approval or payment.`,
+      });
+      await prisma.invoice.update({ where: { id: invoice.id }, data: { status: InvoiceStatus.EXCEPTION_FLAGGED } });
+    }
 
     if (revisionParent) {
       await prisma.invoice.update({
@@ -1229,22 +1263,14 @@ async function processSingleInvoiceBuffer(
       },
     });
 
-    // Create exception if vendor not matched AND not auto-created
-    if (isVendorUnknown && !autoCreatedVendor) {
+    // Create exception when no canonical vendor/alias matched. The supplier
+    // text remains on vendor_name_raw and Accounting maps it later.
+    if (isVendorUnknown) {
       await prisma.exception.create({
         data: {
           invoice_id: invoice.id,
           reason: ExceptionReason.VENDOR_NOT_FOUND as any,
           detail: `No vendor match found for "${ocrResult.vendor_name}". Manual vendor assignment required.`,
-        },
-      });
-    } else if (autoCreatedVendor) {
-      // Log auto-created vendor as an exception for review (bank info may need verification)
-      await prisma.exception.create({
-        data: {
-          invoice_id: invoice.id,
-          reason: ExceptionReason.VENDOR_NOT_FOUND as any,
-          detail: `Auto-created vendor "${ocrResult.vendor_name}" from OCR extraction. Please verify vendor details and bank information.`,
         },
       });
     }

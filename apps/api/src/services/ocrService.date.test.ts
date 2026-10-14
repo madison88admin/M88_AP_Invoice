@@ -55,7 +55,7 @@ const AVERY_VN = [
 ].join(' ');
 
 // Scanned (image-only) Combine invoice: no embedded text layer at all.
-const SCANNED = '';
+const _SCANNED = '';
 
 describe('extractInvoiceFields date extraction — parked-manual-review regression batch', () => {
   // NOTE: extractInvoiceFields returns invoice_date/due_date. Month-name

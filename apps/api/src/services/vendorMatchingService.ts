@@ -229,6 +229,23 @@ export async function matchOrCreateVendor(
   return null;
 }
 
+/**
+ * Return the single system placeholder used for invoice records whose
+ * supplier cannot yet be matched. The placeholder is seeded by migration;
+ * this function is intentionally read-only so OCR can never create a Vendor
+ * Master row. The original supplier name remains on Invoice.vendor_name_raw.
+ */
+export async function getUnknownVendorPlaceholder(): Promise<string | null> {
+  if (!isDbEnabled()) return null;
+  try {
+    const existing = await prisma.vendor.findFirst({ where: { name: 'UNKNOWN VENDOR' }, select: { id: true } });
+    return existing?.id || null;
+  } catch (error) {
+    console.warn('[VendorMatch] Unable to resolve the UNKNOWN VENDOR placeholder:', error);
+    return null;
+  }
+}
+
 function levenshteinDistance(str1: string, str2: string): number {
   const matrix = [];
 

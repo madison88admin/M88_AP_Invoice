@@ -248,6 +248,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
   const [activeTab, setActiveTab] = useState<PaymentBatchView>(initialTab);
   const [batches, setBatches] = useState<PaymentBatch[]>([]);
   const [batchStatusFilter, setBatchStatusFilter] = useState('');
+  const [batchSearch, setBatchSearch] = useState('');
   const [stuckBatches, setStuckBatches] = useState<(PaymentBatch & { days_stuck?: number; pending_payments?: number })[]>([]);
   const [stuckLoading, setStuckLoading] = useState(false);
   const [scheduledPayments, setScheduledPayments] = useState<ScheduledPayment[]>([]);
@@ -325,6 +326,15 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
   // release legacy HELD_BELOW_100 rows created before this rule changed.
   const canReleaseHeld = isAssociate || isSupervisor;
   const isBatchable = (p: ScheduledPayment) => ['SCHEDULED', 'FOR_PAYMENT', 'APPROVED_FOR_PAYMENT', 'AWAITING_POSTING'].includes(p.status);
+
+  // Selecting a batch used to leave the details panel far below the list,
+  // forcing Accounting to scroll manually. Bring the selected batch into view
+  // after opening it from either the stuck queue or the batch list.
+  const openBatchDetails = useCallback((batch: PaymentBatch) => {
+    setSelectedBatch(batch);
+    setSelectedReturnPaymentIds(new Set());
+    window.setTimeout(() => document.getElementById('payment-batch-details')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
+  }, []);
 
   const handleBulkConfirmationImport = async (file: File) => {
     setBulkImporting(true);
@@ -1442,13 +1452,17 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
   const activeBatches = batches.filter((b) => !['PROCESSED', 'CANCELLED'].includes(b.status));
   const processedBatches = batches.filter((b) => b.status === 'PROCESSED');
   const cancelledBatches = batches.filter((b) => b.status === 'CANCELLED');
-  const visibleBatches = activeTab === 'processed'
+  const statusVisibleBatches = activeTab === 'processed'
     ? processedBatches
     : activeTab === 'cancelled'
       ? cancelledBatches
     : batchStatusFilter
       ? activeBatches.filter((b) => b.status === batchStatusFilter)
       : activeBatches;
+  const normalizedBatchSearch = batchSearch.trim().toLowerCase();
+  const visibleBatches = normalizedBatchSearch
+    ? statusVisibleBatches.filter((b) => `${b.batch_number} ${b.status}`.toLowerCase().includes(normalizedBatchSearch))
+    : statusVisibleBatches;
 
   const dateCell = (d?: string | null) => (d ? new Date(d).toLocaleDateString() : '—');
   const filterLabel: React.CSSProperties = { display: 'block', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4, color: 'var(--text-muted)' };
@@ -2060,12 +2074,32 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                   <option key={s} value={s}>{s}</option>
                 ))}
               </select>
+              <div className="flex items-center gap-2 flex-1 min-w-[220px]">
+                <label htmlFor="batch-search" className="sr-only">Find batch</label>
+                <input
+                  id="batch-search"
+                  value={batchSearch}
+                  onChange={(e) => setBatchSearch(e.target.value)}
+                  placeholder="Find batch number…"
+                  style={{ ...filterInput, minWidth: 0, padding: '7px 12px' }}
+                />
+                {batchSearch && (
+                  <button
+                    onClick={() => setBatchSearch('')}
+                    className="shrink-0 p-1.5 rounded-md"
+                    title="Clear batch search"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    <X className="h-3.5 w-3.5" strokeWidth={2} />
+                  </button>
+                )}
+              </div>
               <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                {visibleBatches.length} of {activeBatches.length} active batch{activeBatches.length === 1 ? '' : 'es'}
+                {visibleBatches.length} of {statusVisibleBatches.length} batch{statusVisibleBatches.length === 1 ? '' : 'es'}
               </span>
-              {batchStatusFilter && (
+              {(batchStatusFilter || batchSearch) && (
                 <button
-                  onClick={() => setBatchStatusFilter('')}
+                  onClick={() => { setBatchStatusFilter(''); setBatchSearch(''); }}
                   className="text-xs font-semibold flex items-center gap-1 px-2 py-1 rounded-md transition-colors"
                   style={{ color: 'var(--accent-purple)', background: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)' }}
                   onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.85'; }}
@@ -2100,7 +2134,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                         </div>
                       </div>
                       <button
-                        onClick={() => { setSelectedBatch(sb); setSelectedReturnPaymentIds(new Set()); }}
+                        onClick={() => openBatchDetails(sb)}
                         className="shrink-0 flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
                         style={{ background: 'var(--accent-red)', color: 'white' }}
                         onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.9'; }}
@@ -2132,7 +2166,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                     key={batch.id}
                     className="flex items-center justify-between p-4 rounded-xl cursor-pointer transition-colors"
                     style={{ border: '1px solid var(--border-color)', background: 'var(--bg-elevated)' }}
-                    onClick={() => { setSelectedBatch(batch); setSelectedReturnPaymentIds(new Set()); }}
+                    onClick={() => openBatchDetails(batch)}
                     onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
                     onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--bg-elevated)'; }}
                   >
@@ -2186,7 +2220,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
         )}
 
         {selectedBatch && (
-          <div className="rounded-2xl" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
+          <div id="payment-batch-details" className="rounded-2xl" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)', scrollMarginTop: 20 }}>
             <div className="p-6">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Batch Details: {selectedBatch.batch_number}</h2>

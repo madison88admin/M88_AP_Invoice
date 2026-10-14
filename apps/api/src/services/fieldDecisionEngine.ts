@@ -726,7 +726,7 @@ export class FieldDecisionEngine {
       evidence.raw_text_snippet = rawText.substring(start, end).replace(/\n/g, ' ');
 
       const beforeText = rawText.substring(start, valueIndex);
-      const labelMatch = beforeText.match(/([A-Z][A-Za-z\s\/]+)[:\s]+$/);
+      const labelMatch = beforeText.match(/([A-Z][A-Za-z\s/]+)[:\s]+$/);
       if (labelMatch) {
         evidence.matched_label = labelMatch[1].trim();
       }

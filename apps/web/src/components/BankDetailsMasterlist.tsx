@@ -55,6 +55,7 @@ export default function BankDetailsMasterlist() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingEntry, setEditingEntry] = useState<BankDetailsEntry | null>(null);
   const [editData, setEditData] = useState<Partial<BankDetailsEntry>>({});
+  const [editEvidence, setEditEvidence] = useState({ reason: '', phone_validation_confirmation: '', supporting_documents: '' });
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -125,6 +126,7 @@ export default function BankDetailsMasterlist() {
 
   const handleEdit = (entry: BankDetailsEntry) => {
     setEditingEntry(entry);
+    setEditEvidence({ reason: '', phone_validation_confirmation: '', supporting_documents: '' });
     setEditData({
       name: entry.name,
       beneficiary_name: entry.beneficiary_name,
@@ -169,6 +171,10 @@ export default function BankDetailsMasterlist() {
 
   const handleSave = async () => {
     if (!editingEntry) return;
+    if (user?.role === 'ACCOUNTING_ASSOCIATE' && (!editEvidence.reason.trim() || !editEvidence.phone_validation_confirmation.trim() || !editEvidence.supporting_documents.trim())) {
+      showToast('Reason, Purchasing phone-validation confirmation, and supporting document reference are required.', 'error');
+      return;
+    }
     setSaving(true);
     try {
       const asText = (value: unknown) => Array.isArray(value) ? value.join(', ') : String(value ?? '').trim();
@@ -181,6 +187,11 @@ export default function BankDetailsMasterlist() {
         bank_name_alt: asTextArray(editData.bank_name_alt),
         swift_code_alt: asTextArray(editData.swift_code_alt),
         account_number_alt: asTextArray(editData.account_number_alt),
+        ...(user?.role === 'ACCOUNTING_ASSOCIATE' ? {
+          reason: editEvidence.reason,
+          phone_validation_confirmation: editEvidence.phone_validation_confirmation,
+          supporting_documents: editEvidence.supporting_documents,
+        } : {}),
       };
       const res = await vendorApi.updateBankDetails(editingEntry.id, payload);
       showToast(res.data.message, 'success');
@@ -594,6 +605,14 @@ export default function BankDetailsMasterlist() {
                   {editField('Alt Account Number', 'account_number_alt')}
                 </div>
               </div>
+              {user?.role === 'ACCOUNTING_ASSOCIATE' && (
+                <div className="rounded-xl p-3 space-y-3" style={{ background: 'color-mix(in srgb, var(--accent-amber) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}>
+                  <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>Accounting Associate changes are submitted to Accounting Supervisor approval.</div>
+                  <input value={editEvidence.reason} onChange={(e) => setEditEvidence({ ...editEvidence, reason: e.target.value })} placeholder="Reason for change *" className="w-full px-3 py-2 rounded-lg text-sm" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }} />
+                  <input value={editEvidence.phone_validation_confirmation} onChange={(e) => setEditEvidence({ ...editEvidence, phone_validation_confirmation: e.target.value })} placeholder="Purchasing phone-validation confirmation *" className="w-full px-3 py-2 rounded-lg text-sm" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }} />
+                  <textarea value={editEvidence.supporting_documents} onChange={(e) => setEditEvidence({ ...editEvidence, supporting_documents: e.target.value })} placeholder="Supporting document reference(s) *" rows={2} className="w-full px-3 py-2 rounded-lg text-sm resize-none" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }} />
+                </div>
+              )}
             </div>
 
             {/* Modal Footer */}

@@ -14,27 +14,9 @@ import {
   FULL_BRAND_NAMES,
   GENERIC_LABEL_DENYLIST,
 } from './extractors/constants';
-import {
-  FieldExtraction,
-  ExtractionTrace,
-  ExtractedSignature,
-  MadisonInvoiceExtraction,
-  PDFPage,
-  PDFData,
-  PDFTextItem,
-  PDFTextExtraction,
-  VendorDetection,
-  ExtractedLineItem,
-} from './extractors/types';
-import { normalizeInvoiceText, normalizeOCRAmounts } from './extractors/normalize';
-import {
-  monthNameToNumber,
-  parseDate,
-  computeDueDateFromTerms,
-  formatDate,
-  extractInvoiceDate,
-  extractDueDate,
-} from './extractors/dates';
+import { ExtractionTrace, ExtractedSignature, MadisonInvoiceExtraction, PDFPage, PDFData, PDFTextItem, PDFTextExtraction, VendorDetection } from './extractors/types';
+import { normalizeInvoiceText } from './extractors/normalize';
+import { parseDate, computeDueDateFromTerms, extractInvoiceDate, extractDueDate } from './extractors/dates';
 
 export { AST_SINGLE_SOURCE_MODE } from './extractors/constants';
 export type {
@@ -181,7 +163,7 @@ async function extractTextFromPDF(fileBuffer: Buffer): Promise<PDFTextExtraction
 /**
  * Helper: Clean value by removing quotes, commas, vertical bars
  */
-function cleanValue(str: string): string {
+function _cleanValue(str: string): string {
   return str.replace(/["'|,\r\n]/g, '').trim();
 }
 
@@ -492,7 +474,7 @@ export function extractInvoiceNumber(text: string, vendor: string = 'UNKNOWN'): 
     const match = text.match(regex);
     if (match) {
       // Strip wrapping characters and clean spaces around dashes/slashes
-      let value = match[1].replace(/[*#]/g, '').replace(/\s*([\-\\/])\s*/g, '$1').trim();
+      const value = match[1].replace(/[*#]/g, '').replace(/\s*([\-\\/])\s*/g, '$1').trim();
       // Exclude MPO patterns from invoice number
       if (!/^MPO\d+$/i.test(value) && /\d/.test(value) && !isGenericLabel(value)) {
         console.log('[extractInvoiceNumber] Found invoice number:', value, 'with label:', label);
@@ -532,7 +514,7 @@ export function extractInvoiceNumber(text: string, vendor: string = 'UNKNOWN'): 
 /**
  * Debug: Extract ALL numbers from text for candidate analysis
  */
-function debugExtractAllNumbers(text: string): Array<{ value: number; index: number; context: string }> {
+function _debugExtractAllNumbers(text: string): Array<{ value: number; index: number; context: string }> {
   const regex = /\d+(?:\.\d{2,3})?/g;
   const matches = [...text.matchAll(regex)];
   
@@ -550,7 +532,7 @@ function debugExtractAllNumbers(text: string): Array<{ value: number; index: num
 /**
  * Debug: Extract all monetary amounts specifically
  */
-function debugExtractAllAmounts(text: string): Array<{ value: number; index: number; context: string }> {
+function _debugExtractAllAmounts(text: string): Array<{ value: number; index: number; context: string }> {
   const regex = /([0-9,]+\.[0-9]{2,4})/g;
   const matches = [...text.matchAll(regex)];
   
@@ -568,7 +550,7 @@ function debugExtractAllAmounts(text: string): Array<{ value: number; index: num
 /**
  * Debug: Extract all quantities
  */
-function debugExtractAllQuantities(text: string): Array<{ value: number; context: string }> {
+function _debugExtractAllQuantities(text: string): Array<{ value: number; context: string }> {
   const patterns = [
     /(\d+)\s+USD\s+\d+\.\d+/g,
     /(\d+)\s+Each/gi,
@@ -596,7 +578,7 @@ function debugExtractAllQuantities(text: string): Array<{ value: number; context
 /**
  * Debug: Account number regex test
  */
-function debugAccountNumberExtraction(text: string): Array<{ pattern: string; match: string | null }> {
+function _debugAccountNumberExtraction(text: string): Array<{ pattern: string; match: string | null }> {
   const patterns = [
     { name: 'A/C NO', regex: /A\/C\s*(?:NO|NUMBER)?[:\s：]*([\d\s\-]+)/i },
     { name: 'Account #', regex: /Account\s*#[:\s：]*([\d\s\-]+)/i },
@@ -775,7 +757,7 @@ export function extractAmount(text: string): {
     // Heuristic: prefer amounts that appear near "TOTAL", "USD", or at the end of the document
     // Also penalize amounts that look like unit prices (very small amounts near item descriptions)
     const scoredAmounts = allAmounts.map(a => {
-        let score = 0;
+        const _score = 0;
         let roleScore = 0;
         let skuScore = 0;
         let contextScore = 0;
@@ -1289,7 +1271,7 @@ function extractAdditionalCharges(text: string): number | null {
  */
 function extractTaxDiscountSubtotal(text: string): { subtotal: number | null; tax_amount: number | null; discount_amount: number | null } {
   const result = { subtotal: null as number | null, tax_amount: null as number | null, discount_amount: null as number | null };
-  const amountRegex = '([\\-]?[\\d,]+\\.\\d{2,4})';
+  const _amountRegex = '([\\-]?[\\d,]+\\.\\d{2,4})';
 
   const subtotalPatterns = [
     /\b(?:SUB(?:\s*[-])?\s*TOTAL|SALE\s*AMOUNT|NET\s*AMOUNT|AMOUNT\s*EXCL\S*|AMOUNT\s*EX\.?\s*VAT|GOODS\s*AMOUNT|ITEM\s*TOTAL)\b[:\s]*([\-]?[\d,]+\.\d{2,4})/i,
@@ -1452,7 +1434,7 @@ function extractSignatures(text: string): ExtractedSignature[] {
     // Normalize offset: strip trailing apostrophe, ensure +HH:MM format
     let offsetPart = 'Z';
     if (offset) {
-      let cleanOffset = offset.replace(/'/g, '').trim();
+      const cleanOffset = offset.replace(/'/g, '').trim();
       // Match +HH:MM or +HHMM
       const offsetMatch = cleanOffset.match(/^([+-])(\d{2}):?(\d{2})$/);
       if (offsetMatch) {
@@ -2395,7 +2377,7 @@ export function extractUsingGenericLayer(text: string, preferUS: boolean = false
 /**
  * AI Fallback Interface (placeholder for future OpenAI integration)
  */
-async function extractUsingAI(text: string): Promise<{
+async function _extractUsingAI(_text: string): Promise<{
   vendor_name: string | null;
   invoice_number: string | null;
   invoice_date: string | null;
@@ -2845,7 +2827,7 @@ export function extractLineItems(
     const { sku, pos } = skuPositions[i];
     const rowStart = pos;
     const rowEnd = i < skuPositions.length - 1 ? skuPositions[i + 1].pos : fullText.length;
-    const rowText = fullText.substring(rowStart, rowEnd);
+    const _rowText = fullText.substring(rowStart, rowEnd);
     
     // Expand slightly to the left to catch leading quantity/size columns that may appear
     // before the SKU, but keep the right boundary at the next SKU.
@@ -3437,7 +3419,7 @@ function buildInvoiceTruthGraph(
   normalizedText: string,
   lineItems: Array<{ quantity: number; unitPrice: number; extendedPrice: number; rawLine: string }>,
   legacyAmount: number | null,
-  legacyCurrency: string | null
+  _legacyCurrency: string | null
 ): { graph: any; amountResult: any; qtyResult: any } {
   console.log('[buildInvoiceTruthGraph] Building truth graph from extracted data');
   
@@ -4067,7 +4049,7 @@ export async function extractMadisonInvoiceFields(fileBuffer: Buffer): Promise<M
     console.log('[MadisonExtractor] Legacy mode: running Truth Graph + fallback extraction');
 
     const legacyQtyShipped = extractQtyShipped(normalizedText, pageItems);
-    const { amountResult: truthAmountResult, qtyResult: truthQtyResult } = buildInvoiceTruthGraph(normalizedText, lineItems, amount, currency);
+    const { amountResult: _truthAmountResult, qtyResult: _truthQtyResult } = buildInvoiceTruthGraph(normalizedText, lineItems, amount, currency);
     const astOutput = await executeInvoiceExtraction(
       { rawText, normalizedText, pages: normalizedPages },
       lineItems,

@@ -1,6 +1,7 @@
 export * from './types';
 export * from './validation-rules';
 export * from './sla-utils';
+export * from './workflow-transitions';
 export {
   PaymentTerms,
   BillToEntity,

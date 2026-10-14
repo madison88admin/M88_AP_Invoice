@@ -160,11 +160,11 @@ function isValidInvoiceNumber(num: string): boolean {
  */
 function extractInvoiceNumberFromPage(text: string): string | null {
   const patterns = [
-    /(?:Invoice\s*(?:No|Nº|N°|Number|#)\s*[:.]?\s*)([A-Z0-9][A-Z0-9\-\/]{2,30})/i,
-    /(?:Inv\.?\s*(?:No|Number|#)\s*[:.]?\s*)([A-Z0-9][A-Z0-9\-\/]{2,20})/i,
-    /(?:Bill\s*(?:No|Number|#)\s*[:.]?\s*)([A-Z0-9][A-Z0-9\-\/]{2,20})/i,
-    /(?:Tax\s*Invoice\s*(?:No|Number|#)\s*[:.]?\s*)([A-Z0-9][A-Z0-9\-\/]{2,20})/i,
-    /(?:Commercial\s*Invoice\s*(?:No|Number|#)\s*[:.]?\s*)([A-Z0-9][A-Z0-9\-\/]{2,20})/i,
+    /(?:Invoice\s*(?:No|Nº|N°|Number|#)\s*[:.]?\s*)([A-Z0-9][A-Z0-9-/]{2,30})/i,
+    /(?:Inv\.?\s*(?:No|Number|#)\s*[:.]?\s*)([A-Z0-9][A-Z0-9\-/]{2,20})/i,
+    /(?:Bill\s*(?:No|Number|#)\s*[:.]?\s*)([A-Z0-9][A-Z0-9\-/]{2,20})/i,
+    /(?:Tax\s*Invoice\s*(?:No|Number|#)\s*[:.]?\s*)([A-Z0-9][A-Z0-9\-/]{2,20})/i,
+    /(?:Commercial\s*Invoice\s*(?:No|Number|#)\s*[:.]?\s*)([A-Z0-9][A-Z0-9\-/]{2,20})/i,
   ];
 
   for (const pattern of patterns) {

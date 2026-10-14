@@ -49,6 +49,7 @@ model Vendor {
   updated_at              DateTime @updatedAt
   invoices                Invoice[]
   bank_change_requests    VendorBankChangeRequest[]
+  bank_versions           VendorBankVersion[]
   vendor_bill_stubs       VendorBillStub[]
   
   @@index([name])
@@ -58,7 +59,11 @@ model Vendor {
 
 model Invoice {
   id                    String        @id @default(uuid())
+  // Permanent AP tracking reference. This is intentionally separate from
+  // the supplier invoice number and remains stable across revisions.
+  ap_record_id          String        @unique @default(cuid())
   invoice_number        String
+  normalized_invoice_number String?
   revision              Int           @default(1)
   invoice_date          DateTime?
   invoice_received_date DateTime?
@@ -124,6 +129,13 @@ model Invoice {
   
   // Status & routing
   status                InvoiceStatus @default(RECEIVED)
+  // Stable lifecycle projection used by intake/review/reporting. Legacy
+  // status remains for compatibility with existing approval code.
+  // Canonical lifecycle projection: RECEIVED, OCR_PROCESSING,
+  // NON_PAYABLE_REVIEW, PROFORMA_REVIEW, PURCHASING_REVIEW,
+  // ACCOUNTING_REVIEW, DUPLICATE_REVIEW, REVISION_REVIEW, APPROVED,
+  // POSTED_TO_QB, PAYMENT_SCHEDULED, PAID, ON_HOLD, REJECTED, CANCELLED.
+  workflow_status       String        @default("RECEIVED")
   // Cancellation is an auditable state, never a hard-delete substitute.  The
   // original document, approvals and QuickBooks history remain attached.
   cancellation_requested_by String?
@@ -140,6 +152,10 @@ model Invoice {
   
   // Validation
   is_duplicate          Boolean       @default(false)
+  duplicate_review_status String       @default("NOT_REVIEWED")
+  duplicate_review_reason String?
+  duplicate_reviewed_by String?
+  duplicate_reviewed_at DateTime?
   ocr_confidence_score  Decimal?
   is_handwritten        Boolean       @default(false)
   ocr_raw_data          Json?
@@ -157,6 +173,7 @@ model Invoice {
   
   // Duplicate detection hash
   invoice_hash          String?
+  line_items_signature  String?
   
   // Bank matching
   bank_match_status     String?
@@ -185,6 +202,11 @@ model Invoice {
   source                InvoiceSource @default(EMAIL)
   raw_file_url          String?
   pdf_path              String?
+  source_message_id     String?
+  source_attachment_id  String?
+  source_received_at    DateTime?
+  retention_until       DateTime?
+  legal_hold            Boolean       @default(false)
   created_at            DateTime      @default(now())
   updated_at            DateTime      @updatedAt
   
@@ -200,6 +222,12 @@ model Invoice {
   workflow_actions      InvoiceWorkflowAction[]
   validation_snapshots  ValidationSnapshot[]
   async_jobs            AsyncJob[]
+  duplicate_reviews     DuplicateRevisionReview[] @relation("DuplicateReviewInvoice")
+  duplicate_candidates  DuplicateRevisionReview[] @relation("DuplicateReviewCandidate")
+  quickbooks_reconciliations QuickBooksReconciliation[]
+  bank_snapshot          InvoiceBankSnapshot?
+  bank_snapshot_revisions InvoiceBankSnapshotRevision[]
+  retention_disposition   RetentionDisposition?
   
   @@index([vendor_id])
   @@index([status])
@@ -211,6 +239,57 @@ model Invoice {
   @@index([invoice_number, vendor_id, invoice_type])
   @@index([mpo_base_number, mpo_order_sequence, material_code])
   @@map("APInvoice_Invoice")
+}
+
+model DuplicateRevisionReview {
+  id                    String   @id @default(uuid())
+  invoice_id            String
+  invoice               Invoice  @relation("DuplicateReviewInvoice", fields: [invoice_id], references: [id], onDelete: Cascade)
+  candidate_invoice_id  String?
+  candidate_invoice     Invoice? @relation("DuplicateReviewCandidate", fields: [candidate_invoice_id], references: [id], onDelete: SetNull)
+  status                String   @default("PENDING")
+  classification        String?
+  reason                String?
+  evidence              Json?
+  matching_indicators   Json?
+  reviewer_id           String?
+  reviewed_at           DateTime?
+  created_at            DateTime @default(now())
+  updated_at            DateTime @updatedAt
+
+  @@index([invoice_id, status])
+  @@index([candidate_invoice_id])
+  @@map("APInvoice_DuplicateRevisionReview")
+}
+
+model QuickBooksReconciliation {
+  id                  String   @id @default(uuid())
+  // Nullable for QUICKBOOKS_ONLY rows, which have no AP invoice to attach.
+  invoice_id          String?
+  invoice             Invoice? @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
+  result              String
+  qb_transaction_id   String?
+  qb_reference        String?
+  qb_vendor_name      String?
+  qb_invoice_number   String?
+  qb_amount           Decimal? @db.Decimal(15, 2)
+  qb_open_balance     Decimal? @db.Decimal(15, 2)
+  difference_amount   Decimal? @db.Decimal(15, 2)
+  exception_code      String?
+  review_owner        String?
+  comments            String?
+  source              String?
+  resolution_status   String   @default("OPEN")
+  resolved_by        String?
+  resolved_at        DateTime?
+  resolution_evidence Json?
+  reconciled_at      DateTime @default(now())
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  @@index([invoice_id, reconciled_at])
+  @@index([result, resolution_status])
+  @@map("APInvoice_QuickBooksReconciliation")
 }
 
 model Signature {
@@ -413,6 +492,8 @@ model VendorBankChangeRequest {
   current_value   String?
   requested_value String
   reason          String
+  phone_validation_confirmation String?
+  supporting_documents Json?
   requested_by    String
   requested_by_id String?
   status          String   @default("PENDING") // PENDING | APPROVED | REJECTED
@@ -423,6 +504,94 @@ model VendorBankChangeRequest {
   @@index([vendor_id])
   @@index([status])
   @@map("APInvoice_VendorBankChangeRequest")
+}
+
+model VendorBankVersion {
+  id                    String   @id @default(uuid())
+  vendor_id             String
+  vendor                Vendor   @relation(fields: [vendor_id], references: [id], onDelete: Cascade)
+  version               Int
+  status                String   @default("ACTIVE")
+  effective_date        DateTime @default(now())
+  beneficiary_name      String?
+  bank_name             String?
+  bank_address          String?
+  account_number        String?
+  swift_code            String?
+  iban                  String?
+  sort_code             String?
+  aba_routing_number    String?
+  intermediary_bank_name String?
+  intermediary_bank_swift String?
+  currency              String?
+  payment_method        String?
+  requested_by          String?
+  approved_by           String?
+  approval_timestamp    DateTime?
+  source_request_id     String?
+  created_at            DateTime @default(now())
+
+  @@unique([vendor_id, version])
+  @@index([vendor_id, status])
+  @@map("APInvoice_VendorBankVersion")
+}
+
+// Immutable bank details captured for the invoice itself. Vendor-master
+// changes must never rewrite this record; payment rows capture a second,
+// payment-time snapshot for the bank handoff.
+model InvoiceBankSnapshot {
+  id                    String   @id @default(uuid())
+  invoice_id            String   @unique
+  invoice               Invoice  @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
+  vendor_id             String?
+  vendor_bank_version_id String?
+  beneficiary_name      String?
+  bank_name             String?
+  bank_address          String?
+  account_number        String?
+  swift_code            String?
+  iban                  String?
+  sort_code             String?
+  aba_routing_number    String?
+  intermediary_bank_name String?
+  intermediary_bank_swift String?
+  snapshot_hash         String
+  captured_at           DateTime @default(now())
+  captured_by           String?
+  source                String   @default("INVOICE_INTAKE")
+
+  @@index([vendor_id])
+  @@index([vendor_bank_version_id])
+  @@map("APInvoice_InvoiceBankSnapshot")
+}
+
+// History for authorized invoice-level bank corrections. The current pointer
+// above is convenient for payment readiness; this append-only table preserves
+// every prior confirmed set for audit and payment traceability.
+model InvoiceBankSnapshotRevision {
+  id                    String   @id @default(uuid())
+  invoice_id            String
+  invoice               Invoice  @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
+  revision              Int
+  vendor_bank_version_id String?
+  beneficiary_name      String?
+  bank_name             String?
+  bank_address          String?
+  account_number        String?
+  swift_code            String?
+  iban                  String?
+  sort_code             String?
+  aba_routing_number    String?
+  intermediary_bank_name String?
+  intermediary_bank_swift String?
+  snapshot_hash         String
+  captured_at           DateTime @default(now())
+  captured_by           String?
+  source                String
+
+  @@unique([invoice_id, revision])
+  @@index([invoice_id, captured_at])
+  @@map("APInvoice_InvoiceBankSnapshotRevision")
 }
 
 model Payment {
@@ -443,6 +612,10 @@ model Payment {
   reference     String?
   bank_used     String?
   remarks       String?
+  hold_reason   String?
+  hold_evidence Json?
+  hold_owner    String?
+  hold_review_date DateTime?
   // Immutable payment-authorisation snapshot. Exports must read these fields,
   // never the mutable Vendor Master record.
   beneficiary_name_snapshot String?
@@ -848,6 +1021,7 @@ model Notification {
 
 model EmailIntakeEvent {
   id            String   @id @default(uuid())
+  intake_id     String?
   source        String
   mailbox       String?
   message_id    String?
@@ -863,8 +1037,89 @@ model EmailIntakeEvent {
   @@index([created_at])
   @@index([source, created_at])
   @@index([message_id])
+  @@index([intake_id, created_at])
   @@index([status, created_at])
   @@map("APInvoice_EmailIntakeEvent")
+}
+
+// Review-only intake records preserve non-payable/ambiguous attachments in a
+// searchable queue without creating a payable Invoice row.
+model IntakeReviewRecord {
+  id              String   @id @default(uuid())
+  intake_id       String
+  source          String
+  mailbox         String?
+  message_id      String?
+  attachment_id   String?
+  file_name       String   @default("")
+  storage_path    String?
+  document_type   String?
+  invoice_number  String?
+  reason          String
+  status          String   @default("OPEN")
+  metadata        Json?
+  reviewed_by     String?
+  reviewed_at     DateTime?
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  @@unique([intake_id, file_name])
+  @@index([status, created_at])
+  @@index([source, created_at])
+  @@index([invoice_number])
+  @@map("APInvoice_IntakeReviewRecord")
+}
+
+// Durable case for historical email attachments whose original upload event
+// predates storage-path capture. The case remains searchable until the source
+// PDF is re-supplied or an administrator explicitly closes it.
+model IntakeRecoveryCase {
+  id                   String   @id @default(uuid())
+  intake_id            String   @unique
+  source               String
+  message_id           String?
+  attachment_id        String?
+  file_name            String   @default("")
+  storage_path         String?
+  status               String   @default("SOURCE_RECOVERY_REQUIRED")
+  reason               String
+  attempts             Int      @default(0)
+  last_error           String?
+  recovered_invoice_id String?
+  metadata             Json?
+  created_at           DateTime @default(now())
+  updated_at           DateTime @updatedAt
+
+  @@index([status, created_at])
+  @@index([source, created_at])
+  @@index([file_name])
+  @@map("APInvoice_IntakeRecoveryCase")
+}
+
+// Retention compliance is a controlled queue, not an automatic destructive
+// delete. Disposal is eligible only after expiry, backup attestation, and no
+// legal hold; every decision remains auditable.
+model RetentionDisposition {
+  id                 String   @id @default(uuid())
+  invoice_id         String   @unique
+  retention_until    DateTime?
+  legal_hold         Boolean  @default(false)
+  status             String   @default("ACTIVE")
+  backup_verified_at DateTime?
+  backup_reference   String?
+  backup_hash        String?
+  eligible_at        DateTime?
+  disposed_at        DateTime?
+  disposed_by        String?
+  disposition_reason String?
+  metadata           Json?
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+  invoice            Invoice  @relation(fields: [invoice_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([status, retention_until])
+  @@index([legal_hold, retention_until])
+  @@map("APInvoice_RetentionDisposition")
 }
 
 model FinanceControlRun {

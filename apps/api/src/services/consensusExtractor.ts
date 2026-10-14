@@ -653,7 +653,7 @@ export class ConsensusExtractor {
       // If raw text is available, try to resolve using invoice date label
       const resolved = rawText ? this.resolveDateFromRawText(rawText, [norm1, norm2]) : null;
       if (resolved) {
-        const source = resolved === norm1 ? 'pdf2json' : 'gemini';
+        const _source = resolved === norm1 ? 'pdf2json' : 'gemini';
         return {
           value: resolved,
           confidence: 'HIGH',
@@ -1000,9 +1000,9 @@ export class ConsensusExtractor {
       /^\s*Invoice\s+No\s*/i,
       /^\s*Sales Invoice\s*/i,
       /^\s*Invoice\s*/i,
-      /^\s*Bill\s+To\s*[:\-]?\s*/i,
-      /^\s*Ship\s+To\s*[:\-]?\s*/i,
-      /^\s*Sold\s+To\s*[:\-]?\s*/i,
+      /^\s*Bill\s+To\s*[:-]?\s*/i,
+      /^\s*Ship\s+To\s*[:-]?\s*/i,
+      /^\s*Sold\s+To\s*[:-]?\s*/i,
     ];
     let cleaned = name;
     for (const prefix of noisePrefixes) {
@@ -1101,7 +1101,7 @@ export class ConsensusExtractor {
 
   private normalizeCurrency(value: string): string {
     if (!value) return value;
-    return value.replace(/[\$\s]/g, '').toUpperCase().trim();
+    return value.replace(/[$\s]/g, '').toUpperCase().trim();
   }
 
   private resolveDateFromRawText(rawText: string, candidates: string[]): string | null {

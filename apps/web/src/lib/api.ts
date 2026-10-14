@@ -254,6 +254,10 @@ export const dashboardApi = {
 export const qbApi = {
   exportBills: (params?: { status?: string; dateFrom?: string; dateTo?: string }) =>
     api.get('/api/qb/export', { params, responseType: 'blob' }),
+  listReconciliations: (params?: { result?: string; resolution_status?: string; invoice_id?: string }) =>
+    api.get('/api/qb/reconciliation', { params }),
+  recordReconciliation: (data: any) => api.post('/api/qb/reconciliation', data),
+  resolveReconciliation: (id: string, comments?: string) => api.patch(`/api/qb/reconciliation/${id}/resolve`, { comments }),
 };
 
 export const reportApi = {

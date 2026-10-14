@@ -108,7 +108,6 @@ function useCountUp(end: number, duration: number = 1200, start: boolean = true)
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [start, duration]);
 
   const startAnimation = () => {
@@ -3183,6 +3182,10 @@ ${dataRows}
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
+                  <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>AP Record ID</p>
+                  <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{(selectedInvoice as any).ap_record_id || selectedInvoice.id}</p>
+                </div>
+                <div>
                   <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Invoice Number</p>
                   <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.invoice_number}</p>
                 </div>
@@ -3200,6 +3203,12 @@ ${dataRows}
                   <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Status</p>
                   <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.status.replace(/_/g, ' ')}</p>
                 </div>
+                {(selectedInvoice as any).duplicate_review_status && (selectedInvoice as any).duplicate_review_status !== 'NOT_REVIEWED' && (
+                  <div>
+                    <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Duplicate / Revision Review</p>
+                    <p className="text-sm font-medium" style={{ color: 'var(--accent-amber)' }}>{String((selectedInvoice as any).duplicate_review_status).replace(/_/g, ' ')}</p>
+                  </div>
+                )}
               </div>
 
               {(selectedInvoice as any).ocr_confidence_score !== undefined && (selectedInvoice as any).ocr_confidence_score !== null && (

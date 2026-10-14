@@ -1,5 +1,5 @@
 import nodemailer from 'nodemailer';
-import { InvoiceStatus, ExceptionReason } from '@ap-invoice/shared';
+import { ExceptionReason } from '@ap-invoice/shared';
 import { logger } from '../utils/logger';
 
 const smtpHost = process.env.SMTP_HOST || '';

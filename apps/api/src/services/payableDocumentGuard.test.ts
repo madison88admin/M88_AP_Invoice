@@ -1,9 +1,37 @@
 import { describe, it, expect } from 'vitest';
 import {
   filenameIsHardExcluded,
+  getFilenameOnlyBlockReason,
   getPayableBlockReason,
   validatePayableDocument,
 } from './payableDocumentGuard';
+
+describe('payableDocumentGuard — getFilenameOnlyBlockReason (pre-OCR gate)', () => {
+  it('blocks the exact debit-note attachment class that leaked (Fjall Raven)', () => {
+    expect(getFilenameOnlyBlockReason('DEBIT NOTE- Fjall Raven F26 Bulk + F27 SMS trims UJDB26-964_1791879995189.pdf'))
+      .toBe('Debit notes are not eligible for invoice creation');
+  });
+
+  it('blocks the filename forms the decisive post-OCR branch also blocks', () => {
+    expect(getFilenameOnlyBlockReason('Debit Note ABC.pdf')).toBe('Debit notes are not eligible for invoice creation');
+    expect(getFilenameOnlyBlockReason('DEBIT_NOTE_Acme.pdf')).toBe('Debit notes are not eligible for invoice creation');
+    expect(getFilenameOnlyBlockReason('V2026-DN-IX-00123.pdf')).toBe('Debit notes are not eligible for invoice creation');
+  });
+
+  it('never blocks payables — gate keeps every non-debit filename advisory', () => {
+    expect(getFilenameOnlyBlockReason('INVOICE-25-00700 - Madison 88.pdf')).toBeNull();
+    expect(getFilenameOnlyBlockReason('銷售發票_ Invoice- (1609178)- Madison 88.pdf')).toBeNull();
+    expect(getFilenameOnlyBlockReason('SPPB - 002487 - PAXAR.pdf')).toBeNull();
+    expect(getFilenameOnlyBlockReason('BC40 - 002487 - PAXAR.pdf')).toBeNull();
+    expect(getFilenameOnlyBlockReason('')).toBeNull();
+  });
+
+  it('is consistent with the decisive post-OCR branch for the same filenames', () => {
+    const fileName = 'DEBIT NOTE- Fjall Raven F26 Bulk + F27 SMS trims UJDB26-964.pdf';
+    expect(getPayableBlockReason({ fileName, document_type: 'INVOICE' }))
+      .toBe(getFilenameOnlyBlockReason(fileName));
+  });
+});
 
 describe('payableDocumentGuard — getPayableBlockReason', () => {
   it('allows a plain INVOICE', () => {

@@ -6,6 +6,7 @@ import { logAudit } from '../services/auditLogService';
 import { fieldDecisionEngine } from '../services/fieldDecisionEngine';
 import { correctionLogService } from '../services/correctionLogService';
 import { matchMPOLines } from '../utils/mpoLineMatching';
+import { resolveDuplicateRevisionReview } from '../services/accountingControlService';
 
 const invoiceInclude = { vendor: true, invoice_lines: true, parent_invoice: true, child_invoices: true } as const;
 
@@ -135,10 +136,10 @@ export async function relate(req: AuthRequest, res: Response, next: NextFunction
 
 export async function duplicates(_req: AuthRequest, res: Response, next: NextFunction) {
   try {
-    const flagged = await prisma.invoice.findMany({ where: { is_duplicate: true }, include: invoiceInclude, orderBy: { created_at: 'desc' } });
+    const flagged = await prisma.invoice.findMany({ where: { OR: [{ is_duplicate: true }, { duplicate_review_status: 'PENDING' }] }, include: { ...invoiceInclude, duplicate_reviews: { orderBy: { created_at: 'desc' }, take: 3 } }, orderBy: { created_at: 'desc' } });
     const pairs = await Promise.all(flagged.map(async invoice => {
       const match = await prisma.invoice.findFirst({ where: { id: { not: invoice.id }, vendor_id: invoice.vendor_id, OR: [{ invoice_number: invoice.invoice_number }, { total_amount: invoice.total_amount }] }, include: invoiceInclude });
-      return { invoice, match };
+      return { invoice, match, review: (invoice as any).duplicate_reviews?.[0] || null };
     }));
     res.json(pairs.filter(x => x.match));
   } catch (e) { next(e); }
@@ -148,8 +149,30 @@ export async function resolveDuplicate(req: AuthRequest, res: Response, next: Ne
   try {
     const { resolution, related_invoice_id, note } = req.body;
     if (!['KEEP_BOTH','MARK_DUPLICATE','PROFORMA_TO_FINAL','REVISION_OF'].includes(resolution)) throw new AppError('Invalid duplicate resolution', 400);
+    const latestReview = await prisma.duplicateRevisionReview.findFirst({ where: { invoice_id: req.params.id, status: 'PENDING' }, orderBy: { created_at: 'desc' } });
+    if (latestReview) {
+      const classification = resolution === 'MARK_DUPLICATE'
+        ? 'DUPLICATE_SUBMISSION'
+        : resolution === 'REVISION_OF' ? 'CORRECTED_REVISED'
+        : resolution === 'PROFORMA_TO_FINAL' ? 'REPLACEMENT'
+        : 'NEW_INVOICE';
+      await resolveDuplicateRevisionReview({
+        reviewId: latestReview.id,
+        classification,
+        reviewerId: req.user!.id,
+        reason: note || `Purchasing classified as ${classification}`,
+        evidence: { related_invoice_id, resolution },
+      });
+    }
     const data: any = { is_duplicate: resolution === 'MARK_DUPLICATE' };
     if (['PROFORMA_TO_FINAL','REVISION_OF'].includes(resolution)) data.parent_invoice_id = related_invoice_id;
+    data.duplicate_review_status = resolution === 'MARK_DUPLICATE' ? 'DUPLICATE_SUBMISSION' : 'RESOLVED';
+    data.workflow_status = resolution === 'MARK_DUPLICATE'
+      ? 'CANCELLED'
+      : resolution === 'KEEP_BOTH' ? 'RECEIVED' : 'REVIEW_REQUIRED';
+    data.duplicate_review_reason = note || null;
+    data.duplicate_reviewed_by = req.user!.id;
+    data.duplicate_reviewed_at = new Date();
     const invoice = await prisma.invoice.update({ where: { id: req.params.id }, data });
     await logAudit({ invoice_id: invoice.id, performed_by: req.user!.id, action: `DUPLICATE_${resolution}`, note });
     res.json(invoice);

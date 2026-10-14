@@ -1,10 +1,37 @@
 import { Router } from 'express';
 import { authenticate, authorize } from '../middleware/auth';
-import { startEmailPoller, processPowerAutomateAttachment, processSharePointFile } from '../services/emailIntakeService';
-import { createJob, completeJob, failJob, getJob, cleanupOldJobs } from '../services/jobStore';
+import { startEmailPoller, processPowerAutomateAttachment, processSharePointFile, recoverHistoricalIntakeFromSource } from '../services/emailIntakeService';
+import { createJob, completeJob, failJob, cleanupOldJobs } from '../services/jobStore';
 import { UserRole } from '@ap-invoice/shared';
+import upload from '../middleware/upload';
+import prisma from '../config/database';
 
 const router: Router = Router();
+
+router.get('/recovery-cases', authenticate, authorize(UserRole.IT_ADMIN, UserRole.SUPERADMIN, UserRole.ACCOUNTING_SUPERVISOR), async (req, res, next) => {
+  try {
+    const limit = Math.min(500, Math.max(1, Number(req.query.limit || 100)));
+    const cases = await prisma.$queryRawUnsafe(`SELECT * FROM "APInvoice_IntakeRecoveryCase" ORDER BY created_at ASC LIMIT $1`, limit);
+    res.json({ cases });
+  } catch (error) { next(error); }
+});
+
+/** Re-supply a legacy source PDF while preserving the original intake ID. */
+router.post('/recovery-cases/:intakeId/retry', authenticate, authorize(UserRole.IT_ADMIN, UserRole.SUPERADMIN, UserRole.ACCOUNTING_SUPERVISOR), upload.single('file'), async (req: any, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, error: 'The original source PDF is required.' });
+    const result = await recoverHistoricalIntakeFromSource({
+      intakeId: req.params.intakeId,
+      buffer: req.file.buffer,
+      fileName: req.file.originalname,
+      contentType: req.file.mimetype,
+      emailSubject: req.body?.emailSubject,
+      fromAddress: req.body?.fromAddress,
+      receivedDateTime: req.body?.receivedDateTime,
+    });
+    res.status(202).json(result);
+  } catch (error) { next(error); }
+});
 
 // Simple API key middleware for webhook endpoints (Power Automate can't send JWT)
 const webhookApiKey = (req: any, res: any, next: any) => {

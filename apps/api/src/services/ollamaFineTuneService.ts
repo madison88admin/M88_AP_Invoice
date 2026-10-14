@@ -46,7 +46,7 @@ export class OllamaFineTuneService {
     }
 
     const entries: FineTuneDatasetEntry[] = corrections.map((c: { raw_text: string | null; original_fields: any; corrected_fields: any }) => {
-      const original = (c.original_fields as any) || {};
+      const _original = (c.original_fields as any) || {};
       const corrected = (c.corrected_fields as any) || {};
       return {
         instruction: 'Extract invoice data from the provided text and return valid JSON only.',

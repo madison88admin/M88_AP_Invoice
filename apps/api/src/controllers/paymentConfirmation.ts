@@ -2,9 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { createJob, completeJob, failJob, cleanupOldJobs } from '../services/jobStore';
 import { analyzeInvoice } from '../services/ocrService';
 import prisma from '../config/database';
-import { InvoiceStatus } from '@ap-invoice/shared';
 import { logger } from '../utils/logger';
-import { AppError } from '../middleware/errorHandler';
 import crypto from 'crypto';
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
@@ -177,7 +175,7 @@ export const uploadPaymentConfirmation = async (
       });
     }
 
-    const emailMetadata = {
+    const _emailMetadata = {
       senderEmail: req.body.senderEmail || req.body.fromAddress || '',
       subject: req.body.subject || req.body.emailSubject || '',
       receivedDate: req.body.receivedDate || req.body.receivedDateTime || new Date().toISOString(),

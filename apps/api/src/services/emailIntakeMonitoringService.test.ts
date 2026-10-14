@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   eventFindFirst: vi.fn(),
   eventFindMany: vi.fn(),
   eventCount: vi.fn(),
+  reviewFindMany: vi.fn(),
   notificationFindFirst: vi.fn(),
   notificationCreate: vi.fn(),
 }));
@@ -17,6 +18,7 @@ vi.mock('../config/database', () => ({
       findMany: mocks.eventFindMany,
       count: mocks.eventCount,
     },
+    intakeReviewRecord: { findMany: mocks.reviewFindMany },
     notification: { findFirst: mocks.notificationFindFirst },
   },
 }));
@@ -63,11 +65,13 @@ describe('email intake monitoring', () => {
     mocks.eventFindMany.mockResolvedValue([{ id: 'event-1' }]);
     mocks.eventFindFirst.mockResolvedValue({ created_at: now });
     mocks.eventCount.mockResolvedValue(1);
+    mocks.reviewFindMany.mockResolvedValue([]);
     await expect(getEmailIntakeMonitor(50)).resolves.toEqual({
       latest_poll_at: now,
       failures_24h: 1,
       events: [{ id: 'event-1' }],
       recovery_queue: [],
+      review_records: [],
     });
   });
 });

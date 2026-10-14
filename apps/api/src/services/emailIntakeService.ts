@@ -2,19 +2,19 @@ import { Client } from '@microsoft/microsoft-graph-client';
 import { ClientSecretCredential } from '@azure/identity';
 import { analyzeInvoice } from './ocrService';
 import { evaluateCurrencyPolicy, normalizeToUsd } from './currencyPolicyService';
-import { matchVendor, matchOrCreateVendor } from './vendorMatchingService';
+import { getUnknownVendorPlaceholder, matchOrCreateVendor } from './vendorMatchingService';
 import { getVendorPaymentTermDefault, preferExtractedPaymentTerms } from './vendorDefaultsService';
 import { validateInvoice } from './validationService';
 import { uploadInvoiceToStructuredFolder } from './sharePointService';
-import { uploadToStorage } from './supabaseStorageService';
+import { downloadFromStorage, uploadToStorage } from './supabaseStorageService';
 import { buildMultiInvoiceSourceMetadata, detectMultiInvoice, splitPdfByPageRanges } from './multiInvoiceDetector';
 import { InvoiceStatus, InvoiceType, InvoiceSource, SignatureType, ExceptionReason, determineApprovalTier, BrandTier } from '@ap-invoice/shared';
 import { isTop10Brand, TOP_10_BRANDS } from '@ap-invoice/shared';
 import { sanitizeInvoiceType, sanitizeCategory } from '../utils/enumSanitizer';
-import prisma from '../config/database';
+import prisma, { isDbEnabled } from '../config/database';
 import { logger } from '../utils/logger';
 import { AppError } from '../middleware/errorHandler';
-import { alertEmailIntakeFailure, recordEmailIntakeEvent } from './emailIntakeMonitoringService';
+import { alertEmailIntakeFailure, recordEmailIntakeEvent, recordIntakeRecoveryCase } from './emailIntakeMonitoringService';
 import { analyzeWithRetry, describeIntakeError } from './intakeRetryService';
 import { hasStrongNonInvoiceHeading } from './nonInvoiceSuppression';
 import { PDFDocument } from 'pdf-lib';
@@ -22,6 +22,7 @@ import { buildIntakeIdempotencyKey, evaluateIntakeControls } from './intakeContr
 import { checkEmailDuplicate, generateFileHash } from './emailDuplicateService';
 import { getPayableBlockReason } from './payableDocumentGuard';
 import { replaceInvoicePdfByNumber, PdfReplacementResult } from './invoicePdfReplacementService';
+import { normalizeInvoiceReference } from './accountingControlService';
 
 const clientId = process.env.GRAPH_API_CLIENT_ID || '';
 const clientSecret = process.env.GRAPH_API_CLIENT_SECRET || '';
@@ -231,6 +232,45 @@ async function analyzeIntakeWithRetry(
     const detail = describeIntakeError(error);
     throw new Error(`OCR provider failed for ${fileName}: ${detail}`);
   }
+}
+
+type AtomicIntakeEvent = {
+  source: 'GRAPH' | 'POWER_AUTOMATE' | 'SHAREPOINT';
+  intakeId: string;
+  messageId?: string;
+  attachmentId?: string;
+  fileName: string;
+  mailbox?: string;
+  metadata?: Record<string, unknown>;
+};
+
+/**
+ * Persist the invoice and its CREATED event in one database transaction. The
+ * PDF is uploaded first, so a transient DB failure can be retried without
+ * losing the source document; the event is never allowed to claim CREATED
+ * unless the invoice row committed successfully.
+ */
+async function createInvoiceAndIntakeEvent(invoiceData: any, event: AtomicIntakeEvent): Promise<any> {
+  return prisma.$transaction(async (tx) => {
+    const invoice = await tx.invoice.create({ data: invoiceData, include: { vendor: true } });
+    const { ensureInvoiceBankSnapshot } = await import('./invoiceBankSnapshotService');
+    await ensureInvoiceBankSnapshot(invoice.id, 'email-intake', tx, event.source);
+    await tx.emailIntakeEvent.create({
+      data: {
+        source: event.source,
+        intake_id: event.intakeId,
+        mailbox: event.mailbox,
+        message_id: event.messageId || event.intakeId,
+        attachment_id: event.attachmentId,
+        file_name: event.fileName,
+        stage: 'CREATED',
+        status: 'SUCCESS',
+        invoice_id: invoice.id,
+        metadata: { ...(event.metadata || {}), invoice_number: invoice.invoice_number },
+      } as any,
+    });
+    return invoice;
+  });
 }
 
 export function isEmailPollerConfigured(): boolean {
@@ -464,13 +504,12 @@ async function processSingleInvoiceAttachment(
   attachmentId?: string,
   multiInvoiceSource?: any,
 ): Promise<void> {
+  let storagePath: string | undefined;
   try {
-    // Filename patterns are advisory only. Always retain and OCR the
-    // attachment first; document classification decides whether it is an
-    // invoice or a review item. This prevents valid invoices with filenames
-    // containing "packing", "report", or "artwork" from disappearing.
+    // Store every attachment before classification/OCR. Non-payable documents
+    // are routed to REVIEW_REQUIRED after extraction, but their original PDF
+    // must remain available for audit and later re-review.
     // Upload to VPS Supabase Storage FIRST (before OCR — ensures file is saved even if OCR fails)
-    let storagePath: string | undefined;
     try {
       const uploadedPath = await uploadToStorage(buffer, fileName, contentType);
       if (uploadedPath) {
@@ -512,7 +551,7 @@ async function processSingleInvoiceAttachment(
         source: 'GRAPH', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', mailbox: mailboxAddress,
         messageId: message.id, attachmentId, fileName,
         error: reviewReason,
-        metadata: { invoice_type: ocrResult.invoice_type, amount: ocrResult.total_amount, currency: ocrResult.currency },
+        metadata: { invoice_type: ocrResult.invoice_type, amount: ocrResult.total_amount, currency: ocrResult.currency, invoice_number: ocrResult.invoice_number, storage_path: storagePath, intake_id: graphIdempotencyKey },
       });
       await alertEmailIntakeFailure({ source: 'Invoice intake review required', fileName, error: reviewReason });
       logger.warn(`[Email Intake] ${fileName} routed to review: ${reviewReason}`);
@@ -520,7 +559,7 @@ async function processSingleInvoiceAttachment(
     }
     if (graphControls.reasons.length > 0) {
       const controlReason = graphControls.reasons.join(' ');
-      await recordEmailIntakeEvent({ source: 'GRAPH', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', mailbox: mailboxAddress, messageId: message.id, attachmentId, fileName, error: controlReason, metadata: graphControls.metadata });
+      await recordEmailIntakeEvent({ source: 'GRAPH', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', mailbox: mailboxAddress, messageId: message.id, attachmentId, fileName, error: controlReason, metadata: { ...graphControls.metadata, invoice_number: ocrResult.invoice_number, storage_path: storagePath, intake_id: graphIdempotencyKey } });
       await alertEmailIntakeFailure({ source: 'Invoice intake control', fileName, error: controlReason });
       logger.warn(`[Email Intake] ${fileName} routed to review: ${controlReason}`);
       return;
@@ -564,6 +603,11 @@ async function processSingleInvoiceAttachment(
       invoiceNumber: ocrResult.invoice_number,
       amount: Number(ocrResult.total_amount),
       invoiceDate: ocrResult.invoice_date || null,
+      currency: ocrResult.currency,
+      mpoNumber: ocrResult.mpo_number,
+      customerPoNumber: ocrResult.customer_po_number,
+      lineItemsSignature: Array.isArray((ocrResult as any).line_items) ? JSON.stringify((ocrResult as any).line_items) : undefined,
+      documentLayoutFingerprint: ocrResult.document_layout_fingerprint,
     });
     if (graphDuplicate.isDuplicate) {
       const duplicateReason = `${graphDuplicate.detail}; retained as review-only and no duplicate invoice record was created.`;
@@ -580,8 +624,9 @@ async function processSingleInvoiceAttachment(
       logger.warn(`[Email Intake] Low OCR confidence (${(ocrConfidence * 100).toFixed(1)}%) for ${fileName}`);
     }
 
-    // Match vendor (with auto-create)
+    // Match vendor read-only; OCR never creates a Vendor Master row.
     let vendorId: string | undefined;
+    let vendorMatched = false;
     try {
       const bankInfo = (ocrResult as any).bank_info || {};
       const vendorResult = await matchOrCreateVendor(ocrResult.vendor_name, {
@@ -591,10 +636,12 @@ async function processSingleInvoiceAttachment(
         account_number: bankInfo.account_usd || bankInfo.account_number || (ocrResult as any).account_number,
       });
       vendorId = vendorResult?.vendor_id;
+      vendorMatched = Boolean(vendorId);
     } catch (error) {
       logger.warn(`No vendor match found for ${ocrResult.vendor_name}, creating exception`);
       vendorId = undefined;
     }
+    if (!vendorMatched) vendorId = (await getUnknownVendorPlaceholder()) || undefined;
 
     // Determine approval tier from amount
     const tier = determineApprovalTier(ocrResult.total_amount || 0);
@@ -610,7 +657,7 @@ async function processSingleInvoiceAttachment(
 
     // Upload to structured SharePoint folder (secondary, if configured)
     let sharepointUrl: string | undefined;
-    if (vendorId) {
+    if (vendorMatched) {
       try {
         const uploadResult = await uploadInvoiceToStructuredFolder(
           ocrResult.vendor_name,
@@ -640,8 +687,7 @@ async function processSingleInvoiceAttachment(
 
     // Create invoice record with BRD v5.0 schema fields
     applyUsdNormalization(ocrResult);
-    const invoice = await prisma.invoice.create({
-      data: {
+    const invoice = await createInvoiceAndIntakeEvent({
         invoice_number: ocrResult.invoice_number,
         invoice_date: ocrResult.invoice_date,
         due_date: ocrResult.due_date ? new Date(ocrResult.due_date) : null,
@@ -682,13 +728,15 @@ async function processSingleInvoiceAttachment(
         ocr_confidence_score: ocrResult.ocr_confidence_score || undefined,
         ocr_raw_data: { ...ocrResult, email_internet_message_id: message.id, attachment_file_hash: graphFileHash, intake_idempotency_key: graphIdempotencyKey, multi_invoice_split_index: splitIndex, multi_invoice_source: multiInvoiceSource } as any,
         invoice_hash: graphFileHash,
+        normalized_invoice_number: normalizeInvoiceReference(ocrResult.invoice_number) || undefined,
+        line_items_signature: Array.isArray((ocrResult as any).line_items) ? JSON.stringify((ocrResult as any).line_items) : undefined,
         beneficiary_name: (ocrResult as any).bank_info?.beneficiary_name || (ocrResult as any).beneficiary_name || undefined,
         bank_name: (ocrResult as any).bank_info?.bank_name || (ocrResult as any).bank_name || undefined,
         swift_code: (ocrResult as any).bank_info?.swift_code || (ocrResult as any).swift_code || undefined,
         account_number: (ocrResult as any).bank_info?.account_usd || (ocrResult as any).bank_info?.account_number || (ocrResult as any).account_number || (ocrResult as any).bank_account || undefined,
         qb_memo: qbMemo,
         qb_account_class: ocrResult.qb_account_class,
-        status: (vendorId && !isLowConfidence ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,
+        status: (vendorMatched && !isLowConfidence ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,
         source: InvoiceSource.EMAIL as any,
         approval_tier: tier,
         payment_terms: preferExtractedPaymentTerms(ocrResult.payment_terms, await getVendorPaymentTermDefault(vendorId)),
@@ -696,17 +744,22 @@ async function processSingleInvoiceAttachment(
         sharepoint_filed_at: sharepointUrl ? new Date() : null,
         pdf_path: storagePath || undefined,
         raw_file_url: storagePath || undefined,
+        source_message_id: message.id,
+        source_attachment_id: attachmentId,
+        source_received_at: new Date(message.receivedDateTime || Date.now()),
         ...(ocrResult.date_range_start ? { date_range_start: new Date(ocrResult.date_range_start) } : {}),
         ...(ocrResult.date_range_end ? { date_range_end: new Date(ocrResult.date_range_end) } : {}),
       },
-      include: {
-        vendor: true,
+      {
+        source: 'GRAPH',
+        intakeId: graphIdempotencyKey,
+        messageId: message.id,
+        attachmentId,
+        fileName,
+        mailbox: mailboxAddress,
+        metadata: { storage_path: storagePath, invoice_number: ocrResult.invoice_number },
       },
-    });
-    await recordEmailIntakeEvent({
-      source: 'GRAPH', stage: 'CREATED', mailbox: mailboxAddress, messageId: message.id,
-      attachmentId, fileName, invoiceId: invoice.id, metadata: { invoice_number: invoice.invoice_number },
-    });
+    );
 
     // Create signature records if detected
     if (ocrResult.signatures && ocrResult.signatures.length > 0) {
@@ -735,7 +788,7 @@ async function processSingleInvoiceAttachment(
     });
 
     // Create exception if vendor not matched
-    if (!vendorId) {
+    if (!vendorMatched) {
       await prisma.exception.create({
         data: {
           invoice_id: invoice.id,
@@ -759,7 +812,7 @@ async function processSingleInvoiceAttachment(
     }
     
     // Auto-trigger validation if invoice was created in RECEIVED status (vendor matched, confidence OK)
-    if (vendorId && !isLowConfidence && invoice.status === InvoiceStatus.RECEIVED as any) {
+    if (vendorMatched && !isLowConfidence && invoice.status === InvoiceStatus.RECEIVED as any) {
       try {
         const validationResult = await validateInvoice(invoice.id);
         logger.info(
@@ -780,6 +833,7 @@ async function processSingleInvoiceAttachment(
     await recordEmailIntakeEvent({
       source: 'GRAPH', stage: 'FAILED', status: 'FAILED', mailbox: mailboxAddress,
       messageId: message.id, attachmentId, fileName, error: detail,
+      metadata: { storage_path: storagePath, retryable: true },
     });
     await alertEmailIntakeFailure({ source: 'Microsoft Graph', fileName, error: detail });
   }
@@ -841,9 +895,8 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
     await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'RECEIVED', messageId: intakeKey, fileName: data.fileName, metadata: { from: data.fromAddress } });
     await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'ATTACHMENT_DETECTED', messageId: intakeKey, fileName: data.fileName });
 
-    // Filename patterns are advisory only; OCR/document classification makes
-    // the final decision so invoice-like attachments are never dropped.
-
+    // Filename hints stay advisory; OCR/document classification makes the
+    // final payable-versus-review decision after the PDF is retained.
     // Download file from SharePoint
     const client = await getGraphClient();
     
@@ -889,7 +942,7 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
 
     const reviewReason = intakeReviewReason(ocrResult, data.fileName, data.emailSubject || '');
     if (reviewReason) {
-      await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', messageId: intakeKey, fileName: data.fileName, error: reviewReason });
+      await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', messageId: intakeKey, fileName: data.fileName, error: reviewReason, metadata: { invoice_number: ocrResult.invoice_number, invoice_type: ocrResult.invoice_type, storage_path: storagePath, intake_id: intakeKey } });
       await alertEmailIntakeFailure({ source: 'SharePoint invoice intake review required', fileName: data.fileName, error: reviewReason });
       logger.warn(`[SharePoint Intake] ${data.fileName} routed to review: ${reviewReason}`);
       return { success: false, status: 'REVIEW_REQUIRED', error: reviewReason };
@@ -937,6 +990,11 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
       invoiceNumber: ocrResult.invoice_number,
       amount: Number(ocrResult.total_amount),
       invoiceDate: ocrResult.invoice_date || null,
+      currency: ocrResult.currency,
+      mpoNumber: ocrResult.mpo_number,
+      customerPoNumber: ocrResult.customer_po_number,
+      lineItemsSignature: Array.isArray((ocrResult as any).line_items) ? JSON.stringify((ocrResult as any).line_items) : undefined,
+      documentLayoutFingerprint: ocrResult.document_layout_fingerprint,
     });
     if (sharePointDuplicate.isDuplicate) {
       const duplicateReason = `${sharePointDuplicate.detail}; no duplicate invoice record was created.`;
@@ -952,8 +1010,9 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
       logger.warn(`[SharePoint Intake] Low OCR confidence (${(ocrConfidence * 100).toFixed(1)}%) for ${data.fileName}`);
     }
 
-    // Match vendor (with auto-create)
+    // Match vendor read-only; OCR never creates a Vendor Master row.
     let vendorId: string | undefined;
+    let vendorMatched = false;
     try {
       const bankInfo = (ocrResult as any).bank_info || {};
       const vendorResult = await matchOrCreateVendor(ocrResult.vendor_name, {
@@ -963,10 +1022,12 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
         account_number: bankInfo.account_usd || bankInfo.account_number || (ocrResult as any).account_number,
       });
       vendorId = vendorResult?.vendor_id;
+      vendorMatched = Boolean(vendorId);
     } catch (error) {
       logger.warn(`No vendor match found for ${ocrResult.vendor_name}, creating exception`);
       vendorId = undefined;
     }
+    if (!vendorMatched) vendorId = (await getUnknownVendorPlaceholder()) || undefined;
 
     // Determine approval tier from amount
     const tier = determineApprovalTier(ocrResult.total_amount || 0);
@@ -992,8 +1053,7 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
 
     // Create invoice record
     applyUsdNormalization(ocrResult);
-    const invoice = await prisma.invoice.create({
-      data: {
+    const invoice = await createInvoiceAndIntakeEvent({
         invoice_number: ocrResult.invoice_number,
         invoice_date: ocrResult.invoice_date,
         due_date: ocrResult.due_date ? new Date(ocrResult.due_date) : null,
@@ -1024,13 +1084,15 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
         ocr_confidence_score: ocrResult.ocr_confidence_score || undefined,
         ocr_raw_data: { ...ocrResult, attachment_file_hash: sharePointFileHash, intake_idempotency_key: sharePointIdempotencyKey } as any,
         invoice_hash: sharePointFileHash,
+        normalized_invoice_number: normalizeInvoiceReference(ocrResult.invoice_number) || undefined,
+        line_items_signature: Array.isArray((ocrResult as any).line_items) ? JSON.stringify((ocrResult as any).line_items) : undefined,
         beneficiary_name: (ocrResult as any).bank_info?.beneficiary_name || (ocrResult as any).beneficiary_name || undefined,
         bank_name: (ocrResult as any).bank_info?.bank_name || (ocrResult as any).bank_name || undefined,
         swift_code: (ocrResult as any).bank_info?.swift_code || (ocrResult as any).swift_code || undefined,
         account_number: (ocrResult as any).bank_info?.account_usd || (ocrResult as any).bank_info?.account_number || (ocrResult as any).account_number || (ocrResult as any).bank_account || undefined,
         qb_memo: qbMemo,
         qb_account_class: ocrResult.qb_account_class,
-        status: (vendorId && !isLowConfidence ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,
+        status: (vendorMatched && !isLowConfidence ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,
         source: InvoiceSource.EMAIL as any,
         approval_tier: tier,
         payment_terms: preferExtractedPaymentTerms(ocrResult.payment_terms, await getVendorPaymentTermDefault(vendorId)),
@@ -1038,12 +1100,19 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
         sharepoint_filed_at: new Date(),
         pdf_path: storagePath || undefined,
         raw_file_url: storagePath || undefined,
+        source_message_id: intakeKey,
+        source_attachment_id: sharePointIdempotencyKey,
+        source_received_at: new Date(),
       },
-      include: {
-        vendor: true,
+      {
+        source: 'SHAREPOINT',
+        intakeId: sharePointIdempotencyKey,
+        messageId: intakeKey,
+        attachmentId: sharePointIdempotencyKey,
+        fileName: data.fileName,
+        metadata: { storage_path: storagePath, invoice_number: ocrResult.invoice_number },
       },
-    });
-    await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'CREATED', messageId: intakeKey, fileName: data.fileName, invoiceId: invoice.id, metadata: { invoice_number: invoice.invoice_number } });
+    );
 
     // Create signature records if detected
     if (ocrResult.signatures && ocrResult.signatures.length > 0) {
@@ -1072,8 +1141,8 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
     });
 
     // Create exception if vendor not matched
-    let exceptions: string[] = [];
-    if (!vendorId) {
+    const exceptions: string[] = [];
+    if (!vendorMatched) {
       await prisma.exception.create({
         data: {
           invoice_id: invoice.id,
@@ -1099,7 +1168,7 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
     }
 
     // Auto-trigger validation if invoice was created in RECEIVED status (vendor matched)
-    if (vendorId && !isLowConfidence && invoice.status === InvoiceStatus.RECEIVED as any) {
+    if (vendorMatched && !isLowConfidence && invoice.status === InvoiceStatus.RECEIVED as any) {
       try {
         const validationResult = await validateInvoice(invoice.id);
         logger.info(
@@ -1128,7 +1197,7 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
   } catch (error) {
     logger.error(`Error processing SharePoint file ${data.fileName}:`, error);
     const detail = error instanceof Error ? error.message : String(error);
-    await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'FAILED', status: 'FAILED', messageId: intakeKey, fileName: data.fileName, error: detail });
+    await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'FAILED', status: 'FAILED', messageId: intakeKey, fileName: data.fileName, error: detail, metadata: { intake_id: intakeKey, retryable: true } });
     await alertEmailIntakeFailure({ source: 'Power Automate/SharePoint', fileName: data.fileName, error: detail });
     return {
       success: false,
@@ -1144,6 +1213,11 @@ export interface PowerAutomateAttachment {
   emailSubject: string;
   fromAddress: string;
   receivedDateTime: string;
+  /** Set only by the recovery worker so the original attachment keeps its ID. */
+  intakeId?: string;
+  /** Existing durable object to reuse during recovery; avoids a second upload. */
+  storagePath?: string;
+  attachmentId?: string;
 }
 
 export async function processPowerAutomateAttachment(data: PowerAutomateAttachment): Promise<{
@@ -1157,28 +1231,35 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
   // The initial key is used for the receive event; once the payload is
   // decoded, all processing events use a content-addressed intake ID so a
   // repeated filename can never satisfy another attachment's completion.
-  const receiveKey = `${data.fromAddress}|${data.receivedDateTime}|${data.fileName}`;
-  let intakeKey = receiveKey;
+  const receiveKey = data.intakeId || `${data.fromAddress}|${data.receivedDateTime}|${data.fileName}`;
+  let intakeKey = data.intakeId || receiveKey;
+  // Keep this outside the try block so a later OCR/database failure can be
+  // retried from the durable object instead of losing the PDF reference.
+  let storagePath: string | undefined = data.storagePath;
   try {
     logger.info(`Processing Power Automate attachment: ${data.fileName} from ${data.fromAddress}`);
     await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'RECEIVED', messageId: receiveKey, fileName: data.fileName, metadata: { from: data.fromAddress, subject: data.emailSubject } });
     await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'ATTACHMENT_DETECTED', messageId: receiveKey, fileName: data.fileName });
 
-    // Filename patterns are advisory only; OCR/document classification makes
-    // the final decision so invoice-like attachments are never dropped.
-
+    // Filename hints stay advisory so invoice-like attachments are never
+    // discarded before OCR/classification.
     // Convert base64 to buffer
     const buffer = Buffer.from(data.attachmentBase64, 'base64');
-    intakeKey = buildIntakeIdempotencyKey(receiveKey, generateFileHash(buffer));
+    intakeKey = data.intakeId || buildIntakeIdempotencyKey(receiveKey, generateFileHash(buffer));
 
     // Upload to VPS Supabase Storage FIRST (before OCR — ensures file is saved even if OCR fails)
-    let storagePath: string | undefined;
     try {
-      const uploadedPath = await uploadToStorage(buffer, data.fileName, data.contentType || 'application/pdf');
-      if (uploadedPath) {
-        storagePath = uploadedPath;
-        logger.info(`[Power Automate] Invoice uploaded to VPS storage: ${storagePath}`);
-        await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'UPLOADED', messageId: intakeKey, fileName: data.fileName, metadata: { storage_path: storagePath, intake_id: intakeKey } });
+      if (storagePath) {
+        logger.info(`[Power Automate] Reusing durable storage object for recovery: ${storagePath}`);
+      } else {
+        const uploadedPath = await uploadToStorage(buffer, data.fileName, data.contentType || 'application/pdf');
+        if (uploadedPath) {
+          storagePath = uploadedPath;
+          logger.info(`[Power Automate] Invoice uploaded to VPS storage: ${storagePath}`);
+        }
+      }
+      if (storagePath) {
+        await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'UPLOADED', messageId: intakeKey, attachmentId: data.attachmentId, fileName: data.fileName, metadata: { storage_path: storagePath, intake_id: intakeKey, from: data.fromAddress, subject: data.emailSubject, received_date_time: data.receivedDateTime, content_type: data.contentType } });
       }
     } catch (storageError) {
       logger.warn(`Failed to upload invoice to VPS storage for ${data.fileName}:`, storageError);
@@ -1187,8 +1268,18 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
       await alertEmailIntakeFailure({ source: 'Power Automate storage upload', fileName: data.fileName, error: detail });
     }
     if (!storagePath) {
-      await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'FAILED', status: 'FAILED', messageId: intakeKey, fileName: data.fileName, error: 'Durable storage upload failed; invoice creation was skipped.', metadata: { storage_required: true, retryable: true, intake_id: intakeKey } });
-      return { success: false, status: 'FAILED', error: 'Durable storage upload failed' };
+      const recoveryReason = 'Durable storage upload failed; the original source PDF is required before this intake can be reprocessed.';
+      await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'RECOVERY_REQUIRED', status: 'REVIEW_REQUIRED', messageId: intakeKey, fileName: data.fileName, error: recoveryReason, metadata: { storage_required: true, retryable: false, source_recovery_required: true, intake_id: intakeKey } });
+      await recordIntakeRecoveryCase({
+        intakeId: intakeKey,
+        source: 'POWER_AUTOMATE',
+        messageId: intakeKey,
+        attachmentId: data.attachmentId,
+        fileName: data.fileName,
+        reason: recoveryReason,
+        metadata: { from: data.fromAddress, subject: data.emailSubject, received_date_time: data.receivedDateTime, content_type: data.contentType },
+      });
+      return { success: false, status: 'REVIEW_REQUIRED', error: recoveryReason };
     }
 
     // Analyze invoice using OCR
@@ -1200,7 +1291,7 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
 
     const reviewReason = intakeReviewReason(ocrResult, data.fileName, data.emailSubject || '');
     if (reviewReason) {
-      await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', messageId: intakeKey, fileName: data.fileName, error: reviewReason });
+      await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', messageId: intakeKey, fileName: data.fileName, error: reviewReason, metadata: { invoice_number: ocrResult.invoice_number, invoice_type: ocrResult.invoice_type, storage_path: storagePath, intake_id: intakeKey } });
       await alertEmailIntakeFailure({ source: 'Power Automate invoice intake review required', fileName: data.fileName, error: reviewReason });
       logger.warn(`[Power Automate] ${data.fileName} routed to review: ${reviewReason}`);
       return { success: false, status: 'REVIEW_REQUIRED', error: reviewReason };
@@ -1248,6 +1339,11 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
       invoiceNumber: ocrResult.invoice_number,
       amount: Number(ocrResult.total_amount),
       invoiceDate: ocrResult.invoice_date || null,
+      currency: ocrResult.currency,
+      mpoNumber: ocrResult.mpo_number,
+      customerPoNumber: ocrResult.customer_po_number,
+      lineItemsSignature: Array.isArray((ocrResult as any).line_items) ? JSON.stringify((ocrResult as any).line_items) : undefined,
+      documentLayoutFingerprint: ocrResult.document_layout_fingerprint,
     });
     if (powerAutomateDuplicate.isDuplicate) {
       const duplicateReason = `${powerAutomateDuplicate.detail}; no duplicate invoice record was created.`;
@@ -1263,8 +1359,9 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
       logger.warn(`[Power Automate] Low OCR confidence (${(ocrConfidence * 100).toFixed(1)}%) for ${data.fileName}`);
     }
 
-    // Match vendor (with auto-create)
+    // Match vendor read-only; OCR never creates a Vendor Master row.
     let vendorId: string | undefined;
+    let vendorMatched = false;
     try {
       const bankInfo = (ocrResult as any).bank_info || {};
       const vendorResult = await matchOrCreateVendor(ocrResult.vendor_name, {
@@ -1274,10 +1371,12 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
         account_number: bankInfo.account_usd || bankInfo.account_number || (ocrResult as any).account_number,
       });
       vendorId = vendorResult?.vendor_id;
+      vendorMatched = Boolean(vendorId);
     } catch (error) {
       logger.warn(`No vendor match found for ${ocrResult.vendor_name}, creating exception`);
       vendorId = undefined;
     }
+    if (!vendorMatched) vendorId = (await getUnknownVendorPlaceholder()) || undefined;
 
     // Determine approval tier from amount
     const tier = determineApprovalTier(ocrResult.total_amount || 0);
@@ -1293,7 +1392,7 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
 
     // Upload to structured SharePoint folder (secondary, if configured)
     let sharepointUrl: string | undefined;
-    if (vendorId) {
+    if (vendorMatched) {
       try {
         const uploadResult = await uploadInvoiceToStructuredFolder(
           ocrResult.vendor_name,
@@ -1322,8 +1421,7 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
 
     // Create invoice record
     applyUsdNormalization(ocrResult);
-    const invoice = await prisma.invoice.create({
-      data: {
+    const invoice = await createInvoiceAndIntakeEvent({
         invoice_number: ocrResult.invoice_number,
         invoice_date: ocrResult.invoice_date,
         due_date: ocrResult.due_date ? new Date(ocrResult.due_date) : null,
@@ -1354,13 +1452,15 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
         ocr_confidence_score: ocrResult.ocr_confidence_score || undefined,
         ocr_raw_data: { ...ocrResult, attachment_file_hash: powerAutomateFileHash, intake_idempotency_key: powerAutomateIdempotencyKey } as any,
         invoice_hash: powerAutomateFileHash,
+        normalized_invoice_number: normalizeInvoiceReference(ocrResult.invoice_number) || undefined,
+        line_items_signature: Array.isArray((ocrResult as any).line_items) ? JSON.stringify((ocrResult as any).line_items) : undefined,
         beneficiary_name: (ocrResult as any).bank_info?.beneficiary_name || (ocrResult as any).beneficiary_name || undefined,
         bank_name: (ocrResult as any).bank_info?.bank_name || (ocrResult as any).bank_name || undefined,
         swift_code: (ocrResult as any).bank_info?.swift_code || (ocrResult as any).swift_code || undefined,
         account_number: (ocrResult as any).bank_info?.account_usd || (ocrResult as any).bank_info?.account_number || (ocrResult as any).account_number || (ocrResult as any).bank_account || undefined,
         qb_memo: qbMemo,
         qb_account_class: ocrResult.qb_account_class,
-        status: (vendorId && !isLowConfidence ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,
+        status: (vendorMatched && !isLowConfidence ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,
         source: InvoiceSource.EMAIL as any,
         approval_tier: tier,
         payment_terms: preferExtractedPaymentTerms(ocrResult.payment_terms, await getVendorPaymentTermDefault(vendorId)),
@@ -1368,12 +1468,24 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
         sharepoint_filed_at: sharepointUrl ? new Date() : null,
         pdf_path: storagePath || undefined,
         raw_file_url: storagePath || undefined,
+        source_message_id: intakeKey,
+        source_attachment_id: powerAutomateIdempotencyKey,
+        source_received_at: new Date(),
       },
-      include: {
-        vendor: true,
+      {
+        source: 'POWER_AUTOMATE',
+        intakeId: intakeKey,
+        messageId: intakeKey,
+        attachmentId: data.attachmentId || powerAutomateIdempotencyKey,
+        fileName: data.fileName,
+        metadata: {
+          storage_path: storagePath,
+          invoice_number: ocrResult.invoice_number,
+          email_subject: data.emailSubject,
+          from: data.fromAddress,
+        },
       },
-    });
-    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'CREATED', messageId: intakeKey, fileName: data.fileName, invoiceId: invoice.id, metadata: { invoice_number: invoice.invoice_number } });
+    );
 
     // Create signature records if detected
     if (ocrResult.signatures && ocrResult.signatures.length > 0) {
@@ -1402,8 +1514,8 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
     });
 
     // Create exception if vendor not matched
-    let exceptions: string[] = [];
-    if (!vendorId) {
+    const exceptions: string[] = [];
+    if (!vendorMatched) {
       await prisma.exception.create({
         data: {
           invoice_id: invoice.id,
@@ -1429,7 +1541,7 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
     }
 
     // Auto-trigger validation if invoice was created in RECEIVED status (vendor matched)
-    if (vendorId && !isLowConfidence && invoice.status === InvoiceStatus.RECEIVED as any) {
+    if (vendorMatched && !isLowConfidence && invoice.status === InvoiceStatus.RECEIVED as any) {
       try {
         const validationResult = await validateInvoice(invoice.id);
         logger.info(
@@ -1458,11 +1570,155 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
   } catch (error) {
     logger.error(`Error processing Power Automate attachment ${data.fileName}:`, error);
     const detail = error instanceof Error ? error.message : String(error);
-    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'FAILED', status: 'FAILED', messageId: intakeKey, fileName: data.fileName, error: detail });
+    await recordEmailIntakeEvent({
+      source: 'POWER_AUTOMATE',
+      stage: 'FAILED',
+      status: 'FAILED',
+      messageId: intakeKey,
+      fileName: data.fileName,
+      error: detail,
+      metadata: { intake_id: intakeKey, storage_path: storagePath, retryable: true },
+    });
     await alertEmailIntakeFailure({ source: 'Power Automate', fileName: data.fileName, error: detail });
     return {
       success: false,
       error: detail,
     };
   }
+}
+
+/**
+ * Reprocess durable Power Automate uploads that never reached a terminal
+ * outcome. This is intentionally idempotent: the same intake_id is reused and
+ * a terminal event (CREATED, REVIEW_REQUIRED, PDF_REPLACED, or DUPLICATE)
+ * prevents another attempt. A bounded retry queue keeps provider/database
+ * outages from creating an infinite loop.
+ */
+export async function recoverOrphanedEmailIntakes(limit = 100): Promise<{ scanned: number; retried: number; completed: number }> {
+  if (!isDbEnabled()) return { scanned: 0, retried: 0, completed: 0 };
+
+  const cutoff = new Date(Date.now() - 2 * 60 * 1000);
+  const candidates = await prisma.emailIntakeEvent.findMany({
+    where: { source: 'POWER_AUTOMATE', stage: 'UPLOADED', created_at: { lt: cutoff } },
+    orderBy: { created_at: 'asc' },
+    take: Math.min(250, Math.max(1, limit)),
+  });
+  let retried = 0;
+  let completed = 0;
+  const terminalStages = ['CREATED', 'REVIEW_REQUIRED', 'PDF_REPLACED', 'DUPLICATE', 'SPLIT_COMPLETED'];
+
+  for (const event of candidates) {
+    const intakeId = (event as any).intake_id || event.message_id;
+    if (!intakeId) continue;
+    const terminal = await (prisma.emailIntakeEvent as any).findFirst({
+      where: { intake_id: intakeId, stage: { in: terminalStages } },
+      orderBy: { created_at: 'desc' },
+    });
+    if (terminal) {
+      completed += 1;
+      continue;
+    }
+    const retries = await (prisma.emailIntakeEvent as any).count({ where: { intake_id: intakeId, stage: 'RETRY_QUEUED' } });
+    if (retries >= 3) continue;
+    const metadata = (event.metadata && typeof event.metadata === 'object' ? event.metadata : {}) as Record<string, any>;
+    const storagePath = typeof metadata.storage_path === 'string' ? metadata.storage_path : undefined;
+    if (!storagePath) {
+      const recoveryReason = 'Historical upload has no durable storage_path. Re-supply the original PDF to recover this intake.';
+      await recordEmailIntakeEvent({
+        source: 'POWER_AUTOMATE', stage: 'RECOVERY_REQUIRED', status: 'REVIEW_REQUIRED',
+        messageId: intakeId, attachmentId: event.attachment_id || undefined, fileName: event.file_name || undefined,
+        error: recoveryReason,
+        metadata: { intake_id: intakeId, retryable: false, recovery: true, source_recovery_required: true },
+      });
+      await recordIntakeRecoveryCase({
+        intakeId,
+        source: 'POWER_AUTOMATE',
+        messageId: event.message_id || intakeId,
+        attachmentId: event.attachment_id || undefined,
+        fileName: event.file_name || `${intakeId}.pdf`,
+        reason: recoveryReason,
+        metadata,
+      });
+      continue;
+    }
+    const buffer = await downloadFromStorage(storagePath);
+    if (!buffer) {
+      await recordEmailIntakeEvent({
+        source: 'POWER_AUTOMATE', stage: 'RETRY_QUEUED', status: 'FAILED',
+        messageId: intakeId, attachmentId: event.attachment_id || undefined, fileName: event.file_name || undefined,
+        error: 'Durable PDF could not be downloaded for recovery.',
+        metadata: { intake_id: intakeId, storage_path: storagePath, recovery_attempt: retries + 1, retryable: true },
+      });
+      continue;
+    }
+    await recordEmailIntakeEvent({
+      source: 'POWER_AUTOMATE', stage: 'RETRY_QUEUED', status: 'SUCCESS',
+      messageId: intakeId, attachmentId: event.attachment_id || undefined, fileName: event.file_name || undefined,
+      metadata: { intake_id: intakeId, storage_path: storagePath, recovery_attempt: retries + 1 },
+    });
+    retried += 1;
+    const result = await processPowerAutomateAttachment({
+      attachmentBase64: buffer.toString('base64'),
+      fileName: event.file_name || `${intakeId}.pdf`,
+      contentType: metadata.content_type || 'application/pdf',
+      emailSubject: metadata.subject || '',
+      fromAddress: metadata.from || '',
+      receivedDateTime: metadata.received_date_time || event.created_at.toISOString(),
+      intakeId,
+      storagePath,
+      attachmentId: event.attachment_id || undefined,
+    });
+    if (result.success || result.status === 'REVIEW_REQUIRED' || result.status === 'DUPLICATE' || result.status === 'PDF_REPLACED') {
+      completed += 1;
+    }
+  }
+  return { scanned: candidates.length, retried, completed };
+}
+
+/**
+ * Recovery path for legacy Power Automate events that never stored a PDF.
+ * The operator supplies the original attachment; the same stable intake ID is
+ * reused so a recovered file cannot create a second payable record.
+ */
+export async function recoverHistoricalIntakeFromSource(input: {
+  intakeId: string;
+  buffer: Buffer;
+  fileName: string;
+  contentType?: string;
+  emailSubject?: string;
+  fromAddress?: string;
+  receivedDateTime?: string;
+}) {
+  const recoveryRows = await prisma.$queryRawUnsafe<any[]>(`SELECT * FROM "APInvoice_IntakeRecoveryCase" WHERE intake_id = $1 LIMIT 1`, input.intakeId);
+  const recoveryCase = recoveryRows[0];
+  if (!recoveryCase) throw new AppError('Recovery case not found.', 404);
+  if (recoveryCase.status === 'RECOVERED') return { success: true, status: 'RECOVERED', invoiceId: recoveryCase.recovered_invoice_id };
+
+  const attempt = Number(recoveryCase.attempts || 0) + 1;
+  await prisma.$executeRawUnsafe(`UPDATE "APInvoice_IntakeRecoveryCase" SET status='RETRY_QUEUED', attempts=$2, last_error=NULL, updated_at=NOW() WHERE intake_id=$1`, input.intakeId, attempt);
+  await recordEmailIntakeEvent({
+    source: 'POWER_AUTOMATE',
+    stage: 'RETRY_QUEUED',
+    status: 'SUCCESS',
+    messageId: input.intakeId,
+    fileName: input.fileName,
+    metadata: { intake_id: input.intakeId, recovery_attempt: attempt, source_reupload: true },
+  });
+
+  const result = await processPowerAutomateAttachment({
+    attachmentBase64: input.buffer.toString('base64'),
+    fileName: input.fileName,
+    contentType: input.contentType || 'application/pdf',
+    emailSubject: input.emailSubject || recoveryCase.metadata?.subject || '',
+    fromAddress: input.fromAddress || recoveryCase.metadata?.from || '',
+    receivedDateTime: input.receivedDateTime || new Date().toISOString(),
+    intakeId: input.intakeId,
+    attachmentId: recoveryCase.attachment_id || undefined,
+  });
+
+  const nextStatus = result.success ? 'RECOVERED'
+    : ['REVIEW_REQUIRED', 'DUPLICATE', 'PDF_REPLACED'].includes(String(result.status || '')) ? 'RECOVERED_REVIEW'
+      : 'RETRYABLE_FAILURE';
+  await prisma.$executeRawUnsafe(`UPDATE "APInvoice_IntakeRecoveryCase" SET status=$2, recovered_invoice_id=$3, last_error=$4, updated_at=NOW() WHERE intake_id=$1`, input.intakeId, nextStatus, result.invoiceId || null, result.error || null);
+  return result;
 }

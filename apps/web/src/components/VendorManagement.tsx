@@ -22,7 +22,7 @@ export default function VendorManagement() {
   const [saving, setSaving] = useState(false);
   const [isAddMode, setIsAddMode] = useState(false);
   const [showBankRequestModal, setShowBankRequestModal] = useState(false);
-  const [bankRequestData, setBankRequestData] = useState({ bank_name: '', swift_code: '', account_number: '', reason: '' });
+  const [bankRequestData, setBankRequestData] = useState({ bank_name: '', swift_code: '', account_number: '', reason: '', phone_validation_confirmation: '', supporting_documents: '' });
   const [submittingRequest, setSubmittingRequest] = useState(false);
   const [selectedVendorIds, setSelectedVendorIds] = useState<string[]>([]);
 
@@ -185,6 +185,8 @@ export default function VendorManagement() {
       swift_code: vendor.swift_code || '',
       account_number: vendor.account_number || '',
       reason: '',
+      phone_validation_confirmation: '',
+      supporting_documents: '',
     });
     setShowBankRequestModal(true);
   };
@@ -195,12 +197,20 @@ export default function VendorManagement() {
       showToast('Please provide a reason for the bank update request', 'error');
       return;
     }
+    if (!bankRequestData.phone_validation_confirmation.trim()) {
+      showToast('Add the Purchasing phone-validation confirmation', 'error');
+      return;
+    }
+    if (!bankRequestData.supporting_documents.trim()) {
+      showToast('Add at least one supporting document reference', 'error');
+      return;
+    }
     try {
       setSubmittingRequest(true);
       await vendorApi.requestBankUpdate(selectedVendor.id, bankRequestData);
       showToast('Bank update request sent to Accounting team', 'success');
       setShowBankRequestModal(false);
-      setBankRequestData({ bank_name: '', swift_code: '', account_number: '', reason: '' });
+      setBankRequestData({ bank_name: '', swift_code: '', account_number: '', reason: '', phone_validation_confirmation: '', supporting_documents: '' });
     } catch (error: any) {
       console.error('Failed to submit bank update request:', error);
       const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to send request';
@@ -622,7 +632,7 @@ export default function VendorManagement() {
                 <button
                   onClick={() => {
                     setShowBankRequestModal(false);
-                    setBankRequestData({ bank_name: '', swift_code: '', account_number: '', reason: '' });
+                    setBankRequestData({ bank_name: '', swift_code: '', account_number: '', reason: '', phone_validation_confirmation: '', supporting_documents: '' });
                   }}
                   className="transition-colors"
                   style={{ color: 'var(--text-muted)' }}
@@ -634,7 +644,7 @@ export default function VendorManagement() {
               </div>
               <div className="px-3 py-2 mb-4 rounded-xl text-xs flex items-start gap-2" style={{ background: 'color-mix(in srgb, var(--accent-amber) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)', color: 'var(--text-secondary)' }}>
                 <Send className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" style={{ color: 'var(--accent-amber)' }} />
-                <span>This request will be sent to the Accounting team for review. Fill in the proposed bank details and a reason for the update.</span>
+                <span>This request will be sent to Accounting Supervisor review. Include the phone-validation confirmation and supporting document reference.</span>
               </div>
               <div className="space-y-4">
                 <div>
@@ -681,12 +691,34 @@ export default function VendorManagement() {
                     style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
                   />
                 </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Purchasing phone-validation confirmation <span style={{ color: 'var(--accent-red)' }}>*</span></label>
+                  <input
+                    type="text"
+                    value={bankRequestData.phone_validation_confirmation}
+                    onChange={(e) => setBankRequestData({ ...bankRequestData, phone_validation_confirmation: e.target.value })}
+                    placeholder="Name, date, and confirmation email/reference"
+                    className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm"
+                    style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Supporting document reference(s) <span style={{ color: 'var(--accent-red)' }}>*</span></label>
+                  <textarea
+                    value={bankRequestData.supporting_documents}
+                    onChange={(e) => setBankRequestData({ ...bankRequestData, supporting_documents: e.target.value })}
+                    placeholder="Email, bank letter, or file reference"
+                    rows={2}
+                    className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm resize-none"
+                    style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
+                  />
+                </div>
               </div>
               <div className="mt-6 flex justify-end space-x-3">
                 <button
                   onClick={() => {
                     setShowBankRequestModal(false);
-                    setBankRequestData({ bank_name: '', swift_code: '', account_number: '', reason: '' });
+                    setBankRequestData({ bank_name: '', swift_code: '', account_number: '', reason: '', phone_validation_confirmation: '', supporting_documents: '' });
                   }}
                   className="px-4 py-2 transition-colors text-sm"
                   style={{ color: 'var(--text-secondary)' }}

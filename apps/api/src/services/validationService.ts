@@ -1,5 +1,5 @@
 import prisma, { isDbEnabled } from '../config/database';
-import { ExceptionReason, InvoiceStatus, InvoiceType, BillToEntity, SignatoryRole, APPROVAL_THRESHOLDS, determineApprovalTier, VENDOR_THRESHOLD_CONFIG, BATCH_THRESHOLD_CONFIG, getRequiredSignatoryRoles } from '@ap-invoice/shared';
+import { ExceptionReason, InvoiceStatus, InvoiceType, SignatoryRole, determineApprovalTier, VENDOR_THRESHOLD_CONFIG, getRequiredSignatoryRoles } from '@ap-invoice/shared';
 import { createApprovalRequest } from './approvalService';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils/logger';
@@ -817,7 +817,7 @@ function validateIncoterm(incoterm: string | null): ValidationResult {
 }
 
 // RULE 16 — Invoice template validation
-function validateInvoiceTemplate(invoiceType: InvoiceType, expectedTemplate?: any): ValidationResult {
+function validateInvoiceTemplate(invoiceType: InvoiceType, _expectedTemplate?: any): ValidationResult {
   // STATEMENT type: flag for manual review — do not auto-post
   if (invoiceType === InvoiceType.STATEMENT) {
     return {
@@ -1645,7 +1645,7 @@ async function validatePOAgainstNextGen(invoice: any): Promise<ValidationResult>
       // false positive (e.g. invoice $416.89 vs PO $420 = 0.74% but net $356.89 = 15%)
       const grossVariance = Math.abs(invoiceTotal - poAmount) / poAmount;
       const grossAbsDiff = Math.abs(invoiceTotal - poAmount);
-      const grossWithinTolerance = grossAbsDiff <= financePolicy.invoiceRoundingTolerance
+      const _grossWithinTolerance = grossAbsDiff <= financePolicy.invoiceRoundingTolerance
         || grossVariance <= financePolicy.poAmountTolerancePercent;
       // NextGen PO may include allowance added by the client (extra qty + amount on
       // top of the actual order). When invoice amount ≤ PO amount, the variance is

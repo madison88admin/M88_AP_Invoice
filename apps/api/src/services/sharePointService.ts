@@ -4,7 +4,7 @@ import { logger } from '../utils/logger';
 
 const SHAREPOINT_SITE_ID = process.env.SHAREPOINT_SITE_ID || '';
 const SHAREPOINT_DRIVE_ID = process.env.SHAREPOINT_DRIVE_ID || '';
-const CONFIRMATIONS_FOLDER = 'Payment Confirmations';
+const _CONFIRMATIONS_FOLDER = 'Payment Confirmations';
 const AP_INVOICES_FOLDER = 'AP-Invoices';
 
 // SharePoint watcher folder names
@@ -247,7 +247,7 @@ export async function uploadConfirmation(
   paymentId: string,
   fileName: string,
   fileContent: Buffer,
-  userId: string
+  _userId: string
 ): Promise<SharePointUploadResult> {
   return uploadFile(FOLDER_PAYMENT_CONFIRMATIONS, fileName, fileContent);
 }
@@ -326,7 +326,7 @@ export async function getConfirmation(fileId: string): Promise<SharePointUploadR
 /**
  * Delete confirmation from SharePoint
  */
-export async function deleteConfirmation(fileId: string, userId: string): Promise<SharePointUploadResult> {
+export async function deleteConfirmation(fileId: string, _userId: string): Promise<SharePointUploadResult> {
   try {
     const client = await getGraphClient();
     await client.api(`/sites/${SHAREPOINT_SITE_ID}/drive/items/${fileId}`).delete();
@@ -341,7 +341,7 @@ export async function deleteConfirmation(fileId: string, userId: string): Promis
 /**
  * List all confirmations for a payment
  */
-export async function listConfirmations(paymentId: string): Promise<SharePointUploadResult[]> {
+export async function listConfirmations(_paymentId: string): Promise<SharePointUploadResult[]> {
   try {
     const client = await getGraphClient();
     const response = await client

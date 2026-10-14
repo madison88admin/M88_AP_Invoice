@@ -12,7 +12,58 @@ import { UserRole } from '@ap-invoice/shared';
  * - requester != approver on every vendor bank change (persisted request queue)
  */
 
-const BANK_FIELDS = ['bank_name', 'swift_code', 'account_number', 'iban', 'sort_code', 'aba_routing_number', 'bank_name_alt', 'bank_address', 'account_number_alt', 'swift_code_alt', 'intermediary_bank_name', 'intermediary_bank_swift'];
+const BANK_FIELDS = ['name', 'beneficiary_name', 'bank_name', 'swift_code', 'account_number', 'iban', 'sort_code', 'aba_routing_number', 'bank_name_alt', 'bank_address', 'account_number_alt', 'swift_code_alt', 'intermediary_bank_name', 'intermediary_bank_swift', 'has_multiple_accounts'];
+
+/** Normalize bank-change evidence into auditable structured references. */
+export function normalizeSupportingDocuments(value: unknown): Array<Record<string, unknown>> {
+  const entries = Array.isArray(value) ? value : typeof value === 'string' && value.trim() ? [value.trim()] : [];
+  return entries.map((entry) => {
+    if (typeof entry === 'string') {
+      return { reference: entry.trim(), source: 'MANUAL_REFERENCE' };
+    }
+    if (!entry || typeof entry !== 'object') {
+      throw new AppError('Each supporting document must be a file/reference object.', 400);
+    }
+    const item = entry as Record<string, unknown>;
+    const reference = item.storage_path || item.url || item.reference || item.file_name || item.name;
+    if (!reference) throw new AppError('Each supporting document must include a reference or storage path.', 400);
+    return {
+      file_name: item.file_name || item.name || null,
+      storage_path: item.storage_path || item.url || null,
+      reference: String(reference),
+      sha256: item.sha256 || item.hash || null,
+      uploaded_at: item.uploaded_at || new Date().toISOString(),
+      source: item.source || 'BANK_CHANGE_EVIDENCE',
+    };
+  });
+}
+
+export async function recordVendorBankVersion(vendorId: string, actorId?: string, sourceRequestId?: string) {
+  const vendor = await prisma.vendor.findUnique({ where: { id: vendorId } });
+  if (!vendor) return null;
+  const latest = await prisma.vendorBankVersion.findFirst({ where: { vendor_id: vendorId }, orderBy: { version: 'desc' }, select: { version: true } });
+  await prisma.vendorBankVersion.updateMany({ where: { vendor_id: vendorId, status: 'ACTIVE' }, data: { status: 'SUPERSEDED' } });
+  return prisma.vendorBankVersion.create({
+    data: {
+      vendor_id: vendorId,
+      version: (latest?.version || 0) + 1,
+      status: 'ACTIVE',
+      beneficiary_name: vendor.beneficiary_name,
+      bank_name: vendor.bank_name,
+      bank_address: vendor.bank_address,
+      account_number: vendor.account_number,
+      swift_code: vendor.swift_code,
+      iban: vendor.iban,
+      sort_code: vendor.sort_code,
+      aba_routing_number: vendor.aba_routing_number,
+      intermediary_bank_name: vendor.intermediary_bank_name,
+      intermediary_bank_swift: vendor.intermediary_bank_swift,
+      approved_by: actorId || null,
+      approval_timestamp: actorId ? new Date() : null,
+      source_request_id: sourceRequestId || null,
+    },
+  });
+}
 
 export function normalizeVendorName(name: string): string {
   return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
@@ -86,7 +137,7 @@ export function assertBankField(field: string) {
  */
 export async function requestVendorBankUpdate(
   vendorId: string,
-  input: { field: string; current_value?: string; requested_value: string; reason: string },
+  input: { field: string; current_value?: string; requested_value: string; reason: string; phone_validation_confirmation?: string; supporting_documents?: unknown },
   userId: string,
   userName: string,
   userRole?: string
@@ -95,6 +146,16 @@ export async function requestVendorBankUpdate(
   if (!vendor) throw new AppError('Vendor not found', 404);
   assertBankField(input.field);
   if (!input.reason || !input.reason.trim()) throw new AppError('A reason for the bank update request is required', 400);
+  if (userRole === UserRole.ACCOUNTING_ASSOCIATE) {
+    if (!input.phone_validation_confirmation?.trim()) {
+      throw new AppError('Purchasing phone-validation confirmation is required.', 400);
+    }
+    const documents = normalizeSupportingDocuments(input.supporting_documents);
+    if (documents.length === 0) {
+      throw new AppError('At least one supporting document reference is required for a bank change.', 400);
+    }
+    input.supporting_documents = documents;
+  }
   const current = String((vendor as any)[input.field] ?? '');
   if (current === String(input.requested_value ?? '')) {
     throw new AppError(`No change detected: ${input.field} is already "${current || 'empty'}"`, 400);
@@ -107,6 +168,8 @@ export async function requestVendorBankUpdate(
       current_value: input.current_value ?? (current || null),
       requested_value: input.requested_value,
       reason: input.reason.trim(),
+      phone_validation_confirmation: input.phone_validation_confirmation?.trim() || null,
+      supporting_documents: normalizeSupportingDocuments(input.supporting_documents) as any,
       requested_by: userName,
       requested_by_id: userId,
       status: 'PENDING',
@@ -169,6 +232,8 @@ export async function listVendorBankChangeRequests(status?: string) {
     requested_value: r.requested_value,
     reason: r.reason,
     requested_by: r.requested_by,
+    phone_validation_confirmation: r.phone_validation_confirmation,
+    supporting_documents: r.supporting_documents,
     status: r.status,
     reviewed_by: r.reviewed_by,
     reviewed_at: r.reviewed_at,
@@ -187,29 +252,63 @@ export async function approveVendorBankChange(requestId: string, userId: string,
     throw new AppError('Bank change requester cannot approve their own request', 403);
   }
 
+  const arrayFields = new Set(['bank_name_alt', 'account_number_alt', 'swift_code_alt']);
+  const approvedValue: any = arrayFields.has(request.field)
+    ? (() => { try { return JSON.parse(request.requested_value); } catch { return [request.requested_value]; } })()
+    : request.requested_value;
+
   // Reuse alert BEFORE applying: the new account must not belong to another vendor.
-  const reuse = await findBankAccountReuse(request.vendor_id, request.requested_value);
-  if (reuse.length > 0) {
-    await alertBankAccountReuse(request.vendor.name, request.requested_value, reuse, userId);
-    throw new AppError(`Approval blocked: account is already used by: ${reuse.map(v => v.name).join(', ')}.`, 409);
+  if (request.field === 'account_number') {
+    const reuse = await findBankAccountReuse(request.vendor_id, request.requested_value);
+    if (reuse.length > 0) {
+      await alertBankAccountReuse(request.vendor.name, request.requested_value, reuse, userId);
+      throw new AppError(`Approval blocked: account is already used by: ${reuse.map(v => v.name).join(', ')}.`, 409);
+    }
   }
 
   await prisma.$transaction([
     prisma.vendor.update({
       where: { id: request.vendor_id },
-      data: { [request.field]: request.requested_value, bank_verified_at: new Date(), updated_at: new Date() },
+      data: { [request.field]: approvedValue, bank_verified_at: new Date(), updated_at: new Date() },
     }),
     prisma.vendorBankChangeRequest.update({
       where: { id: requestId },
       data: { status: 'APPROVED', reviewed_by: userName, reviewed_at: new Date() },
     }),
   ]);
+  await recordVendorBankVersion(request.vendor_id, userId, requestId);
+
+  // A newly approved master version must not rewrite invoice snapshots. Open
+  // invoices are explicitly reassessed instead so Accounting can confirm the
+  // correct version before posting or payment selection.
+  // Keep the reassessment step isolated from the approval transaction.  This
+  // also lets lightweight service/unit-test Prisma doubles omit the optional
+  // invoice model while the production client always executes it.
+  const openReassessment = typeof (prisma as any).invoice?.updateMany === 'function'
+    ? await (prisma as any).invoice.updateMany({
+      where: {
+        vendor_id: request.vendor_id,
+        status: { notIn: ['PAID', 'CANCELLED', 'REJECTED'] as any },
+      },
+      data: { bank_match_status: 'PENDING_VENDOR_CHANGE_REVIEW' },
+    })
+    : { count: 0 };
 
   await logAudit({
     performed_by: userId,
     action: 'VENDOR_BANK_UPDATE_APPROVED',
     note: `Vendor "${request.vendor.name}" bank change approved by ${userName}. Field: ${request.field}. New value: "${request.requested_value}"`,
-    metadata: { vendor_id: request.vendor_id, request_id: requestId, field: request.field },
+    metadata: {
+      vendor_id: request.vendor_id,
+      request_id: requestId,
+      field: request.field,
+      before_value: request.current_value,
+      after_value: approvedValue,
+      phone_validation_confirmation: request.phone_validation_confirmation,
+      supporting_documents: request.supporting_documents,
+      active_invoice_snapshots_unchanged: true,
+      open_invoices_reassessed: openReassessment.count,
+    },
   }).catch(() => {});
 
   return { success: true, message: `Bank change approved and applied to vendor "${request.vendor.name}".` };

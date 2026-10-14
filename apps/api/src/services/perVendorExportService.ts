@@ -62,7 +62,7 @@ export async function exportBatchPerVendor(batchId: string, userId?: string): Pr
   const distinctVendors = Array.from(new Map(
     (batch.payments as any[]).map((p: any) => [p.invoice?.vendor_id ?? 'unknown', p.invoice?.vendor])
   ).values()).filter(Boolean);
-  const vendor = distinctVendors[0];
+  const _vendor = distinctVendors[0];
   const vendorNames = distinctVendors.map((v: any) => v.name).join(', ');
   const vendorName = vendorNames || 'Unknown Vendor';
   const singleVendor = distinctVendors.length <= 1;

@@ -1,6 +1,5 @@
 import { logger } from '../utils/logger';
 import { geminiOCRService } from './geminiOCRService';
-import { qwenOCRService } from './qwenOCRService';
 import { DecisionResult } from './fieldDecisionEngine';
 
 export interface ValidationIssue {

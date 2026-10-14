@@ -4,38 +4,10 @@ import path from 'path';
 import crypto from 'crypto';
 import XLSX from 'xlsx';
 import { AuthRequest } from '../middleware/auth';
-import {
-  createPaymentBatch,
-  createGroupedPaymentBatches,
-  getPaymentBatches,
-  getPaymentBatchById,
-  getScheduledPaymentsForBatch,
-  processPaymentBatch,
-  cancelPaymentBatch,
-  selectPaymentsForBatch,
-  deselectPaymentsForBatch,
-  submitPaymentBatchForReview,
-  updatePaymentBillsSetup,
-  reviewPaymentBatch,
-  returnPaymentBatch,
-  returnInvoicesFromBatch,
-  markPaymentBatchExported,
-  setPaymentRemarks,
-  markPaymentForPayment,
-  approvePaymentForPayment,
-  rejectPaymentForPayment,
-  bulkApprovePaymentsForPayment,
-  applyBankCharge,
-  removeBankCharge,
-  endorseBillStub,
-  matchPaymentConfirmation,
-  findPaymentBatchByConfirmationReference,
-  approveHeldPayment,
-  holdScheduledPayment,
-  getStuckBatches,
-} from '../services/paymentBatchService';
+import { createGroupedPaymentBatches, getPaymentBatches, getPaymentBatchById, getScheduledPaymentsForBatch, processPaymentBatch, cancelPaymentBatch, selectPaymentsForBatch, deselectPaymentsForBatch, submitPaymentBatchForReview, updatePaymentBillsSetup, reviewPaymentBatch, returnPaymentBatch, returnInvoicesFromBatch, markPaymentBatchExported, setPaymentRemarks, markPaymentForPayment, approvePaymentForPayment, rejectPaymentForPayment, bulkApprovePaymentsForPayment, applyBankCharge, removeBankCharge, endorseBillStub, matchPaymentConfirmation, findPaymentBatchByConfirmationReference, approveHeldPayment, holdScheduledPayment, getStuckBatches } from '../services/paymentBatchService';
 import { exportPaymentReconciliation } from '../services/reconciliationExportService';
 import { exportBatchPerVendor } from '../services/perVendorExportService';
+import { isDbEnabled } from '../config/database';
 
 export const createPaymentBatchController = async (
   req: AuthRequest,
@@ -57,6 +29,9 @@ export const getScheduledPaymentsForBatchController = async (
   next: NextFunction
 ) => {
   try {
+    if (!isDbEnabled()) {
+      return res.json({ payments: [], filtered_count: 0, totals: [] });
+    }
     const payments = await getScheduledPaymentsForBatch({
       vendorId: req.query.vendorId as string | undefined,
       currency: req.query.currency as string | undefined,
@@ -122,6 +97,7 @@ export const exportPaymentBatchController = async (req: AuthRequest, res: Respon
 
 export const getStuckBatchesController = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    if (!isDbEnabled()) return res.json([]);
     const { days } = req.query as { days?: string };
     const stuck = await getStuckBatches(days);
     res.json(stuck);
@@ -136,6 +112,7 @@ export const getPaymentBatchesController = async (
   next: NextFunction
 ) => {
   try {
+    if (!isDbEnabled()) return res.json([]);
     const batches = await getPaymentBatches();
     res.json(batches);
   } catch (error) {

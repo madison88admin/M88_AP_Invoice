@@ -120,7 +120,7 @@ describe('schedulePayment — Accounting-controlled holds', () => {
   it('schedules payments at or above the threshold as SCHEDULED with no Purchasing hold notification', async () => {
     invoiceFindUnique.mockResolvedValue(makeInvoice({ total_amount: 150 }));
 
-    const payment = await schedulePayment('inv-1', undefined, 'assoc-1');
+    const _payment = await schedulePayment('inv-1', undefined, 'assoc-1');
 
     expect(paymentCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({

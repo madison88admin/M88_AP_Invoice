@@ -1248,7 +1248,7 @@ export class NextGenService {
    * Falls back to scanning all pages if estimation fails.
    */
   private async fetchAllMPOHeaders(mpoNumber?: string): Promise<any[]> {
-    const PAGE_SIZE = 500;
+    const _PAGE_SIZE = 500;
 
     // ── Check cache first ──
     const now = Date.now();

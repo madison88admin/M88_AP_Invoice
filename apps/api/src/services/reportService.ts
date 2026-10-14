@@ -1,5 +1,5 @@
 import prisma from '../config/database';
-import { InvoiceStatus, InvoiceType, APPROVAL_THRESHOLDS, determineApprovalTier } from '@ap-invoice/shared';
+import { InvoiceStatus, InvoiceType, determineApprovalTier } from '@ap-invoice/shared';
 
 export interface InvoiceVolumeReport {
   date: string;

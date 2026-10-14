@@ -4,7 +4,6 @@ import { AppError } from '../middleware/errorHandler';
 import { analyzeInvoice } from '../services/ocrService';
 import { extractMadisonInvoiceFields, AST_SINGLE_SOURCE_MODE } from '../services/madisonInvoiceExtractor';
 import { matchVendor, matchOrCreateVendor } from '../services/vendorMatchingService';
-import { InvoiceStatus, SignatureType } from '@ap-invoice/shared';
 import { sanitizeInvoiceType, sanitizeCategory } from '../utils/enumSanitizer';
 import prisma from '../config/database';
 import { logAudit } from '../services/auditLogService';
@@ -16,7 +15,7 @@ import { groqOCRService } from '../services/groqOCRService';
 import { ollamaOCRService } from '../services/ollamaOCRService';
 import { qwenOCRService } from '../services/qwenOCRService';
 import { fieldDecisionEngine, EngineName } from '../services/fieldDecisionEngine';
-import { validateLineItems, formatLineItemValidation } from '../services/lineItemValidator';
+import { validateLineItems } from '../services/lineItemValidator';
 import { normalizeInvoiceDatePair } from '../services/extractors/dates';
 import { detectFraud } from '../services/fraudDetector';
 import { smartRetry } from '../services/smartRetry';
@@ -36,11 +35,12 @@ import { createChildLogger } from '../utils/logger';
 import { uploadToStorage } from '../services/supabaseStorageService';
 import { syncToHetzner } from '../services/hetznerStorageService';
 import { mistralOCRService } from '../services/mistralOCRService';
-import { createJob, completeJob, failJob, getJob } from '../services/jobStore';
+import { createJob, getJob } from '../services/jobStore';
 import { invoiceUploadQueue, QueuedInvoiceUpload } from '../services/invoiceUploadQueue';
 import { generateFileHash } from '../services/emailDuplicateService';
 import { storeInvoiceHashFromStorage } from '../services/duplicateDetectionService';
 import { eventBroadcaster } from '../services/eventBroadcaster';
+import { recordIntakeReviewRecord } from '../services/emailIntakeMonitoringService';
 
 // ─── Async upload job storage ───
 export const uploadInvoice = async (
@@ -190,7 +190,8 @@ export const uploadInvoice = async (
         vendorId = vendorMatch.vendor_id;
         requiresManualVendorAssignment = false;
       } else {
-        // Auto-create vendor if no match and we have a valid vendor name
+        // OCR cannot create a Vendor Master row. Unmatched suppliers require
+        // an explicit Accounting assignment.
         const bankInfo = (ocrResult as any).bank_info || {};
         const vendorResult = await matchOrCreateVendor(ocrResult.vendor_name, {
           beneficiary_name: bankInfo.beneficiary_name || (ocrResult as any).beneficiary_name,
@@ -201,7 +202,7 @@ export const uploadInvoice = async (
         if (vendorResult) {
           vendorId = vendorResult.vendor_id;
           requiresManualVendorAssignment = false;
-          console.log('[DEBUG] Auto-created vendor:', ocrResult.vendor_name, 'id:', vendorId);
+          console.log('[DEBUG] Vendor matched from canonical master:', ocrResult.vendor_name, 'id:', vendorId);
         } else {
           console.log('[DEBUG] Vendor not found in DB or DB unavailable, requires manual assignment');
           requiresManualVendorAssignment = true;
@@ -401,7 +402,7 @@ async function processSingleInvoice(
     let activeLearningQuestions: any = null;
     let fieldPredictions: any = null;
     let layoutChangeDetection: any = null;
-    let fallbackResult: any = geminiResult || qwenResult || groqResult || mistralResult || ollamaResult || null;
+    const fallbackResult: any = geminiResult || qwenResult || groqResult || mistralResult || ollamaResult || null;
 
     try {
       fieldDecision = await fieldDecisionEngine.decide(decisionEngines, {
@@ -551,7 +552,7 @@ async function processSingleInvoice(
 
     // Normalize invoice number: remove spaces around dashes/slashes
     const cleanInvoiceNumber = (value: string | null | undefined) =>
-      value ? value.replace(/\s*([\-\\/])\s*/g, '$1').trim() : null;
+      value ? value.replace(/\s*([-\\/])\s*/g, '$1').trim() : null;
 
     // Normalize PO number: extract PO002905 from strings like CSC_F26_PO002905_JAN 28
     const cleanPONumber = (value: string | null | undefined) => {
@@ -616,7 +617,7 @@ async function processSingleInvoice(
 
     const invoiceReceivedDate = new Date().toISOString();
 
-    let madisonResult = {
+    const madisonResult = {
       ...madisonRawResult,
       ...decisionFinal,
       amount: finalAmount,
@@ -962,7 +963,8 @@ async function processSingleInvoice(
         requiresManualVendorAssignment = false;
         console.log('[DEBUG] Vendor matched via DB:', vendorMatch.vendor_name);
       } else {
-        // Auto-create vendor if no match and we have a valid vendor name
+        // OCR cannot create a Vendor Master row. Unmatched suppliers require
+        // an explicit Accounting assignment.
         const bankDetails = madisonResult.bank_details || {};
         const vendorResult = await matchOrCreateVendor(madisonResult.vendor_name, {
           beneficiary_name: bankDetails.beneficiary_name || (madisonResult as any).beneficiary_name,
@@ -973,7 +975,7 @@ async function processSingleInvoice(
         if (vendorResult) {
           vendorId = vendorResult.vendor_id;
           requiresManualVendorAssignment = false;
-          console.log('[DEBUG] Auto-created vendor:', madisonResult.vendor_name, 'id:', vendorId);
+          console.log('[DEBUG] Vendor matched from canonical master:', madisonResult.vendor_name, 'id:', vendorId);
         } else {
           console.log('[DEBUG] Vendor not found in DB or DB unavailable, requires manual assignment');
           requiresManualVendorAssignment = true;
@@ -1184,7 +1186,7 @@ export const confirmOCR = async (
   next: NextFunction
 ) => {
   try {
-    const invoice_id = req.params.id;
+    const _invoice_id = req.params.id;
     const {
       invoice_number,
       invoice_date,
@@ -1261,6 +1263,22 @@ export const confirmOCR = async (
         { skipFilenameHints: true } // filename already covered by pre-OCR suppression; body type decides here
       );
       if (blockReason) {
+        await recordIntakeReviewRecord({
+          intakeId: String(req.params.id || req.headers['x-intake-id'] || crypto.randomUUID()),
+          source: 'MANUAL_UPLOAD',
+          fileName: pdfFileName || String(req.body.file_name || 'manual-upload.pdf'),
+          storagePath: storage_path ? String(storage_path) : undefined,
+          documentType: String(source_document_type || document_classification || invoice_type || 'UNKNOWN'),
+          invoiceNumber: invoice_number ? String(invoice_number) : undefined,
+          reason: blockReason,
+          metadata: {
+            invoice_type,
+            document_classification,
+            source_document_type,
+            ocr_confidence_score,
+            review_record_for_invoice_id: req.params.id,
+          },
+        });
         throw new AppError(
           `Rejected: ${blockReason}`,
           422

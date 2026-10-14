@@ -1,12 +1,13 @@
-import crypto from 'crypto';
 import { logger } from '../utils/logger';
 import { analyzeInvoice } from './ocrService';
-import { matchVendor, matchOrCreateVendor } from './vendorMatchingService';
+import { matchOrCreateVendor } from './vendorMatchingService';
 import { getVendorPaymentTermDefault, preferExtractedPaymentTerms } from './vendorDefaultsService';
 import { validateInvoice } from './validationService';
 import { checkEmailDuplicate, generateFileHash } from './emailDuplicateService';
 import { uploadInvoiceToStructuredFolder } from './sharePointService';
 import { uploadToStorage } from './supabaseStorageService';
+import { ensureInvoiceBankSnapshot } from './invoiceBankSnapshotService';
+import { normalizeInvoiceReference } from './accountingControlService';
 import {
   isSharePointConfigured,
   ensureWatcherFolders,
@@ -132,7 +133,7 @@ async function processIncomingFile(file: { id: string; name: string; size: numbe
     return;
   }
 
-  // Step 5: Vendor matching (with auto-create)
+  // Step 5: Vendor matching (read-only; OCR never creates Vendor Master rows)
   let vendorId: string | undefined;
   try {
     const bankInfo = (ocrResult as any).bank_info || {};
@@ -241,6 +242,8 @@ async function processIncomingFile(file: { id: string; name: string; size: numbe
         priority_pay_date: ocrResult.priority_pay_date ? new Date(ocrResult.priority_pay_date) : null,
         is_duplicate: false,
         invoice_hash: fileHash,
+        normalized_invoice_number: normalizeInvoiceReference(ocrResult.invoice_number) || undefined,
+        line_items_signature: Array.isArray((ocrResult as any).line_items) ? JSON.stringify((ocrResult as any).line_items) : undefined,
         ocr_confidence_score: ocrResult.ocr_confidence_score || undefined,
         ocr_raw_data: ocrResult as any,
         beneficiary_name: (ocrResult as any).bank_info?.beneficiary_name || (ocrResult as any).beneficiary_name || undefined,
@@ -262,6 +265,7 @@ async function processIncomingFile(file: { id: string; name: string; size: numbe
       },
       include: { vendor: true },
     });
+    await ensureInvoiceBankSnapshot(invoice.id, 'sharepoint-watcher');
     invoiceId = invoice.id;
 
     // Create signature records if detected

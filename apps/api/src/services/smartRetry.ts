@@ -134,7 +134,7 @@ function getRetryEngine(): RetryEngine | null {
   if (geminiOCRService.isAvailable()) {
     return {
       name: 'gemini',
-      extract: async (text, prompt) => {
+      extract: async (text, _prompt) => {
         // Use the Gemini service with a custom focused prompt
         const result = await geminiOCRService.extractFromText(text, { vendorName: undefined });
         // If the service doesn't support custom prompts, we parse the result

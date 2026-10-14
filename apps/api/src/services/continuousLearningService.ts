@@ -392,7 +392,7 @@ export class VendorTemplateService {
     return patterns;
   }
 
-  private async saveTemplateToVendor(vendorName: string, template: VendorTemplate): Promise<void> {
+  private async saveTemplateToVendor(vendorName: string, _template: VendorTemplate): Promise<void> {
     try {
       const vendor = await prisma.vendor.findFirst({
         where: { name: { contains: vendorName, mode: 'insensitive' } },

@@ -106,11 +106,11 @@ export async function getScheduledPaymentsForBatch(filters: ScheduledPaymentFilt
   }
   const hasDueFilter = !!(filters.dueFrom || filters.dueTo || filters.dueMonth);
 
-  let invoiceDateRange: { gte?: Date; lte?: Date } = {};
+  const invoiceDateRange: { gte?: Date; lte?: Date } = {};
   if (filters.invoiceDateFrom) invoiceDateRange.gte = new Date(filters.invoiceDateFrom);
   if (filters.invoiceDateTo) invoiceDateRange.lte = new Date(`${filters.invoiceDateTo}T23:59:59.999Z`);
 
-  let approvalRange: { gte?: Date; lte?: Date } = {};
+  const approvalRange: { gte?: Date; lte?: Date } = {};
   if (filters.approvalFrom) approvalRange.gte = new Date(filters.approvalFrom);
   if (filters.approvalTo) approvalRange.lte = new Date(`${filters.approvalTo}T23:59:59.999Z`);
 
@@ -193,7 +193,7 @@ export async function getScheduledPaymentsForBatch(filters: ScheduledPaymentFilt
     const existingPayment = (inv.payments || []).find((p: any) =>
       p.batch_id === null && !['CANCELLED', 'VOIDED'].includes(p.status)
     );
-    const { signatures, payments, ...invoiceRest } = inv;
+    const { signatures, payments: _payments, ...invoiceRest } = inv;
     return {
       id: existingPayment?.id || `inv-${inv.id}`,
       invoice_id: inv.id,
@@ -502,6 +502,8 @@ export async function holdScheduledPayment(paymentId: string, userId: string, re
   }
 
   const holdReason = reason?.trim() || 'Accounting Associate placed the payment on hold for review';
+  const holdReviewDate = new Date();
+  holdReviewDate.setUTCDate(holdReviewDate.getUTCDate() + 7);
   const updated = await prisma.payment.update({
     where: { id: paymentId },
     data: {
@@ -510,6 +512,10 @@ export async function holdScheduledPayment(paymentId: string, userId: string, re
       selected_by: null,
       selected_at: null,
       remarks: holdReason,
+      hold_reason: holdReason,
+      hold_owner: userId,
+      hold_review_date: holdReviewDate,
+      hold_evidence: { manual: true, reason: holdReason, review_date: holdReviewDate.toISOString() },
     },
   });
 
@@ -1182,6 +1188,14 @@ export async function createPaymentBatch(
   }
   const invalid: string[] = [];
   for (const payment of payments as any[]) {
+    const invoice = payment.invoice as any;
+    const duplicateReviewPending = Boolean(invoice?.is_duplicate)
+      || ['PENDING', 'DUPLICATE_SUBMISSION'].includes(String(invoice?.duplicate_review_status || '').toUpperCase())
+      || ['DUPLICATE_REVIEW', 'REVISION_REVIEW', 'PROFORMA_REVIEW', 'NON_PAYABLE_REVIEW'].includes(String(invoice?.workflow_status || '').toUpperCase());
+    if (duplicateReviewPending) {
+      invalid.push(`${invoice?.invoice_number || payment.invoice_id}: unresolved duplicate/revision/non-payable review`);
+      continue;
+    }
     const readiness = getApprovalReadiness(payment.invoice);
     if (!readiness.ready) {
       invalid.push(`${payment.invoice?.invoice_number || payment.invoice_id}: ${readiness.missing.map((m: any) => m.label).join(', ')}`);
@@ -1189,9 +1203,56 @@ export async function createPaymentBatch(
     }
     const hasBankSnapshot = Boolean(payment.beneficiary_name_snapshot && payment.account_number_snapshot && payment.bank_snapshot_hash);
     if (!hasBankSnapshot) invalid.push(`${payment.invoice?.invoice_number || payment.invoice_id}: approved bank details snapshot is missing`);
+    if (['MISMATCH', 'PENDING_VENDOR_CHANGE_REVIEW', 'NOT_CHECKED'].includes(String(payment.invoice?.bank_match_status || '').toUpperCase())) {
+      invalid.push(`${payment.invoice?.invoice_number || payment.invoice_id}: bank-information validation is unresolved`);
+    }
   }
   if (invalid.length) {
     throw new AppError(`Cannot create payment batch until all invoices pass validation: ${invalid.slice(0, 8).join('; ')}${invalid.length > 8 ? `; and ${invalid.length - 8} more` : ''}`, 400);
+  }
+
+  // The USD 100 rule is evaluated at the vendor + currency + confirmed-bank
+  // account subtotal, never per invoice. A low-value group is explicitly
+  // held with an owner/evidence/review date so it can be consolidated later.
+  const subtotalGroups = new Map<string, { ids: string[]; total: number; vendor: string; currency: string }>();
+  for (const payment of payments as any[]) {
+    const currency = String(payment.currency || payment.invoice?.currency || 'USD').toUpperCase();
+    const key = [payment.invoice?.vendor_id || payment.vendor_id || 'UNKNOWN', currency, payment.bank_snapshot_hash || 'NO_BANK_SNAPSHOT'].join('|');
+    const current: { ids: string[]; total: number; vendor: string; currency: string } = subtotalGroups.get(key) || { ids: [], total: 0, vendor: payment.invoice?.vendor?.name || 'Unknown vendor', currency };
+    current.ids.push(payment.id);
+    current.total += Number(payment.amount || 0);
+    subtotalGroups.set(key, current);
+  }
+  const belowThreshold = [...subtotalGroups.values()].filter(group => group.total < 100);
+  if (belowThreshold.length > 0) {
+    const reviewDate = new Date();
+    reviewDate.setUTCDate(reviewDate.getUTCDate() + 7);
+    for (const group of belowThreshold) {
+      const reason = `${group.currency} ${group.total.toFixed(2)} subtotal for ${group.vendor} is below the 100 threshold; consolidate with another payment or obtain Accounting approval.`;
+      await prisma.payment.updateMany({
+        where: { id: { in: group.ids } },
+        data: {
+          status: 'HELD_BELOW_100',
+          selected_for_batch: false,
+          selected_by: null,
+          selected_at: null,
+          remarks: reason,
+          hold_reason: reason,
+          hold_owner: userId,
+          hold_review_date: reviewDate,
+          hold_evidence: { threshold: 100, currency: group.currency, subtotal: Number(group.total.toFixed(2)), vendor: group.vendor },
+        } as any,
+      });
+      await prisma.auditLog.create({
+        data: {
+          action: 'PAYMENT_THRESHOLD_HOLD_PLACED',
+          performed_by: userId,
+          note: reason,
+          metadata: { payment_ids: group.ids, threshold: 100, currency: group.currency, subtotal: Number(group.total.toFixed(2)), review_date: reviewDate.toISOString() },
+        } as any,
+      });
+    }
+    throw new AppError(`Payment group subtotal is below the 100 threshold and has been placed on hold: ${belowThreshold.map(group => `${group.vendor} ${group.currency} ${group.total.toFixed(2)}`).join('; ')}`, 400);
   }
 
   // A batch may combine payments from ANY vendors (Accounting Associate decides
@@ -1252,12 +1313,62 @@ export async function createPaymentBatch(
  */
 export async function createGroupedPaymentBatches(paymentIds: string[], userId: string) {
   const uniquePaymentIds = [...new Set(paymentIds)];
-  const batch = await createPaymentBatch(uniquePaymentIds, userId);
+  const selected = await prisma.payment.findMany({
+    where: { id: { in: uniquePaymentIds } },
+    select: { id: true, amount: true, currency: true, bank_snapshot_hash: true, invoice: { select: { vendor_id: true, currency: true, vendor: { select: { name: true } } } } },
+  });
+  if (selected.length !== uniquePaymentIds.length) {
+    throw new AppError('Some selected payments no longer exist and were not placed in a batch', 400);
+  }
+  const groups = new Map<string, { ids: string[]; total: number; vendor: string; currency: string }>();
+  for (const payment of selected as any[]) {
+    const currency = String(payment.currency || payment.invoice?.currency || 'USD').toUpperCase();
+    const key = [payment.invoice?.vendor_id || 'UNKNOWN', currency, payment.bank_snapshot_hash || 'NO_BANK_SNAPSHOT'].join('|');
+    const group: { ids: string[]; total: number; vendor: string; currency: string } = groups.get(key) || { ids: [], total: 0, vendor: payment.invoice?.vendor?.name || 'Unknown vendor', currency };
+    group.ids.push(payment.id);
+    group.total += Number(payment.amount || 0);
+    groups.set(key, group);
+  }
+  const batches = [];
+  const heldPaymentIds: string[] = [];
+  const reviewDate = new Date();
+  reviewDate.setUTCDate(reviewDate.getUTCDate() + 7);
+  for (const group of groups.values()) {
+    if (group.total < 100) {
+      const reason = `${group.currency} ${group.total.toFixed(2)} subtotal for ${group.vendor} is below the 100 threshold; consolidate with another payment or obtain Accounting approval.`;
+      heldPaymentIds.push(...group.ids);
+      await prisma.payment.updateMany({
+        where: { id: { in: group.ids } },
+        data: {
+          status: 'HELD_BELOW_100', selected_for_batch: false, selected_by: null, selected_at: null,
+          remarks: reason, hold_reason: reason, hold_owner: userId, hold_review_date: reviewDate,
+          hold_evidence: { threshold: 100, currency: group.currency, subtotal: Number(group.total.toFixed(2)), vendor: group.vendor },
+        } as any,
+      });
+      await prisma.auditLog.create({
+        data: {
+          action: 'PAYMENT_THRESHOLD_HOLD_PLACED',
+          performed_by: userId,
+          note: reason,
+          metadata: {
+            payment_ids: group.ids,
+            threshold: 100,
+            currency: group.currency,
+            subtotal: Number(group.total.toFixed(2)),
+            review_date: reviewDate.toISOString(),
+          },
+        },
+      } as any);
+      continue;
+    }
+    batches.push(await createPaymentBatch(group.ids, userId));
+  }
 
   return {
-    batches: [batch],
-    batch_count: 1,
+    batches,
+    batch_count: batches.length,
     payment_count: uniquePaymentIds.length,
+    held_payment_ids: heldPaymentIds,
   };
 }
 

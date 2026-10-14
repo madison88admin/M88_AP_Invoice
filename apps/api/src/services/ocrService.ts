@@ -1,6 +1,6 @@
 import PDFParser from 'pdf2json';
 import { InvoiceType, InvoiceCategory, PaymentTerms, BillToEntity, OrderType, SignatoryRole, SignatureType } from '@ap-invoice/shared';
-import { parsePOReference, matchSignerToRole, TOP_10_BRANDS, isTop10Brand } from '@ap-invoice/shared';
+import { parsePOReference, matchSignerToRole, TOP_10_BRANDS } from '@ap-invoice/shared';
 import { logger } from '../utils/logger';
 import { convertPDFToImages } from '../utils/pdfToImages';
 import { mergeEngineResults, EngineResult } from './engineConsensus';
@@ -225,7 +225,7 @@ const MONTH_LOOKUP: Record<string, number> = {
 
 function toISODateFromMonthName(raw: string): string {
   if (!raw) return '';
-  const s = raw.trim().replace(/[,.\-]/g, ' ').replace(/\s+/g, ' ');
+  const s = raw.trim().replace(/[,.-]/g, ' ').replace(/\s+/g, ' ');
   const pick = (monthToken: string, day: number, year: number): string | null => {
     const month = MONTH_LOOKUP[monthToken.toUpperCase()];
     if (!month || !day || !year) return null;
@@ -245,11 +245,11 @@ export async function extractInvoiceFields(fileBuffer: Buffer) {
   return extractInvoiceFieldsFromText(text, fileBuffer);
 }
 
-async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
+async function extractInvoiceFieldsFromText(text: string, _fileBuffer?: Buffer) {
   console.log('[OCR] Extracted text length:', text.length);
   console.log('[OCR] Text contains 8.62:', text.includes('8.62'));
   console.log('[OCR] Text contains TOTAL USD:', text.toUpperCase().includes('TOTAL USD'));
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const _lines = text.split('\n').map(l => l.trim()).filter(Boolean);
   const headerText = extractHeaderVendorName(text);
   const vendorSearchText = headerText || text.split(/\r?\n/).slice(0, 45).join('\n');
 
@@ -301,23 +301,23 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
   // invoice_number — multiple patterns, prioritized by specificity
   // Must contain at least one digit to avoid matching words like "signature"
   const invoiceNumberPatterns = [
-    /IN[VW]?OICE\s*NO[:\s#]*([A-Z0-9\-\/*]+)/i, // OCR reads V as W ("INWOICE") or drops it ("INOICE") on Paxar/PCI forms
-    /IN[VW]?OICE\s*NO[.]*[:\s#]*([A-Z0-9\-\/*]+)/i,
-    /IN[VW]?OICE\s*NUMBER[:\s#]*([A-Z0-9\-\/*]+)/i,
-    /INV(?:OICE)?\s*#[:\s]*([A-Z0-9\-\/*]+)/i,
-    /Invoice\s*#[:\s]*([A-Z0-9\-\/*]+)/i,
-    /I\/V\s*NO[.]*[:\s]*([A-Z0-9\-\/*]+)/i,
-    /PI\s*No[.]*[:\s]*([A-Z0-9\-\/*]+)/i,
-    /PI#[:\s]*([A-Z0-9\-\/*]+)/i,
-    /P\/I\s*NO[:\s]*([A-Z0-9\-\/*]+)/i,
-    /SI\s*No[:\s]*([A-Z0-9\-\/*]+)/i,
-    /D\/N\s*No[.]*[:\s]*([A-Z0-9\-\/*]+)/i,
-    /Bill\s*No[:\s]*([A-Z0-9\-\/*]+)/i,
-    /Bill\s*Number[:\s]*([A-Z0-9\-\/*]+)/i,
-    /Order\s*#[:\s]*([A-Z0-9\-\/*]+)/i,
-    /BILL\s*TO[:\s\.:]*[\s\n]*([A-Z]{2,4}[-\s]*\d{4,10})/i, // Invoice number after BILL TO (e.g., PCI-26018341)
-    /Ref[:\s#]*([A-Z0-9\-\/*]+)/i,
-    /Reference[:\s#]*([A-Z0-9\-\/*]+)/i,
+    /IN[VW]?OICE\s*NO[:\s#]*([A-Z0-9\-/*]+)/i, // OCR reads V as W ("INWOICE") or drops it ("INOICE") on Paxar/PCI forms
+    /IN[VW]?OICE\s*NO[.]*[:\s#]*([A-Z0-9\-/*]+)/i,
+    /IN[VW]?OICE\s*NUMBER[:\s#]*([A-Z0-9\-/*]+)/i,
+    /INV(?:OICE)?\s*#[:\s]*([A-Z0-9\-/*]+)/i,
+    /Invoice\s*#[:\s]*([A-Z0-9\-/*]+)/i,
+    /I\/V\s*NO[.]*[:\s]*([A-Z0-9\-/*]+)/i,
+    /PI\s*No[.]*[:\s]*([A-Z0-9\-/*]+)/i,
+    /PI#[:\s]*([A-Z0-9\-/*]+)/i,
+    /P\/I\s*NO[:\s]*([A-Z0-9\-/*]+)/i,
+    /SI\s*No[:\s]*([A-Z0-9\-/*]+)/i,
+    /D\/N\s*No[.]*[:\s]*([A-Z0-9\-/*]+)/i,
+    /Bill\s*No[:\s]*([A-Z0-9\-/*]+)/i,
+    /Bill\s*Number[:\s]*([A-Z0-9\-/*]+)/i,
+    /Order\s*#[:\s]*([A-Z0-9\-/*]+)/i,
+    /BILL\s*TO[:\s.:]*[\s\n]*([A-Z]{2,4}[-\s]*\d{4,10})/i, // Invoice number after BILL TO (e.g., PCI-26018341)
+    /Ref[:\s#]*([A-Z0-9\-/*]+)/i,
+    /Reference[:\s#]*([A-Z0-9\-/*]+)/i,
   ];
   
   let invoice_number = '';
@@ -422,7 +422,7 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
   // Avery's flattened PDF order can be: "INVOICE DATE: INVOICE NO:
   // 17778374 15-SEP-2026". Recover the date adjacent to the invoice header
   // before generic date fallbacks see received/endorsement timestamps.
-  const averyInvoiceDate = text.match(/INVOICE\s+DATE\s*:\s*INVOICE\s+NO\s*:\s*[A-Z0-9\-\/]*\s*(\d{1,2}-[A-Z]{3}-\d{2,4})/i);
+  const averyInvoiceDate = text.match(/INVOICE\s+DATE\s*:\s*INVOICE\s+NO\s*:\s*[A-Z0-9\-/]*\s*(\d{1,2}-[A-Z]{3}-\d{2,4})/i);
   if (averyInvoiceDate) invoice_date = averyInvoiceDate[1];
   const isPlausibleDateCapture = (value: string): boolean => {
     // Numeric-only fallbacks are dangerous: they match bank-account segments
@@ -700,7 +700,7 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
   // Prefer an explicitly labelled payable total over currencies mentioned in
   // bank-account options or item descriptions (for example, a USD invoice
   // whose remittance section also lists EUR and HKD accounts).
-  const explicitTotalUsd = /(?:TOTAL|SUBTOTAL|GRAND\s+TOTAL|TOTAL\s+AMOUNT)\s*[:(\-]?\s*(?:AMOUNT\s*[:\-]?\s*)?(?:\(\s*USD\s*\)|USD)\b/i.test(text);
+  const explicitTotalUsd = /(?:TOTAL|SUBTOTAL|GRAND\s+TOTAL|TOTAL\s+AMOUNT)\s*[:(-]?\s*(?:AMOUNT\s*[:-]?\s*)?(?:\(\s*USD\s*\)|USD)\b/i.test(text);
   const currencyMatch = explicitTotalUsd
     ? ['USD', 'USD']
     : text.match(/\b(USD|HKD|EUR|GBP|PHP|JPY|IDR|VND|CNY|SGD|AUD|CAD|CHF|MYR|THB|KRW|TWD)\b/);
@@ -729,13 +729,13 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
   // po_reference — multiple patterns for different brands
   const poPatterns = [
     /Sold To\s*:\s*(\d+)\s*\/\s*[A-Z\s]+/i,
-    /PO\s*#[:\s]*([A-Z0-9\-\/_]+)/i,
-    /P\.O\.\s*#[:\s]*([A-Z0-9\-\/_]+)/i,
-    /Customer\s*PO[:\s]*([A-Z0-9\-\/_]+)/i,
-    /PO\s*Reference[:\s]*([A-Z0-9\-\/_]+)/i,
-    /P\/O\s*#[:\s]*([A-Z0-9\-\/_]+)/i,
-    /PO\s*No[:\s]*([A-Z0-9\-\/_]+)/i,
-    /Purchase\s*Order[:\s]*([A-Z0-9\-\/_]+)/i,
+    /PO\s*#[:\s]*([A-Z0-9\-/_]+)/i,
+    /P\.O\.\s*#[:\s]*([A-Z0-9\-/_]+)/i,
+    /Customer\s*PO[:\s]*([A-Z0-9\-/_]+)/i,
+    /PO\s*Reference[:\s]*([A-Z0-9\-/_]+)/i,
+    /P\/O\s*#[:\s]*([A-Z0-9\-/_]+)/i,
+    /PO\s*No[:\s]*([A-Z0-9\-/_]+)/i,
+    /Purchase\s*Order[:\s]*([A-Z0-9\-/_]+)/i,
   ];
   let po_reference = '';
   for (const pattern of poPatterns) {
@@ -746,7 +746,7 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
   // brand_code — only extract from PO reference format, not from random text
   // Pattern: BRAND_SEASON_ORDER_TYPE (e.g., TNF_F26_BULK, CSC_FH26_SMS)
   // This will be parsed from po_reference later in analyzeInvoice
-  let brand_code = '';
+  const brand_code = '';
 
   // swift code — multiple patterns
   const swiftPatterns = [
@@ -762,13 +762,13 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
 
   // bank account — multiple patterns
   const accountPatterns = [
-    /A\/C#\s*([\d\-]+)\s*\(USD\)/i,
-    /A\/C\s*No[.]*[:\s]*([\d\-]+)/i,
-    /Our\s*A\/C\s*No[.]*[:\s]*([\d\-]+)/i,
-    /Account\s*#[:\s]*([\d\-]+)/i,
-    /Account\s*No[:\s]*([\d\-]+)/i,
-    /Account\s*Number[:\s]*([\d\-]+)/i,
-    /Beneficiary\s*Account[:\s]*([\d\-]+)/i,
+    /A\/C#\s*([\d-]+)\s*\(USD\)/i,
+    /A\/C\s*No[.]*[:\s]*([\d-]+)/i,
+    /Our\s*A\/C\s*No[.]*[:\s]*([\d-]+)/i,
+    /Account\s*#[:\s]*([\d-]+)/i,
+    /Account\s*No[:\s]*([\d-]+)/i,
+    /Account\s*Number[:\s]*([\d-]+)/i,
+    /Beneficiary\s*Account[:\s]*([\d-]+)/i,
   ];
   let bank_account = '';
   for (const pattern of accountPatterns) {
@@ -866,7 +866,7 @@ async function extractInvoiceFieldsFromText(text: string, fileBuffer?: Buffer) {
   // invoice's original amount.
   let usd_equivalent: number | undefined;
   if ((currencyMatch?.[1] || '').toUpperCase() !== 'USD') {
-    const usdEquivalentMatch = text.match(/(?:amount\s+in\s+usd|usd\s+(?:amount|equivalent|value)|us\$\s+(?:amount|equivalent|value))\s*[:=\-]?\s*([\d,]+(?:\.\d{1,2})?)/i);
+    const usdEquivalentMatch = text.match(/(?:amount\s+in\s+usd|usd\s+(?:amount|equivalent|value)|us\$\s+(?:amount|equivalent|value))\s*[:=-]?\s*([\d,]+(?:\.\d{1,2})?)/i);
     if (usdEquivalentMatch) usd_equivalent = Number(usdEquivalentMatch[1].replace(/,/g, ''));
   }
 
@@ -1266,7 +1266,7 @@ function safeISODate(value: unknown): string {
   const raw = String(value || '').trim();
   if (!raw) return '';
 
-  const dmy = raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+  const dmy = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
   if (dmy) {
     const [, day, month, year] = dmy;
     const parsed = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
@@ -1558,7 +1558,7 @@ async function tryDoclingFallback(fileBuffer: Buffer, extracted: any): Promise<{
   }
 }
 
-export async function analyzeInvoice(fileBuffer: Buffer, mimeType: string) {
+export async function analyzeInvoice(fileBuffer: Buffer, _mimeType: string) {
   let extracted: any;
   let usedGeminiVision = false;
   let usedAIFallback = false;

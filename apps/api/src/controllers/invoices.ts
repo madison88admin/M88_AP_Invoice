@@ -7,6 +7,7 @@ import { eventBroadcaster } from '../services/eventBroadcaster';
 import { storeInvoiceHashFromStorage } from '../services/duplicateDetectionService';
 import { InvoiceStatus, InvoiceType, InvoiceCategory } from '@ap-invoice/shared';
 import { getPayableBlockReason } from '../services/payableDocumentGuard';
+import { isDbEnabled } from '../config/database';
 
 export const createInvoice = async (
   req: AuthRequest,
@@ -86,6 +87,7 @@ export const getInvoices = async (
   next: NextFunction
 ) => {
   try {
+    if (!isDbEnabled()) return res.json([]);
     const filters = {
       status: req.query.status as InvoiceStatus | undefined,
       vendor: req.query.vendor as string | undefined,

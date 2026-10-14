@@ -13,6 +13,7 @@ import path from 'path';
 import { parseMPOReference } from '../utils/mpoReference';
 import { Prisma } from '@prisma/client';
 import { getVendorPaymentTermDefault, preferExtractedPaymentTerms } from './vendorDefaultsService';
+import { captureInvoiceBankSnapshotRevision, ensureInvoiceBankSnapshot } from './invoiceBankSnapshotService';
 
 // Keep update/read endpoints safe during a rolling deploy where the API may
 // briefly load an older shared-package build.  Older builds did not export the
@@ -354,6 +355,8 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
       payments: true,
     },
   });
+
+  await ensureInvoiceBankSnapshot(invoice.id, userId);
 
   await prisma.auditLog.create({
     data: {
@@ -980,6 +983,10 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
     },
   });
 
+  if (bankDetailFields.some(field => invoiceData[field] !== undefined && String(invoiceData[field] ?? '') !== String((existing as any)[field] ?? ''))) {
+    await captureInvoiceBankSnapshotRevision(id, userId, 'AUTHORIZED_INVOICE_BANK_UPDATE');
+  }
+
   if (materialChange) {
     await prisma.invoiceWorkflowAction.create({
       data: {
@@ -1106,7 +1113,7 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
 export const checkDuplicate = async (invoiceData: any) => {
   const { invoice_number, vendor_id, amount, invoice_date } = invoiceData;
   
-  const hash = crypto
+  const _hash = crypto
     .createHash('sha256')
     .update(`${invoice_number}${vendor_id}${amount}${invoice_date}`)
     .digest('hex');
@@ -1303,6 +1310,21 @@ export const deleteInvoice = async (id: string, userId: string, userRole: string
   });
   if (!existing) {
     throw new AppError('Invoice not found', 404);
+  }
+
+  // Confirmed duplicates are retained as closed AP records for audit and
+  // retention purposes. They must never be hard-deleted with the intake
+  // cleanup action; resolve/cancel them instead.
+  if (existing.is_duplicate || (existing as any).duplicate_review_status === 'DUPLICATE_SUBMISSION') {
+    throw new AppError('Confirmed duplicate invoices are retained for audit and cannot be hard-deleted. Resolve or cancel the record instead.', 400);
+  }
+
+  const retentionUntil = existing.retention_until ? new Date(existing.retention_until) : null;
+  if (existing.legal_hold || (retentionUntil && retentionUntil > new Date())) {
+    const retentionMessage = retentionUntil
+      ? ` until ${retentionUntil.toISOString().slice(0, 10)}`
+      : '';
+    throw new AppError(`Invoice is retention-protected${retentionMessage} and cannot be hard-deleted. Cancel or close it instead.`, 400);
   }
 
   // Deletion is only for OCR/intake mistakes which have never entered the AP

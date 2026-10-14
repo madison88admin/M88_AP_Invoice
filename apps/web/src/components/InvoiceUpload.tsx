@@ -162,6 +162,13 @@ export default function InvoiceUpload() {
 
   const handleConfirm = async () => {
     if (!ocrResult) return;
+    const nonPayableDocument = Boolean(
+      ocrResult.document_classification && !ocrResult.document_classification.payable_candidate,
+    );
+    if (nonPayableDocument) {
+      setError('Review Required: this document type cannot be created as a payable invoice. The original file is retained for review.');
+      return;
+    }
     const accountingUpload = user?.role === 'ACCOUNTING_ASSOCIATE';
     const allowedAccountingCategories = [
       InvoiceCategory.LAB_TESTING,
@@ -177,11 +184,6 @@ export default function InvoiceUpload() {
       setError('Confirm that the invoice is already signed and approved.');
       return;
     }
-    if (ocrResult.document_classification && !ocrResult.document_classification.payable_candidate &&
-        !window.confirm(`This file was classified as ${ocrResult.document_classification.document_type}. Save it as an invoice record anyway?`)) {
-      return;
-    }
-
     setUploading(true);
     setError(null);
 
@@ -451,7 +453,7 @@ export default function InvoiceUpload() {
               <AlertCircle className="h-5 w-5 mr-3 mt-0.5" />
               <div>
                 <p className="text-sm font-medium">Document classified as {ocrResult.document_classification.document_type.replace(/_/g, ' ')} ({ocrResult.document_classification.confidence}%)</p>
-                {!ocrResult.document_classification.payable_candidate && <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>This is normally a supporting document and should not proceed to payment unless Purchasing confirms it.</p>}
+                {!ocrResult.document_classification.payable_candidate && <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Review Required: this document is retained for audit but cannot be created as a payable invoice.</p>}
               </div>
             </div>
           )}
@@ -760,16 +762,16 @@ export default function InvoiceUpload() {
           <div className="flex gap-4">
             <button
               onClick={handleConfirm}
-              disabled={uploading || (!vendorMatch && !selectedVendor) || (user?.role === 'ACCOUNTING_ASSOCIATE' && !accountingPreapproved)}
+              disabled={uploading || (!vendorMatch && !selectedVendor) || (user?.role === 'ACCOUNTING_ASSOCIATE' && !accountingPreapproved) || Boolean(ocrResult.document_classification && !ocrResult.document_classification.payable_candidate)}
               className="flex-1 py-3 rounded-xl transition-colors disabled:cursor-not-allowed text-sm font-semibold"
-              style={uploading || (!vendorMatch && !selectedVendor) || (user?.role === 'ACCOUNTING_ASSOCIATE' && !accountingPreapproved)
+              style={uploading || (!vendorMatch && !selectedVendor) || (user?.role === 'ACCOUNTING_ASSOCIATE' && !accountingPreapproved) || Boolean(ocrResult.document_classification && !ocrResult.document_classification.payable_candidate)
                 ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' }
                 : { background: 'var(--accent-lime)', color: 'var(--bg-base)' }
               }
-              onMouseEnter={(e) => { if (!(uploading || (!vendorMatch && !selectedVendor) || (user?.role === 'ACCOUNTING_ASSOCIATE' && !accountingPreapproved))) e.currentTarget.style.background = 'var(--accent-lime-hover)'; }}
-              onMouseLeave={(e) => { if (!(uploading || (!vendorMatch && !selectedVendor) || (user?.role === 'ACCOUNTING_ASSOCIATE' && !accountingPreapproved))) e.currentTarget.style.background = 'var(--accent-lime)'; }}
+              onMouseEnter={(e) => { if (!(uploading || (!vendorMatch && !selectedVendor) || (user?.role === 'ACCOUNTING_ASSOCIATE' && !accountingPreapproved) || Boolean(ocrResult.document_classification && !ocrResult.document_classification.payable_candidate))) e.currentTarget.style.background = 'var(--accent-lime-hover)'; }}
+              onMouseLeave={(e) => { if (!(uploading || (!vendorMatch && !selectedVendor) || (user?.role === 'ACCOUNTING_ASSOCIATE' && !accountingPreapproved) || Boolean(ocrResult.document_classification && !ocrResult.document_classification.payable_candidate))) e.currentTarget.style.background = 'var(--accent-lime)'; }}
             >
-              {uploading ? 'Confirming...' : 'Confirm & Create Invoice'}
+              {uploading ? 'Confirming...' : ocrResult.document_classification && !ocrResult.document_classification.payable_candidate ? 'Review Required' : 'Confirm & Create Invoice'}
             </button>
             <button
               onClick={handleSaveCorrection}

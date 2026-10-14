@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import api from '../lib/api';
-import { AlertTriangle, CheckCircle2, X, Filter, RefreshCw, Loader2, Clock, User, FileText, RotateCcw, Flag, CircleDot, Mail } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, X, Filter, RefreshCw, Loader2, Clock, User, FileText, RotateCcw, Flag, CircleDot, Mail, ShieldCheck } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 
 type Finding = {
   id: string;
@@ -55,6 +56,17 @@ type IntakeMonitor = {
   recovery_queue?: IntakeEvent[];
 };
 
+type RetentionRow = {
+  invoice_id: string;
+  invoice_number?: string | null;
+  invoice_status?: string | null;
+  status: string;
+  legal_hold?: boolean;
+  retention_until?: string | null;
+  backup_verified_at?: string | null;
+  eligible_at?: string | null;
+};
+
 const SEV_COLOR: Record<string, string> = {
   CRITICAL: 'var(--accent-red)',
   HIGH: 'var(--accent-amber)',
@@ -76,6 +88,7 @@ const fmtDate = (value?: string | null) =>
   value ? new Date(value).toLocaleString('en-US', { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
 
 export default function FinanceControlsDashboard() {
+  const { user } = useAuth();
   const [runs, setRuns] = useState<Run[]>([]);
   const [busy, setBusy] = useState('');
   const [selectedRunId, setSelectedRunId] = useState('');
@@ -85,6 +98,9 @@ export default function FinanceControlsDashboard() {
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
   const [acting, setActing] = useState('');
   const [intakeMonitor, setIntakeMonitor] = useState<IntakeMonitor | null>(null);
+  const [retentionRows, setRetentionRows] = useState<RetentionRow[]>([]);
+  const [retentionBusy, setRetentionBusy] = useState(false);
+  const canManageRetention = Boolean(user && ['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role));
 
   const load = useCallback(async () => {
     const [runResult, monitorResult] = await Promise.allSettled([
@@ -93,7 +109,11 @@ export default function FinanceControlsDashboard() {
     ]);
     if (runResult.status === 'fulfilled') setRuns(runResult.value.data);
     if (monitorResult.status === 'fulfilled') setIntakeMonitor(monitorResult.value.data);
-  }, []);
+    if (canManageRetention) {
+      const retentionResult = await api.get('/api/retention/queue').catch(() => null);
+      if (retentionResult) setRetentionRows(retentionResult.data?.rows || []);
+    }
+  }, [canManageRetention]);
   useEffect(() => { void load(); }, [load]);
 
   // Keep the selected run valid — after a fresh scan/reconcile, jump to the newest run.
@@ -104,6 +124,11 @@ export default function FinanceControlsDashboard() {
   }, [runs, selectedRunId]);
 
   const execute = async (path: string) => { setBusy(path); try { await api.post(path); await load(); } finally { setBusy(''); } };
+
+  const runRetentionScan = async () => {
+    setRetentionBusy(true);
+    try { await api.post('/api/retention/run'); await load(); } finally { setRetentionBusy(false); }
+  };
 
   const act = async (id: string, action: string) => {
     let note: string | undefined;
@@ -224,6 +249,35 @@ export default function FinanceControlsDashboard() {
           </div>
         )}
       </div>
+
+      {canManageRetention && (
+        <div className="rounded-xl border overflow-hidden" style={{ background: 'var(--bg-card)' }}>
+          <div className="p-4 flex flex-wrap items-center gap-3 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
+            <ShieldCheck className="h-4 w-4" style={{ color: 'var(--accent-violet)' }} />
+            <div>
+              <div className="font-semibold">Retention & legal-hold controls</div>
+              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>Seven-year retention, backup evidence, and controlled disposal queue</div>
+            </div>
+            <button className="ml-auto px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 disabled:opacity-50" style={{ background: 'var(--accent-violet)', color: 'white' }} disabled={retentionBusy} onClick={() => void runRetentionScan()}>
+              {retentionBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+              Run scan
+            </button>
+          </div>
+          {retentionRows.length === 0 ? (
+            <div className="p-4 text-sm" style={{ color: 'var(--text-muted)' }}>No retention records returned.</div>
+          ) : (
+            <div className="max-h-56 overflow-y-auto divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
+              {retentionRows.slice(0, 25).map((row) => (
+                <div key={row.invoice_id} className="px-4 py-2.5 flex items-center gap-3 text-sm">
+                  <span className="font-medium truncate min-w-0 flex-1">{row.invoice_number || row.invoice_id.slice(0, 8)}</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full whitespace-nowrap" style={{ background: 'var(--bg-elevated)', color: row.status === 'LEGAL_HOLD' ? 'var(--accent-red)' : row.status === 'ELIGIBLE_FOR_DISPOSAL' ? 'var(--accent-amber)' : 'var(--text-muted)' }}>{row.status.replace(/_/g, ' ')}</span>
+                  <span className="text-[11px] whitespace-nowrap" style={{ color: 'var(--text-subtle)' }}>{row.retention_until ? new Date(row.retention_until).toLocaleDateString() : '—'}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Actions + run selector */}
       <div className="flex flex-wrap items-center justify-between gap-3">

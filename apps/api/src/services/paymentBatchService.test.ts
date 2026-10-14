@@ -999,47 +999,45 @@ describe('getStuckBatches', () => {
 });
 
 describe('createPaymentBatch / createGroupedPaymentBatches (multi-vendor)', () => {
-  it('creates ONE batch combining payments from different vendors', async () => {
+  it('holds a vendor group below 100 even when the combined selection exceeds 100', async () => {
     paymentFindMany.mockResolvedValue([
       makePayment({ id: 'pay-1', invoice_id: 'inv-1', vendor_id: 'vendor-1', amount: 100 }),
       makePayment({ id: 'pay-2', invoice_id: 'inv-2', vendor_id: 'vendor-2', amount: 50 }),
     ]);
-    paymentBatchCreate.mockResolvedValue({ id: 'batch-new', batch_number: 'PB202608140001', total_amount: '150.00', payment_count: 2, status: 'DRAFT' });
-
-    const result = await createPaymentBatch(['pay-1', 'pay-2'], 'assoc-1');
-
-    // No compatibility error — both vendors land in the same batch
-    expect(paymentBatchCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        total_amount: '150.00',
-        payment_count: 2,
-        payments: { connect: [{ id: 'pay-1' }, { id: 'pay-2' }] },
-      }),
-    });
+    await expect(createPaymentBatch(['pay-1', 'pay-2'], 'assoc-1')).rejects.toThrow(/below the 100 threshold/);
+    expect(paymentBatchCreate).not.toHaveBeenCalled();
     expect(paymentUpdateMany).toHaveBeenCalledWith({
-      where: { id: { in: ['pay-1', 'pay-2'] } },
-      data: expect.objectContaining({ batch_id: 'batch-new', selected_for_batch: false }),
+      where: { id: { in: ['pay-2'] } },
+      data: expect.objectContaining({ status: 'HELD_BELOW_100', hold_owner: 'assoc-1', selected_for_batch: false }),
     });
-    expect(auditLogCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({ action: 'PAYMENT_BATCH_CREATED' }),
-    });
-    expect(result).toMatchObject({ payment_count: 2, total_amount: '150.00' });
+    expect(auditLogCreate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'PAYMENT_THRESHOLD_HOLD_PLACED' }) }));
   });
 
-  it('createGroupedPaymentBatches returns a single batch for mixed-vendor selection', async () => {
-    paymentFindMany.mockResolvedValue([
+  it('createGroupedPaymentBatches separates mixed-vendor selection by vendor/account group', async () => {
+    const selected = [
       makePayment({ id: 'pay-1', invoice_id: 'inv-1', vendor_id: 'vendor-1', amount: 100 }),
       makePayment({ id: 'pay-2', invoice_id: 'inv-2', vendor_id: 'vendor-2', amount: 50 }),
       makePayment({ id: 'pay-3', invoice_id: 'inv-3', vendor_id: 'vendor-1', amount: 75 }),
-    ]);
-    paymentBatchCreate.mockResolvedValue({ id: 'batch-new', batch_number: 'PB202608140002', total_amount: '225.00', payment_count: 3, status: 'DRAFT' });
+    ];
+    paymentFindMany.mockImplementation(async (args: any) => {
+      const ids = args?.where?.id?.in;
+      return ids ? selected.filter((payment) => ids.includes(payment.id)) : selected;
+    });
+    paymentBatchCreate.mockImplementation(async ({ data }: any) => ({
+      id: `batch-${data.payments.connect[0].id}`,
+      batch_number: 'PB202608140002',
+      total_amount: String(data.total_amount),
+      payment_count: data.payment_count,
+      status: 'DRAFT',
+    }));
 
     const result = await createGroupedPaymentBatches(['pay-1', 'pay-2', 'pay-3'], 'assoc-1');
 
     expect(result.batch_count).toBe(1);
     expect(result.payment_count).toBe(3);
+    expect(result.held_payment_ids).toEqual(['pay-2']);
     expect(paymentBatchCreate).toHaveBeenCalledTimes(1);
-    expect(paymentBatchCreate.mock.calls[0][0].data.payments.connect).toHaveLength(3);
+    expect(paymentBatchCreate.mock.calls[0][0].data.payments.connect).toHaveLength(2);
   });
 });
 

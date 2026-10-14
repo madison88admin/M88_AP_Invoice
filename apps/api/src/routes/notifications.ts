@@ -1,6 +1,7 @@
-import { Router, Request, Response, NextFunction } from 'express';
+import { Router, Response, NextFunction } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { inAppNotificationService } from '../services/inAppNotificationService';
+import { isDbEnabled } from '../config/database';
 
 const router: Router = Router();
 
@@ -9,6 +10,7 @@ router.use(authenticate);
 // Get notifications for current user
 router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    if (!isDbEnabled()) return res.json([]);
     const limit = parseInt(req.query.limit as string) || 20;
     const notifications = await inAppNotificationService.getNotifications(req.user!.role, limit);
     res.json(notifications);
@@ -20,6 +22,7 @@ router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
 // Get unread count
 router.get('/unread-count', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    if (!isDbEnabled()) return res.json({ count: 0 });
     const count = await inAppNotificationService.getUnreadCount(req.user!.role);
     res.json({ count });
   } catch (error) {

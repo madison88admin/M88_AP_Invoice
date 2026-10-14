@@ -1,5 +1,4 @@
 import { Request, Response, NextFunction } from 'express';
-import { processPowerAutomateAttachment } from '../services/emailIntakeService';
 import { checkEmailDuplicate, generateFileHash } from '../services/emailDuplicateService';
 import { createJob, completeJob, failJob, cleanupOldJobs } from '../services/jobStore';
 import { analyzeInvoice } from '../services/ocrService';
@@ -12,10 +11,11 @@ import { InvoiceStatus, InvoiceSource, InvoiceType, SignatureType, ExceptionReas
 import { parseMPOReference } from '../utils/mpoReference';
 import prisma from '../config/database';
 import { logger } from '../utils/logger';
-import { AppError } from '../middleware/errorHandler';
 import crypto from 'crypto';
 import { classifyInvoiceDocument } from '../services/structuredInvoiceService';
 import { getPayableBlockReason } from '../services/payableDocumentGuard';
+import { ensureInvoiceBankSnapshot } from '../services/invoiceBankSnapshotService';
+import { normalizeInvoiceReference } from '../services/accountingControlService';
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
 
@@ -214,6 +214,8 @@ async function processSingleEmailInvoice(
         priority_flag: ocrResult.is_urgent || false,
         is_duplicate: false,
         invoice_hash: fileHash,
+        normalized_invoice_number: normalizeInvoiceReference(ocrResult.invoice_number) || undefined,
+        line_items_signature: Array.isArray((ocrResult as any).line_items) ? JSON.stringify((ocrResult as any).line_items) : undefined,
         ocr_confidence_score: ocrResult.ocr_confidence_score || undefined,
         ocr_raw_data: {
           ...ocrResult,
@@ -244,6 +246,7 @@ async function processSingleEmailInvoice(
         } : {}),
       },
     });
+    await ensureInvoiceBankSnapshot(invoice.id, 'email-controller');
 
     // Step 10: Create signature records if detected
     if (ocrResult.signatures && ocrResult.signatures.length > 0) {
@@ -272,7 +275,7 @@ async function processSingleEmailInvoice(
     });
 
     // Step 12: Exception if vendor not matched
-    let exceptions: string[] = [];
+    const exceptions: string[] = [];
     if (!vendorId) {
       await prisma.exception.create({
         data: {
@@ -467,6 +470,8 @@ async function processSingleManualInvoice(
         bill_to_entity: (ocrResult.bill_to_entity || 'MADISON_88_LTD') as any,
         is_duplicate: false,
         invoice_hash: fileHash,
+        normalized_invoice_number: normalizeInvoiceReference(ocrResult.invoice_number) || undefined,
+        line_items_signature: Array.isArray((ocrResult as any).line_items) ? JSON.stringify((ocrResult as any).line_items) : undefined,
         ocr_confidence_score: ocrResult.ocr_confidence_score || undefined,
         ocr_raw_data: { ...ocrResult, manual_upload_by: uploadedBy, multi_invoice_split_index: splitIndex, multi_invoice_source: multiInvoiceSource } as any,
         qb_memo: qbMemo,
@@ -482,6 +487,7 @@ async function processSingleManualInvoice(
         } : {}),
       },
     });
+    await ensureInvoiceBankSnapshot(invoice.id, uploadedBy || 'email-controller');
 
     await prisma.auditLog.create({
       data: {
@@ -492,7 +498,7 @@ async function processSingleManualInvoice(
       },
     });
 
-    let exceptions: string[] = [];
+    const exceptions: string[] = [];
     if (!vendorId) {
       await prisma.exception.create({
         data: {

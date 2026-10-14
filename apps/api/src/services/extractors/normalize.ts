@@ -126,7 +126,7 @@ export function normalizeInvoiceText(text: string): string {
   normalized = normalized.replace(/(A\/C)(NO\.?)/gi, '$1 $2');
 
   // Normalize OCR misreadings of "PO" (e.g., "P/0 #", "P/0#", "P/O #")
-  normalized = normalized.replace(/\bP\s*[\/0]\s*O\s*#?\b/gi, 'PO#');
+  normalized = normalized.replace(/\bP\s*[/0]\s*O\s*#?\b/gi, 'PO#');
 
   // Compact spaced company-name fragments followed by a word (e.g., "K A J I DOME" -> "KAJIDOME")
   normalized = normalized.replace(/([A-Z])(?:\s+[A-Z]){2,}\s+([A-Z][a-zA-Z]+)\b/g, (match) => match.replace(/\s+/g, ''));

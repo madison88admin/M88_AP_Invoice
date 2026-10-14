@@ -2,20 +2,7 @@ import prisma from '../config/database';
 import { InvoiceStatus, SignatoryRole, SignatureType, ExceptionReason, BrandTier, calcWorkingHoursElapsed } from '@ap-invoice/shared';
 import { getStageSLAStart } from '../utils/slaTime';
 import { AppError } from '../middleware/errorHandler';
-import {
-  APPROVAL_THRESHOLDS,
-  SLA_LIMITS,
-  KNOWN_BRANDS,
-  COORDINATOR_NAMES,
-  PURCHASING_MANAGER_NAMES,
-  MLO_ACCOUNT_HOLDER_EDWIN,
-  MLO_ACCOUNT_HOLDER_GLECIE,
-  SR_MANAGER_NAME,
-  MS_POLLY_NAME,
-  determineApprovalTier,
-  mapSignatoryRoleToPendingStatus,
-  matchSignerToRole,
-} from '@ap-invoice/shared';
+import { SLA_LIMITS, KNOWN_BRANDS, SR_MANAGER_NAME, determineApprovalTier, mapSignatoryRoleToPendingStatus } from '@ap-invoice/shared';
 import { sendApprovalRequestNotification } from './notificationService';
 import { inAppNotificationService } from './inAppNotificationService';
 import { eventBroadcaster } from './eventBroadcaster';
@@ -38,7 +25,7 @@ interface BrandValidationResult {
 /**
  * Validate brand information for Tier 2+ invoices using KNOWN_BRANDS table
  */
-function validateBrandForApproval(
+function _validateBrandForApproval(
   brandCode: string | null | undefined,
   brandName?: string | null,
   explicitTier?: BrandTier | null
@@ -95,9 +82,9 @@ function validateBrandForApproval(
  */
 export function determineApprovalRoute(
   amount: number,
-  brandName?: string,
-  brandCode?: string,
-  brandTier?: BrandTier
+  _brandName?: string,
+  _brandCode?: string,
+  _brandTier?: BrandTier
 ): ApprovalRouteStep[] {
   const tier = determineApprovalTier(amount);
   const route: ApprovalRouteStep[] = [];
@@ -126,7 +113,7 @@ export function determineApprovalRoute(
  * approval. Accounting Associate decides whether to hold or release a payment
  * after it is scheduled.
  */
-async function isAutoApprovalEligible(invoice: any): Promise<{ eligible: boolean; reason?: string }> {
+async function isAutoApprovalEligible(_invoice: any): Promise<{ eligible: boolean; reason?: string }> {
   // Auto-approval disabled: ALL invoices must go through Purchasing Coordinator for validation
   // regardless of amount, OCR confidence, or vendor bank verification status.
   return { eligible: false, reason: 'Auto-approval disabled — all invoices require coordinator validation' };
@@ -156,7 +143,7 @@ export async function createApprovalRequest(
 async function createApprovalRequestInternal(
   invoiceId: string,
   userId: string,
-  options?: { fromExceptionResolution?: boolean }
+  _options?: { fromExceptionResolution?: boolean }
 ) {
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
@@ -399,7 +386,7 @@ async function createApprovalRequestInternal(
   // These are signatures extracted from the PDF during OCR processing
   // NOTE: COORDINATOR role is NEVER auto-skipped — all invoices must go through
   // Purchasing Coordinator for manual validation, even if the PDF is already signed.
-  const ocrSignatures = (invoice.signatures || []).filter(
+  const _ocrSignatures = (invoice.signatures || []).filter(
     (sig: any) => sig.ocr_detected && sig.signed_at
   );
 
@@ -650,7 +637,7 @@ export async function approveInvoice(
   }
 
   // Find the first unsigned signature matching any allowed role
-  let pendingSignature = workflowSignatures.find(
+  const pendingSignature = workflowSignatures.find(
     (sig: any) => signatoryRoles.includes(sig.signatory_role) && !sig.signed_at
   );
 
@@ -665,7 +652,7 @@ export async function approveInvoice(
     );
     if (allWorkflowSigned && !hasAccountingSig
       && invoice!.status === (InvoiceStatus as any).PENDING_ACCOUNTING) {
-      const created = await prisma.signature.create({
+      const _created = await prisma.signature.create({
         data: {
           invoice_id: invoiceId,
           signatory_role: (SignatoryRole as any).ACCOUNTING_REVIEWER,
@@ -965,7 +952,7 @@ export async function rejectInvoice(
   }
 
   // Find the first unsigned signature matching any allowed role
-  let pendingSignature = invoice.signatures.find(
+  const pendingSignature = invoice.signatures.find(
     (sig: any) => signatoryRoles.includes(sig.signatory_role) && !sig.signed_at
   );
 

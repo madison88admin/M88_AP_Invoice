@@ -9,10 +9,10 @@ import crypto from 'crypto';
 import { getFinancePolicy } from './financePolicyService';
 
 // QuickBooks Online API configuration
-const QB_CLIENT_ID = process.env.QB_CLIENT_ID || '';
-const QB_CLIENT_SECRET = process.env.QB_CLIENT_SECRET || '';
-const QB_REDIRECT_URI = process.env.QB_REDIRECT_URI || '';
-const QB_ENVIRONMENT = process.env.QB_ENVIRONMENT || 'sandbox';
+const _QB_CLIENT_ID = process.env.QB_CLIENT_ID || '';
+const _QB_CLIENT_SECRET = process.env.QB_CLIENT_SECRET || '';
+const _QB_REDIRECT_URI = process.env.QB_REDIRECT_URI || '';
+const _QB_ENVIRONMENT = process.env.QB_ENVIRONMENT || 'sandbox';
 
 // ─── PRE-POST CHECK ─────────────────────────────────────────────────────────
 // Deterministic sanity check before QB posting. No AI calls.
@@ -591,7 +591,7 @@ async function postToQuickBooks(invoice: any, glAccount: string, qbMemo: string)
   }
 
   // Map invoice data to QuickBooks format
-  const qbInvoice = {
+  const _qbInvoice = {
     InvoiceNum: invoice.invoice_number,
     VendorRef: {
       value: invoice.vendor_id,

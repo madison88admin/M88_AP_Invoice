@@ -47,6 +47,8 @@ let watcherInterval: NodeJS.Timeout | null = null;
 let isProcessing = false;
 const processedFiles = new Set<string>();
 let lastUploadOnlyAuditAt = 0;
+let lastPdfPathReconcileAt = 0;
+const PDF_PATH_RECONCILE_INTERVAL_MS = 5 * 60 * 1000;
 
 type IntakeEventSummary = {
   file_name: string | null;
@@ -1143,8 +1145,32 @@ async function processSingleInvoiceBuffer(
       data: baseData,
       include: { vendor: true, invoice_lines: true },
     });
-    await ensureInvoiceBankSnapshot(invoice.id, 'power-automate-watcher');
+    // Set this immediately after the invoice row is committed. If a later
+    // non-critical step fails, the catch block can still reconcile the PDF
+    // path instead of moving the file away and leaving a stale processing path
+    // in the invoice row (the cause of the blank-PDF incident for 254616).
     invoiceId = invoice.id;
+    try {
+      await ensureInvoiceBankSnapshot(invoice.id, 'power-automate-watcher');
+    } catch (snapshotError) {
+      const detail = snapshotError instanceof Error ? snapshotError.message : String(snapshotError);
+      logger.error(`[File Watcher] Bank snapshot capture failed for ${invoice.invoice_number}; keeping invoice visible for review: ${detail}`);
+      try {
+        await prisma.invoice.update({
+          where: { id: invoice.id },
+          data: { status: InvoiceStatus.EXCEPTION_FLAGGED as any },
+        });
+        await prisma.exception.create({
+          data: {
+            invoice_id: invoice.id,
+            reason: ExceptionReason.MISSING_BANK_INFO as any,
+            detail: `Bank snapshot capture pending; invoice was saved and routed for review. ${detail}`,
+          },
+        });
+      } catch (flagError) {
+        logger.warn(`[File Watcher] Could not flag bank snapshot failure for ${invoice.invoice_number}:`, flagError);
+      }
+    }
 
     if (normalizedRevisionCandidate) {
       const indicators = buildDuplicateIndicators({
@@ -1368,9 +1394,16 @@ async function processSingleInvoiceBuffer(
     return { fileName, terminalStage: 'CREATED', invoiceId: invoice.id, invoiceNumber: invoice.invoice_number };
   } catch (err) {
     logger.error(`[File Watcher] DB save failed for ${fileName}${partLabel}:`, err);
-    safeMove(currentProcessingPath, FAILED_DIR);
     const detail = err instanceof Error ? err.message : String(err);
     if (invoiceId) {
+      // The invoice row may already exist even when a downstream write fails.
+      // Always move-and-reconcile the PDF path before returning so the UI can
+      // still open the original document and the next recovery scan has a
+      // durable reference to it.
+      const reconciledPath = await safeMoveAndUpdatePdfPath(currentProcessingPath, FAILED_DIR, invoiceId, fileName);
+      if (!reconciledPath) {
+        logger.warn(`[File Watcher] Could not move/reconcile source PDF for ${fileName}; retaining current path for retry`);
+      }
       await createAuditLog(invoiceId, 'WATCHER_DB_FAILED', `Database save failed for ${fileName}: ${err}`);
       // The invoice row already exists and a CREATED event was emitted. Keep
       // the child classified as created so a non-critical downstream failure
@@ -1419,6 +1452,53 @@ function findWatcherFile(fileName: string): string | null {
     }
   }
   return null;
+}
+
+function findWatcherPath(fileName: string): string | null {
+  for (const directory of [INCOMING_DIR, PROCESSING_DIR, PROCESSED_DIR, FAILED_DIR, MANUAL_REVIEW_DIR, DUPLICATES_DIR]) {
+    const candidate = path.join(directory, fileName);
+    try {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+    } catch {
+      // A missing/unavailable directory is handled as not found.
+    }
+  }
+  return null;
+}
+
+/**
+ * Repair legacy rows whose PDF was moved after a partial intake failure but
+ * whose database path still points at processing/. This is idempotent and
+ * runs periodically with the watcher, so old records are healed without a
+ * manual SQL fix.
+ */
+async function reconcileStalePdfPaths(): Promise<void> {
+  const now = Date.now();
+  if (now - lastPdfPathReconcileAt < PDF_PATH_RECONCILE_INTERVAL_MS) return;
+  lastPdfPathReconcileAt = now;
+  try {
+    const invoices = await prisma.invoice.findMany({
+      where: { pdf_path: { contains: '/processing/' } },
+      select: { id: true, invoice_number: true, pdf_path: true, raw_file_url: true },
+      take: 200,
+    });
+    for (const invoice of invoices) {
+      if (!invoice.pdf_path || fs.existsSync(invoice.pdf_path)) continue;
+      const recoveredPath = findWatcherPath(path.basename(invoice.pdf_path));
+      if (!recoveredPath || recoveredPath === invoice.pdf_path) continue;
+      await prisma.invoice.update({
+        where: { id: invoice.id },
+        data: {
+          pdf_path: recoveredPath,
+          ...(invoice.raw_file_url === invoice.pdf_path || !invoice.raw_file_url ? { raw_file_url: recoveredPath } : {}),
+        },
+      });
+      await createAuditLog(invoice.id, 'PDF_PATH_RECONCILED', `Recovered PDF reference from ${invoice.pdf_path} to ${recoveredPath}`);
+      logger.info(`[File Watcher] Reconciled stale PDF path for ${invoice.invoice_number || invoice.id}: ${recoveredPath}`);
+    }
+  } catch (error) {
+    logger.warn('[File Watcher] Stale PDF path reconciliation failed:', error);
+  }
 }
 
 /**
@@ -1559,6 +1639,7 @@ async function pollIncomingDirectory(): Promise<void> {
     // Recover stuck files from processing/ (files older than 10 minutes)
     recoverStuckFilesPeriodic();
     await auditUploadOnlyIntake();
+    await reconcileStalePdfPaths();
     await queueRetryableFiles();
 
     if (!fs.existsSync(INCOMING_DIR)) {

@@ -10,6 +10,7 @@ import { extractMadisonInvoiceFields } from './madisonInvoiceExtractor';
 import { analyzeInvoice } from './ocrService';
 import { matchOrCreateVendor } from './vendorMatchingService';
 import fs from 'fs';
+import path from 'path';
 import { fieldDecisionEngine } from './fieldDecisionEngine';
 import { geminiOCRService } from './geminiOCRService';
 import { qwenOCRService } from './qwenOCRService';
@@ -252,6 +253,29 @@ export async function reprocessInvoices(
 // (absolute, or data/… / ./…) may be served straight from disk.
 const STORAGE_KEY_RE = /^invoices\/\d{4}\/\d{2}\//;
 
+export function findLocalSiblingPdf(stalePath: string): string | null {
+  const fileName = path.basename(stalePath);
+  const sourceDir = path.dirname(stalePath);
+  const watcherRoot = path.dirname(sourceDir);
+  const candidates = [
+    stalePath,
+    path.join(watcherRoot, 'incoming', fileName),
+    path.join(watcherRoot, 'processing', fileName),
+    path.join(watcherRoot, 'processed', fileName),
+    path.join(watcherRoot, 'failed', fileName),
+    path.join(watcherRoot, 'manual-review', fileName),
+    path.join(watcherRoot, 'duplicates', fileName),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+    } catch {
+      // Continue through the remaining storage locations.
+    }
+  }
+  return null;
+}
+
 export async function downloadInvoicePdf(invoice: any): Promise<Buffer> {
   // 1. pdf_path — authoritative copy lives in Supabase Storage for keys;
   //    local-style paths keep local-first (file-watcher invoices).
@@ -284,6 +308,24 @@ export async function downloadInvoicePdf(invoice: any): Promise<Buffer> {
       return fs.readFileSync(invoice.pdf_path);
     }
     logger.warn(`[ReExtract] pdf_path exists in DB but file not found on disk or Supabase: ${invoice.pdf_path}`);
+    const recoveredPath = findLocalSiblingPdf(invoice.pdf_path);
+    if (recoveredPath && recoveredPath !== invoice.pdf_path) {
+      logger.warn(`[ReExtract] Recovered stale PDF reference ${invoice.pdf_path} → ${recoveredPath}`);
+      try {
+        if (invoice.id) {
+          await prisma.invoice.update({
+            where: { id: invoice.id },
+            data: {
+              pdf_path: recoveredPath,
+              ...(invoice.raw_file_url === invoice.pdf_path || !invoice.raw_file_url ? { raw_file_url: recoveredPath } : {}),
+            },
+          });
+        }
+      } catch (updateError) {
+        logger.warn(`[ReExtract] Could not persist recovered PDF reference: ${updateError instanceof Error ? updateError.message : 'unknown'}`);
+      }
+      return fs.readFileSync(recoveredPath);
+    }
   }
 
   // 1c. Try raw_file_url as a Supabase storage key (common for SFTP-uploaded invoices)

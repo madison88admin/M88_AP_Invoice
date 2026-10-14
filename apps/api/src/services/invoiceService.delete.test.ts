@@ -62,6 +62,8 @@ function makeInvoice(overrides: Record<string, any> = {}) {
     status: overrides.status ?? 'RECEIVED',
     pdf_path: overrides.pdf_path ?? null,
     raw_file_url: overrides.raw_file_url ?? null,
+    retention_until: overrides.retention_until ?? null,
+    legal_hold: overrides.legal_hold ?? false,
     payments: overrides.payments ?? [],
   };
 }
@@ -124,6 +126,34 @@ describe('deleteInvoice', () => {
     expect(entry.invoice_id).toBeUndefined();
     expect(entry.note).toContain('INV-1');
     expect(entry.note).toContain('inv-1');
+  });
+
+  it('allows cleanup of a retention-dated intake draft', async () => {
+    invoiceFindUnique.mockResolvedValue(makeInvoice({
+      status: 'EXCEPTION_FLAGGED',
+      retention_until: new Date('2033-10-14'),
+      legal_hold: false,
+      payments: [],
+    }));
+    invoiceDelete.mockResolvedValue({ id: 'inv-1' });
+
+    const result = await deleteInvoice('inv-1', 'admin-1', 'IT_ADMIN', 'IT Admin');
+
+    expect(result.deleted).toBe(true);
+    expect(invoiceDelete).toHaveBeenCalledWith({ where: { id: 'inv-1' } });
+  });
+
+  it('still blocks retention-protected invoices that entered workflow', async () => {
+    invoiceFindUnique.mockResolvedValue(makeInvoice({
+      status: 'APPROVED',
+      retention_until: new Date('2033-10-14'),
+      legal_hold: false,
+      payments: [],
+    }));
+
+    await expect(deleteInvoice('inv-1', 'admin-1', 'IT_ADMIN', 'IT Admin'))
+      .rejects.toThrow('retention-protected');
+    expect(invoiceDelete).not.toHaveBeenCalled();
   });
 
   it('rejects deletion once an invoice has entered the approval workflow', async () => {

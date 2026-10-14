@@ -82,6 +82,6 @@ router.get('/:id/bank-change-requests', authenticate, invoiceController.getBankC
 router.get('/bank-change-requests/:requestId/attachment', authenticate, invoiceController.downloadBankChangeAttachment);
 router.post('/bank-change-requests/:requestId/approve', authorize(UserRole.ACCOUNTING_SUPERVISOR), invoiceController.approveBankChangeRequest);
 router.post('/bank-change-requests/:requestId/reject', authorize(UserRole.ACCOUNTING_SUPERVISOR), invoiceController.rejectBankChangeRequest);
-router.delete('/:id', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.PURCHASING_MANAGER, UserRole.IT_ADMIN), invoiceController.deleteInvoice);
+router.delete('/:id', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.PURCHASING_MANAGER, UserRole.IT_ADMIN, UserRole.SUPERADMIN, UserRole.ADMIN), invoiceController.deleteInvoice);
 
 export default router;

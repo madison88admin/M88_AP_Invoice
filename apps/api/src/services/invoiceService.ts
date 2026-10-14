@@ -1369,8 +1369,20 @@ export const deleteInvoice = async (id: string, userId: string, userRole: string
   // first; otherwise PostgreSQL raises P2003 and the UI shows the misleading
   // "value is no longer valid" save error.
   const retentionDisposition = (prisma as any).retentionDisposition;
+  let retentionRowRemoved = false;
   if (retentionDisposition?.deleteMany) {
-    await retentionDisposition.deleteMany({ where: { invoice_id: id } });
+    const result = await retentionDisposition.deleteMany({ where: { invoice_id: id } });
+    retentionRowRemoved = Number(result?.count || 0) > 0;
+  }
+  // During a rolling deploy the generated Prisma client can lag behind the
+  // schema even though the table already exists. Fall back to the fixed,
+  // parameterized SQL delete so the RESTRICT foreign key is cleared instead
+  // of surfacing another generic P2003 response.
+  if (!retentionRowRemoved && typeof (prisma as any).$executeRawUnsafe === 'function') {
+    await (prisma as any).$executeRawUnsafe(
+      'DELETE FROM "APInvoice_RetentionDisposition" WHERE invoice_id = $1',
+      id,
+    );
   }
 
   await prisma.invoice.delete({ where: { id } });

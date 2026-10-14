@@ -44,11 +44,17 @@ async function appendSnapshotRevision(invoiceId: string, values: Record<string, 
   const snapshotHash = bankSnapshotHash(values);
   const latest = await revisions.findFirst({ where: { invoice_id: invoiceId }, orderBy: { revision: 'desc' }, select: { revision: true, snapshot_hash: true } });
   if (latest?.snapshot_hash === snapshotHash) return;
+  // InvoiceBankSnapshot stores vendor_id, but the append-only revision table
+  // intentionally stores only the bank snapshot fields. Do not spread
+  // vendor_id into the revision create payload; older Prisma clients correctly
+  // reject that unknown column and would otherwise fail the entire intake after
+  // OCR had already succeeded.
+  const { vendor_id: _vendorId, ...revisionValues } = values;
   await revisions.create({
     data: {
       invoice_id: invoiceId,
       revision: (latest?.revision || 0) + 1,
-      ...values,
+      ...revisionValues,
       snapshot_hash: snapshotHash,
       captured_by: capturedBy || null,
       source,

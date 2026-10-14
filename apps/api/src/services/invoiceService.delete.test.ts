@@ -12,6 +12,7 @@ const {
   workflowActionCreate,
   transaction,
   auditLogCreate,
+  retentionDispositionDeleteMany,
 } = vi.hoisted(() => ({
   invoiceFindUnique: vi.fn(),
   paymentBatchFindFirst: vi.fn(),
@@ -23,6 +24,7 @@ const {
   workflowActionCreate: vi.fn(),
   transaction: vi.fn(),
   auditLogCreate: vi.fn(),
+  retentionDispositionDeleteMany: vi.fn(),
 }));
 
 vi.mock('../config/database', () => ({
@@ -35,6 +37,7 @@ vi.mock('../config/database', () => ({
     payment: { updateMany: paymentUpdateMany, aggregate: paymentAggregate },
     paymentBatch: { findFirst: paymentBatchFindFirst, update: paymentBatchUpdate },
     invoiceWorkflowAction: { create: workflowActionCreate },
+    retentionDisposition: { deleteMany: retentionDispositionDeleteMany },
     $transaction: transaction,
     auditLog: { create: auditLogCreate },
   },
@@ -71,6 +74,7 @@ function makeInvoice(overrides: Record<string, any> = {}) {
 describe('deleteInvoice', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    retentionDispositionDeleteMany.mockResolvedValue({ count: 1 });
     transaction.mockImplementation(async (callback: any) => callback({
       invoice: { update: invoiceUpdate },
       payment: { updateMany: paymentUpdateMany, aggregate: paymentAggregate },
@@ -109,6 +113,7 @@ describe('deleteInvoice', () => {
     const result = await deleteInvoice('inv-1', 'user-1', 'PURCHASING_COORDINATOR', 'Alice');
 
     expect(result.deleted).toBe(true);
+    expect(retentionDispositionDeleteMany).toHaveBeenCalledWith({ where: { invoice_id: 'inv-1' } });
     expect(invoiceDelete).toHaveBeenCalledWith({ where: { id: 'inv-1' } });
   });
 
@@ -140,6 +145,7 @@ describe('deleteInvoice', () => {
     const result = await deleteInvoice('inv-1', 'admin-1', 'IT_ADMIN', 'IT Admin');
 
     expect(result.deleted).toBe(true);
+    expect(retentionDispositionDeleteMany).toHaveBeenCalledWith({ where: { invoice_id: 'inv-1' } });
     expect(invoiceDelete).toHaveBeenCalledWith({ where: { id: 'inv-1' } });
   });
 

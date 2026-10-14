@@ -1363,6 +1363,16 @@ export const deleteInvoice = async (id: string, userId: string, userRole: string
     note: `Invoice ${existing.invoice_number} (${id}) deleted by ${userName} (${userRole})`,
   });
 
+  // RetentionDisposition deliberately uses RESTRICT so the compliance queue
+  // cannot be removed by an ordinary retention scan. Intake-draft deletion
+  // is an explicit cleanup path, however, and must remove that dependent row
+  // first; otherwise PostgreSQL raises P2003 and the UI shows the misleading
+  // "value is no longer valid" save error.
+  const retentionDisposition = (prisma as any).retentionDisposition;
+  if (retentionDisposition?.deleteMany) {
+    await retentionDisposition.deleteMany({ where: { invoice_id: id } });
+  }
+
   await prisma.invoice.delete({ where: { id } });
 
   // Best-effort cleanup of the actual PDF — never blocks the deletion.

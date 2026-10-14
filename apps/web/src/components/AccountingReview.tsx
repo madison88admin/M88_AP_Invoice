@@ -22,6 +22,9 @@ export default function AccountingReview() {
   const [bankRequestsLoading, setBankRequestsLoading] = useState(false);
   const [bankActionLoading, setBankActionLoading] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [pdfPreview, setPdfPreview] = useState<{ invoice: MockInvoice; url: string } | null>(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
@@ -184,6 +187,43 @@ ${dataRows}
     } finally {
       setPostingInvoiceId(null);
     }
+  };
+
+  const openInvoicePdf = async (invoice: MockInvoice) => {
+    setPdfLoading(true);
+    setPdfError(null);
+    if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
+    setPdfPreview(null);
+    try {
+      // Use the shared Axios client so the Bearer token is attached. A direct
+      // window.open('/api/invoices/:id/document') request is unauthenticated
+      // and returns 403 in production.
+      const response = await invoiceApi.getDocument(invoice.id);
+      const contentType = String(response.headers['content-type'] || 'application/pdf');
+      const url = URL.createObjectURL(new Blob([response.data], { type: contentType }));
+      setPdfPreview({ invoice, url });
+    } catch (error: any) {
+      let message = 'The actual invoice PDF is not available for this record.';
+      const responseData = error?.response?.data;
+      if (responseData instanceof Blob) {
+        try {
+          const parsed = JSON.parse(await responseData.text());
+          message = parsed?.error?.message || parsed?.message || message;
+        } catch { /* keep the safe fallback */ }
+      } else {
+        message = responseData?.error?.message || responseData?.message || message;
+      }
+      setPdfError(message);
+      showToast(message, 'error');
+    } finally {
+      setPdfLoading(false);
+    }
+  };
+
+  const closeInvoicePdf = () => {
+    if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
+    setPdfPreview(null);
+    setPdfError(null);
   };
 
   return (
@@ -500,7 +540,7 @@ ${dataRows}
                               {postingInvoiceId === invoice.id ? 'Posting...' : 'Post to Accounting'}
                             </button>
                           )}
-                          <button onClick={() => setSelectedInvoice(invoice)} className="transition-colors" style={{ color: 'var(--accent-purple)' }}
+                          <button onClick={() => { setSelectedInvoice(invoice); void openInvoicePdf(invoice); }} className="transition-colors" style={{ color: 'var(--accent-purple)' }}
                             onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-violet)'; }}
                             onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--accent-purple)'; }}
                             title="View details"
@@ -528,6 +568,16 @@ ${dataRows}
               <div className="p-6">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Invoice Details</h2>
+                  <button
+                    type="button"
+                    onClick={() => void openInvoicePdf(selectedInvoice)}
+                    disabled={pdfLoading}
+                    className="mr-auto ml-4 inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+                    style={{ background: 'color-mix(in srgb, var(--accent-blue) 12%, transparent)', color: 'var(--accent-blue)', border: '1px solid color-mix(in srgb, var(--accent-blue) 25%, transparent)' }}
+                  >
+                    {pdfLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
+                    {pdfLoading ? 'Opening PDF…' : 'View actual PDF'}
+                  </button>
                   <button onClick={() => setSelectedInvoice(null)} className="transition-colors" style={{ color: 'var(--text-muted)' }}
                     onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
                     onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
@@ -622,6 +672,25 @@ ${dataRows}
                 </div>
               </div>
             </div>
+          )}
+
+          {pdfPreview && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.65)' }} onClick={closeInvoicePdf}>
+              <div className="flex h-[min(92vh,900px)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }} onClick={(event) => event.stopPropagation()}>
+                <div className="flex items-center justify-between gap-3 px-5 py-3" style={{ borderBottom: '1px solid var(--border-color)' }}>
+                  <div className="min-w-0">
+                    <h3 className="truncate text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Actual invoice PDF</h3>
+                    <p className="truncate text-xs" style={{ color: 'var(--text-muted)' }}>{pdfPreview.invoice.invoice_number} · {pdfPreview.invoice.vendor_name}</p>
+                  </div>
+                  <button type="button" onClick={closeInvoicePdf} className="rounded-lg p-1.5" style={{ color: 'var(--text-muted)' }} aria-label="Close PDF preview"><XCircle className="h-5 w-5" /></button>
+                </div>
+                <iframe title={`Invoice PDF ${pdfPreview.invoice.invoice_number}`} src={pdfPreview.url} className="min-h-0 flex-1 bg-white" />
+              </div>
+            </div>
+          )}
+
+          {pdfError && !pdfPreview && (
+            <div className="fixed bottom-20 right-4 z-[60] max-w-md rounded-xl p-3 text-sm" style={{ background: 'var(--bg-card)', color: 'var(--accent-red)', border: '1px solid color-mix(in srgb, var(--accent-red) 30%, transparent)' }} role="alert">{pdfError}</div>
           )}
 
       {/* Toast Notification */}

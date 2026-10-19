@@ -490,19 +490,10 @@ export default function FinanceControlsDashboard() {
                   style={{ background: 'var(--accent-blue)', color: 'var(--text-inverse)' }}
                 >
                   {invoicePreviewLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
-                  {invoicePreviewLoading ? 'Loading actual invoice...' : invoicePreviewUrl ? 'Hide actual invoice' : 'Quick view actual invoice'}
+                  {invoicePreviewLoading ? 'Loading actual invoice...' : invoicePreviewUrl ? 'Close quick view' : 'Quick view actual invoice'}
                 </button>
                 {invoicePreviewError && (
                   <div className="mt-2 text-xs" style={{ color: 'var(--accent-red)' }}>{invoicePreviewError}</div>
-                )}
-                {invoicePreviewUrl && (
-                  <div className="mt-3 overflow-hidden rounded-xl border" style={{ height: 420, borderColor: 'var(--border-subtle)', background: 'white' }}>
-                    <iframe
-                      title={`Actual invoice PDF ${selectedFinding.invoice_id}`}
-                      src={invoicePreviewUrl}
-                      className="h-full w-full"
-                    />
-                  </div>
                 )}
               </div>
             )}
@@ -574,6 +565,36 @@ export default function FinanceControlsDashboard() {
                 </button>
               ))}
             </div>
+
+            {invoicePreviewUrl && (
+              <div
+                className="fixed inset-0 z-[60] flex items-center justify-center p-4 sm:p-6"
+                role="dialog"
+                aria-modal="true"
+                aria-label="Actual invoice PDF quick view"
+                style={{ background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(2px)' }}
+                onMouseDown={(event) => { if (event.target === event.currentTarget) setInvoicePreviewUrl(null); }}
+              >
+                <div
+                  className="flex h-[min(92vh,900px)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border shadow-2xl"
+                  style={{ background: 'var(--bg-card)', borderColor: 'var(--border-color)' }}
+                  onMouseDown={(event) => event.stopPropagation()}
+                >
+                  <div className="flex items-center justify-between gap-3 px-5 py-3" style={{ borderBottom: '1px solid var(--border-color)' }}>
+                    <div className="min-w-0">
+                      <div className="font-semibold" style={{ color: 'var(--text-primary)' }}>Actual invoice PDF</div>
+                      <div className="truncate text-xs" style={{ color: 'var(--text-muted)' }}>Finding {selectedFinding.code} · Invoice {selectedFinding.invoice_id}</div>
+                    </div>
+                    <button type="button" onClick={() => setInvoicePreviewUrl(null)} aria-label="Close actual invoice preview" className="rounded-xl p-2" style={{ color: 'var(--text-muted)' }}>
+                      <X className="h-5 w-5" />
+                    </button>
+                  </div>
+                  <div className="min-h-0 flex-1 bg-white">
+                    <iframe title={`Actual invoice PDF ${selectedFinding.invoice_id}`} src={invoicePreviewUrl} className="h-full w-full" />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

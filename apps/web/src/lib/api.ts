@@ -70,6 +70,12 @@ export const invoiceApi = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
+  requestDueDateChange: (id: string, data: { requested_due_date: string; reason: string }) =>
+    api.post(`/api/invoices/${id}/request-due-date-change`, data),
+  getDueDateChangeRequests: (status?: string) => api.get('/api/invoices/due-date-change-requests', { params: status ? { status } : undefined }),
+  getDueDateChangeRequestsForInvoice: (id: string) => api.get(`/api/invoices/${id}/due-date-change-requests`),
+  approveDueDateChange: (requestId: string) => api.post(`/api/invoices/due-date-change-requests/${requestId}/approve`),
+  rejectDueDateChange: (requestId: string, reason?: string) => api.post(`/api/invoices/due-date-change-requests/${requestId}/reject`, reason ? { reason } : {}),
   getBankChangeRequests: () => api.get('/api/invoices/bank-change-requests'),
   getBankChangeRequestsForInvoice: (id: string) => api.get(`/api/invoices/${id}/bank-change-requests`),
   downloadBankChangeAttachment: (requestId: string) => api.get(`/api/invoices/bank-change-requests/${requestId}/attachment`, { responseType: 'blob' }),

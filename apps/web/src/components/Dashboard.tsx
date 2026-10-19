@@ -19,7 +19,7 @@ import { cn } from '../lib/utils';
 import { getAuditActorDisplay } from '../lib/auditActor';
 import { getPendingApprovalsForUser, getReturnedInvoicesForUser, isReturnedSignatureForUser } from '../lib/approvalQueue';
 import { displayInvoiceStatus, isCoordinatorQueueStatus } from '../lib/coordinatorQueue';
-import { FileText, Clock, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, RotateCcw, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, ChevronRight, LogOut, Edit, Unlock, Pause, Users, Loader2, Menu, X, Trash2, Landmark, Paperclip, Upload, Download, Eye, Info, PenTool, Zap } from 'lucide-react';
+import { FileText, Clock, CalendarDays, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, RotateCcw, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, ChevronRight, LogOut, Edit, Unlock, Pause, Users, Loader2, Menu, X, Trash2, Landmark, Paperclip, Upload, Download, Eye, Info, PenTool, Zap } from 'lucide-react';
 import { Skeleton, SkeletonBar } from './ui/Skeleton';
 
 const CANCELLATION_APPROVER_BY_USER_ROLE: Record<string, string> = {
@@ -277,6 +277,10 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
   const [bankChangeAttachment, setBankChangeAttachment] = useState<File | null>(null);
   const [submittingBankChange, setSubmittingBankChange] = useState(false);
   const [invoiceBankRequests, setInvoiceBankRequests] = useState<any[]>([]);
+  const [showDueDateChangeModal, setShowDueDateChangeModal] = useState(false);
+  const [dueDateChangeDate, setDueDateChangeDate] = useState('');
+  const [dueDateChangeReason, setDueDateChangeReason] = useState('');
+  const [submittingDueDateChange, setSubmittingDueDateChange] = useState(false);
   const [showHoldModal, setShowHoldModal] = useState(false);
   const [holdReason, setHoldReason] = useState('Vendor cumulative amount below $100 batch threshold');
   const [loading, setLoading] = useState(true);
@@ -516,8 +520,15 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
   // Count how many filters are currently active (for the "Clear" affordance)
   const activeFilterCount = Object.values(filters).filter(v => v !== undefined && v !== '').length;
 
-  // Sort invoices by created_at/received date (newest first)
+  // The repository is a deadline work queue: show the nearest due date first
+  // (including overdue invoices), then keep undated records at the bottom.
+  // The dashboard keeps its existing newest-first behavior.
   const sortedInvoices = [...quickFilteredInvoices].sort((a, b) => {
+    if (mode === 'repository') {
+      const dueA = a.due_date ? new Date(a.due_date).getTime() : Number.POSITIVE_INFINITY;
+      const dueB = b.due_date ? new Date(b.due_date).getTime() : Number.POSITIVE_INFINITY;
+      if (dueA !== dueB) return dueA - dueB;
+    }
     const dateA = new Date(a.created_at || a.invoice_received_date || a.invoice_date);
     const dateB = new Date(b.created_at || b.invoice_received_date || b.invoice_date);
     if ((user?.role === 'PURCHASING_COORDINATOR' || user?.role === 'PURCHASING_MANAGER') && filters.receivedOrder === 'oldest') {
@@ -1230,6 +1241,25 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
       showToast(error?.response?.data?.message || error?.response?.data?.error?.message || 'Failed to submit request', 'error');
     } finally {
       setSubmittingBankChange(false);
+    }
+  };
+
+  const handleRequestDueDateChange = async () => {
+    if (!selectedInvoice || !dueDateChangeDate || !dueDateChangeReason.trim()) return;
+    setSubmittingDueDateChange(true);
+    try {
+      const response = await invoiceApi.requestDueDateChange(selectedInvoice.id, {
+        requested_due_date: dueDateChangeDate,
+        reason: dueDateChangeReason.trim(),
+      });
+      showToast(response.data?.message || 'Due-date change request submitted to Accounting Supervisor', 'success');
+      setShowDueDateChangeModal(false);
+      setDueDateChangeDate('');
+      setDueDateChangeReason('');
+    } catch (error: any) {
+      showToast(error?.response?.data?.message || error?.response?.data?.error?.message || 'Failed to submit due-date change request', 'error');
+    } finally {
+      setSubmittingDueDateChange(false);
     }
   };
 
@@ -3195,6 +3225,11 @@ ${dataRows}
                       <AlertTriangle className="h-3.5 w-3.5" /> Resolve issue
                     </button>
                   )}
+                  {user?.role === 'PURCHASING_COORDINATOR' && ['APPROVED', 'PENDING_ACCOUNTING'].includes(String(selectedInvoice.status)) && (
+                    <button type="button" onClick={() => { setDueDateChangeDate(selectedInvoice.due_date ? new Date(selectedInvoice.due_date).toISOString().slice(0, 10) : ''); setDueDateChangeReason(''); setShowDueDateChangeModal(true); }} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-blue) 12%, transparent)', color: 'var(--accent-blue)', border: '1px solid color-mix(in srgb, var(--accent-blue) 25%, transparent)' }}>
+                      <CalendarDays className="h-3.5 w-3.5" /> Request due-date change
+                    </button>
+                  )}
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -4719,12 +4754,17 @@ ${dataRows}
                     <>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
                       {section.fields.filter((definition: any) => !definition.showWhen || editFormData.order_type === definition.showWhen).map(({ label, field, type, options, required }: any) => {
-                        const fieldIsReadOnly = isReadOnly && !(canEditVendor && (field === 'vendor_id' || field === 'new_vendor_name'));
+                        // Once Purchasing approvals are complete, due-date changes must go
+                        // through the coordinator request + Accounting Supervisor approval flow.
+                        const dueDateChangeLocked = field === 'due_date'
+                          && ['PENDING_ACCOUNTING', 'APPROVED'].includes(String(selectedInvoice?.status));
+                        const fieldIsReadOnly = dueDateChangeLocked || (isReadOnly && !(canEditVendor && (field === 'vendor_id' || field === 'new_vendor_name')));
                         return (
                         <div key={field}>
                           <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
                             {label}{required && <span style={{ color: 'var(--accent-red)' }}> *</span>}
                           </label>
+                          {dueDateChangeLocked && <p className="text-[11px] mb-1" style={{ color: 'var(--accent-amber)' }}>Use “Request due-date change” after saving/closing this form.</p>}
                           {type === 'select' ? (
                             <select
                               value={editFormData[field] || ''}
@@ -5009,6 +5049,36 @@ ${dataRows}
               >
                 {holdingInvoice ? <Loader2 className="h-4 w-4 mr-2 animate-spin" strokeWidth={1.75} /> : <Pause className="h-4 w-4 mr-2" strokeWidth={1.75} />}
                 {holdingInvoice ? 'Holding...' : 'Hold Invoice'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Purchasing Coordinator due-date change request */}
+      {mode === 'repository' && showDueDateChangeModal && selectedInvoice && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.5)' }} onClick={() => !submittingDueDateChange && setShowDueDateChangeModal(false)}>
+          <div className="w-full max-w-md rounded-2xl p-6 animate-scale-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 24px 64px rgba(0,0,0,0.3)' }} onClick={(event) => event.stopPropagation()}>
+            <h3 className="text-lg font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Request Due-Date Change</h3>
+            <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>Invoice: {selectedInvoice.invoice_number} — Accounting Supervisor approval is required.</p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Current Due Date</label>
+                <div className="px-3 py-2 rounded-xl text-sm" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}>{selectedInvoice.due_date ? new Date(selectedInvoice.due_date).toLocaleDateString() : 'Not set'}</div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Requested Due Date *</label>
+                <input type="date" value={dueDateChangeDate} onChange={(event) => setDueDateChangeDate(event.target.value)} min={selectedInvoice.invoice_date ? new Date(selectedInvoice.invoice_date).toISOString().slice(0, 10) : undefined} className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Reason *</label>
+                <textarea value={dueDateChangeReason} onChange={(event) => setDueDateChangeReason(event.target.value)} placeholder="Explain why the supplier due date needs to change..." rows={3} className="w-full px-3 py-2 rounded-xl focus:outline-none text-sm resize-none" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }} />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button type="button" onClick={() => !submittingDueDateChange && setShowDueDateChangeModal(false)} disabled={submittingDueDateChange} className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium" style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>Cancel</button>
+              <button type="button" onClick={() => void handleRequestDueDateChange()} disabled={!dueDateChangeDate || !dueDateChangeReason.trim() || submittingDueDateChange} className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold" style={!dueDateChangeDate || !dueDateChangeReason.trim() || submittingDueDateChange ? { background: 'var(--bg-elevated)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'var(--accent-blue)', color: 'var(--text-inverse)' }}>
+                {submittingDueDateChange ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} {submittingDueDateChange ? 'Submitting…' : 'Submit Request'}
               </button>
             </div>
           </div>

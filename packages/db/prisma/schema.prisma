@@ -214,6 +214,7 @@ model Invoice {
   stage_timestamps      StageTimestamp[]
   audit_logs            AuditLog[]
   bank_change_requests  BankChangeRequest[]
+  due_date_change_requests InvoiceDueDateChangeRequest[]
   payments              Payment[]
   exceptions            Exception[]
   follow_up_tasks       FollowUpTask[]
@@ -478,6 +479,30 @@ model BankChangeRequest {
   @@index([invoice_id])
   @@index([status])
   @@map("APInvoice_BankChangeRequest")
+}
+
+// A purchasing coordinator may request a due-date correction after the
+// purchasing approval. The requested date is not applied until Accounting
+// Supervisor approval, preserving segregation of duties and payment auditability.
+model InvoiceDueDateChangeRequest {
+  id                  String   @id @default(uuid())
+  invoice_id          String
+  invoice             Invoice  @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
+  current_due_date    DateTime?
+  requested_due_date  DateTime
+  reason              String
+  requested_by        String
+  requested_by_id     String?
+  status              String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  reviewed_by         String?
+  reviewed_by_id      String?
+  reviewed_at         DateTime?
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  @@index([invoice_id, status])
+  @@index([status, requested_due_date])
+  @@map("APInvoice_InvoiceDueDateChangeRequest")
 }
 
 // Persisted vendor-master bank change requests so the requester can never

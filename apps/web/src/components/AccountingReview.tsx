@@ -13,13 +13,15 @@ export default function AccountingReview() {
   const [loading, setLoading] = useState(true);
   const [selectedInvoice, setSelectedInvoice] = useState<MockInvoice | null>(null);
   const [postingInvoiceId, setPostingInvoiceId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'posted' | 'soa' | 'bank-requests'>('posted');
+  const [activeTab, setActiveTab] = useState<'posted' | 'soa' | 'bank-requests' | 'due-date-requests'>('posted');
   const [filters, setFilters] = useState({
     status: InvoiceStatus.POSTED_TO_QB,
     search: '',
   });
   const [bankRequests, setBankRequests] = useState<any[]>([]);
   const [bankRequestsLoading, setBankRequestsLoading] = useState(false);
+  const [dueDateRequests, setDueDateRequests] = useState<any[]>([]);
+  const [dueDateRequestsLoading, setDueDateRequestsLoading] = useState(false);
   const [bankActionLoading, setBankActionLoading] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [pdfPreview, setPdfPreview] = useState<{ invoice: MockInvoice; url: string } | null>(null);
@@ -41,6 +43,14 @@ export default function AccountingReview() {
       .finally(() => setBankRequestsLoading(false));
   }, []);
 
+  const reloadDueDateRequests = useCallback(() => {
+    setDueDateRequestsLoading(true);
+    invoiceApi.getDueDateChangeRequests('PENDING')
+      .then((res) => setDueDateRequests(res.data || []))
+      .catch(() => setDueDateRequests([]))
+      .finally(() => setDueDateRequestsLoading(false));
+  }, []);
+
   useEffect(() => {
     setLoading(false);
   }, [invoices]);
@@ -49,7 +59,8 @@ export default function AccountingReview() {
     if (activeTab === 'bank-requests') {
       reloadBankRequests();
     }
-  }, [activeTab, reloadBankRequests]);
+    if (activeTab === 'due-date-requests') reloadDueDateRequests();
+  }, [activeTab, reloadBankRequests, reloadDueDateRequests]);
 
   const filteredInvoices = invoices.filter(invoice => {
     if (activeTab === 'soa' && invoice.invoice_type !== 'STATEMENT') return false;
@@ -259,6 +270,16 @@ ${dataRows}
               <Landmark className="h-4 w-4" strokeWidth={1.75} />
               Bank Change Requests ({bankRequests.length})
             </button>
+            <button
+              onClick={() => setActiveTab('due-date-requests')}
+              className="px-4 py-2.5 rounded-xl transition-all text-sm font-medium flex items-center gap-2"
+              style={activeTab === 'due-date-requests'
+                ? { background: 'var(--accent-amber)', color: 'white' }
+                : { background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}
+            >
+              <Calendar className="h-4 w-4" strokeWidth={1.75} />
+              Due-Date Requests ({dueDateRequests.length})
+            </button>
           </div>
 
           {/* SOA Info Banner */}
@@ -271,6 +292,31 @@ ${dataRows}
                   <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>These are monthly statement invoices with aggregated totals (current charges + prior overdue + finance surcharge). PO amount matching is skipped. Reconcile against vendor Statements of Account manually.</p>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Due-Date Change Requests Tab */}
+          {activeTab === 'due-date-requests' && (
+            <div className="rounded-2xl" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
+              <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
+                <h2 className="text-lg font-semibold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}><Calendar className="h-5 w-5" style={{ color: 'var(--accent-amber)' }} strokeWidth={1.75} />Due-Date Change Requests</h2>
+                <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{dueDateRequests.length} pending request(s)</span>
+              </div>
+              {dueDateRequestsLoading ? <div className="p-6 text-center" style={{ color: 'var(--text-muted)' }}>Loading requests...</div> : dueDateRequests.length === 0 ? <div className="p-6 text-center" style={{ color: 'var(--text-muted)' }}>No pending due-date requests.</div> : (
+                <div className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
+                  {dueDateRequests.map((req: any) => (
+                    <div key={req.id} className="p-5">
+                      <div className="flex items-start justify-between gap-4 mb-3">
+                        <div><div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{req.invoice?.invoice_number || 'Unknown invoice'}</div><div className="text-xs" style={{ color: 'var(--text-muted)' }}>{req.invoice?.vendor?.name || req.invoice?.vendor_name_raw || 'Unknown vendor'} · requested by {req.requested_by}</div></div>
+                        <Link to={`/repository?invoiceId=${req.invoice_id}`} className="text-xs" style={{ color: 'var(--accent-blue)' }}>View invoice</Link>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3 mb-3"><div className="p-2 rounded-lg" style={{ background: 'var(--bg-elevated)' }}><div className="text-xs" style={{ color: 'var(--text-muted)' }}>Current due date</div><div className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>{req.current_due_date ? new Date(req.current_due_date).toLocaleDateString() : 'Not set'}</div></div><div className="p-2 rounded-lg" style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)' }}><div className="text-xs" style={{ color: 'var(--text-muted)' }}>Requested due date</div><div className="text-sm font-semibold" style={{ color: 'var(--accent-amber)' }}>{new Date(req.requested_due_date).toLocaleDateString()}</div></div></div>
+                      <p className="text-sm mb-3" style={{ color: 'var(--text-secondary)' }}><span className="text-xs" style={{ color: 'var(--text-muted)' }}>Reason: </span>{req.reason}</p>
+                      <div className="flex justify-end gap-2"><button type="button" onClick={async () => { setBankActionLoading(req.id); try { const res = await invoiceApi.approveDueDateChange(req.id); showToast(res.data?.message || 'Due date updated', 'success'); reloadDueDateRequests(); } catch (error: any) { showToast(error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to approve request', 'error'); } finally { setBankActionLoading(null); } }} disabled={bankActionLoading === req.id} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-lime) 12%, transparent)', color: 'var(--accent-lime)' }}><Check className="h-3.5 w-3.5" />Approve</button><button type="button" onClick={async () => { setBankActionLoading(req.id + '-reject'); try { await invoiceApi.rejectDueDateChange(req.id); showToast('Due-date request rejected', 'success'); reloadDueDateRequests(); } catch (error: any) { showToast(error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to reject request', 'error'); } finally { setBankActionLoading(null); } }} disabled={bankActionLoading === req.id + '-reject'} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-red) 12%, transparent)', color: 'var(--accent-red)' }}><XIcon className="h-3.5 w-3.5" />Reject</button></div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -429,7 +475,7 @@ ${dataRows}
             </div>
           )}
 
-          {activeTab !== 'bank-requests' && (
+          {activeTab !== 'bank-requests' && activeTab !== 'due-date-requests' && (
           <div>
           {/* Filters */}
           <div className="p-6 mb-6 rounded-2xl" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>

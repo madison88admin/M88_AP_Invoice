@@ -608,9 +608,13 @@ export const getInvoices = async (filters: any, userRole?: string) => {
       follow_up_tasks: true,
       payment_confirmations: true,
     },
-    orderBy: {
-      created_at: 'desc',
-    },
+    // The repository is an operational work queue: invoices nearest to (or
+    // past) their due date must be visible first. Null due dates stay at the
+    // bottom, with newest intake as the deterministic tie-breaker.
+    orderBy: [
+      { due_date: { sort: 'asc', nulls: 'last' } },
+      { created_at: 'desc' },
+    ],
   });
 
   const visibleInvoices = userRole === 'PURCHASING_MANAGER'

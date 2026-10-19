@@ -8,6 +8,7 @@ import { storeInvoiceHashFromStorage } from '../services/duplicateDetectionServi
 import { InvoiceStatus, InvoiceType, InvoiceCategory } from '@ap-invoice/shared';
 import { getPayableBlockReason } from '../services/payableDocumentGuard';
 import { isDbEnabled } from '../config/database';
+import { approveInvoiceDueDateChange, listInvoiceDueDateChangeRequests, listInvoiceDueDateChangeRequestsForInvoice, rejectInvoiceDueDateChange, requestInvoiceDueDateChange } from '../services/invoiceDueDateService';
 
 export const createInvoice = async (
   req: AuthRequest,
@@ -334,6 +335,39 @@ export const requestBankDetailsChange = async (
   } catch (error) {
     next(error);
   }
+};
+
+export const requestDueDateChange = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const request = await requestInvoiceDueDateChange({
+      invoiceId: req.params.id,
+      requestedDueDate: req.body?.requested_due_date,
+      reason: req.body?.reason,
+      userId: req.user!.id,
+      userName: req.user!.name || req.user!.email,
+    });
+    res.status(201).json({ success: true, request });
+  } catch (error) { next(error); }
+};
+
+export const getDueDateChangeRequests = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try { res.json(await listInvoiceDueDateChangeRequests(req.query.status as string | undefined)); }
+  catch (error) { next(error); }
+};
+
+export const getDueDateChangeRequestsForInvoice = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try { res.json(await listInvoiceDueDateChangeRequestsForInvoice(req.params.id)); }
+  catch (error) { next(error); }
+};
+
+export const approveDueDateChange = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try { res.json(await approveInvoiceDueDateChange(req.params.requestId, req.user!.id, req.user!.name || req.user!.email)); }
+  catch (error) { next(error); }
+};
+
+export const rejectDueDateChange = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try { res.json(await rejectInvoiceDueDateChange(req.params.requestId, req.user!.id, req.user!.name || req.user!.email, req.body?.reason)); }
+  catch (error) { next(error); }
 };
 
 export const getBankChangeRequests = async (

@@ -3866,14 +3866,28 @@ ${dataRows}
               {(selectedInvoice.status === InvoiceStatus.APPROVED || selectedInvoice.status === InvoiceStatus.PENDING_ACCOUNTING) && user && hasPermission(user.role, 'canPost') && (
                 <>
                   {user.role === 'ACCOUNTING_ASSOCIATE' && (
-                    <label className="flex items-center gap-2 px-4 py-2 text-xs cursor-pointer" style={{ color: 'var(--text-muted)' }}>
+                    <label
+                      className="flex items-start gap-2 px-4 py-2.5 text-xs cursor-pointer rounded-xl"
+                      title="Accounting Associate override: posts this invoice even when validation exceptions remain. The action is recorded in the audit log."
+                      style={{
+                        color: bypassVarianceCheck ? 'var(--accent-amber)' : 'var(--text-primary)',
+                        background: bypassVarianceCheck
+                          ? 'color-mix(in srgb, var(--accent-amber) 12%, transparent)'
+                          : 'color-mix(in srgb, var(--accent-purple) 8%, transparent)',
+                        border: '1px solid color-mix(in srgb, ' + (bypassVarianceCheck ? 'var(--accent-amber)' : 'var(--accent-purple)') + ' 22%, transparent)',
+                      }}
+                    >
                       <input
                         type="checkbox"
                         checked={bypassVarianceCheck}
                         onChange={(e) => setBypassVarianceCheck(e.target.checked)}
-                        className="w-4 h-4 rounded"
+                        aria-label="Bypass all invoice validation checks"
+                        className="w-4 h-4 mt-0.5 rounded cursor-pointer accent-purple-600"
                       />
-                      Bypass all validation (override exceptions, variance, pre-post checks)
+                      <span>
+                        <span className="block font-medium">Accounting override: bypass validation</span>
+                        <span className="block mt-0.5 opacity-80">Override exceptions, variance, and pre-post checks. This is audit logged.</span>
+                      </span>
                     </label>
                   )}
                   <button

@@ -61,7 +61,7 @@ export function deriveQBMemo(invoice: any): string {
   return invoice.qb_memo || memoParts.join('_');
 }
 
-async function prePostCheck(invoice: any): Promise<PrePostResult> {
+async function prePostCheck(invoice: any, skipExternalValidation = false): Promise<PrePostResult> {
   const financePolicy = getFinancePolicy();
   const flags: PrePostFlag[] = [];
   // NextGen is an external validation source. In Finance advisory mode its
@@ -99,7 +99,11 @@ async function prePostCheck(invoice: any): Promise<PrePostResult> {
     Number(process.env.NEXTGEN_PREPOST_DEADLINE_MS || 10000)
   );
   const poRef = invoice.mpo_number || invoice.po_number;
-  if (poRef && invoice.invoice_type !== 'STATEMENT') {
+  // An explicit Accounting Associate bypass is intended to override variance
+  // and pre-post checks. Do not call the remote NextGen service in that path:
+  // a cold/expired NextGen session can take tens of seconds and cause the
+  // Netlify proxy to return 504 even though the posting itself is valid.
+  if (!skipExternalValidation && poRef && invoice.invoice_type !== 'STATEMENT') {
     try {
       const nextgenPromise = invoice.mpo_number
         ? nextGenService.getFullPOByMPO(invoice.mpo_number)
@@ -358,7 +362,7 @@ export async function postInvoice(invoiceId: string, userId: string, bypassVaria
   }
 
   // Pre-post sanity check (deterministic, no AI)
-  const check = await prePostCheck(invoice);
+  const check = await prePostCheck(invoice, bypassVarianceCheck);
 
   // When bypass is enabled, skip all pre-post blocking checks
   if (bypassVarianceCheck) {

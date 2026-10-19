@@ -1,6 +1,9 @@
 import { Handler } from '@netlify/functions';
 
-const VPS_URL = 'http://5.223.78.194';
+// Call the API service directly. Port 80 is an nginx redirect endpoint on the
+// VPS (308 -> :8444), which causes Netlify Functions to surface a 504 before
+// the invoice route is reached. The API listens on 3001.
+const VPS_URL = 'http://5.223.78.194:3001';
 
 /**
  * Proxy for slow API endpoints that exceed Netlify's 10-second redirect timeout.

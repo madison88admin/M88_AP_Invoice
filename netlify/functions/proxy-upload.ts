@@ -1,6 +1,8 @@
 import { Handler } from '@netlify/functions';
 
-const VPS_URL = 'http://5.223.78.194';
+// Keep long-running uploads on the API port instead of the nginx redirect
+// endpoint (port 80), which returns 308 -> :8444 to the function runtime.
+const VPS_URL = 'http://5.223.78.194:3001';
 
 export const handler: Handler = async (event) => {
   const authHeader = event.headers.authorization || '';

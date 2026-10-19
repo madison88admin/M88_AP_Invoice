@@ -449,6 +449,11 @@ const resolveReceivedSource = async (invoice: any) => {
     }
   }
 
+  if (!receivedSource && Array.isArray(invoice?.audit_logs)) {
+    const watcherIntake = invoice.audit_logs.find((log: any) => String(log?.action || '') === 'FILE_WATCHER_INTAKE');
+    if (watcherIntake) receivedSource = 'SFTP';
+  }
+
   if (!receivedSource) receivedSource = invoice?.source || null;
 
   return {

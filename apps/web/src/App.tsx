@@ -23,11 +23,12 @@ import SettingsPage from './components/SettingsPage';
 import BankDetailsMasterlist from './components/BankDetailsMasterlist';
 import FinanceControlsDashboard from './components/FinanceControlsDashboard';
 import AccountingInvoiceArchive from './components/AccountingInvoiceArchive';
+import PurchasingWorkbench from './components/PurchasingWorkbench';
 
 import ProtectedRoute from './components/ProtectedRoute';
 import NotFound from './components/NotFound';
 import AppLayout from './components/AppLayout';
-import { FileText, CheckSquare, AlertTriangle, Building2, Package, BarChart3, FileSearch, Users, Settings, Upload, FileSearch as AuditIcon, LayoutDashboard, Landmark, CheckCircle, XCircle, RotateCcw, Clock3 } from 'lucide-react';
+import { FileText, CheckSquare, AlertTriangle, Building2, Package, BarChart3, FileSearch, Users, Settings, Upload, FileSearch as AuditIcon, LayoutDashboard, Landmark, CheckCircle, XCircle, RotateCcw, Clock3, GitCompare } from 'lucide-react';
 import ValidationPendingQueue from './components/ValidationPendingQueue';
 
 function App() {
@@ -85,6 +86,13 @@ function App() {
                   <ProtectedRoute>
                     <AppLayout title="Returned Invoices" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-amber), var(--accent-red))' }}><RotateCcw className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
                       <ReturnedInvoices />
+                    </AppLayout>
+                  </ProtectedRoute>
+                } />
+                <Route path="/purchasing-workbench" element={
+                  <ProtectedRoute roles={['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN']}>
+                    <AppLayout title="Purchasing Workbench" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-blue), var(--accent-purple))' }}><GitCompare className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
+                      <PurchasingWorkbench />
                     </AppLayout>
                   </ProtectedRoute>
                 } />

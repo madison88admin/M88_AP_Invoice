@@ -13,7 +13,7 @@ import {
   Menu, X, LogOut, Upload, Pause, Activity, Gauge, History,
   ClipboardList, Landmark,
   RotateCcw, Clock3,
-  CheckCircle, XCircle,
+  CheckCircle, XCircle, GitCompare,
 } from 'lucide-react';
 
 interface AppLayoutProps {
@@ -64,6 +64,7 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
         // hand-off: managers can send an invoice back, and coordinators must
         // be able to correct it before it returns to the manager's queue.
         { icon: RotateCcw, label: 'Returned Invoices', path: '/returned-invoices', roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER'], badgeKey: 'returned', badgeColor: 'amber' },
+        { icon: GitCompare, label: 'Duplicate Resolution', path: '/purchasing-workbench', roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN'], badgeKey: 'workbench', badgeColor: 'amber' },
         // Exceptions are handled by Accounting/IT. Purchasing roles should use
         // Pending Coordinator and Returned Invoices instead of this queue.
         { icon: AlertTriangle, label: 'Exceptions', path: '/exceptions', roles: ['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN'], badgeKey: 'exceptions', badgeColor: 'amber' },

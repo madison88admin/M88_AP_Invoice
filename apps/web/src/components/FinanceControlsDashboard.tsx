@@ -67,6 +67,15 @@ type RetentionRow = {
   eligible_at?: string | null;
 };
 
+type ActionModalState = {
+  findingId: string;
+  action: 'RESOLVE' | 'ASSIGN' | 'ESCALATE';
+  title: string;
+  label: string;
+  placeholder: string;
+  requiredMessage: string;
+};
+
 const SEV_COLOR: Record<string, string> = {
   CRITICAL: 'var(--accent-red)',
   HIGH: 'var(--accent-amber)',
@@ -103,6 +112,9 @@ export default function FinanceControlsDashboard() {
   const [invoicePreviewUrl, setInvoicePreviewUrl] = useState<string | null>(null);
   const [invoicePreviewLoading, setInvoicePreviewLoading] = useState(false);
   const [invoicePreviewError, setInvoicePreviewError] = useState<string | null>(null);
+  const [actionModal, setActionModal] = useState<ActionModalState | null>(null);
+  const [actionModalValue, setActionModalValue] = useState('');
+  const [actionModalError, setActionModalError] = useState('');
   const canManageRetention = Boolean(user && ['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role));
 
   useEffect(() => {
@@ -161,27 +173,56 @@ export default function FinanceControlsDashboard() {
     try { await api.post('/api/retention/run'); await load(); } finally { setRetentionBusy(false); }
   };
 
-  const act = async (id: string, action: string) => {
-    let note: string | undefined;
+  const openActionModal = (id: string, action: string) => {
     if (action === 'RESOLVE') {
-      note = window.prompt('Resolution note (required):', '') ?? undefined;
-      if (!note?.trim()) return;
+      setActionModal({ findingId: id, action: 'RESOLVE', title: 'Resolve finding', label: 'Resolution note', placeholder: 'Describe the corrective action or evidence...', requiredMessage: 'A resolution note is required.' });
     } else if (action === 'ASSIGN') {
-      const target = window.prompt('Assign to (user name or email):', '') ?? '';
-      if (!target.trim()) return;
-      await api.patch(`/api/finance-controls/findings/${id}`, { action, assigned_to: target.trim() });
-      await load();
-      return;
+      setActionModal({ findingId: id, action: 'ASSIGN', title: 'Assign finding', label: 'Assign to', placeholder: 'User name, email, or role...', requiredMessage: 'An assignee is required.' });
     } else if (action === 'ESCALATE') {
-      const target = window.prompt('Escalate to (role or user):', '') ?? '';
-      if (!target.trim()) return;
-      await api.patch(`/api/finance-controls/findings/${id}`, { action, escalate_to: target.trim() });
+      setActionModal({ findingId: id, action: 'ESCALATE', title: 'Escalate finding', label: 'Escalate to', placeholder: 'Role, user name, or email...', requiredMessage: 'An escalation target is required.' });
+    }
+    setActionModalValue('');
+    setActionModalError('');
+  };
+
+  const closeActionModal = () => {
+    setActionModal(null);
+    setActionModalValue('');
+    setActionModalError('');
+  };
+
+  const submitActionModal = async () => {
+    if (!actionModal) return;
+    const value = actionModalValue.trim();
+    if (!value) {
+      setActionModalError(actionModal.requiredMessage);
+      return;
+    }
+    const { findingId, action } = actionModal;
+    closeActionModal();
+    setActing(findingId);
+    try {
+      if (action === 'RESOLVE') {
+        await api.patch(`/api/finance-controls/findings/${findingId}`, { action, note: value });
+      } else if (action === 'ASSIGN') {
+        await api.patch(`/api/finance-controls/findings/${findingId}`, { action, assigned_to: value });
+      } else {
+        await api.patch(`/api/finance-controls/findings/${findingId}`, { action, escalate_to: value });
+      }
       await load();
+    } finally {
+      setActing('');
+    }
+  };
+
+  const act = async (id: string, action: string) => {
+    if (action === 'RESOLVE' || action === 'ASSIGN' || action === 'ESCALATE') {
+      openActionModal(id, action);
       return;
     }
     setActing(id);
     try {
-      await api.patch(`/api/finance-controls/findings/${id}`, { action, note });
+      await api.patch(`/api/finance-controls/findings/${id}`, { action });
       await load();
     } finally {
       setActing('');
@@ -595,6 +636,54 @@ export default function FinanceControlsDashboard() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {actionModal && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="finance-action-modal-title"
+          style={{ background: 'rgba(0,0,0,0.62)', backdropFilter: 'blur(3px)' }}
+          onMouseDown={(event) => { if (event.target === event.currentTarget) closeActionModal(); }}
+        >
+          <div
+            className="w-full max-w-lg overflow-hidden rounded-2xl border shadow-2xl"
+            style={{ background: 'var(--bg-card)', borderColor: 'var(--border-color)' }}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 px-5 py-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
+              <div>
+                <h2 id="finance-action-modal-title" className="font-semibold" style={{ color: 'var(--text-primary)' }}>{actionModal.title}</h2>
+                <p className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>This action will be recorded in the finance-control audit trail.</p>
+              </div>
+              <button type="button" onClick={closeActionModal} aria-label="Close action modal" className="rounded-xl p-2" style={{ color: 'var(--text-muted)' }}>
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="p-5">
+              <label className="mb-2 block text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{actionModal.label}</label>
+              <textarea
+                value={actionModalValue}
+                onChange={(event) => { setActionModalValue(event.target.value); setActionModalError(''); }}
+                placeholder={actionModal.placeholder}
+                rows={actionModal.action === 'RESOLVE' ? 4 : 2}
+                autoFocus
+                className="w-full resize-y rounded-xl px-3 py-2.5 text-sm outline-none"
+                style={{ background: 'var(--input-bg)', border: `1px solid ${actionModalError ? 'var(--accent-red)' : 'var(--input-border)'}`, color: 'var(--text-primary)' }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') closeActionModal();
+                  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) void submitActionModal();
+                }}
+              />
+              {actionModalError && <p className="mt-2 text-xs" style={{ color: 'var(--accent-red)' }}>{actionModalError}</p>}
+              <div className="mt-5 flex justify-end gap-2">
+                <button type="button" onClick={closeActionModal} className="rounded-xl px-4 py-2.5 text-sm font-semibold" style={{ background: 'var(--bg-elevated)', color: 'var(--text-primary)', border: '1px solid var(--border-color)' }}>Cancel</button>
+                <button type="button" onClick={() => void submitActionModal()} className="rounded-xl px-4 py-2.5 text-sm font-semibold" style={{ background: 'var(--accent-blue)', color: 'var(--text-inverse)' }}>Confirm {actionModal.action === 'RESOLVE' ? 'resolution' : actionModal.action.toLowerCase()}</button>
+              </div>
+            </div>
           </div>
         </div>
       )}

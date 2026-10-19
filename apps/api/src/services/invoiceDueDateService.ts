@@ -81,7 +81,7 @@ export async function requestInvoiceDueDateChange(input: {
     message: `${input.userName} requested due date ${requestedDueDate.toISOString().slice(0, 10)} for invoice ${invoice.invoice_number}. Reason: ${reason}`,
     type: 'warning',
     category: 'approval',
-    target_role: UserRole.ACCOUNTING_SUPERVISOR,
+    target_role: UserRole.ACCOUNTING_ASSOCIATE,
   });
   return request;
 }
@@ -113,7 +113,7 @@ export async function approveInvoiceDueDateChange(requestId: string, userId: str
     prisma.invoice.update({ where: { id: request.invoice_id }, data: { due_date: request.requested_due_date } }),
     prisma.invoiceDueDateChangeRequest.update({ where: { id: requestId }, data: { status: 'APPROVED', reviewed_by: userName, reviewed_by_id: userId, reviewed_at: new Date() } }),
   ]);
-  await logAudit({ invoice_id: request.invoice_id, performed_by: userId, actor_role: UserRole.ACCOUNTING_SUPERVISOR, action: 'INVOICE_DUE_DATE_CHANGE_APPROVED', note: `Due date changed by ${userName}: ${request.current_due_date?.toISOString().slice(0, 10) || '—'} → ${request.requested_due_date.toISOString().slice(0, 10)}.`, metadata: { request_id: request.id } });
+  await logAudit({ invoice_id: request.invoice_id, performed_by: userId, actor_role: UserRole.ACCOUNTING_ASSOCIATE, action: 'INVOICE_DUE_DATE_CHANGE_APPROVED', note: `Due date changed by ${userName}: ${request.current_due_date?.toISOString().slice(0, 10) || '—'} → ${request.requested_due_date.toISOString().slice(0, 10)}.`, metadata: { request_id: request.id } });
   return { success: true, message: `Due date updated to ${request.requested_due_date.toISOString().slice(0, 10)}.` };
 }
 
@@ -122,6 +122,6 @@ export async function rejectInvoiceDueDateChange(requestId: string, userId: stri
   if (!request) throw new AppError('Due-date change request not found', 404);
   if (request.status !== 'PENDING') throw new AppError(`Request already ${request.status}`, 400);
   await prisma.invoiceDueDateChangeRequest.update({ where: { id: requestId }, data: { status: 'REJECTED', reviewed_by: userName, reviewed_by_id: userId, reviewed_at: new Date() } });
-  await logAudit({ invoice_id: request.invoice_id, performed_by: userId, actor_role: UserRole.ACCOUNTING_SUPERVISOR, action: 'INVOICE_DUE_DATE_CHANGE_REJECTED', note: `Due-date change rejected by ${userName}.${reason ? ` Reason: ${reason}` : ''}`, metadata: { request_id: request.id } });
+  await logAudit({ invoice_id: request.invoice_id, performed_by: userId, actor_role: UserRole.ACCOUNTING_ASSOCIATE, action: 'INVOICE_DUE_DATE_CHANGE_REJECTED', note: `Due-date change rejected by ${userName}.${reason ? ` Reason: ${reason}` : ''}`, metadata: { request_id: request.id } });
   return { success: true, message: 'Due-date change request rejected.' };
 }

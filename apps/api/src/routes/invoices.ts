@@ -77,12 +77,12 @@ router.patch('/:id/status', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.
 router.patch('/:id', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.PURCHASING_MANAGER, UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), invoiceController.updateInvoice);
 router.post('/:id/request-bank-change', authenticate, upload.single('attachment'), invoiceController.requestBankDetailsChange);
 // Due-date changes are requested by Purchasing Coordination and approved by
-// Accounting Supervisor before the invoice is changed.
+// Accounting Associate before the invoice is changed.
 router.post('/:id/request-due-date-change', authorize(UserRole.PURCHASING_COORDINATOR), invoiceController.requestDueDateChange);
-router.get('/due-date-change-requests', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN), invoiceController.getDueDateChangeRequests);
+router.get('/due-date-change-requests', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), invoiceController.getDueDateChangeRequests);
 router.get('/:id/due-date-change-requests', authenticate, invoiceController.getDueDateChangeRequestsForInvoice);
-router.post('/due-date-change-requests/:requestId/approve', authorize(UserRole.ACCOUNTING_SUPERVISOR), invoiceController.approveDueDateChange);
-router.post('/due-date-change-requests/:requestId/reject', authorize(UserRole.ACCOUNTING_SUPERVISOR), invoiceController.rejectDueDateChange);
+router.post('/due-date-change-requests/:requestId/approve', authorize(UserRole.ACCOUNTING_ASSOCIATE), invoiceController.approveDueDateChange);
+router.post('/due-date-change-requests/:requestId/reject', authorize(UserRole.ACCOUNTING_ASSOCIATE), invoiceController.rejectDueDateChange);
 // Replace / re-link the actual invoice PDF (uploaded to Supabase Storage)
 router.post('/:id/upload-pdf', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.PURCHASING_COORDINATOR, UserRole.PURCHASING_MANAGER, UserRole.IT_ADMIN), upload.single('file'), uploadController.uploadInvoicePdf);
 router.get('/:id/bank-change-requests', authenticate, invoiceController.getBankChangeRequestsForInvoice);

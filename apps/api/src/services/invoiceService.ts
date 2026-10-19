@@ -423,7 +423,7 @@ const resolveReceivedSource = async (invoice: any) => {
     : {};
   let receivedFrom = raw.email_sender || raw.from || raw.senderEmail || null;
   let receivedSubject = raw.email_subject || raw.subject || null;
-  let receivedSource = invoice?.source || null;
+  let receivedSource = raw.received_source || null;
 
   const intakeKey = raw.intake_id || invoice?.source_message_id || null;
   if (intakeKey) {
@@ -440,6 +440,7 @@ const resolveReceivedSource = async (invoice: any) => {
           : {};
         if (!receivedFrom && typeof metadata.from === 'string' && metadata.from.trim()) receivedFrom = metadata.from.trim();
         if (!receivedSubject && typeof metadata.subject === 'string' && metadata.subject.trim()) receivedSubject = metadata.subject.trim();
+        if (!receivedSource && typeof metadata.channel === 'string' && metadata.channel.trim()) receivedSource = metadata.channel.trim();
         if (!receivedSource && event.source) receivedSource = event.source;
         if (receivedFrom && receivedSubject) break;
       }
@@ -447,6 +448,8 @@ const resolveReceivedSource = async (invoice: any) => {
       // Source enrichment is best-effort and must never block invoice access.
     }
   }
+
+  if (!receivedSource) receivedSource = invoice?.source || null;
 
   return {
     received_from: receivedFrom,

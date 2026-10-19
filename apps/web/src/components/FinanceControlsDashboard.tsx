@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import api from '../lib/api';
+import api, { invoiceApi } from '../lib/api';
 import { AlertTriangle, CheckCircle2, X, Filter, RefreshCw, Loader2, Clock, User, FileText, RotateCcw, Flag, CircleDot, Mail, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -100,7 +100,38 @@ export default function FinanceControlsDashboard() {
   const [intakeMonitor, setIntakeMonitor] = useState<IntakeMonitor | null>(null);
   const [retentionRows, setRetentionRows] = useState<RetentionRow[]>([]);
   const [retentionBusy, setRetentionBusy] = useState(false);
+  const [invoicePreviewUrl, setInvoicePreviewUrl] = useState<string | null>(null);
+  const [invoicePreviewLoading, setInvoicePreviewLoading] = useState(false);
+  const [invoicePreviewError, setInvoicePreviewError] = useState<string | null>(null);
   const canManageRetention = Boolean(user && ['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role));
+
+  useEffect(() => {
+    return () => {
+      if (invoicePreviewUrl) URL.revokeObjectURL(invoicePreviewUrl);
+    };
+  }, [invoicePreviewUrl]);
+
+  useEffect(() => {
+    setInvoicePreviewUrl(null);
+    setInvoicePreviewError(null);
+    setInvoicePreviewLoading(false);
+  }, [selectedFinding?.id]);
+
+  const openInvoicePreview = async (invoiceId: string) => {
+    if (invoicePreviewUrl) URL.revokeObjectURL(invoicePreviewUrl);
+    setInvoicePreviewUrl(null);
+    setInvoicePreviewError(null);
+    setInvoicePreviewLoading(true);
+    try {
+      const response = await invoiceApi.getDocument(invoiceId);
+      const contentType = String(response.headers['content-type'] || 'application/pdf');
+      setInvoicePreviewUrl(URL.createObjectURL(new Blob([response.data], { type: contentType })));
+    } catch (error: any) {
+      setInvoicePreviewError(error?.response?.data?.message || 'The actual invoice PDF is not available for this record.');
+    } finally {
+      setInvoicePreviewLoading(false);
+    }
+  };
 
   const load = useCallback(async () => {
     const [runResult, monitorResult] = await Promise.allSettled([
@@ -448,6 +479,33 @@ export default function FinanceControlsDashboard() {
               </button>
             </div>
             <p className="text-sm mt-3" style={{ color: 'var(--text-secondary)' }}>{selectedFinding.detail}</p>
+
+            {selectedFinding.invoice_id && (
+              <div className="mt-4">
+                <button
+                  type="button"
+                  onClick={() => invoicePreviewUrl ? setInvoicePreviewUrl(null) : void openInvoicePreview(selectedFinding.invoice_id as string)}
+                  disabled={invoicePreviewLoading}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-60"
+                  style={{ background: 'var(--accent-blue)', color: 'var(--text-inverse)' }}
+                >
+                  {invoicePreviewLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+                  {invoicePreviewLoading ? 'Loading actual invoice...' : invoicePreviewUrl ? 'Hide actual invoice' : 'Quick view actual invoice'}
+                </button>
+                {invoicePreviewError && (
+                  <div className="mt-2 text-xs" style={{ color: 'var(--accent-red)' }}>{invoicePreviewError}</div>
+                )}
+                {invoicePreviewUrl && (
+                  <div className="mt-3 overflow-hidden rounded-xl border" style={{ height: 420, borderColor: 'var(--border-subtle)', background: 'white' }}>
+                    <iframe
+                      title={`Actual invoice PDF ${selectedFinding.invoice_id}`}
+                      src={invoicePreviewUrl}
+                      className="h-full w-full"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="mt-5 space-y-3">
               <div className="grid grid-cols-2 gap-3 text-sm">

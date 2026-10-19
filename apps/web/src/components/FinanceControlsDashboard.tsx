@@ -115,6 +115,7 @@ export default function FinanceControlsDashboard() {
   const [actionModal, setActionModal] = useState<ActionModalState | null>(null);
   const [actionModalValue, setActionModalValue] = useState('');
   const [actionModalError, setActionModalError] = useState('');
+  const [actionError, setActionError] = useState('');
   const canManageRetention = Boolean(user && ['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role));
 
   useEffect(() => {
@@ -174,6 +175,7 @@ export default function FinanceControlsDashboard() {
   };
 
   const openActionModal = (id: string, action: string) => {
+    setActionError('');
     if (action === 'RESOLVE') {
       setActionModal({ findingId: id, action: 'RESOLVE', title: 'Resolve finding', label: 'Resolution note', placeholder: 'Describe the corrective action or evidence...', requiredMessage: 'A resolution note is required.' });
     } else if (action === 'ASSIGN') {
@@ -199,7 +201,6 @@ export default function FinanceControlsDashboard() {
       return;
     }
     const { findingId, action } = actionModal;
-    closeActionModal();
     setActing(findingId);
     try {
       if (action === 'RESOLVE') {
@@ -210,6 +211,9 @@ export default function FinanceControlsDashboard() {
         await api.patch(`/api/finance-controls/findings/${findingId}`, { action, escalate_to: value });
       }
       await load();
+      closeActionModal();
+    } catch (error: any) {
+      setActionModalError(error?.response?.data?.message || 'The action could not be completed. Please try again.');
     } finally {
       setActing('');
     }
@@ -220,10 +224,13 @@ export default function FinanceControlsDashboard() {
       openActionModal(id, action);
       return;
     }
+    setActionError('');
     setActing(id);
     try {
       await api.patch(`/api/finance-controls/findings/${id}`, { action });
       await load();
+    } catch (error: any) {
+      setActionError(error?.response?.data?.message || 'The action could not be completed. Please try again.');
     } finally {
       setActing('');
     }
@@ -268,6 +275,13 @@ export default function FinanceControlsDashboard() {
 
   return (
     <div className="space-y-5">
+      {actionError && (
+        <div className="flex items-start gap-2 rounded-xl border px-4 py-3 text-sm" role="alert" style={{ background: 'color-mix(in srgb, var(--accent-red) 8%, transparent)', borderColor: 'color-mix(in srgb, var(--accent-red) 30%, transparent)', color: 'var(--accent-red)' }}>
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span className="flex-1">{actionError}</span>
+          <button type="button" onClick={() => setActionError('')} aria-label="Dismiss action error" className="rounded p-0.5"><X className="h-4 w-4" /></button>
+        </div>
+      )}
       <div className="rounded-xl border overflow-hidden" style={{ background: 'var(--bg-card)' }}>
         <div className="p-4 flex flex-wrap items-center gap-3 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
           <Mail className="h-4 w-4" style={{ color: 'var(--accent-blue)' }} />

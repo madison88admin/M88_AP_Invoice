@@ -22,8 +22,7 @@ import { hasStrongNonInvoiceHeading, isObviouslyNonInvoiceFilename, nonInvoiceSu
 import { PDFDocument } from 'pdf-lib';
 import { evaluateIntakeControls } from './intakeControlService';
 import { getPayableBlockReason } from './payableDocumentGuard';
-import { replaceInvoicePdfByNumber } from './invoicePdfReplacementService';
-import { buildDuplicateIndicators, createDuplicateRevisionReview, normalizeInvoiceReference } from './accountingControlService';
+import { createDuplicateRevisionReviewFromCandidate, normalizeInvoiceReference } from './accountingControlService';
 import { ensureInvoiceBankSnapshot } from './invoiceBankSnapshotService';
 
 const INCOMING_DIR = process.env.WATCHER_INCOMING_DIR || '/incoming-invoices';
@@ -33,6 +32,42 @@ const DUPLICATES_DIR = process.env.WATCHER_DUPLICATES_DIR || '/incoming-invoices
 const MANUAL_REVIEW_DIR = process.env.WATCHER_MANUAL_REVIEW_DIR || '/incoming-invoices/manual-review';
 const FAILED_DIR = process.env.WATCHER_FAILED_DIR || '/incoming-invoices/failed';
 const NON_INVOICE_HINTS = /\b(statement|packing\s*(?:list|slip)|delivery\s*(?:note|receipt)|purchase\s*order|sales\s*order|order\s*confirmation|quotation|quote|remittance|receipt|shipping\s*document|shipment\s*document|air\s*way\s*bill|airway\s*bill|awb|bill\s*of\s*lading|cargo\s*manifest|waybill|layout|tech\s*pack|bill\s*stub|account\s*information|forwarder(?:['’]s|s)?\s+billing\s+invoice|expeditors?\s+billing\s+invoice|forwarder(?:['’]s|s)?\s+invoice|expeditors?\s+invoice)\b/i;
+
+type IntakeProvenance = {
+  fromAddress?: string;
+  toMailbox?: string;
+  receivedBy?: string;
+  receivedDateTime?: string;
+};
+
+function normalizeIntakeProvenance(input?: IntakeProvenance): Required<IntakeProvenance> {
+  const toMailbox = String(input?.toMailbox || '').trim();
+  return {
+    fromAddress: String(input?.fromAddress || '').trim(),
+    toMailbox,
+    receivedBy: String(input?.receivedBy || toMailbox || '').trim(),
+    receivedDateTime: String(input?.receivedDateTime || '').trim(),
+  };
+}
+
+function readIntakeSidecar(filePath: string, fileName: string): IntakeProvenance {
+  const sidecarPath = `${filePath}.metadata.json`;
+  try {
+    if (!fs.existsSync(sidecarPath)) return {};
+    const raw = JSON.parse(fs.readFileSync(sidecarPath, 'utf8')) as Record<string, unknown>;
+    const provenance = normalizeIntakeProvenance({
+      fromAddress: String(raw.fromAddress || ''),
+      toMailbox: String(raw.toMailbox || ''),
+      receivedBy: String(raw.receivedBy || ''),
+      receivedDateTime: String(raw.receivedDateTime || ''),
+    });
+    logger.info(`[File Watcher] Loaded email provenance sidecar for ${fileName}`);
+    return provenance;
+  } catch (error) {
+    logger.warn(`[File Watcher] Ignoring invalid provenance sidecar for ${fileName}:`, error);
+    return {};
+  }
+}
 const SFTP_PLACEHOLDER_INVOICE_NUMBER = /^SFTP-\d+$/i;
 const UPLOAD_ONLY_AUDIT_INTERVAL_MS = 5 * 60 * 1000;
 const UPLOAD_ONLY_MIN_AGE_MS = 10 * 60 * 1000;
@@ -456,11 +491,11 @@ function extractLabeledDateFromOcr(ocrResult: any): Date | null {
  * exception into a durable failure event. Previously an exception after the
  * UPLOADED event could leave a file with no terminal intake event at all.
  */
-async function processFile(filePath: string, fileName: string): Promise<void> {
+async function processFile(filePath: string, fileName: string, provenance?: IntakeProvenance): Promise<void> {
   const intakeId = crypto.randomUUID();
   const processingPath = path.join(PROCESSING_DIR, fileName);
   try {
-    await processFileInternal(filePath, fileName, intakeId);
+    await processFileInternal(filePath, fileName, intakeId, provenance);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     logger.error(`[File Watcher] Unhandled pipeline failure for ${fileName}:`, err);
@@ -479,12 +514,20 @@ async function processFile(filePath: string, fileName: string): Promise<void> {
       fileName,
       error: `Watcher pipeline failed after upload: ${detail}`,
     });
+  } finally {
+    const sidecarPath = `${filePath}.metadata.json`;
+    try {
+      if (fs.existsSync(sidecarPath)) fs.unlinkSync(sidecarPath);
+    } catch (sidecarError) {
+      logger.warn(`[File Watcher] Could not remove provenance sidecar for ${fileName}:`, sidecarError);
+    }
   }
 }
 
-async function processFileInternal(filePath: string, fileName: string, intakeId: string): Promise<void> {
+async function processFileInternal(filePath: string, fileName: string, intakeId: string, inputProvenance?: IntakeProvenance): Promise<void> {
+  const provenance = normalizeIntakeProvenance(inputProvenance);
   logger.info(`[File Watcher] Processing: ${fileName}`);
-  await recordWatcherIntakeEvent(intakeId, { source: 'POWER_AUTOMATE', stage: 'ATTACHMENT_DETECTED', fileName, metadata: { channel: 'SFTP' } });
+  await recordWatcherIntakeEvent(intakeId, { source: 'POWER_AUTOMATE', stage: 'ATTACHMENT_DETECTED', fileName, metadata: { channel: 'SFTP', ...provenance } });
 
   // Step 1: Move to Processing
   const processingPath = path.join(PROCESSING_DIR, fileName);
@@ -505,7 +548,7 @@ async function processFileInternal(filePath: string, fileName: string, intakeId:
   let fileBuffer: Buffer;
   try {
     fileBuffer = fs.readFileSync(processingPath);
-    await recordWatcherIntakeEvent(intakeId, { source: 'POWER_AUTOMATE', stage: 'UPLOADED', fileName, metadata: { bytes: fileBuffer.length, channel: 'SFTP' } });
+    await recordWatcherIntakeEvent(intakeId, { source: 'POWER_AUTOMATE', stage: 'UPLOADED', fileName, metadata: { bytes: fileBuffer.length, channel: 'SFTP', ...provenance } });
   } catch (err) {
     logger.error(`[File Watcher] Failed to read ${fileName}:`, err);
     safeMove(processingPath, FAILED_DIR);
@@ -606,7 +649,7 @@ async function processFileInternal(filePath: string, fileName: string, intakeId:
         }
         logger.info(`[File Watcher] Processing split invoice ${i + 1}/${splitBuffers.length} from ${fileName}`);
         try {
-          splitOutcomes.push(await processSingleInvoiceBuffer(splitBuffers[i], partName, splitProcessingPath, i, intakeId));
+          splitOutcomes.push(await processSingleInvoiceBuffer(splitBuffers[i], partName, splitProcessingPath, i, intakeId, provenance));
         } catch (splitErr) {
           logger.error(`[File Watcher] Error processing split ${i + 1} of ${fileName}:`, splitErr);
           if (fs.existsSync(splitProcessingPath)) safeMove(splitProcessingPath, FAILED_DIR);
@@ -668,7 +711,7 @@ async function processFileInternal(filePath: string, fileName: string, intakeId:
   }
 
   // Single invoice — process normally
-  await processSingleInvoiceBuffer(fileBuffer, fileName, processingPath, undefined, intakeId);
+  await processSingleInvoiceBuffer(fileBuffer, fileName, processingPath, undefined, intakeId, provenance);
 }
 
 /**
@@ -681,8 +724,10 @@ async function processSingleInvoiceBuffer(
   processingPath: string,
   splitIndex?: number,
   intakeId?: string,
+  provenanceInput?: IntakeProvenance,
 ): Promise<SingleInvoiceOutcome> {
   const runIntakeId = intakeId || crypto.randomUUID();
+  const provenance = normalizeIntakeProvenance(provenanceInput);
   const partLabel = splitIndex !== undefined ? ` [part ${splitIndex + 1}]` : '';
   const currentProcessingPath = splitIndex !== undefined
     ? path.join(PROCESSING_DIR, fileName)
@@ -829,51 +874,12 @@ async function processSingleInvoiceBuffer(
   }
   ocrResult.invoice_number = recoveredInvoiceNumber;
 
-  // Step 4: Duplicate detection / attachment replacement.
-  // A corrected PDF with the same invoice number is an attachment update, not
-  // a new invoice revision. Keep the existing workflow/status and replace only
-  // the stored PDF so approvals and accounting history remain intact.
+  // Step 4: Duplicate/revision detection. Every incoming attachment gets its
+  // own AP record and immutable PDF. Matching an existing invoice only creates
+  // a review flag; it must never replace or cancel an already approved record.
   const fileHash = generateFileHash(fileBuffer);
-  if (ocrResult.invoice_number) {
-    const replacement = await replaceInvoicePdfByNumber({
-      invoiceNumber: ocrResult.invoice_number,
-      buffer: fileBuffer,
-      fileName,
-      contentType: 'application/pdf',
-      source: 'file_watcher',
-    });
-    if (replacement.action === 'REPLACED') {
-      safeMove(currentProcessingPath, PROCESSED_DIR);
-      await recordWatcherIntakeEvent(runIntakeId, {
-        source: 'POWER_AUTOMATE',
-        stage: 'PDF_REPLACED',
-        status: 'COMPLETED',
-        fileName,
-        invoiceId: replacement.invoice.id,
-        metadata: {
-          invoice_number: replacement.invoice.invoice_number,
-          storage_path: replacement.storagePath,
-          replacement: true,
-        },
-      });
-      logger.info(`[File Watcher] ${fileName}${partLabel} → replaced PDF for ${replacement.invoice.invoice_number}`);
-      return { fileName, terminalStage: 'PDF_REPLACED', invoiceId: replacement.invoice.id, invoiceNumber: replacement.invoice.invoice_number };
-    }
-    if (replacement.action === 'NOOP_DUPLICATE') {
-      safeMove(currentProcessingPath, DUPLICATES_DIR);
-      await createAuditLog(replacement.invoice.id, 'WATCHER_DUPLICATE', `Identical PDF for invoice ${replacement.invoice.invoice_number}: ${fileName}`);
-      await recordWatcherIntakeEvent(runIntakeId, {
-        source: 'POWER_AUTOMATE', stage: 'DUPLICATE', status: 'COMPLETED', fileName,
-        invoiceId: replacement.invoice.id,
-        metadata: { invoice_number: replacement.invoice.invoice_number, duplicate_type: 'IDENTICAL_PDF' },
-      });
-      return { fileName, terminalStage: 'DUPLICATE', invoiceId: replacement.invoice.id, invoiceNumber: replacement.invoice.invoice_number };
-    }
-  }
-
-  // Step 4b: Revision detection is retained only for invoice numbers that do
-  // not already exist. This prevents same-number corrections from creating
-  // duplicate child records.
+  // Step 4b: retain the best matching record only as a review candidate. Do
+  // not auto-supersede the candidate; the Purchasing Coordinator decides.
   let revisionParent: any = null;
   let normalizedRevisionCandidate: any = null;
   const normalizedIncomingReference = normalizeInvoiceReference(ocrResult.invoice_number);
@@ -905,49 +911,29 @@ async function processSingleInvoiceBuffer(
       logger.info(`[File Watcher] Treating ${fileName} as revision ${revisionParent.revision + 1} of ${ocrResult.invoice_number}`);
     }
   }
-  const dupResult: any = revisionParent
-    ? { isDuplicate: false, level: 'REVISION', detail: 'New invoice revision detected' }
-    : await checkEmailDuplicate(fileBuffer, undefined, {
+  const dupResult: any = await checkEmailDuplicate(fileBuffer, undefined, {
       vendorName: ocrResult.vendor_name,
       invoiceNumber: ocrResult.invoice_number,
       amount: ocrResult.total_amount,
       invoiceDate: ocrResult.invoice_date,
     });
 
-  if (dupResult.isDuplicate) {
-    logger.info(`[File Watcher] Duplicate: ${fileName}${partLabel} → ${dupResult.existingInvoiceNumber} (${dupResult.level})`);
-    safeMove(currentProcessingPath, DUPLICATES_DIR);
-    await createAuditLog(
-      dupResult.existingInvoiceId || null,
-      'WATCHER_DUPLICATE',
-      `Duplicate detected for ${fileName}: ${dupResult.detail}`
-    );
-    await recordWatcherIntakeEvent(runIntakeId, {
-      source: 'POWER_AUTOMATE', stage: 'DUPLICATE', status: 'COMPLETED', fileName,
-      invoiceId: dupResult.existingInvoiceId || undefined,
-      metadata: { invoice_number: dupResult.existingInvoiceNumber, duplicate_type: dupResult.level, detail: dupResult.detail },
-    });
-    return { fileName, terminalStage: 'DUPLICATE', invoiceId: dupResult.existingInvoiceId || undefined, invoiceNumber: dupResult.existingInvoiceNumber };
-  }
-
-  // Also check DB directly for existing invoice_number to prevent unique constraint errors.
-  // The replacement branch above should have handled this; this remains a
-  // defensive guard for races or records created between the two queries.
+  // A matching hash/business key is a candidate, not a reason to drop the
+  // attachment. Keep the PDF in the normal processing path and flag the new
+  // record after it is committed.
   if (ocrResult.invoice_number) {
     const existing = await prisma.invoice.findFirst({
       where: { invoice_number: ocrResult.invoice_number },
-      select: { id: true },
+      select: { id: true, revision: true, status: true, vendor_id: true, vendor_name_raw: true, invoice_number: true, normalized_invoice_number: true, total_amount: true, currency: true, invoice_date: true, invoice_hash: true, mpo_number: true, customer_po_number: true, document_layout_fingerprint: true },
     });
-    if (existing && !revisionParent) {
-      logger.info(`[File Watcher] Duplicate invoice_number "${ocrResult.invoice_number}" already in DB: ${fileName}${partLabel}`);
-      safeMove(currentProcessingPath, DUPLICATES_DIR);
-      await createAuditLog(existing.id, 'WATCHER_DUPLICATE', `Duplicate invoice_number ${ocrResult.invoice_number} for ${fileName}`);
-      await recordWatcherIntakeEvent(runIntakeId, {
-        source: 'POWER_AUTOMATE', stage: 'DUPLICATE', status: 'COMPLETED', fileName, invoiceId: existing.id,
-        metadata: { invoice_number: ocrResult.invoice_number, duplicate_type: 'INVOICE_NUMBER' },
-      });
-      return { fileName, terminalStage: 'DUPLICATE', invoiceId: existing.id, invoiceNumber: ocrResult.invoice_number };
-    }
+    if (existing && !revisionParent && !normalizedRevisionCandidate) normalizedRevisionCandidate = existing;
+  }
+  let duplicateCandidate: any = revisionParent || normalizedRevisionCandidate || null;
+  if (!duplicateCandidate && dupResult?.isDuplicate && dupResult.existingInvoiceId) {
+    duplicateCandidate = await prisma.invoice.findUnique({
+      where: { id: dupResult.existingInvoiceId },
+      select: { id: true, revision: true, status: true, vendor_id: true, vendor_name_raw: true, invoice_number: true, normalized_invoice_number: true, total_amount: true, currency: true, invoice_date: true, invoice_hash: true, mpo_number: true, customer_po_number: true, document_layout_fingerprint: true, line_items_signature: true },
+    });
   }
 
   // Step 5: Vendor matching (read-only; OCR never creates a Vendor Master row)
@@ -1040,11 +1026,14 @@ async function processSingleInvoiceBuffer(
     }
     const baseData: any = {
         invoice_number: effectiveInvoiceNumber,
-        revision: revisionParent ? revisionParent.revision + 1 : 1,
-        ...(revisionParent ? { parent_invoice_id: revisionParent.id } : {}),
+        revision: duplicateCandidate ? Number(duplicateCandidate.revision || 1) + 1 : 1,
+        ...(duplicateCandidate ? { parent_invoice_id: duplicateCandidate.id } : {}),
         invoice_date: ocrResult.invoice_date,
         due_date: ocrResult.due_date ? new Date(ocrResult.due_date) : null,
-        invoice_received_date: new Date(),
+        invoice_received_date: (() => {
+          const parsed = provenance.receivedDateTime ? new Date(provenance.receivedDateTime) : null;
+          return parsed && !Number.isNaN(parsed.getTime()) ? parsed : new Date();
+        })(),
         vendor_id: effectiveVendorId,
         pdf_path: processingPath,
         vendor_name_raw: ocrResult.vendor_name,
@@ -1089,12 +1078,12 @@ async function processSingleInvoiceBuffer(
         priority_flag: ocrResult.is_urgent || false,
         priority_pay_date: ocrResult.priority_pay_date ? new Date(ocrResult.priority_pay_date) : null,
         is_duplicate: false,
-        duplicate_review_status: normalizedRevisionCandidate ? 'PENDING' : 'NOT_REVIEWED',
-        duplicate_review_reason: normalizedRevisionCandidate ? `Normalized invoice reference ${normalizeInvoiceReference(ocrResult.invoice_number)} matches ${normalizedRevisionCandidate.invoice_number}; Purchasing classification required.` : undefined,
+        duplicate_review_status: duplicateCandidate ? 'PENDING' : 'NOT_REVIEWED',
+        duplicate_review_reason: duplicateCandidate ? `Incoming invoice matches ${duplicateCandidate.invoice_number}; Purchasing Coordinator classification required.` : undefined,
         invoice_hash: fileHash,
         normalized_invoice_number: normalizedIncomingReference || undefined,
         ocr_confidence_score: ocrResult.ocr_confidence_score || undefined,
-        ocr_raw_data: ocrResult as any,
+        ocr_raw_data: { ...ocrResult, email_from_address: provenance.fromAddress || undefined, email_to_mailbox: provenance.toMailbox || undefined, email_received_by: provenance.receivedBy || undefined, email_received_date_time: provenance.receivedDateTime || undefined } as any,
         beneficiary_name: (ocrResult as any).bank_info?.beneficiary_name || (ocrResult as any).beneficiary_name || undefined,
         bank_name: (ocrResult as any).bank_info?.bank_name || (ocrResult as any).bank_name || undefined,
         swift_code: (ocrResult as any).bank_info?.swift_code || (ocrResult as any).swift_code || undefined,
@@ -1172,9 +1161,10 @@ async function processSingleInvoiceBuffer(
       }
     }
 
-    if (normalizedRevisionCandidate) {
-      const indicators = buildDuplicateIndicators({
-        existing: normalizedRevisionCandidate,
+    if (duplicateCandidate) {
+      await createDuplicateRevisionReviewFromCandidate({
+        invoiceId: invoice.id,
+        candidateInvoiceId: duplicateCandidate.id,
         incoming: {
           vendor_id: effectiveVendorId,
           invoice_number: ocrResult.invoice_number,
@@ -1187,34 +1177,9 @@ async function processSingleInvoiceBuffer(
           line_items_signature: Array.isArray((ocrResult as any).line_items) ? JSON.stringify((ocrResult as any).line_items) : null,
           document_layout_fingerprint: (ocrResult as any).document_layout_fingerprint || null,
         },
-      });
-      await createDuplicateRevisionReview({
-        invoiceId: invoice.id,
-        candidateInvoiceId: normalizedRevisionCandidate.id,
-        indicators,
-        reason: `Changed invoice reference ${ocrResult.invoice_number} resembles ${normalizedRevisionCandidate.invoice_number}; Purchasing classification required before approval or payment.`,
+        reason: `Incoming invoice ${ocrResult.invoice_number} resembles ${duplicateCandidate.invoice_number}; Purchasing classification required before approval or payment.`,
       });
       await prisma.invoice.update({ where: { id: invoice.id }, data: { status: InvoiceStatus.EXCEPTION_FLAGGED } });
-    }
-
-    if (revisionParent) {
-      await prisma.invoice.update({
-        where: { id: revisionParent.id },
-        data: {
-          status: InvoiceStatus.CANCELLED,
-          cancelled_by: 'file_watcher',
-          cancelled_at: new Date(),
-          cancellation_reason: `Superseded by invoice revision ${invoice.revision}`,
-        },
-      });
-      await prisma.auditLog.create({
-        data: {
-          invoice_id: revisionParent.id,
-          action: 'INVOICE_SUPERSEDED',
-          performed_by: 'file_watcher',
-          note: `Invoice revision ${invoice.revision} replaced this record; new invoice id ${invoice.id}.`,
-        },
-      });
     }
 
     logger.info(`[File Watcher] Saved invoice ${invoice.invoice_number} with ${invoice.invoice_lines?.length || 0} line items`);
@@ -1223,7 +1188,7 @@ async function processSingleInvoiceBuffer(
       stage: 'CREATED',
       fileName,
       invoiceId: invoice.id,
-      metadata: { invoiceNumber: invoice.invoice_number, documentType: ocrResult.document_type, currency: ocrResult.currency },
+      metadata: { invoiceNumber: invoice.invoice_number, documentType: ocrResult.document_type, currency: ocrResult.currency, ...provenance },
     });
 
     // If multiple MPOs in one invoice, add a MULTI_PO_CONSOLIDATED exception for manual review
@@ -1285,7 +1250,12 @@ async function processSingleInvoiceBuffer(
         invoice_id: invoice.id,
         action: 'FILE_WATCHER_INTAKE',
         performed_by: 'file_watcher',
-        note: `Auto-processed from SFTP incoming folder: ${fileName}`,
+        note: `Auto-processed from SFTP incoming folder: ${fileName}${provenance.fromAddress ? `; from ${provenance.fromAddress}` : ''}${provenance.toMailbox ? `; to ${provenance.toMailbox}` : ''}${provenance.receivedBy ? `; receivedBy ${provenance.receivedBy}` : ''}${provenance.receivedDateTime ? `; received ${provenance.receivedDateTime}` : ''}`,
+        metadata: {
+          source: 'POWER_AUTOMATE_SFTP',
+          fileName,
+          ...provenance,
+        },
       },
     });
 
@@ -1670,7 +1640,7 @@ async function pollIncomingDirectory(): Promise<void> {
       processedFiles.add(fileName);
 
       try {
-        await processFile(filePath, fileName);
+        await processFile(filePath, fileName, readIntakeSidecar(filePath, fileName));
       } catch (err) {
         logger.error(`[File Watcher] Unhandled error for ${fileName}:`, err);
       } finally {

@@ -15,7 +15,7 @@ import crypto from 'crypto';
 import { classifyInvoiceDocument } from '../services/structuredInvoiceService';
 import { getPayableBlockReason } from '../services/payableDocumentGuard';
 import { ensureInvoiceBankSnapshot } from '../services/invoiceBankSnapshotService';
-import { normalizeInvoiceReference } from '../services/accountingControlService';
+import { normalizeInvoiceReference, createDuplicateRevisionReviewFromCandidate } from '../services/accountingControlService';
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
 
@@ -76,17 +76,7 @@ async function processSingleEmailInvoice(
       conversationId: emailMetadata.conversationId,
     });
 
-    if (preOcrDuplicate.isDuplicate) {
-      logger.info(`[${requestId}] Duplicate detected${partLabel} (${preOcrDuplicate.level}): ${preOcrDuplicate.existingInvoiceNumber}`);
-      return {
-        success: true,
-        duplicate: true,
-        duplicateLevel: preOcrDuplicate.level,
-        invoiceId: preOcrDuplicate.existingInvoiceId,
-        invoiceNumber: preOcrDuplicate.existingInvoiceNumber,
-        status: 'DUPLICATE',
-      };
-    }
+    // Matching email/hash is retained as a new AP record and reviewed later.
 
     // Step 1b: Upload to VPS Supabase Storage FIRST (before OCR — ensures file is saved even if OCR fails)
     let storagePath: string | undefined;
@@ -132,17 +122,7 @@ async function processSingleEmailInvoice(
       invoiceDate: ocrResult.invoice_date,
     });
 
-    if (postOcrDuplicate.isDuplicate) {
-      logger.info(`[${requestId}] Business duplicate${partLabel}: ${postOcrDuplicate.existingInvoiceNumber}`);
-      return {
-        success: true,
-        duplicate: true,
-        duplicateLevel: postOcrDuplicate.level,
-        invoiceId: postOcrDuplicate.existingInvoiceId,
-        invoiceNumber: postOcrDuplicate.existingInvoiceNumber,
-        status: 'DUPLICATE',
-      };
-    }
+    // Keep processing; the new row will be marked DUPLICATE_REVIEW after save.
 
     // Step 4: Vendor matching
     let vendorId: string | undefined;
@@ -246,6 +226,24 @@ async function processSingleEmailInvoice(
         } : {}),
       },
     });
+    const duplicateCandidate = postOcrDuplicate.isDuplicate ? postOcrDuplicate : preOcrDuplicate;
+    if (duplicateCandidate?.isDuplicate && duplicateCandidate.existingInvoiceId) {
+      await createDuplicateRevisionReviewFromCandidate({
+        invoiceId: invoice.id,
+        candidateInvoiceId: duplicateCandidate.existingInvoiceId,
+        incoming: {
+          vendor_id: invoice.vendor_id,
+          invoice_number: invoice.invoice_number,
+          invoice_date: invoice.invoice_date,
+          total_amount: invoice.total_amount,
+          currency: invoice.currency,
+          invoice_hash: invoice.invoice_hash,
+          line_items_signature: invoice.line_items_signature,
+        },
+        reason: `${fileName} matches existing invoice ${duplicateCandidate.existingInvoiceNumber || duplicateCandidate.existingInvoiceId}; Purchasing Coordinator classification required.`,
+      });
+      await prisma.invoice.update({ where: { id: invoice.id }, data: { status: InvoiceStatus.EXCEPTION_FLAGGED } as any });
+    }
     await ensureInvoiceBankSnapshot(invoice.id, 'email-controller');
 
     // Step 10: Create signature records if detected
@@ -347,16 +345,7 @@ async function processSingleManualInvoice(
     // Check file hash duplicate
     const dupCheck = await checkEmailDuplicate(fileBuffer);
 
-    if (dupCheck.isDuplicate) {
-      logger.info(`[${requestId}] Duplicate detected${partLabel}: ${dupCheck.existingInvoiceNumber}`);
-      return {
-        success: true,
-        duplicate: true,
-        invoiceId: dupCheck.existingInvoiceId,
-        invoiceNumber: dupCheck.existingInvoiceNumber,
-        status: 'DUPLICATE',
-      };
-    }
+    // Matching hash is retained as a new AP record and reviewed later.
 
     // Upload to VPS Supabase Storage FIRST (before OCR — ensures file is saved even if OCR fails)
     let storagePath: string | undefined;
@@ -400,17 +389,7 @@ async function processSingleManualInvoice(
       invoiceDate: ocrResult.invoice_date,
     });
 
-    if (bizDup.isDuplicate) {
-      logger.info(`[${requestId}] Business duplicate${partLabel}: ${bizDup.existingInvoiceNumber}`);
-      return {
-        success: true,
-        duplicate: true,
-        duplicateLevel: bizDup.level,
-        invoiceId: bizDup.existingInvoiceId,
-        invoiceNumber: bizDup.existingInvoiceNumber,
-        status: 'DUPLICATE',
-      };
-    }
+    // Keep processing; the new row will be marked DUPLICATE_REVIEW after save.
 
     // Vendor match
     let vendorId: string | undefined;
@@ -487,6 +466,24 @@ async function processSingleManualInvoice(
         } : {}),
       },
     });
+    const duplicateCandidate = bizDup.isDuplicate ? bizDup : dupCheck;
+    if (duplicateCandidate?.isDuplicate && duplicateCandidate.existingInvoiceId) {
+      await createDuplicateRevisionReviewFromCandidate({
+        invoiceId: invoice.id,
+        candidateInvoiceId: duplicateCandidate.existingInvoiceId,
+        incoming: {
+          vendor_id: invoice.vendor_id,
+          invoice_number: invoice.invoice_number,
+          invoice_date: invoice.invoice_date,
+          total_amount: invoice.total_amount,
+          currency: invoice.currency,
+          invoice_hash: invoice.invoice_hash,
+          line_items_signature: invoice.line_items_signature,
+        },
+        reason: `${fileName} matches existing invoice ${duplicateCandidate.existingInvoiceNumber || duplicateCandidate.existingInvoiceId}; Purchasing Coordinator classification required.`,
+      });
+      await prisma.invoice.update({ where: { id: invoice.id }, data: { status: InvoiceStatus.EXCEPTION_FLAGGED } as any });
+    }
     await ensureInvoiceBankSnapshot(invoice.id, uploadedBy || 'email-controller');
 
     await prisma.auditLog.create({

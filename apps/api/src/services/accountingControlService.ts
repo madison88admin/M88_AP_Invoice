@@ -37,6 +37,56 @@ export interface DuplicateIndicators {
   reason: string;
 }
 
+/**
+ * Mark a newly ingested record for duplicate/revision review using an
+ * existing candidate.  Intake callers use this after the new PDF and AP
+ * record have been committed; the candidate is never replaced or cancelled.
+ */
+export async function createDuplicateRevisionReviewFromCandidate(input: {
+  invoiceId: string;
+  candidateInvoiceId: string;
+  incoming: {
+    vendor_id?: string | null;
+    invoice_number?: string | null;
+    mpo_number?: string | null;
+    customer_po_number?: string | null;
+    invoice_date?: Date | null;
+    total_amount?: unknown;
+    currency?: string | null;
+    invoice_hash?: string | null;
+    line_items_signature?: string | null;
+    document_layout_fingerprint?: string | null;
+  };
+  reason?: string;
+}): Promise<any | null> {
+  if (input.invoiceId === input.candidateInvoiceId) return null;
+  const existing = await prisma.invoice.findUnique({
+    where: { id: input.candidateInvoiceId },
+    select: {
+      id: true,
+      vendor_id: true,
+      normalized_invoice_number: true,
+      invoice_number: true,
+      mpo_number: true,
+      customer_po_number: true,
+      invoice_date: true,
+      total_amount: true,
+      currency: true,
+      invoice_hash: true,
+      line_items_signature: true,
+      document_layout_fingerprint: true,
+    },
+  });
+  if (!existing) return null;
+  const indicators = buildDuplicateIndicators({ existing, incoming: input.incoming });
+  return createDuplicateRevisionReview({
+    invoiceId: input.invoiceId,
+    candidateInvoiceId: existing.id,
+    indicators,
+    reason: input.reason || `Incoming invoice ${input.incoming.invoice_number || ''} matches existing record ${existing.invoice_number}; Purchasing Coordinator classification required.`,
+  });
+}
+
 export function buildDuplicateIndicators(input: {
   existing: { vendor_id?: string | null; normalized_invoice_number?: string | null; invoice_number?: string | null; mpo_number?: string | null; customer_po_number?: string | null; invoice_date?: Date | null; total_amount?: unknown; currency?: string | null; invoice_hash?: string | null; line_items_signature?: string | null; document_layout_fingerprint?: string | null };
   incoming: { vendor_id?: string | null; invoice_number?: string | null; mpo_number?: string | null; customer_po_number?: string | null; invoice_date?: Date | null; total_amount?: unknown; currency?: string | null; invoice_hash?: string | null; line_items_signature?: string | null; document_layout_fingerprint?: string | null };

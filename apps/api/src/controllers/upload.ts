@@ -41,6 +41,7 @@ import { generateFileHash } from '../services/emailDuplicateService';
 import { storeInvoiceHashFromStorage } from '../services/duplicateDetectionService';
 import { eventBroadcaster } from '../services/eventBroadcaster';
 import { recordIntakeReviewRecord } from '../services/emailIntakeMonitoringService';
+import { InvoiceStatus } from '@ap-invoice/shared';
 
 // ─── Async upload job storage ───
 export const uploadInvoice = async (
@@ -1505,6 +1506,27 @@ export const uploadInvoicePdf = async (
     const invoice = await prisma.invoice.findUnique({ where: { id } });
     if (!invoice) {
       throw new AppError('Invoice not found', 404);
+    }
+    // Once Purchasing or Accounting has endorsed an invoice, its source PDF
+    // is an immutable audit artifact. A corrected/revised supplier document
+    // must enter as a new AP request and be linked through duplicate/revision
+    // review; it must never overwrite this record's approved PDF.
+    const immutablePdfStatuses = new Set([
+      InvoiceStatus.PENDING_MANAGER,
+      InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER,
+      InvoiceStatus.PENDING_MLO_PLANNING_MANAGER,
+      InvoiceStatus.PENDING_SR_MANAGER,
+      InvoiceStatus.PENDING_POLLY,
+      InvoiceStatus.PENDING_PRESIDENT,
+      InvoiceStatus.PENDING_ACCOUNTING,
+      InvoiceStatus.APPROVED,
+      InvoiceStatus.POSTED_TO_QB,
+      InvoiceStatus.PAYMENT_SCHEDULED,
+      InvoiceStatus.PAID,
+      InvoiceStatus.PAYMENT_CONFIRMATION_SENT,
+    ]);
+    if (immutablePdfStatuses.has(String(invoice.status) as InvoiceStatus)) {
+      throw new AppError('Approved/accounting invoice PDFs are immutable. Upload the corrected document as a new invoice for duplicate/revision review.', 409);
     }
 
     let uploadedPath = await uploadToStorage(req.file.buffer, req.file.originalname, req.file.mimetype);

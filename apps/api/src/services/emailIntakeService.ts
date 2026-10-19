@@ -21,8 +21,7 @@ import { PDFDocument } from 'pdf-lib';
 import { buildIntakeIdempotencyKey, evaluateIntakeControls } from './intakeControlService';
 import { checkEmailDuplicate, generateFileHash } from './emailDuplicateService';
 import { getPayableBlockReason } from './payableDocumentGuard';
-import { replaceInvoicePdfByNumber, PdfReplacementResult } from './invoicePdfReplacementService';
-import { normalizeInvoiceReference } from './accountingControlService';
+import { normalizeInvoiceReference, createDuplicateRevisionReviewFromCandidate } from './accountingControlService';
 
 const clientId = process.env.GRAPH_API_CLIENT_ID || '';
 const clientSecret = process.env.GRAPH_API_CLIENT_SECRET || '';
@@ -32,28 +31,6 @@ let emailPollerTimer: NodeJS.Timeout | null = null;
 let emailPollerStarted = false;
 let emailPollInProgress = false;
 const processedMessageIds = new Set<string>();
-
-async function replaceExistingInvoicePdfIfPresent(options: {
-  invoiceNumber?: string;
-  buffer: Buffer;
-  fileName: string;
-  contentType?: string;
-  source: 'email_poller' | 'powerautomate' | 'sharepoint';
-  storagePath?: string;
-}): Promise<Exclude<PdfReplacementResult, { action: 'NOT_FOUND' }> | null> {
-  const invoiceNumber = String(options.invoiceNumber || '').trim();
-  if (!invoiceNumber) return null;
-  const result = await replaceInvoicePdfByNumber({
-    invoiceNumber,
-    buffer: options.buffer,
-    fileName: options.fileName,
-    contentType: options.contentType || 'application/pdf',
-    source: options.source,
-    uploadedStoragePath: options.storagePath,
-  });
-  if (result.action === 'NOT_FOUND') return null;
-  return result;
-}
 
 async function countPdfPages(buffer: Buffer): Promise<number | undefined> {
   try {
@@ -270,6 +247,37 @@ async function createInvoiceAndIntakeEvent(invoiceData: any, event: AtomicIntake
       } as any,
     });
     return invoice;
+  });
+}
+
+async function flagDuplicateIntake(invoice: any, duplicate: any, source: string, fileName: string): Promise<void> {
+  if (!duplicate?.isDuplicate || !duplicate.existingInvoiceId || duplicate.existingInvoiceId === invoice.id) return;
+  await createDuplicateRevisionReviewFromCandidate({
+    invoiceId: invoice.id,
+    candidateInvoiceId: duplicate.existingInvoiceId,
+    incoming: {
+      vendor_id: invoice.vendor_id,
+      invoice_number: invoice.invoice_number,
+      mpo_number: invoice.mpo_number,
+      customer_po_number: invoice.customer_po_number,
+      invoice_date: invoice.invoice_date,
+      total_amount: invoice.total_amount,
+      currency: invoice.currency,
+      invoice_hash: invoice.invoice_hash,
+      line_items_signature: invoice.line_items_signature,
+      document_layout_fingerprint: invoice.document_layout_fingerprint,
+    },
+    reason: `${fileName} matches existing invoice ${duplicate.existingInvoiceNumber || duplicate.existingInvoiceId}; Purchasing Coordinator classification required.`,
+  });
+  await prisma.invoice.update({ where: { id: invoice.id }, data: { status: InvoiceStatus.EXCEPTION_FLAGGED } as any });
+  await recordEmailIntakeEvent({
+    source: source as any,
+    stage: 'REVIEW_REQUIRED',
+    status: 'REVIEW_REQUIRED',
+    fileName,
+    invoiceId: invoice.id,
+    error: `Duplicate/revision review required; existing record ${duplicate.existingInvoiceNumber || duplicate.existingInvoiceId}.`,
+    metadata: { duplicate_level: duplicate.level, existing_invoice_id: duplicate.existingInvoiceId },
   });
 }
 
@@ -565,39 +573,6 @@ async function processSingleInvoiceAttachment(
       return;
     }
 
-    const graphReplacement = await replaceExistingInvoicePdfIfPresent({
-      invoiceNumber: ocrResult.invoice_number,
-      buffer,
-      fileName,
-      contentType,
-      source: 'email_poller',
-      storagePath,
-    });
-    if (graphReplacement) {
-      const replacementInvoice = graphReplacement.invoice;
-      const replacementMessage = graphReplacement.action === 'REPLACED'
-        ? `Updated the stored PDF for existing invoice ${replacementInvoice.invoice_number}.`
-        : `Identical PDF already stored for existing invoice ${replacementInvoice.invoice_number}.`;
-      await recordEmailIntakeEvent({
-        source: 'GRAPH',
-        stage: graphReplacement.action === 'REPLACED' ? 'PDF_REPLACED' : 'REVIEW_REQUIRED',
-        status: graphReplacement.action === 'REPLACED' ? 'COMPLETED' : 'FAILED',
-        mailbox: mailboxAddress,
-        messageId: message.id,
-        attachmentId,
-        fileName,
-        invoiceId: replacementInvoice.id,
-        error: graphReplacement.action === 'NOOP_DUPLICATE' ? replacementMessage : undefined,
-        metadata: {
-          invoice_number: replacementInvoice.invoice_number,
-          replacement: graphReplacement.action === 'REPLACED',
-          storage_path: graphReplacement.action === 'REPLACED' ? graphReplacement.storagePath : replacementInvoice.pdf_path,
-        },
-      });
-      logger.info(`[Email Intake] ${fileName} → ${replacementMessage}`);
-      return;
-    }
-
     const graphDuplicate = await checkEmailDuplicate(buffer, { internetMessageId: message.id }, {
       vendorName: ocrResult.vendor_name,
       invoiceNumber: ocrResult.invoice_number,
@@ -609,12 +584,8 @@ async function processSingleInvoiceAttachment(
       lineItemsSignature: Array.isArray((ocrResult as any).line_items) ? JSON.stringify((ocrResult as any).line_items) : undefined,
       documentLayoutFingerprint: ocrResult.document_layout_fingerprint,
     });
-    if (graphDuplicate.isDuplicate) {
-      const duplicateReason = `${graphDuplicate.detail}; retained as review-only and no duplicate invoice record was created.`;
-      await recordEmailIntakeEvent({ source: 'GRAPH', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', mailbox: mailboxAddress, messageId: message.id, attachmentId, fileName, error: duplicateReason, metadata: { duplicate_level: graphDuplicate.level, existing_invoice_id: graphDuplicate.existingInvoiceId } });
-      await alertEmailIntakeFailure({ source: 'Invoice duplicate protection', fileName, error: duplicateReason });
-      return;
-    }
+    // A duplicate is retained as a new AP record. The coordinator will
+    // classify it after creation; never overwrite the existing PDF.
 
     // OCR confidence threshold check — flag low confidence for manual review
     const OCR_CONFIDENCE_THRESHOLD = parseFloat(process.env.OCR_CONFIDENCE_THRESHOLD || '0.60');
@@ -761,6 +732,8 @@ async function processSingleInvoiceAttachment(
       },
     );
 
+    await flagDuplicateIntake(invoice, graphDuplicate, 'GRAPH', fileName);
+
     // Create signature records if detected
     if (ocrResult.signatures && ocrResult.signatures.length > 0) {
       for (const sig of ocrResult.signatures) {
@@ -878,6 +851,8 @@ export interface SharePointFileData {
   fileName: string;
   emailSubject: string;
   fromAddress: string;
+  toMailbox?: string;
+  receivedBy?: string;
   receivedDateTime: string;
 }
 
@@ -954,37 +929,6 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
       logger.warn(`[SharePoint Intake] ${data.fileName} routed to review: ${controlReason}`);
       return { success: false, status: 'REVIEW_REQUIRED', error: controlReason };
     }
-    const sharePointReplacement = await replaceExistingInvoicePdfIfPresent({
-      invoiceNumber: ocrResult.invoice_number,
-      buffer,
-      fileName: data.fileName,
-      contentType: 'application/pdf',
-      source: 'sharepoint',
-      storagePath,
-    });
-    if (sharePointReplacement) {
-      const replacementInvoice = sharePointReplacement.invoice;
-      const replaced = sharePointReplacement.action === 'REPLACED';
-      const message = replaced
-        ? `Updated the stored PDF for existing invoice ${replacementInvoice.invoice_number}.`
-        : `Identical PDF already stored for existing invoice ${replacementInvoice.invoice_number}.`;
-      await recordEmailIntakeEvent({
-        source: 'SHAREPOINT',
-        stage: replaced ? 'PDF_REPLACED' : 'REVIEW_REQUIRED',
-        status: replaced ? 'COMPLETED' : 'REVIEW_REQUIRED',
-        messageId: intakeKey,
-        fileName: data.fileName,
-        invoiceId: replacementInvoice.id,
-        error: replaced ? undefined : message,
-        metadata: {
-          invoice_number: replacementInvoice.invoice_number,
-          replacement: replaced,
-          storage_path: replaced ? sharePointReplacement.storagePath : replacementInvoice.pdf_path,
-        },
-      });
-      logger.info(`[SharePoint Intake] ${data.fileName} → ${message}`);
-      return { success: true, invoiceNumber: replacementInvoice.invoice_number, invoiceId: replacementInvoice.id, status: replaced ? 'PDF_REPLACED' : 'DUPLICATE' };
-    }
     const sharePointDuplicate = await checkEmailDuplicate(buffer, undefined, {
       vendorName: ocrResult.vendor_name,
       invoiceNumber: ocrResult.invoice_number,
@@ -996,11 +940,8 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
       lineItemsSignature: Array.isArray((ocrResult as any).line_items) ? JSON.stringify((ocrResult as any).line_items) : undefined,
       documentLayoutFingerprint: ocrResult.document_layout_fingerprint,
     });
-    if (sharePointDuplicate.isDuplicate) {
-      const duplicateReason = `${sharePointDuplicate.detail}; no duplicate invoice record was created.`;
-      await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', messageId: intakeKey, fileName: data.fileName, error: duplicateReason, metadata: { duplicate_level: sharePointDuplicate.level, existing_invoice_id: sharePointDuplicate.existingInvoiceId } });
-      return { success: false, status: 'REVIEW_REQUIRED', error: duplicateReason };
-    }
+    // Keep the incoming PDF as a separate record; duplicate classification is
+    // performed after the record is committed.
 
     // OCR confidence threshold check
     const OCR_CONFIDENCE_THRESHOLD = parseFloat(process.env.OCR_CONFIDENCE_THRESHOLD || '0.60');
@@ -1114,6 +1055,8 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
       },
     );
 
+    await flagDuplicateIntake(invoice, sharePointDuplicate, 'SHAREPOINT', data.fileName);
+
     // Create signature records if detected
     if (ocrResult.signatures && ocrResult.signatures.length > 0) {
       for (const sig of ocrResult.signatures) {
@@ -1212,12 +1155,30 @@ export interface PowerAutomateAttachment {
   contentType: string;
   emailSubject: string;
   fromAddress: string;
+  toMailbox?: string;
+  receivedBy?: string;
   receivedDateTime: string;
   /** Set only by the recovery worker so the original attachment keeps its ID. */
   intakeId?: string;
   /** Existing durable object to reuse during recovery; avoids a second upload. */
   storagePath?: string;
   attachmentId?: string;
+}
+
+/** Canonical provenance fields persisted for every Power Automate invoice intake. */
+function emailProvenance(data: {
+  fromAddress?: string;
+  toMailbox?: string;
+  receivedBy?: string;
+  receivedDateTime?: string;
+}) {
+  const toMailbox = String(data.toMailbox || '').trim();
+  return {
+    fromAddress: String(data.fromAddress || '').trim(),
+    toMailbox,
+    receivedBy: String(data.receivedBy || toMailbox || '').trim(),
+    receivedDateTime: String(data.receivedDateTime || '').trim(),
+  };
 }
 
 export async function processPowerAutomateAttachment(data: PowerAutomateAttachment): Promise<{
@@ -1228,6 +1189,7 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
   exceptions?: string[];
   error?: string;
 }> {
+  const provenance = emailProvenance(data);
   // The initial key is used for the receive event; once the payload is
   // decoded, all processing events use a content-addressed intake ID so a
   // repeated filename can never satisfy another attachment's completion.
@@ -1238,7 +1200,7 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
   let storagePath: string | undefined = data.storagePath;
   try {
     logger.info(`Processing Power Automate attachment: ${data.fileName} from ${data.fromAddress}`);
-    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'RECEIVED', messageId: receiveKey, fileName: data.fileName, metadata: { from: data.fromAddress, subject: data.emailSubject } });
+    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'RECEIVED', messageId: receiveKey, fileName: data.fileName, metadata: { ...provenance, subject: data.emailSubject } });
     await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'ATTACHMENT_DETECTED', messageId: receiveKey, fileName: data.fileName });
 
     // Filename hints stay advisory so invoice-like attachments are never
@@ -1259,7 +1221,7 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
         }
       }
       if (storagePath) {
-        await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'UPLOADED', messageId: intakeKey, attachmentId: data.attachmentId, fileName: data.fileName, metadata: { storage_path: storagePath, intake_id: intakeKey, from: data.fromAddress, subject: data.emailSubject, received_date_time: data.receivedDateTime, content_type: data.contentType } });
+        await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'UPLOADED', messageId: intakeKey, attachmentId: data.attachmentId, fileName: data.fileName, metadata: { storage_path: storagePath, intake_id: intakeKey, ...provenance, subject: data.emailSubject, content_type: data.contentType } });
       }
     } catch (storageError) {
       logger.warn(`Failed to upload invoice to VPS storage for ${data.fileName}:`, storageError);
@@ -1277,7 +1239,7 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
         attachmentId: data.attachmentId,
         fileName: data.fileName,
         reason: recoveryReason,
-        metadata: { from: data.fromAddress, subject: data.emailSubject, received_date_time: data.receivedDateTime, content_type: data.contentType },
+        metadata: { ...provenance, subject: data.emailSubject, content_type: data.contentType },
       });
       return { success: false, status: 'REVIEW_REQUIRED', error: recoveryReason };
     }
@@ -1287,52 +1249,21 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
     const powerAutomateFileHash = generateFileHash(buffer);
     const powerAutomateIdempotencyKey = buildIntakeIdempotencyKey(intakeKey, powerAutomateFileHash);
     const powerAutomateControls = await applyIntakeControls(ocrResult, buffer);
-    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'EXTRACTED', messageId: intakeKey, fileName: data.fileName, metadata: { invoice_number: ocrResult.invoice_number, confidence: ocrResult.ocr_confidence_score, idempotency_key: powerAutomateIdempotencyKey, ...powerAutomateControls.metadata } });
+    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'EXTRACTED', messageId: intakeKey, fileName: data.fileName, metadata: { ...provenance, invoice_number: ocrResult.invoice_number, confidence: ocrResult.ocr_confidence_score, idempotency_key: powerAutomateIdempotencyKey, ...powerAutomateControls.metadata } });
 
     const reviewReason = intakeReviewReason(ocrResult, data.fileName, data.emailSubject || '');
     if (reviewReason) {
-      await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', messageId: intakeKey, fileName: data.fileName, error: reviewReason, metadata: { invoice_number: ocrResult.invoice_number, invoice_type: ocrResult.invoice_type, storage_path: storagePath, intake_id: intakeKey } });
+      await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', messageId: intakeKey, fileName: data.fileName, error: reviewReason, metadata: { ...provenance, invoice_number: ocrResult.invoice_number, invoice_type: ocrResult.invoice_type, storage_path: storagePath, intake_id: intakeKey } });
       await alertEmailIntakeFailure({ source: 'Power Automate invoice intake review required', fileName: data.fileName, error: reviewReason });
       logger.warn(`[Power Automate] ${data.fileName} routed to review: ${reviewReason}`);
       return { success: false, status: 'REVIEW_REQUIRED', error: reviewReason };
     }
     if (powerAutomateControls.reasons.length > 0) {
       const controlReason = powerAutomateControls.reasons.join(' ');
-      await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', messageId: intakeKey, fileName: data.fileName, error: controlReason, metadata: powerAutomateControls.metadata });
+      await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', messageId: intakeKey, fileName: data.fileName, error: controlReason, metadata: { ...provenance, ...powerAutomateControls.metadata } });
       await alertEmailIntakeFailure({ source: 'Power Automate invoice intake control', fileName: data.fileName, error: controlReason });
       logger.warn(`[Power Automate] ${data.fileName} routed to review: ${controlReason}`);
       return { success: false, status: 'REVIEW_REQUIRED', error: controlReason };
-    }
-    const powerAutomateReplacement = await replaceExistingInvoicePdfIfPresent({
-      invoiceNumber: ocrResult.invoice_number,
-      buffer,
-      fileName: data.fileName,
-      contentType: data.contentType || 'application/pdf',
-      source: 'powerautomate',
-      storagePath,
-    });
-    if (powerAutomateReplacement) {
-      const replacementInvoice = powerAutomateReplacement.invoice;
-      const replaced = powerAutomateReplacement.action === 'REPLACED';
-      const message = replaced
-        ? `Updated the stored PDF for existing invoice ${replacementInvoice.invoice_number}.`
-        : `Identical PDF already stored for existing invoice ${replacementInvoice.invoice_number}.`;
-      await recordEmailIntakeEvent({
-        source: 'POWER_AUTOMATE',
-        stage: replaced ? 'PDF_REPLACED' : 'REVIEW_REQUIRED',
-        status: replaced ? 'COMPLETED' : 'REVIEW_REQUIRED',
-        messageId: intakeKey,
-        fileName: data.fileName,
-        invoiceId: replacementInvoice.id,
-        error: replaced ? undefined : message,
-        metadata: {
-          invoice_number: replacementInvoice.invoice_number,
-          replacement: replaced,
-          storage_path: replaced ? powerAutomateReplacement.storagePath : replacementInvoice.pdf_path,
-        },
-      });
-      logger.info(`[Power Automate] ${data.fileName} → ${message}`);
-      return { success: true, invoiceNumber: replacementInvoice.invoice_number, invoiceId: replacementInvoice.id, status: replaced ? 'PDF_REPLACED' : 'DUPLICATE' };
     }
     const powerAutomateDuplicate = await checkEmailDuplicate(buffer, undefined, {
       vendorName: ocrResult.vendor_name,
@@ -1345,11 +1276,8 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
       lineItemsSignature: Array.isArray((ocrResult as any).line_items) ? JSON.stringify((ocrResult as any).line_items) : undefined,
       documentLayoutFingerprint: ocrResult.document_layout_fingerprint,
     });
-    if (powerAutomateDuplicate.isDuplicate) {
-      const duplicateReason = `${powerAutomateDuplicate.detail}; no duplicate invoice record was created.`;
-      await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', messageId: intakeKey, fileName: data.fileName, error: duplicateReason, metadata: { duplicate_level: powerAutomateDuplicate.level, existing_invoice_id: powerAutomateDuplicate.existingInvoiceId } });
-      return { success: false, status: 'REVIEW_REQUIRED', error: duplicateReason };
-    }
+    // Keep the incoming PDF as a separate record; duplicate classification is
+    // performed after the record is committed.
 
     // OCR confidence threshold check
     const OCR_CONFIDENCE_THRESHOLD = parseFloat(process.env.OCR_CONFIDENCE_THRESHOLD || '0.60');
@@ -1455,6 +1383,10 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
           attachment_file_hash: powerAutomateFileHash,
           intake_idempotency_key: powerAutomateIdempotencyKey,
           intake_id: intakeKey,
+          email_from_address: provenance.fromAddress || undefined,
+          email_to_mailbox: provenance.toMailbox || undefined,
+          email_received_by: provenance.receivedBy || undefined,
+          email_received_date_time: provenance.receivedDateTime || undefined,
           email_sender: data.fromAddress || undefined,
           email_subject: data.emailSubject || undefined,
           email_received_date: data.receivedDateTime || undefined,
@@ -1488,6 +1420,7 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
         attachmentId: data.attachmentId || powerAutomateIdempotencyKey,
         fileName: data.fileName,
         metadata: {
+          ...provenance,
           storage_path: storagePath,
           invoice_number: ocrResult.invoice_number,
           email_subject: data.emailSubject,
@@ -1495,6 +1428,8 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
         },
       },
     );
+
+    await flagDuplicateIntake(invoice, powerAutomateDuplicate, 'POWER_AUTOMATE', data.fileName);
 
     // Create signature records if detected
     if (ocrResult.signatures && ocrResult.signatures.length > 0) {
@@ -1518,7 +1453,13 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
         invoice_id: invoice.id,
         action: 'POWER_AUTOMATE_INTAKE',
         performed_by: 'powerautomate',
-        note: `Power Automate intake from ${data.fromAddress}: ${data.fileName}${sharepointUrl ? `. Uploaded to SharePoint: ${sharepointUrl}` : ''}`,
+        note: `Power Automate intake from ${provenance.fromAddress || '(unknown sender)'} to ${provenance.toMailbox || '(unknown mailbox)'} received by ${provenance.receivedBy || '(unknown recipient)'} at ${provenance.receivedDateTime || '(unknown time)'}: ${data.fileName}${sharepointUrl ? `. Uploaded to SharePoint: ${sharepointUrl}` : ''}`,
+        metadata: {
+          source: 'POWER_AUTOMATE',
+          fileName: data.fileName,
+          emailSubject: data.emailSubject || null,
+          ...provenance,
+        },
       },
     });
 
@@ -1696,6 +1637,8 @@ export async function recoverHistoricalIntakeFromSource(input: {
   contentType?: string;
   emailSubject?: string;
   fromAddress?: string;
+  toMailbox?: string;
+  receivedBy?: string;
   receivedDateTime?: string;
 }) {
   const recoveryRows = await prisma.$queryRawUnsafe<any[]>(`SELECT * FROM "APInvoice_IntakeRecoveryCase" WHERE intake_id = $1 LIMIT 1`, input.intakeId);
@@ -1711,7 +1654,7 @@ export async function recoverHistoricalIntakeFromSource(input: {
     status: 'SUCCESS',
     messageId: input.intakeId,
     fileName: input.fileName,
-    metadata: { intake_id: input.intakeId, recovery_attempt: attempt, source_reupload: true },
+    metadata: { intake_id: input.intakeId, recovery_attempt: attempt, source_reupload: true, fromAddress: input.fromAddress || '', toMailbox: input.toMailbox || '', receivedBy: input.receivedBy || '', receivedDateTime: input.receivedDateTime || '' },
   });
 
   const result = await processPowerAutomateAttachment({
@@ -1720,6 +1663,8 @@ export async function recoverHistoricalIntakeFromSource(input: {
     contentType: input.contentType || 'application/pdf',
     emailSubject: input.emailSubject || recoveryCase.metadata?.subject || '',
     fromAddress: input.fromAddress || recoveryCase.metadata?.from || '',
+    toMailbox: input.toMailbox || recoveryCase.metadata?.toMailbox || '',
+    receivedBy: input.receivedBy || recoveryCase.metadata?.receivedBy || '',
     receivedDateTime: input.receivedDateTime || new Date().toISOString(),
     intakeId: input.intakeId,
     attachmentId: recoveryCase.attachment_id || undefined,

@@ -3220,6 +3220,17 @@ ${dataRows}
                   <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Status</p>
                   <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.status.replace(/_/g, ' ')}</p>
                 </div>
+                <div>
+                  <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Received From</p>
+                  <p className="text-sm font-medium break-words" style={{ color: 'var(--text-primary)' }}>
+                    {(selectedInvoice as any).received_from || (selectedInvoice as any).received_source || 'Not captured'}
+                  </p>
+                  {(selectedInvoice as any).received_subject && (
+                    <p className="mt-1 text-[11px] break-words" style={{ color: 'var(--text-muted)' }}>
+                      Subject: {(selectedInvoice as any).received_subject}
+                    </p>
+                  )}
+                </div>
                 {(selectedInvoice as any).duplicate_review_status && (selectedInvoice as any).duplicate_review_status !== 'NOT_REVIEWED' && (
                   <div>
                     <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Duplicate / Revision Review</p>

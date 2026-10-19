@@ -410,6 +410,51 @@ const applyVendorDisplayFallbacks = (invoice: any) => {
   };
 };
 
+/**
+ * Resolve the origin of an intake for the invoice detail view.  Email sender
+ * metadata is intentionally kept outside the payable fields, but should be
+ * visible to reviewers so they can confirm who submitted the document.
+ * Older Power Automate records keep this on the intake event rather than in
+ * ocr_raw_data, so the controller enriches the detail response below.
+ */
+const resolveReceivedSource = async (invoice: any) => {
+  const raw = invoice?.ocr_raw_data && typeof invoice.ocr_raw_data === 'object'
+    ? invoice.ocr_raw_data
+    : {};
+  let receivedFrom = raw.email_sender || raw.from || raw.senderEmail || null;
+  let receivedSubject = raw.email_subject || raw.subject || null;
+  let receivedSource = invoice?.source || null;
+
+  const intakeKey = raw.intake_id || invoice?.source_message_id || null;
+  if (intakeKey) {
+    try {
+      const events = await prisma.emailIntakeEvent.findMany({
+        where: { OR: [{ intake_id: String(intakeKey) }, { message_id: String(intakeKey) }] },
+        orderBy: { created_at: 'desc' },
+        take: 20,
+        select: { source: true, metadata: true },
+      });
+      for (const event of events) {
+        const metadata = event.metadata && typeof event.metadata === 'object'
+          ? event.metadata as Record<string, any>
+          : {};
+        if (!receivedFrom && typeof metadata.from === 'string' && metadata.from.trim()) receivedFrom = metadata.from.trim();
+        if (!receivedSubject && typeof metadata.subject === 'string' && metadata.subject.trim()) receivedSubject = metadata.subject.trim();
+        if (!receivedSource && event.source) receivedSource = event.source;
+        if (receivedFrom && receivedSubject) break;
+      }
+    } catch {
+      // Source enrichment is best-effort and must never block invoice access.
+    }
+  }
+
+  return {
+    received_from: receivedFrom,
+    received_subject: receivedSubject,
+    received_source: receivedSource,
+  };
+};
+
 const ALL_STAGES = [
   'RECEIVED', 'VALIDATION_PENDING', 'EXCEPTION_FLAGGED',
   'PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_MLO_ACCOUNT_HOLDER',
@@ -589,7 +634,8 @@ export const getInvoiceById = async (id: string) => {
 
   if (!invoice) return invoice;
   const auditLogs = await resolveAuditActorNames(invoice.audit_logs);
-  return applyVendorDisplayFallbacks({ ...invoice, audit_logs: auditLogs });
+  const receivedSource = await resolveReceivedSource(invoice);
+  return applyVendorDisplayFallbacks({ ...invoice, audit_logs: auditLogs, ...receivedSource });
 };
 
 const managerMaySeeReturnedInvoice = (invoice: any): boolean => {

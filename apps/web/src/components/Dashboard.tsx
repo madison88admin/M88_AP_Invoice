@@ -3870,8 +3870,16 @@ ${dataRows}
                 </button>
               )}
 
-              {/* Request Approval Button — for invoices in VALIDATION_PENDING that need manual approval trigger */}
-              {selectedInvoice.status === (InvoiceStatus.VALIDATION_PENDING as any) && user && hasPermission(user.role, 'canRequestApproval') && (
+              {/* Request Approval Button — validation-pending records, plus the
+                  recoverable exception state where every exception is already
+                  resolved/waived but auto-advance left a stale status. */}
+              {(() => {
+                const exceptionRows = (selectedInvoice.exceptions || []) as any[];
+                const hasPendingException = exceptionRows.some((exception) => String(exception.status || '').toUpperCase() === 'PENDING');
+                const approvalReadyStatus = selectedInvoice.status === (InvoiceStatus.VALIDATION_PENDING as any)
+                  || (selectedInvoice.status === (InvoiceStatus.EXCEPTION_FLAGGED as any) && !hasPendingException);
+                return approvalReadyStatus && user && hasPermission(user.role, 'canRequestApproval');
+              })() && (
                 <button
                   onClick={handleRequestApproval}
                   disabled={requestingApproval}

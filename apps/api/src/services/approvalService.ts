@@ -164,7 +164,33 @@ async function createApprovalRequestInternal(
   }
 
   if (invoice.status !== 'VALIDATION_PENDING') {
-    throw new AppError('Invoice must be validated before requesting approval', 400);
+    // Recovery path for records whose validation completed with only waived or
+    // resolved exceptions but whose status was left at EXCEPTION_FLAGGED (for
+    // example, an auto-advance failed after the exception decision was saved).
+    // Do not allow this for records with any active exception.
+    if (invoice.status === InvoiceStatus.EXCEPTION_FLAGGED) {
+      const pendingExceptionCount = await prisma.exception.count({
+        where: { invoice_id: invoiceId, status: 'PENDING' as any },
+      });
+      if (pendingExceptionCount === 0) {
+        await prisma.invoice.update({
+          where: { id: invoiceId },
+          data: { status: InvoiceStatus.VALIDATION_PENDING as any },
+        });
+        invoice.status = InvoiceStatus.VALIDATION_PENDING as any;
+        await prisma.auditLog.create({
+          data: {
+            invoice_id: invoiceId,
+            performed_by: userId,
+            action: 'APPROVAL_REQUEST_RECOVERED',
+            note: 'Approval request recovered after all invoice exceptions were already resolved or waived.',
+          },
+        });
+      }
+    }
+    if (invoice.status !== 'VALIDATION_PENDING') {
+      throw new AppError('Invoice must be validated before requesting approval', 400);
+    }
   }
 
   // NOTE: Vendor threshold is a warning only and does not block approval.

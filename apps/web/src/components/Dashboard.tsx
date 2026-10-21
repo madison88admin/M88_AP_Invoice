@@ -235,6 +235,8 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
   const [showReturnModal, setShowReturnModal] = useState(false);
   const [returnReason, setReturnReason] = useState('');
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+  const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<string[]>([]);
   const [showCancellationModal, setShowCancellationModal] = useState(false);
   const [cancellationReason, setCancellationReason] = useState('');
   const [finalizingCancellation, setFinalizingCancellation] = useState(false);
@@ -556,6 +558,8 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
   // returns to the top with its marker reset.
   useEffect(() => {
     setCurrentPage(1);
+    setSelectedInvoiceIds([]);
+    setShowBulkDeleteModal(false);
     if (repoListRef.current && typeof repoListRef.current.scrollTo === 'function') {
       repoListRef.current.scrollTo({ top: 0 });
     }
@@ -580,6 +584,7 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
   const startIndex = (safePage - 1) * invoicesPerPage;
   const endIndex = repositoryOneScroll ? sortedInvoices.length : startIndex + invoicesPerPage;
   const displayedInvoices = repositoryOneScroll ? sortedInvoices : sortedInvoices.slice(startIndex, endIndex);
+  const bulkDeleteAllowed = mode === 'repository' && !!user && ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN', 'SUPERADMIN', 'ADMIN'].includes(user.role);
 
   // KPI navigation can request a focused split view: select the first matching
   // invoice automatically so users can review it beside the repository list.
@@ -1309,6 +1314,43 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
     } finally {
       setShowDeleteModal(false);
     }
+  };
+
+  const handleBulkDeleteInvoices = async () => {
+    if (selectedInvoiceIds.length === 0) return;
+    try {
+      const response = await invoiceApi.deleteBulk(selectedInvoiceIds);
+      const result = response.data || {};
+      if (Number(result.deleted || 0) > 0) {
+        showToast(`${result.deleted} invoice${result.deleted === 1 ? '' : 's'} deleted successfully`, 'success');
+      }
+      if (Number(result.failed || 0) > 0) {
+        const firstFailure = Array.isArray(result.results) ? result.results.find((item: any) => !item.deleted) : null;
+        showToast(`${result.failed} invoice${result.failed === 1 ? '' : 's'} could not be deleted${firstFailure?.error ? `: ${firstFailure.error}` : ''}`, 'warning');
+      }
+      await refresh();
+      setSelectedInvoiceIds([]);
+      if (selectedInvoice && selectedInvoiceIds.includes(selectedInvoice.id)) setSelectedInvoice(null);
+    } catch (error: any) {
+      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to delete selected invoices';
+      showToast(msg, 'error');
+    } finally {
+      setShowBulkDeleteModal(false);
+    }
+  };
+
+  const toggleInvoiceSelection = (invoiceId: string) => {
+    setSelectedInvoiceIds((current) => current.includes(invoiceId)
+      ? current.filter((id) => id !== invoiceId)
+      : [...current, invoiceId]);
+  };
+
+  const toggleAllInvoiceSelection = (invoiceIds: string[]) => {
+    setSelectedInvoiceIds((current) => {
+      const visible = new Set(displayedInvoices.map((invoice) => invoice.id));
+      const remaining = current.filter((id) => !visible.has(id));
+      return [...remaining, ...invoiceIds];
+    });
   };
 
   const handleCancellation = async () => {
@@ -2755,6 +2797,17 @@ ${dataRows}
               </h2>
               {mode === 'repository' ? (
                 <div className="flex items-center gap-3">
+                  {bulkDeleteAllowed && selectedInvoiceIds.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowBulkDeleteModal(true)}
+                      className="inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold"
+                      style={{ background: 'color-mix(in srgb, var(--accent-red) 12%, transparent)', color: 'var(--accent-red)', border: '1px solid color-mix(in srgb, var(--accent-red) 28%, transparent)' }}
+                      title="Delete selected intake or duplicate records"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" /> Delete selected ({selectedInvoiceIds.length})
+                    </button>
+                  )}
                   <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
                     {repoRange || `${displayedInvoices.length} records`}
                   </span>
@@ -2800,6 +2853,10 @@ ${dataRows}
               // surfaces extra actions to approvers, IT admin, or other users.
               onApprove={mode === 'repository' && user?.role === 'ACCOUNTING_SUPERVISOR' ? handleRowApprove : undefined}
               onPost={mode === 'repository' && user?.role === 'ACCOUNTING_ASSOCIATE' ? handleRowPost : undefined}
+              selectionEnabled={bulkDeleteAllowed}
+              selectedInvoiceIds={selectedInvoiceIds}
+              onToggleInvoiceSelection={toggleInvoiceSelection}
+              onToggleAllInvoiceSelection={toggleAllInvoiceSelection}
               stickyHeader={mode === 'repository'}
               loading={loading}
               emptyHint={activeFilterCount > 0 ? 'filters' : 'default'}
@@ -4536,6 +4593,38 @@ ${dataRows}
                   style={{ background: 'var(--accent-red)', color: 'white' }}
                 >
                   Delete Permanently
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk delete confirmation. The API evaluates every selected invoice
+          independently, so protected records are reported without blocking
+          cleanup of eligible intake/duplicate records. */}
+      {mode === 'repository' && showBulkDeleteModal && bulkDeleteAllowed && (
+        <div className="fixed inset-0 flex items-center justify-center z-50 animate-backdrop" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
+          <div className="max-w-lg w-full mx-2 sm:mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+            <div className="p-6">
+              <div className="flex items-start gap-3 mb-4">
+                <div className="p-2.5 rounded-xl flex-shrink-0" style={{ background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)' }}>
+                  <AlertTriangle className="h-5 w-5" style={{ color: 'var(--accent-red)' }} strokeWidth={1.75} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Delete selected invoices</h3>
+                  <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>
+                    You selected <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{selectedInvoiceIds.length}</span> invoice{selectedInvoiceIds.length === 1 ? '' : 's'}.
+                  </p>
+                </div>
+              </div>
+              <div className="rounded-xl p-3 text-xs" style={{ background: 'color-mix(in srgb, var(--accent-amber) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)', color: 'var(--text-secondary)' }}>
+                Only intake drafts and duplicate records can be hard-deleted. Approved, paid, batched, retention-protected, or legal-hold invoices will be skipped and reported. Every successful deletion keeps an audit entry.
+              </div>
+              <div className="mt-4 flex justify-end space-x-3">
+                <button type="button" onClick={() => setShowBulkDeleteModal(false)} className="px-4 py-2 transition-colors text-sm" style={{ color: 'var(--text-secondary)' }}>Cancel</button>
+                <button type="button" onClick={() => void handleBulkDeleteInvoices()} className="px-4 py-2 rounded-xl transition-colors text-sm font-medium" style={{ background: 'var(--accent-red)', color: 'white' }}>
+                  Delete selected
                 </button>
               </div>
             </div>

@@ -172,6 +172,7 @@ export const invoiceApi = {
   requestCancellation: (id: string, reason: string) => api.post(`/api/invoices/${id}/request-cancellation`, { reason }),
   cancel: (id: string, reason: string) => api.post(`/api/invoices/${id}/cancel`, { reason }),
   delete: (id: string) => api.delete(`/api/invoices/${id}`),
+  deleteBulk: (ids: string[]) => api.delete('/api/invoices/bulk', { data: { ids } }),
 };
 
 export const approvalApi = {

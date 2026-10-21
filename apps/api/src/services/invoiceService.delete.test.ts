@@ -54,7 +54,7 @@ vi.mock('./fieldDecisionEngine', () => ({ fieldDecisionEngine: { decide: vi.fn()
 vi.mock('./inAppNotificationService', () => ({ inAppNotificationService: { create: vi.fn(), notifyStageTransition: vi.fn() } }));
 vi.mock('../utils/mpoReference', () => ({ parseMPOReference: vi.fn() }));
 
-import { cancelInvoice, deleteInvoice, requestInvoiceCancellation } from './invoiceService';
+import { cancelInvoice, deleteInvoice, deleteInvoicesBulk, requestInvoiceCancellation } from './invoiceService';
 import { logAudit } from './auditLogService';
 
 function makeInvoice(overrides: Record<string, any> = {}) {
@@ -67,6 +67,8 @@ function makeInvoice(overrides: Record<string, any> = {}) {
     raw_file_url: overrides.raw_file_url ?? null,
     retention_until: overrides.retention_until ?? null,
     legal_hold: overrides.legal_hold ?? false,
+    is_duplicate: overrides.is_duplicate ?? false,
+    duplicate_review_status: overrides.duplicate_review_status ?? 'NOT_REVIEWED',
     payments: overrides.payments ?? [],
   };
 }
@@ -147,6 +149,27 @@ describe('deleteInvoice', () => {
     expect(result.deleted).toBe(true);
     expect(retentionDispositionDeleteMany).toHaveBeenCalledWith({ where: { invoice_id: 'inv-1' } });
     expect(invoiceDelete).toHaveBeenCalledWith({ where: { id: 'inv-1' } });
+  });
+
+  it('deletes eligible duplicates and reports protected records independently', async () => {
+    invoiceFindUnique
+      .mockResolvedValueOnce(makeInvoice({ id: 'duplicate-1', invoice_number: 'INV-DUP', is_duplicate: true, status: 'APPROVED' }))
+      .mockResolvedValueOnce(makeInvoice({ id: 'protected-1', invoice_number: 'INV-LOCKED', status: 'APPROVED', retention_until: new Date('2033-10-14') }));
+    invoiceDelete.mockResolvedValue({ id: 'duplicate-1' });
+
+    const result = await deleteInvoicesBulk(
+      ['duplicate-1', 'duplicate-1', 'protected-1'],
+      'coord-1',
+      'PURCHASING_COORDINATOR',
+      'Alice',
+    );
+
+    expect(result).toMatchObject({ requested: 2, deleted: 1, failed: 1 });
+    expect(result.results).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'duplicate-1', deleted: true, invoice_number: 'INV-DUP' }),
+      expect.objectContaining({ id: 'protected-1', deleted: false, error: expect.stringContaining('retention-protected') }),
+    ]));
+    expect(invoiceDelete).toHaveBeenCalledTimes(1);
   });
 
   it('still blocks retention-protected invoices that entered workflow', async () => {

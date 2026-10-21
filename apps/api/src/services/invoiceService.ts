@@ -1457,6 +1457,52 @@ export const deleteInvoice = async (id: string, userId: string, userRole: string
   return { id, deleted: true, invoice_number: existing.invoice_number };
 };
 
+/**
+ * Delete a set of selected intake/duplicate records using the same safeguards
+ * as the single-record delete path.  This deliberately runs sequentially so
+ * every invoice gets its own audit entry, PDF cleanup, and protected-record
+ * validation. A protected invoice is reported as a per-item failure instead
+ * of aborting the rest of the user's cleanup batch.
+ */
+export const deleteInvoicesBulk = async (
+  ids: string[],
+  userId: string,
+  userRole: string,
+  userName: string,
+) => {
+  const uniqueIds = [...new Set((Array.isArray(ids) ? ids : [])
+    .map((id) => String(id || '').trim())
+    .filter(Boolean))];
+  if (uniqueIds.length === 0) {
+    throw new AppError('At least one invoice id is required', 400);
+  }
+  if (uniqueIds.length > 100) {
+    throw new AppError('Bulk delete is limited to 100 invoices per request', 400);
+  }
+
+  const results: Array<{ id: string; deleted: boolean; invoice_number?: string; error?: string }> = [];
+  for (const id of uniqueIds) {
+    try {
+      const deleted = await deleteInvoice(id, userId, userRole, userName);
+      results.push({ ...deleted, deleted: true });
+    } catch (error: any) {
+      results.push({
+        id,
+        deleted: false,
+        error: error?.message || 'Failed to delete invoice',
+      });
+    }
+  }
+
+  const deleted = results.filter((result) => result.deleted).length;
+  return {
+    requested: uniqueIds.length,
+    deleted,
+    failed: uniqueIds.length - deleted,
+    results,
+  };
+};
+
 // A coordinator may cancel directly only while the invoice is still under
 // coordinator ownership. Once it has been endorsed, the current approver
 // must decide on a cancellation request.

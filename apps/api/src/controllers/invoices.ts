@@ -268,6 +268,33 @@ export const deleteInvoice = async (
   }
 };
 
+export const deleteInvoicesBulk = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const ids = req.body?.ids;
+    if (!Array.isArray(ids)) {
+      throw new AppError('ids must be an array', 400);
+    }
+    const result = await invoiceService.deleteInvoicesBulk(
+      ids,
+      req.user!.id,
+      req.user!.role,
+      req.user!.name,
+    );
+    for (const item of result.results) {
+      if (item.deleted) {
+        eventBroadcaster.broadcast({ type: 'INVOICE_DELETED', invoiceId: item.id, timestamp: Date.now() });
+      }
+    }
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const requestInvoiceCancellation = async (
   req: AuthRequest,
   res: Response,

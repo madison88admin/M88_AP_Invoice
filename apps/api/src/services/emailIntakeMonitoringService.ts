@@ -85,15 +85,14 @@ async function createReviewInvoiceRecord(input: {
     }
 
     const metadata = input.metadata || {};
+    const identityFilters = [
+      ...(input.attachmentId ? [{ source_attachment_id: input.attachmentId }] : []),
+      { pdf_path: input.storagePath },
+      { raw_file_url: input.storagePath },
+      ...(!input.attachmentId && input.messageId ? [{ source_message_id: input.messageId }] : []),
+    ];
     const existing = await prisma.invoice.findFirst({
-      where: {
-        OR: [
-          ...(input.messageId ? [{ source_message_id: input.messageId }] : []),
-          ...(input.attachmentId ? [{ source_attachment_id: input.attachmentId }] : []),
-          { pdf_path: input.storagePath },
-          { raw_file_url: input.storagePath },
-        ],
-      },
+      where: { OR: identityFilters },
       select: { id: true },
     });
     if (existing) return existing;

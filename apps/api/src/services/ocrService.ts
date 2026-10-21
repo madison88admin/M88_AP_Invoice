@@ -1873,7 +1873,12 @@ export async function analyzeInvoice(fileBuffer: Buffer, _mimeType: string) {
         ocr_detected: true,
       } as SignatureInfo;
     }) as SignatureInfo[],
-    raw_data: { ...extracted, ocr_engine: ocrEngine, used_gemini_vision: usedGeminiVision, material_code: poParsed.material_code, mpo_revision: poParsed.mpo_revision },
+    // Preserve the OCR text used for classification so intake recovery and
+    // document guards can make a second, deterministic decision without
+    // having to rerun OCR. This is especially important for Faktur Pajak
+    // forms whose layout is often mistaken for an airwaybill.
+    raw_text: classificationText || (extracted as any).raw_text || '',
+    raw_data: { ...extracted, raw_text: classificationText || (extracted as any).raw_text || '', ocr_engine: ocrEngine, used_gemini_vision: usedGeminiVision, material_code: poParsed.material_code, mpo_revision: poParsed.mpo_revision },
     qty_shipped: (extracted as any).qty_shipped || undefined,
     ship_to: (extracted as any).ship_to || undefined,
     sold_to: (extracted as any).sold_to || undefined,

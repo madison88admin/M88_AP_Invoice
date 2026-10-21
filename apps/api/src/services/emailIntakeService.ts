@@ -20,7 +20,7 @@ import { hasStrongNonInvoiceHeading } from './nonInvoiceSuppression';
 import { PDFDocument } from 'pdf-lib';
 import { buildIntakeIdempotencyKey, evaluateIntakeControls } from './intakeControlService';
 import { checkEmailDuplicate, generateFileHash } from './emailDuplicateService';
-import { getPayableBlockReason } from './payableDocumentGuard';
+import { getPayableBlockReason, isValidCommercialInvoice } from './payableDocumentGuard';
 import { normalizeInvoiceReference, createDuplicateRevisionReviewFromCandidate } from './accountingControlService';
 
 const clientId = process.env.GRAPH_API_CLIENT_ID || '';
@@ -50,6 +50,12 @@ async function applyIntakeControls(
   ocrResult.input_pages = inputPages;
   ocrResult.processed_pages = processedPages;
   const controls = evaluateIntakeControls(ocrResult);
+  // Faktur Pajak forms often contain tax/identity rows that do not reconcile
+  // with the commercial total parser. The normalized supplier total is kept
+  // for review; do not discard the attachment solely for that parser mismatch.
+  if (ocrResult?.tax_invoice_detected) {
+    controls.reasons = controls.reasons.filter((reason) => !reason.startsWith('Invoice total reconciliation requires review'));
+  }
   return {
     reasons: controls.reasons,
     metadata: {
@@ -63,7 +69,31 @@ async function applyIntakeControls(
 
 const NON_INVOICE_HINTS = /\b(statement|packing\s*(?:list|slip)|delivery\s*(?:note|receipt)|purchase\s*order|quotation|quote|remittance|receipt|shipping\s*document|shipment\s*document|air\s*way\s*bill|airway\s*bill|shipment\s*airwaybill|awb|bill\s*of\s*lading|cargo\s*manifest|forwarder(?:['’]s|s)?\s+billing\s+invoice|expeditors?\s+billing\s+invoice|forwarder(?:['’]s|s)?\s+invoice|expeditors?\s+invoice)\b/i;
 
+/** Recover unambiguous fields when OCR mistakes an Indonesian tax invoice for an AWB. */
+function normalizeFakturPajakExtraction(ocrResult: any): void {
+  const rawText = String(ocrResult?.raw_text || ocrResult?.raw_data?.raw_text || '');
+  if (!/\bfaktur\s+pajak\b/i.test(rawText)) return;
+  const invoiceNumber = rawText.match(/\bInvoice\s+([A-Z0-9][A-Z0-9/-]{4,})\b/i)?.[1];
+  const vendorName = rawText.match(/\b(PT\s+[A-Z][A-Z0-9 .,&-]{3,}?)(?=\s*:\s*(?:GEDUNG|JL\.|JALAN|NPWP|Alamat)\b)/i)?.[1]
+    || rawText.match(/\b(PT\s+[A-Z][A-Z0-9 .,&-]{3,})\b/i)?.[1];
+  const amountToken = rawText.match(/(?:Harga\s+Jual\s*\/\s*Penggantian\s*\/\s*Uang\s*Muka\s*\/\s*Termin|Harga\s+Jual)\s*[:\-]?\s*([0-9][0-9.,]*)/i)?.[1];
+  const amount = amountToken ? Number(amountToken.replace(/\./g, '').replace(',', '.')) : NaN;
+  if (!invoiceNumber || !vendorName || !Number.isFinite(amount) || amount <= 0) return;
+  ocrResult.invoice_number = invoiceNumber;
+  ocrResult.vendor_name = vendorName.trim();
+  ocrResult.total_amount = amount;
+  ocrResult.currency = 'IDR';
+  ocrResult.invoice_type = 'INVOICE';
+  ocrResult.document_type = 'FAKTUR_PAJAK';
+  ocrResult.source_document_type = 'FAKTUR_PAJAK';
+  ocrResult.document_classification = { document_type: 'FAKTUR_PAJAK', payable_candidate: true, confidence: 0.95, reasons: ['Tax invoice heading and supplier invoice fields detected'] };
+  ocrResult.is_non_invoice_document = false;
+  ocrResult.tax_invoice_detected = true;
+  if (!ocrResult.invoice_date) ocrResult.invoice_date = null;
+}
+
 export function intakeReviewReason(ocrResult: any, fileName: string, subject = ''): string | null {
+  normalizeFakturPajakExtraction(ocrResult);
   const consensusReviewFields = Array.isArray(ocrResult?.consensus_review_required_fields) ? ocrResult.consensus_review_required_fields : [];
   if (consensusReviewFields.length > 0) return `OCR engines disagreed on: ${consensusReviewFields.join(', ')}.`;
   const type = String(ocrResult?.invoice_type || '').toUpperCase();
@@ -78,9 +108,18 @@ export function intakeReviewReason(ocrResult: any, fileName: string, subject = '
     is_non_invoice_document: ocrResult?.is_non_invoice_document,
     raw_text: rawText,
     fileName,
+    invoice_number: ocrResult?.invoice_number,
+    vendor_name: ocrResult?.vendor_name,
+    total_amount: ocrResult?.total_amount,
+    invoice_date: ocrResult?.invoice_date,
   });
+  const validTaxInvoice = isValidCommercialInvoice({
+    document_type: 'FAKTUR_PAJAK', raw_text: rawText, fileName,
+    invoice_number: ocrResult?.invoice_number, vendor_name: ocrResult?.vendor_name,
+    total_amount: ocrResult?.total_amount, invoice_date: ocrResult?.invoice_date,
+  }, 'FAKTUR_PAJAK');
   if (payableBlockReason) return payableBlockReason;
-  if ((!isProforma && ocrResult?.is_non_invoice_document) || hasStrongNonInvoiceHeading(rawText) || ['AIRWAY_BILL', 'PACKING_LIST', 'DELIVERY_RECEIPT', 'TECH_PACK', 'TRIM_RECEIPT', 'FAKTUR_PAJAK', 'FORWARDER_BILLING_INVOICE', 'FORWARDERS_BILLING_INVOICE', 'EXPEDITOR_BILLING_INVOICE', 'EXPEDITORS_BILLING_INVOICE', 'FORWARDER_INVOICE', 'EXPEDITOR_INVOICE', 'EXPEDITORS_INVOICE'].includes(type)) {
+  if ((!isProforma && ocrResult?.is_non_invoice_document && !validTaxInvoice) || (hasStrongNonInvoiceHeading(rawText) && !validTaxInvoice) || (['AIRWAY_BILL', 'PACKING_LIST', 'DELIVERY_RECEIPT', 'TECH_PACK', 'TRIM_RECEIPT', 'FAKTUR_PAJAK', 'FORWARDER_BILLING_INVOICE', 'FORWARDERS_BILLING_INVOICE', 'EXPEDITOR_BILLING_INVOICE', 'EXPEDITORS_BILLING_INVOICE', 'FORWARDER_INVOICE', 'EXPEDITOR_INVOICE', 'EXPEDITORS_INVOICE'].includes(type) && !validTaxInvoice)) {
     return 'Document is a shipping/non-invoice document (packing list, AWB, delivery or shipment document) — not eligible for invoice creation.';
   }
   // Body classification wins over filename: only apply filename/subject hints
@@ -92,11 +131,12 @@ export function intakeReviewReason(ocrResult: any, fileName: string, subject = '
     type === 'PROFORMA_INVOICE' ||
     type === 'COMMERCIAL' ||
     type === 'SALES' ||
+    type === 'FAKTUR_PAJAK' ||
     type === 'DEBIT_NOTE' ||
     type === 'CREDIT_NOTE';
   const normalizedHaystack = `${fileName} ${subject}`.replace(/[_-]+/g, ' ');
-  const invoiceHeaderSignals = /\b(?:commercial\s+invoice|tax\s+invoice|sales\s+invoice|invoice)\b/i.test(rawText)
-    && /\b(?:invoice\s*(?:no|number)|invoice\s*date|total(?:\s+amount)?|amount\s+due)\b/i.test(rawText)
+  const invoiceHeaderSignals = /\b(?:commercial\s+invoice|tax\s+invoice|faktur\s+pajak|sales\s+invoice|invoice)\b/i.test(rawText)
+    && /\b(?:invoice\s*(?:no|number)|invoice\s*date|total(?:\s+amount)?|amount\s+due|faktur\s+pajak|harga\s+jual|jumlah\s+ppn|dpp)\b/i.test(rawText)
     && String(ocrResult?.invoice_number || '').trim()
     && String(ocrResult?.vendor_name || '').trim()
     && Number(ocrResult?.total_amount) > 0;
@@ -105,7 +145,7 @@ export function intakeReviewReason(ocrResult: any, fileName: string, subject = '
   }
   const amount = Number(ocrResult?.total_amount);
   if (!Number.isFinite(amount) || amount <= 0) return 'A valid positive total amount was not extracted.';
-  if (ocrResult?.invoice_date_extracted === false) return 'Invoice date was not confidently extracted from a labeled date field.';
+  if (ocrResult?.invoice_date_extracted === false && !validTaxInvoice) return 'Invoice date was not confidently extracted from a labeled date field.';
   const confidence = Number(ocrResult?.ocr_confidence_score);
   const threshold = Number(process.env.OCR_CONFIDENCE_THRESHOLD || 0.60);
   if (Number.isFinite(confidence) && confidence < threshold) return `OCR confidence is below the review threshold (${confidence.toFixed(2)} < ${threshold.toFixed(2)}).`;
@@ -543,6 +583,7 @@ async function processSingleInvoiceAttachment(
     const ocrResult = await analyzeIntakeWithRetry(buffer, contentType, fileName, 'GRAPH', {
       mailbox: mailboxAddress, messageId: message.id, attachmentId,
     });
+    normalizeFakturPajakExtraction(ocrResult);
     const graphFileHash = generateFileHash(buffer);
     const graphIdempotencyKey = buildIntakeIdempotencyKey(message.id, graphFileHash);
     const graphControls = await applyIntakeControls(ocrResult, buffer);
@@ -910,6 +951,7 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
 
     // Analyze invoice using OCR
     const ocrResult = await analyzeIntakeWithRetry(buffer, 'application/pdf', data.fileName, 'SHAREPOINT', { intakeKey });
+    normalizeFakturPajakExtraction(ocrResult);
     const sharePointFileHash = generateFileHash(buffer);
     const sharePointIdempotencyKey = buildIntakeIdempotencyKey(intakeKey, sharePointFileHash);
     const sharePointControls = await applyIntakeControls(ocrResult, buffer);
@@ -1246,6 +1288,7 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
 
     // Analyze invoice using OCR
     const ocrResult = await analyzeIntakeWithRetry(buffer, data.contentType, data.fileName, 'POWER_AUTOMATE', { intakeKey });
+    normalizeFakturPajakExtraction(ocrResult);
     const powerAutomateFileHash = generateFileHash(buffer);
     const powerAutomateIdempotencyKey = buildIntakeIdempotencyKey(intakeKey, powerAutomateFileHash);
     const powerAutomateControls = await applyIntakeControls(ocrResult, buffer);

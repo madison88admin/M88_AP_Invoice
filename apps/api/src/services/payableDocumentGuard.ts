@@ -120,18 +120,24 @@ export function isValidCommercialInvoice(doc: PayableCheckInput, docType: string
   // the page contains account/balance language.  Allow the stronger
   // invoice-header evidence to correct that label, but only when all core
   // payable fields are present.
-  if (!['COMMERCIAL', 'COMMERCIAL_INVOICE', 'INVOICE', 'SALES', 'STATEMENT', 'OTHER', 'UNKNOWN'].includes(docType)) return false;
+  // Indonesian Faktur Pajak documents are tax invoices issued by the supplier.
+  // They are only payable when the OCR contains strong tax-invoice evidence and
+  // the normal AP fields are present; a bare classification/filename remains
+  // blocked by the non-payable guard below.
+  if (!['COMMERCIAL', 'COMMERCIAL_INVOICE', 'INVOICE', 'SALES', 'STATEMENT', 'OTHER', 'UNKNOWN', 'FAKTUR_PAJAK'].includes(docType)) return false;
   const invoiceNumber = String(doc.invoice_number || '').trim();
   const vendorName = String(doc.vendor_name || '').trim();
   const invoiceDate = String(doc.invoice_date || '').trim();
   const totalAmount = Number(String(doc.total_amount ?? '').replace(/[^0-9.-]/g, ''));
   const firstPage = String(doc.raw_text || '').replace(/\r\n?/g, '\n').slice(0, 1600);
   const hasCommercialHeading = /\b(?:commercial\s+invoice|tax\s+invoice|sales\s+invoice|invoice)\b/i.test(firstPage);
-  const hasInvoiceFieldLabels = /\b(?:invoice\s*(?:no|number)|invoice\s*date|total(?:\s+amount)?|amount\s+due)\b/i.test(firstPage);
+  const hasTaxInvoiceHeading = /\b(?:faktur\s+pajak|tax\s+invoice)\b/i.test(firstPage);
+  const hasInvoiceFieldLabels = /\b(?:invoice\s*(?:no|number)|invoice\s*date|total(?:\s+amount)?|amount\s+due|faktur\s+pajak|harga\s+jual|jumlah\s+ppn|dpp)\b/i.test(firstPage);
   const filename = String(doc.fileName || '');
   const hasInvoiceFilename = /(?:^|[^a-z])(?:invoice|inv|a\/?ci|ci)\s*[-_]?\s*[a-z0-9]/i.test(filename);
-  return Boolean(invoiceNumber && vendorName && invoiceDate && Number.isFinite(totalAmount) && totalAmount > 0
-    && hasInvoiceFieldLabels && (hasCommercialHeading || hasInvoiceFilename));
+  const dateRequirementSatisfied = Boolean(invoiceDate) || (docType === 'FAKTUR_PAJAK' && hasTaxInvoiceHeading);
+  return Boolean(invoiceNumber && vendorName && dateRequirementSatisfied && Number.isFinite(totalAmount) && totalAmount > 0
+    && hasInvoiceFieldLabels && (hasCommercialHeading || hasTaxInvoiceHeading || hasInvoiceFilename));
 }
 
 /** Focused guard used by legacy intake review paths for the newly requested exclusions. */
@@ -274,7 +280,7 @@ export function getPayableBlockReason(
 
   // 3. Statement-of-account text signals (even if type extraction failed)
   const text = rawText;
-  if (text && hasStrongNonInvoiceHeading(text)) {
+  if (text && hasStrongNonInvoiceHeading(text) && !validCommercialInvoice) {
     return 'Document heading identifies an excluded non-invoice document';
   }
   if (text && STATEMENT_TEXT_HINTS.test(text) && !validCommercialInvoice) {

@@ -55,6 +55,15 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
     expect(getPayableBlockReason({ document_type: 'TECH_PACK' })).toMatch(/TECH_PACK/);
     expect(getPayableBlockReason({ document_type: 'TRIM_RECEIPT' })).toMatch(/TRIM_RECEIPT/);
     expect(getPayableBlockReason({ document_type: 'FAKTUR_PAJAK' })).toMatch(/FAKTUR_PAJAK/);
+    expect(getPayableBlockReason({
+      document_type: 'FAKTUR_PAJAK',
+      invoice_number: 'SIC261000032',
+      vendor_name: 'PT SUPER DRY MARINE',
+      invoice_date: '2026-10-20',
+      total_amount: 2899320,
+      fileName: 'PT Super Dry_ SIC261000032_Dry Sac.pdf',
+      raw_text: 'DRAFT FAKTUR PAJAK\nPT SUPER DRY MARINE\nNo. Faktur Pajak: SIC261000032\nTanggal: 20/10/2026\nHarga Jual: 2.899.320,00\nJumlah PPN: 289.932,00',
+    })).toBeNull();
     expect(getPayableBlockReason({ document_type: 'FORWARDER_BILLING_INVOICE' })).toMatch(/FORWARDER_BILLING_INVOICE/);
     expect(getPayableBlockReason({ document_type: 'EXPEDITORS_BILLING_INVOICE' })).toMatch(/EXPEDITORS_BILLING_INVOICE/);
   });

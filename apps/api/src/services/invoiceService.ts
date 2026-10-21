@@ -1372,12 +1372,14 @@ export const deleteInvoice = async (id: string, userId: string, userRole: string
     throw new AppError('Invoice not found', 404);
   }
 
-  // Confirmed duplicates are retained as closed AP records for audit and
-  // retention purposes. They must never be hard-deleted with the intake
-  // cleanup action; resolve/cancel them instead.
-  if (existing.is_duplicate || (existing as any).duplicate_review_status === 'DUPLICATE_SUBMISSION') {
-    throw new AppError('Confirmed duplicate invoices are retained for audit and cannot be hard-deleted. Resolve or cancel the record instead.', 400);
-  }
+  // Duplicate submissions are explicitly removable, even if they have
+  // already reached a manager/review stage or carry a retention date. The
+  // surviving canonical invoice remains untouched; this only removes the
+  // duplicate record selected by the user.
+  const isDuplicateRecord = Boolean(existing.is_duplicate)
+    || ['PENDING', 'DUPLICATE_SUBMISSION', 'CONFIRMED_DUPLICATE'].includes(
+      String((existing as any).duplicate_review_status || '').toUpperCase(),
+    );
 
   // Hard-delete is reserved for intake/OCR mistakes that never entered the
   // AP workflow. These rows receive the default seven-year retention date at
@@ -1387,7 +1389,7 @@ export const deleteInvoice = async (id: string, userId: string, userRole: string
   const deletableStatuses = ['RECEIVED', 'OCR_PROCESSING', 'VALIDATION_PENDING', 'EXCEPTION_FLAGGED'];
   const isIntakeDraft = deletableStatuses.includes(existing.status);
   const retentionUntil = existing.retention_until ? new Date(existing.retention_until) : null;
-  if (existing.legal_hold || (retentionUntil && retentionUntil > new Date() && !isIntakeDraft)) {
+  if (!isDuplicateRecord && (existing.legal_hold || (retentionUntil && retentionUntil > new Date() && !isIntakeDraft))) {
     const retentionMessage = retentionUntil
       ? ` until ${retentionUntil.toISOString().slice(0, 10)}`
       : '';
@@ -1397,7 +1399,7 @@ export const deleteInvoice = async (id: string, userId: string, userRole: string
   // Deletion is only for OCR/intake mistakes which have never entered the AP
   // workflow. Once an invoice is submitted, it must be cancelled so the source
   // document, approvals, QuickBooks reference and audit history are retained.
-  if (!deletableStatuses.includes(existing.status)) {
+  if (!isDuplicateRecord && !deletableStatuses.includes(existing.status)) {
     throw new AppError(`Cannot delete invoice in ${existing.status} status. Submit a cancellation request instead.`, 400);
   }
 

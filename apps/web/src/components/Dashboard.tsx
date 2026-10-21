@@ -4009,18 +4009,21 @@ ${dataRows}
                 </>
               )}
 
-              {/* Hard deletion remains limited to intake/OCR mistakes that never entered workflow. */}
-              {user && ['RECEIVED', 'OCR_PROCESSING', 'VALIDATION_PENDING', 'EXCEPTION_FLAGGED'].includes(selectedInvoice.status as string) &&
+              {/* Duplicate submissions may be removed regardless of workflow/retention status. */}
+              {user && (
+                (['RECEIVED', 'OCR_PROCESSING', 'VALIDATION_PENDING', 'EXCEPTION_FLAGGED'].includes(selectedInvoice.status as string)
+                  || Boolean((selectedInvoice as any).is_duplicate)
+                  || ['PENDING', 'DUPLICATE_SUBMISSION', 'CONFIRMED_DUPLICATE'].includes(String((selectedInvoice as any).duplicate_review_status || '').toUpperCase())) &&
                 ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN', 'SUPERADMIN', 'ADMIN'].includes(user.role) && (
                 <button
                   onClick={() => setShowDeleteModal(true)}
                   className="w-full flex items-center justify-center px-4 py-2 rounded-xl transition-all font-medium text-xs mt-2"
                   style={{ color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}
-                  title="Only unsubmitted intake/OCR mistakes may be permanently removed"
+                  title="Duplicate submissions may be permanently removed; other invoices require cancellation"
                 >
                   <Trash2 className="h-3.5 w-3.5 mr-2" strokeWidth={1.75} /> Remove intake draft
                 </button>
-              )}
+              ))}
 
               {/* No actions available */}
               {!user?.role || (user.role === 'MS_POLLY') && (

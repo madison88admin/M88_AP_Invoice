@@ -151,11 +151,11 @@ describe('deleteInvoice', () => {
     expect(invoiceDelete).toHaveBeenCalledWith({ where: { id: 'inv-1' } });
   });
 
-  it('deletes eligible duplicates and reports protected records independently', async () => {
+  it('closes duplicates for audit and reports protected records independently', async () => {
     invoiceFindUnique
       .mockResolvedValueOnce(makeInvoice({ id: 'duplicate-1', invoice_number: 'INV-DUP', is_duplicate: true, status: 'APPROVED' }))
       .mockResolvedValueOnce(makeInvoice({ id: 'protected-1', invoice_number: 'INV-LOCKED', status: 'APPROVED', retention_until: new Date('2033-10-14') }));
-    invoiceDelete.mockResolvedValue({ id: 'duplicate-1' });
+    invoiceUpdate.mockResolvedValue({ id: 'duplicate-1', status: 'CANCELLED' });
 
     const result = await deleteInvoicesBulk(
       ['duplicate-1', 'duplicate-1', 'protected-1'],
@@ -164,12 +164,13 @@ describe('deleteInvoice', () => {
       'Alice',
     );
 
-    expect(result).toMatchObject({ requested: 2, deleted: 1, failed: 1 });
+    expect(result).toMatchObject({ requested: 2, deleted: 0, closed: 1, failed: 1 });
     expect(result.results).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'duplicate-1', deleted: true, invoice_number: 'INV-DUP' }),
+      expect.objectContaining({ id: 'duplicate-1', deleted: false, closed: true, invoice_number: 'INV-DUP' }),
       expect.objectContaining({ id: 'protected-1', deleted: false, error: expect.stringContaining('retention-protected') }),
     ]));
-    expect(invoiceDelete).toHaveBeenCalledTimes(1);
+    expect(invoiceDelete).not.toHaveBeenCalled();
+    expect(invoiceUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'duplicate-1' } }));
   });
 
   it('still blocks retention-protected invoices that entered workflow', async () => {

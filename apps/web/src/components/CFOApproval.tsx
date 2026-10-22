@@ -8,7 +8,7 @@ interface PaymentBatch {
   batch_number: string;
   total_amount: number;
   payment_count: number;
-  status: 'DRAFT' | 'PENDING_CFO' | 'APPROVED' | 'PROCESSED' | 'CANCELLED';
+  status: 'PENDING_CFO' | 'REVIEWED' | 'PROCESSED' | 'CANCELLED';
   created_at: Date;
   processed_at?: Date;
   payments: Array<{
@@ -49,7 +49,7 @@ export default function CFOApproval() {
         batch_number: b.batch_number || b.batch_name || b.name || b.id,
         total_amount: Number(b.total_amount || 0),
         payment_count: b.payment_count || b.invoice_count || 0,
-        status: b.status || 'DRAFT',
+        status: (b.status || 'PENDING_CFO') as PaymentBatch['status'],
         created_at: new Date(b.created_at),
         processed_at: b.processed_at ? new Date(b.processed_at) : undefined,
         payments: (b.payments || []).map((p: any) => ({
@@ -77,7 +77,7 @@ export default function CFOApproval() {
 
   const handleApprove = async (batchId: string) => {
     try {
-      await paymentBatchApi.process(batchId);
+      await paymentBatchApi.approveCfo(batchId, 'Approved by CFO');
       loadBatches();
     } catch (error) {
       console.error('Failed to process batch:', error);
@@ -86,7 +86,7 @@ export default function CFOApproval() {
 
   const handleReject = async (batchId: string, reason: string) => {
     try {
-      await paymentBatchApi.cancel(batchId, reason);
+      await paymentBatchApi.rejectCfo(batchId, reason);
       loadBatches();
     } catch (error) {
       console.error('Failed to reject batch:', error);
@@ -139,9 +139,8 @@ export default function CFOApproval() {
                 className="px-4 py-3 rounded-xl focus:outline-none transition-all text-sm"
                 style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
               >
-                <option value="DRAFT">Draft</option>
                 <option value="PENDING_CFO">Pending CFO</option>
-                <option value="APPROVED">Approved</option>
+                <option value="REVIEWED">Supervisor reviewed</option>
                 <option value="PROCESSED">Processed</option>
                 <option value="CANCELLED">Cancelled</option>
                 <option value="">All Statuses</option>
@@ -196,12 +195,11 @@ export default function CFOApproval() {
                       <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>${batch.total_amount.toLocaleString()}</td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className="px-2 py-1 text-xs font-medium rounded-full border" style={
-                          batch.status === 'DRAFT' ? { background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)', borderColor: 'color-mix(in srgb, var(--accent-amber) 20%, transparent)' } :
                           batch.status === 'PENDING_CFO' ? { background: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)', color: 'var(--accent-purple)', borderColor: 'color-mix(in srgb, var(--accent-purple) 20%, transparent)' } :
                           batch.status === 'PROCESSED' ? { background: 'color-mix(in srgb, var(--accent-green) 10%, transparent)', color: 'var(--accent-green)', borderColor: 'color-mix(in srgb, var(--accent-green) 20%, transparent)' } :
                           { background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', color: 'var(--accent-red)', borderColor: 'color-mix(in srgb, var(--accent-red) 20%, transparent)' }
                         }>
-                          {batch.status === 'DRAFT' ? 'Draft' : batch.status === 'PENDING_CFO' ? 'Pending CFO' : batch.status === 'APPROVED' ? 'Approved' : batch.status === 'PROCESSED' ? 'Processed' : batch.status === 'CANCELLED' ? 'Cancelled' : batch.status}
+                          {batch.status === 'PENDING_CFO' ? 'Pending CFO' : batch.status === 'REVIEWED' ? 'Supervisor reviewed' : batch.status === 'PROCESSED' ? 'Processed' : batch.status === 'CANCELLED' ? 'Cancelled' : batch.status}
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--text-secondary)' }}>{new Date(batch.created_at).toLocaleDateString()}</td>

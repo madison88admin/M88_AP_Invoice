@@ -1350,8 +1350,8 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
   const handleDeleteInvoice = async () => {
     if (!selectedInvoice) return;
     try {
-      await invoiceApi.delete(selectedInvoice.id);
-      showToast(`Invoice ${selectedInvoice.invoice_number} deleted successfully`, 'success');
+      const response = await invoiceApi.delete(selectedInvoice.id);
+      showToast(response.data?.closed ? `Invoice ${selectedInvoice.invoice_number} was closed as a duplicate and retained for audit` : `Invoice ${selectedInvoice.invoice_number} deleted successfully`, 'success');
       await refresh();
       setSelectedInvoice(null);
     } catch (error: any) {
@@ -1367,8 +1367,10 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
     try {
       const response = await invoiceApi.deleteBulk(selectedInvoiceIds);
       const result = response.data || {};
-      if (Number(result.deleted || 0) > 0) {
-        showToast(`${result.deleted} invoice${result.deleted === 1 ? '' : 's'} deleted successfully`, 'success');
+      if (Number(result.deleted || 0) > 0 || Number(result.closed || 0) > 0) {
+        const deletedText = Number(result.deleted || 0) > 0 ? `${result.deleted} invoice${result.deleted === 1 ? '' : 's'} deleted` : '';
+        const closedText = Number(result.closed || 0) > 0 ? `${result.closed} duplicate${result.closed === 1 ? '' : 's'} closed and retained` : '';
+        showToast([deletedText, closedText].filter(Boolean).join('; '), 'success');
       }
       if (Number(result.failed || 0) > 0) {
         const firstFailure = Array.isArray(result.results) ? result.results.find((item: any) => !item.deleted) : null;
@@ -2864,9 +2866,9 @@ ${dataRows}
                       onClick={() => setShowBulkDeleteModal(true)}
                       className="inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold"
                       style={{ background: 'color-mix(in srgb, var(--accent-red) 12%, transparent)', color: 'var(--accent-red)', border: '1px solid color-mix(in srgb, var(--accent-red) 28%, transparent)' }}
-                      title="Delete selected intake or duplicate records"
+                      title="Remove selected intake drafts or close duplicate records"
                     >
-                      <Trash2 className="h-3.5 w-3.5" /> Delete selected ({selectedInvoiceIds.length})
+                      <Trash2 className="h-3.5 w-3.5" /> Remove / close selected ({selectedInvoiceIds.length})
                     </button>
                   )}
                   <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
@@ -4639,10 +4641,10 @@ ${dataRows}
                 </div>
                 <div>
                   <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
-                    Delete Invoice
+                    Remove / close invoice
                   </h3>
                   <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>
-                    Are you sure you want to delete invoice <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.invoice_number}</span>? This action cannot be undone.
+                    Intake drafts can be removed. Duplicate records are closed and retained for audit. Continue with <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{selectedInvoice.invoice_number}</span>?
                   </p>
                 </div>
               </div>
@@ -4661,7 +4663,7 @@ ${dataRows}
                   className="px-4 py-2 rounded-xl transition-colors text-sm font-medium"
                   style={{ background: 'var(--accent-red)', color: 'white' }}
                 >
-                  Delete Permanently
+                  Remove / close
                 </button>
               </div>
             </div>
@@ -4681,19 +4683,19 @@ ${dataRows}
                   <AlertTriangle className="h-5 w-5" style={{ color: 'var(--accent-red)' }} strokeWidth={1.75} />
                 </div>
                 <div>
-                  <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Delete selected invoices</h3>
+                  <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Remove or close selected invoices</h3>
                   <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>
                     You selected <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{selectedInvoiceIds.length}</span> invoice{selectedInvoiceIds.length === 1 ? '' : 's'}.
                   </p>
                 </div>
               </div>
               <div className="rounded-xl p-3 text-xs" style={{ background: 'color-mix(in srgb, var(--accent-amber) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)', color: 'var(--text-secondary)' }}>
-                Only intake drafts and duplicate records can be hard-deleted. Approved, paid, batched, retention-protected, or legal-hold invoices will be skipped and reported. Every successful deletion keeps an audit entry.
+                Intake drafts may be hard-deleted. Duplicate records are closed as confirmed duplicates and retained with their PDF, links, and audit history. Approved, paid, batched, retention-protected, or legal-hold invoices will be skipped and reported.
               </div>
               <div className="mt-4 flex justify-end space-x-3">
                 <button type="button" onClick={() => setShowBulkDeleteModal(false)} className="px-4 py-2 transition-colors text-sm" style={{ color: 'var(--text-secondary)' }}>Cancel</button>
                 <button type="button" onClick={() => void handleBulkDeleteInvoices()} className="px-4 py-2 rounded-xl transition-colors text-sm font-medium" style={{ background: 'var(--accent-red)', color: 'white' }}>
-                  Delete selected
+                    Remove / close selected
                 </button>
               </div>
             </div>

@@ -4,7 +4,7 @@ import path from 'path';
 import crypto from 'crypto';
 import XLSX from 'xlsx';
 import { AuthRequest } from '../middleware/auth';
-import { createGroupedPaymentBatches, getPaymentBatches, getPaymentBatchById, getScheduledPaymentsForBatch, processPaymentBatch, cancelPaymentBatch, selectPaymentsForBatch, deselectPaymentsForBatch, submitPaymentBatchForReview, updatePaymentBillsSetup, reviewPaymentBatch, returnPaymentBatch, returnInvoicesFromBatch, markPaymentBatchExported, setPaymentRemarks, markPaymentForPayment, approvePaymentForPayment, rejectPaymentForPayment, bulkApprovePaymentsForPayment, applyBankCharge, removeBankCharge, endorseBillStub, matchPaymentConfirmation, findPaymentBatchByConfirmationReference, approveHeldPayment, holdScheduledPayment, getStuckBatches } from '../services/paymentBatchService';
+import { createGroupedPaymentBatches, getPaymentBatches, getPaymentBatchById, getScheduledPaymentsForBatch, processPaymentBatch, cancelPaymentBatch, selectPaymentsForBatch, deselectPaymentsForBatch, submitPaymentBatchForReview, updatePaymentBillsSetup, reviewPaymentBatch, returnPaymentBatch, returnInvoicesFromBatch, markPaymentBatchExported, setPaymentRemarks, markPaymentForPayment, approvePaymentForPayment, rejectPaymentForPayment, bulkApprovePaymentsForPayment, applyBankCharge, removeBankCharge, endorseBillStub, matchPaymentConfirmation, findPaymentBatchByConfirmationReference, approveHeldPayment, holdScheduledPayment, getStuckBatches, approveCfoPaymentBatch, rejectCfoPaymentBatch } from '../services/paymentBatchService';
 import { exportPaymentReconciliation } from '../services/reconciliationExportService';
 import { exportBatchPerVendor } from '../services/perVendorExportService';
 import { isDbEnabled } from '../config/database';
@@ -80,6 +80,14 @@ export const reviewPaymentBatchController = async (req: AuthRequest, res: Respon
 
 export const returnPaymentBatchController = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try { res.json(await returnPaymentBatch(req.params.batchId, req.user!.id, req.body.reason)); } catch (error) { next(error); }
+};
+
+export const approveCfoPaymentBatchController = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try { res.json(await approveCfoPaymentBatch(req.params.batchId, req.user!.id, req.body.note)); } catch (error) { next(error); }
+};
+
+export const rejectCfoPaymentBatchController = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try { res.json(await rejectCfoPaymentBatch(req.params.batchId, req.user!.id, req.body.reason)); } catch (error) { next(error); }
 };
 
 export const returnInvoicesFromBatchController = async (req: AuthRequest, res: Response, next: NextFunction) => {

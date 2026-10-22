@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import api, { invoiceApi } from '../lib/api';
-import { AlertTriangle, CheckCircle2, X, Filter, RefreshCw, Loader2, Clock, User, FileText, RotateCcw, Flag, CircleDot, Mail, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, X, Filter, RefreshCw, Loader2, Clock, User, FileText, RotateCcw, Flag, CircleDot, Mail, ShieldCheck, Search } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 type Finding = {
@@ -104,11 +104,14 @@ export default function FinanceControlsDashboard() {
   const [sevFilter, setSevFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [codeFilter, setCodeFilter] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
   const [acting, setActing] = useState('');
   const [intakeMonitor, setIntakeMonitor] = useState<IntakeMonitor | null>(null);
   const [retentionRows, setRetentionRows] = useState<RetentionRow[]>([]);
   const [retentionBusy, setRetentionBusy] = useState(false);
+  const [retentionAction, setRetentionAction] = useState<string | null>(null);
+  const [retentionError, setRetentionError] = useState('');
   const [invoicePreviewUrl, setInvoicePreviewUrl] = useState<string | null>(null);
   const [invoicePreviewLoading, setInvoicePreviewLoading] = useState(false);
   const [invoicePreviewError, setInvoicePreviewError] = useState<string | null>(null);
@@ -149,7 +152,7 @@ export default function FinanceControlsDashboard() {
   const load = useCallback(async () => {
     const [runResult, monitorResult] = await Promise.allSettled([
       api.get('/api/finance-controls/runs'),
-      api.get('/api/email-intake-monitor?limit=50'),
+      api.get('/api/email-intake-monitor?limit=500'),
     ]);
     if (runResult.status === 'fulfilled') setRuns(runResult.value.data);
     if (monitorResult.status === 'fulfilled') setIntakeMonitor(monitorResult.value.data);
@@ -172,6 +175,32 @@ export default function FinanceControlsDashboard() {
   const runRetentionScan = async () => {
     setRetentionBusy(true);
     try { await api.post('/api/retention/run'); await load(); } finally { setRetentionBusy(false); }
+  };
+
+  const runRetentionAction = async (row: RetentionRow, action: 'backup' | 'hold' | 'release' | 'dispose') => {
+    setRetentionAction(`${row.invoice_id}:${action}`);
+    setRetentionError('');
+    try {
+      if (action === 'backup') {
+        const reference = window.prompt('Backup reference (required):', 'backup-verified-by-accounting');
+        const hash = window.prompt('Backup hash/checksum (required):', '');
+        if (!reference?.trim() || !hash?.trim()) return;
+        await api.post(`/api/retention/${row.invoice_id}/backup-attestation`, { reference: reference.trim(), hash: hash.trim() });
+      } else if (action === 'hold' || action === 'release') {
+        const reason = window.prompt(action === 'hold' ? 'Legal-hold reason (required):' : 'Reason for releasing legal hold (required):', '');
+        if (!reason?.trim()) return;
+        await api.post(`/api/retention/${row.invoice_id}/legal-hold`, { enabled: action === 'hold', reason: reason.trim() });
+      } else {
+        const reason = window.prompt('Controlled-disposal reason (required):', 'Retention period expired and backup verified');
+        if (!reason?.trim()) return;
+        await api.post(`/api/retention/${row.invoice_id}/dispose`, { reason: reason.trim() });
+      }
+      await load();
+    } catch (error: any) {
+      setRetentionError(error?.response?.data?.error?.message || error?.response?.data?.message || 'Retention action failed.');
+    } finally {
+      setRetentionAction(null);
+    }
   };
 
   const openActionModal = (id: string, action: string) => {
@@ -238,10 +267,25 @@ export default function FinanceControlsDashboard() {
 
   const selectedRun = runs.find((r) => r.id === selectedRunId) || runs[0];
   const baseFindings = selectedRun?.findings || [];
+  const normalizedSearch = searchTerm.trim().toLowerCase();
+
+  const filteredIntakeEvents = useMemo(() => {
+    if (!intakeMonitor?.events) return [];
+    if (!normalizedSearch) return intakeMonitor.events;
+    return intakeMonitor.events.filter((event) => {
+      const metadata = event.metadata ? JSON.stringify(event.metadata) : '';
+      return [event.file_name, event.invoice_id, event.source, event.stage, event.status, event.error, metadata]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(normalizedSearch));
+    });
+  }, [intakeMonitor?.events, normalizedSearch]);
 
   const codes = useMemo(() => [...new Set(baseFindings.map((f) => f.code))].sort(), [baseFindings]);
 
   const filtered = baseFindings.filter((f) =>
+    (!normalizedSearch || [f.code, f.detail, f.invoice_id, f.payment_id, f.status, f.severity]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(normalizedSearch))) &&
     (!sevFilter || f.severity === sevFilter) &&
     (!statusFilter || f.status === statusFilter) &&
     (!codeFilter || f.code === codeFilter)
@@ -259,7 +303,7 @@ export default function FinanceControlsDashboard() {
     return counts;
   }, [baseFindings]);
 
-  const clearFilters = () => { setSevFilter(''); setStatusFilter(''); setCodeFilter(''); };
+  const clearFilters = () => { setSevFilter(''); setStatusFilter(''); setCodeFilter(''); setSearchTerm(''); };
 
   const activeActions = (f: Finding) => {
     const actions: Array<{ key: string; label: string; icon?: any }> = [];
@@ -313,9 +357,11 @@ export default function FinanceControlsDashboard() {
           <div className="p-4 text-sm" style={{ color: 'var(--text-muted)' }}>Intake monitoring data is not available yet.</div>
         ) : intakeMonitor.events.length === 0 ? (
           <div className="p-4 text-sm" style={{ color: 'var(--text-muted)' }}>No intake events recorded yet.</div>
+        ) : filteredIntakeEvents.length === 0 ? (
+          <div className="p-4 text-sm" style={{ color: 'var(--text-muted)' }}>No intake events match “{searchTerm}”.</div>
         ) : (
           <div className="max-h-72 overflow-y-auto divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
-            {intakeMonitor.events.map((event) => (
+            {filteredIntakeEvents.map((event) => (
               <div key={event.id} className="px-4 py-3 flex items-start gap-3 text-sm">
                 <span
                   className="mt-1 h-2 w-2 rounded-full shrink-0"
@@ -349,6 +395,7 @@ export default function FinanceControlsDashboard() {
               Run scan
             </button>
           </div>
+          {retentionError && <div className="px-4 py-2 text-xs" style={{ color: 'var(--accent-red)', background: 'color-mix(in srgb, var(--accent-red) 8%, transparent)' }}>{retentionError}</div>}
           {retentionRows.length === 0 ? (
             <div className="p-4 text-sm" style={{ color: 'var(--text-muted)' }}>No retention records returned.</div>
           ) : (
@@ -358,6 +405,11 @@ export default function FinanceControlsDashboard() {
                   <span className="font-medium truncate min-w-0 flex-1">{row.invoice_number || row.invoice_id.slice(0, 8)}</span>
                   <span className="text-[10px] px-2 py-0.5 rounded-full whitespace-nowrap" style={{ background: 'var(--bg-elevated)', color: row.status === 'LEGAL_HOLD' ? 'var(--accent-red)' : row.status === 'ELIGIBLE_FOR_DISPOSAL' ? 'var(--accent-amber)' : 'var(--text-muted)' }}>{row.status.replace(/_/g, ' ')}</span>
                   <span className="text-[11px] whitespace-nowrap" style={{ color: 'var(--text-subtle)' }}>{row.retention_until ? new Date(row.retention_until).toLocaleDateString() : '—'}</span>
+                  <div className="flex items-center gap-1.5 ml-auto">
+                    {!row.backup_verified_at && <button type="button" onClick={() => void runRetentionAction(row, 'backup')} disabled={retentionAction === `${row.invoice_id}:backup`} className="px-2 py-1 rounded text-[10px] border disabled:opacity-50">Verify backup</button>}
+                    {row.legal_hold ? <button type="button" onClick={() => void runRetentionAction(row, 'release')} disabled={retentionAction === `${row.invoice_id}:release`} className="px-2 py-1 rounded text-[10px] border disabled:opacity-50">Release hold</button> : <button type="button" onClick={() => void runRetentionAction(row, 'hold')} disabled={retentionAction === `${row.invoice_id}:hold`} className="px-2 py-1 rounded text-[10px] border disabled:opacity-50">Legal hold</button>}
+                    {row.status === 'ELIGIBLE_FOR_DISPOSAL' && <button type="button" onClick={() => void runRetentionAction(row, 'dispose')} disabled={retentionAction === `${row.invoice_id}:dispose`} className="px-2 py-1 rounded text-[10px] border disabled:opacity-50" style={{ color: 'var(--accent-red)' }}>Dispose</button>}
+                  </div>
                 </div>
               ))}
             </div>
@@ -389,6 +441,22 @@ export default function FinanceControlsDashboard() {
           <button className="px-4 py-2 rounded-lg border text-sm" style={{ background: 'var(--bg-card)', color: 'var(--text-primary)' }} onClick={() => void load()}>
             Refresh
           </button>
+        </div>
+        <div className="relative w-full md:w-80 order-3 md:order-none">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} strokeWidth={1.75} />
+          <input
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Search invoice, file, or finding..."
+            aria-label="Search invoice intake and findings"
+            className="w-full rounded-lg py-2 pl-9 pr-8 text-sm focus:outline-none"
+            style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
+          />
+          {searchTerm && (
+            <button type="button" onClick={() => setSearchTerm('')} aria-label="Clear invoice search" className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1" style={{ color: 'var(--text-muted)' }}>
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
         <select
           value={selectedRunId}
@@ -452,7 +520,7 @@ export default function FinanceControlsDashboard() {
         {(sevFilter || statusFilter || codeFilter) && (
           <button className="text-xs underline" style={{ color: 'var(--accent-blue)' }} onClick={clearFilters}>Clear filters</button>
         )}
-        <span className="ml-auto text-xs" style={{ color: 'var(--text-muted)' }}>{filtered.length} of {baseFindings.length} findings</span>
+        <span className="ml-auto text-xs" style={{ color: 'var(--text-muted)' }}>{filtered.length} of {baseFindings.length} findings{normalizedSearch ? ` · ${filteredIntakeEvents.length} intake matches` : ''}</span>
       </div>
 
       {/* Findings list */}

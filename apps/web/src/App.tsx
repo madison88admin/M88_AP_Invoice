@@ -24,11 +24,12 @@ import BankDetailsMasterlist from './components/BankDetailsMasterlist';
 import FinanceControlsDashboard from './components/FinanceControlsDashboard';
 import AccountingInvoiceArchive from './components/AccountingInvoiceArchive';
 import PurchasingWorkbench from './components/PurchasingWorkbench';
+import CFOApproval from './components/CFOApproval';
 
 import ProtectedRoute from './components/ProtectedRoute';
 import NotFound from './components/NotFound';
 import AppLayout from './components/AppLayout';
-import { FileText, CheckSquare, AlertTriangle, Building2, Package, BarChart3, FileSearch, Users, Settings, Upload, FileSearch as AuditIcon, LayoutDashboard, Landmark, CheckCircle, XCircle, RotateCcw, Clock3, GitCompare } from 'lucide-react';
+import { FileText, CheckSquare, AlertTriangle, Building2, Package, BarChart3, FileSearch, Users, Settings, Upload, FileSearch as AuditIcon, LayoutDashboard, Landmark, CheckCircle, XCircle, RotateCcw, Clock3, GitCompare, DollarSign } from 'lucide-react';
 import ValidationPendingQueue from './components/ValidationPendingQueue';
 
 function App() {
@@ -107,6 +108,13 @@ function App() {
                   <ProtectedRoute>
                     <AppLayout title="Payment Batches" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}><Package className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
                       <PaymentBatchManager />
+                    </AppLayout>
+                  </ProtectedRoute>
+                } />
+                <Route path="/cfo-approval" element={
+                  <ProtectedRoute roles={['CFO', 'IT_ADMIN', 'SUPERADMIN']}>
+                    <AppLayout title="CFO Approval" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}><DollarSign className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
+                      <CFOApproval />
                     </AppLayout>
                   </ProtectedRoute>
                 } />

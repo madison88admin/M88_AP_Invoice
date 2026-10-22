@@ -15,7 +15,9 @@ export default function AccountingReview() {
   const [postingInvoiceId, setPostingInvoiceId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'posted' | 'soa' | 'bank-requests' | 'due-date-requests'>('posted');
   const [filters, setFilters] = useState({
-    status: InvoiceStatus.POSTED_TO_QB,
+    // Accounting's primary queue is the postable work, not already-posted
+    // records. Posted invoices remain available through the status filter.
+    status: InvoiceStatus.PENDING_ACCOUNTING,
     search: '',
   });
   const [bankRequests, setBankRequests] = useState<any[]>([]);

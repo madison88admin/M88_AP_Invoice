@@ -87,13 +87,14 @@ interface PaymentBatch {
   batch_number: string;
   total_amount: number;
   payment_count: number;
-  status: 'DRAFT' | 'PENDING_SUPERVISOR_REVIEW' | 'RETURNED_FOR_CORRECTION' | 'REVIEWED' | 'EXPORTED_TO_BANK' | 'PROCESSING' | 'PROCESSED' | 'PARTIALLY_PAID' | 'FAILED' | 'CANCELLED';
+  status: 'DRAFT' | 'PENDING_SUPERVISOR_REVIEW' | 'PENDING_CFO' | 'RETURNED_FOR_CORRECTION' | 'REVIEWED' | 'EXPORTED_TO_BANK' | 'PROCESSING' | 'PROCESSED' | 'PARTIALLY_PAID' | 'FAILED' | 'CANCELLED';
   created_at: string;
   processed_at?: string;
   cancelled_at?: string;
   cancellation_reason?: string;
   return_reason?: string;
   review_note?: string;
+  cfo_note?: string;
   // QuickBooks "Pay Bills"-style setup chosen by the Associate on the DRAFT batch
   payment_method?: string | null; // CHECK | EFT | WIRE
   payment_bank_account?: string | null;
@@ -126,6 +127,7 @@ function mapBatchPayload(b: any): PaymentBatch {
     cancellation_reason: b.cancellation_reason || undefined,
     return_reason: b.return_reason || undefined,
     review_note: b.review_note || undefined,
+    cfo_note: b.cfo_note || undefined,
     payment_method: b.payment_method || null,
     payment_bank_account: b.payment_bank_account || null,
     payment_date: b.payment_date || null,
@@ -210,6 +212,7 @@ async function openAuthenticatedPaymentFile(fileUrl: string, fileName?: string):
 const BATCH_STATUSES = [
   'DRAFT',
   'PENDING_SUPERVISOR_REVIEW',
+  'PENDING_CFO',
   'RETURNED_FOR_CORRECTION',
   'REVIEWED',
   'EXPORTED_TO_BANK',
@@ -2311,7 +2314,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                     </div>
                   </div>
                   <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
-                    QuickBooks Pay Bills-style setup: choose how this batch will be paid, from which bank account, and on which date. Method, date, and an uploaded bill stub file for every payment are required before this batch can be marked ready. Supervisor review is not required.
+                    QuickBooks Pay Bills-style setup: choose how this batch will be paid, from which bank account, and on which date. Method, date, and an uploaded bill stub file for every payment are required before this batch can be submitted for independent Supervisor review.
                   </p>
                 </div>
               )}
@@ -2376,23 +2379,22 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                 </div>
               )}
 
-              {selectedBatch.status === 'PENDING_SUPERVISOR_REVIEW' && isAssociate && (
+              {selectedBatch.status === 'PENDING_SUPERVISOR_REVIEW' && isSupervisor && (
                 <div className="flex items-center gap-3 mb-6">
-                  <button onClick={() => handleBatchAction('review', selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}>Continue Batch</button>
-                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Legacy status — no supervisor approval is required.</span>
+                  <button onClick={() => handleBatchAction('review', selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}>Approve Supervisor Review</button>
+                  <button onClick={() => handleBatchAction('return', selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-red) 12%, transparent)', color: 'var(--accent-red)', border: '1px solid color-mix(in srgb, var(--accent-red) 25%, transparent)' }}>Return for Correction</button>
                 </div>
               )}
 
-              {selectedBatch.status === 'PENDING_SUPERVISOR_REVIEW' && isAssociate && (
+              {selectedBatch.status === 'PENDING_SUPERVISOR_REVIEW' && isSupervisor && (
                 <div className="flex items-center gap-3 mb-6">
-                  <button onClick={() => setShowCancelModal(true)} disabled={processing}
-                    className="flex items-center px-4 py-2.5 rounded-xl transition-colors disabled:opacity-50 text-sm font-medium"
-                    style={{ background: 'color-mix(in srgb, var(--accent-red) 10%, transparent)', color: 'var(--accent-red)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}
-                  >
-                    <X className="h-4 w-4 mr-2" strokeWidth={1.75} />
-                    Cancel Batch
-                  </button>
-                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Legacy status — the Accounting Associate controls the batch.</span>
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Review the attached bill stubs and invoice evidence before approval.</span>
+                </div>
+              )}
+
+              {selectedBatch.status === 'PENDING_CFO' && isAssociate && (
+                <div className="mb-6 p-3 rounded-xl text-sm" style={{ background: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)', color: 'var(--accent-purple)', border: '1px solid color-mix(in srgb, var(--accent-purple) 25%, transparent)' }}>
+                  Pending CFO approval. Export and bank processing are locked until CFO approval is recorded.
                 </div>
               )}
 
@@ -2406,7 +2408,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                 </div>
               )}
 
-              {selectedBatch.status === 'EXPORTED_TO_BANK' && isAssociate && (
+              {selectedBatch.status === 'EXPORTED_TO_BANK' && (isAssociate || isSupervisor) && (
                 <div className="flex items-center gap-3 mb-6">
                   <button onClick={() => setShowExecutionModal(true)} disabled={processing || !billStubFilesComplete} title={!billStubFilesComplete ? 'Upload a bill stub file for every payment first' : undefined} className="px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50" style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}>Process Payment Batch</button>
                 </div>

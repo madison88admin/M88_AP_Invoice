@@ -689,6 +689,9 @@ model PaymentBatch {
   reviewed_by          String?
   reviewed_at          DateTime?
   review_note          String?
+  cfo_approved_by      String?
+  cfo_approved_at      DateTime?
+  cfo_note             String?
   exported_at          DateTime?
   returned_by          String?
   returned_at          DateTime?
@@ -978,6 +981,7 @@ enum ExceptionStatus {
 enum PaymentBatchStatus {
   DRAFT
   PENDING_SUPERVISOR_REVIEW
+  PENDING_CFO
   RETURNED_FOR_CORRECTION
   REVIEWED
   EXPORTED_TO_BANK

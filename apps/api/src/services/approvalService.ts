@@ -100,7 +100,7 @@ export function determineApprovalRoute(
 
   // Tier 3: $100,000+ → + President
   if (tier >= 3) {
-    route.push({ role: SignatoryRole.PRESIDENT, assignee_name: 'President', sla_days: SLA_LIMITS.PRESIDENT_DAYS || 5 });
+    route.push({ role: SignatoryRole.PRESIDENT, assignee_name: 'President', sla_days: SLA_LIMITS.PRESIDENT_DAYS });
   }
 
   return route;
@@ -1387,7 +1387,7 @@ function getSLAForRole(signerRole: string): number {
     [SignatoryRole.MLO_PLANNING_MANAGER]: SLA_LIMITS.MLO_PLANNING_MANAGER_DAYS,
     [SignatoryRole.SR_MANAGER_GLOBAL_PRODUCTION]: SLA_LIMITS.SR_MANAGER_DAYS,
     [SignatoryRole.MS_POLLY]: SLA_LIMITS.MS_POLLY_DAYS,
-    [SignatoryRole.PRESIDENT]: SLA_LIMITS.PRESIDENT_DAYS || 5,
+    [SignatoryRole.PRESIDENT]: SLA_LIMITS.PRESIDENT_DAYS,
     [SignatoryRole.ACCOUNTING_REVIEWER]: SLA_LIMITS.ACCOUNTING_DAYS,
   };
   return mapping[signerRole] || 7;

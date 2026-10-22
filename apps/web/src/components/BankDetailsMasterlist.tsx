@@ -56,6 +56,7 @@ export default function BankDetailsMasterlist() {
   const [editingEntry, setEditingEntry] = useState<BankDetailsEntry | null>(null);
   const [editData, setEditData] = useState<Partial<BankDetailsEntry>>({});
   const [editEvidence, setEditEvidence] = useState({ reason: '', phone_validation_confirmation: '', supporting_documents: '' });
+  const [editEvidenceFiles, setEditEvidenceFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -127,6 +128,7 @@ export default function BankDetailsMasterlist() {
   const handleEdit = (entry: BankDetailsEntry) => {
     setEditingEntry(entry);
     setEditEvidence({ reason: '', phone_validation_confirmation: '', supporting_documents: '' });
+    setEditEvidenceFiles([]);
     setEditData({
       name: entry.name,
       beneficiary_name: entry.beneficiary_name,
@@ -171,8 +173,8 @@ export default function BankDetailsMasterlist() {
 
   const handleSave = async () => {
     if (!editingEntry) return;
-    if (user?.role === 'ACCOUNTING_ASSOCIATE' && (!editEvidence.reason.trim() || !editEvidence.phone_validation_confirmation.trim() || !editEvidence.supporting_documents.trim())) {
-      showToast('Reason, Purchasing phone-validation confirmation, and supporting document reference are required.', 'error');
+    if (user?.role === 'ACCOUNTING_ASSOCIATE' && (!editEvidence.reason.trim() || !editEvidence.phone_validation_confirmation.trim() || (!editEvidence.supporting_documents.trim() && editEvidenceFiles.length === 0))) {
+      showToast('Reason, Purchasing phone-validation confirmation, and at least one supporting document reference or file are required.', 'error');
       return;
     }
     setSaving(true);
@@ -194,6 +196,10 @@ export default function BankDetailsMasterlist() {
         } : {}),
       };
       const res = await vendorApi.updateBankDetails(editingEntry.id, payload);
+      const requestId = res.data?.request?.id;
+      if (requestId && editEvidenceFiles.length > 0) {
+        for (const file of editEvidenceFiles) await vendorApi.uploadBankChangeEvidence(editingEntry.id, requestId, file);
+      }
       showToast(res.data.message, 'success');
       setShowEditModal(false);
       setEditingEntry(null);
@@ -210,6 +216,7 @@ export default function BankDetailsMasterlist() {
     setShowEditModal(false);
     setEditingEntry(null);
     setEditData({});
+    setEditEvidenceFiles([]);
   };
 
   const handleDelete = async (entry: BankDetailsEntry) => {
@@ -611,6 +618,10 @@ export default function BankDetailsMasterlist() {
                   <input value={editEvidence.reason} onChange={(e) => setEditEvidence({ ...editEvidence, reason: e.target.value })} placeholder="Reason for change *" className="w-full px-3 py-2 rounded-lg text-sm" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }} />
                   <input value={editEvidence.phone_validation_confirmation} onChange={(e) => setEditEvidence({ ...editEvidence, phone_validation_confirmation: e.target.value })} placeholder="Purchasing phone-validation confirmation *" className="w-full px-3 py-2 rounded-lg text-sm" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }} />
                   <textarea value={editEvidence.supporting_documents} onChange={(e) => setEditEvidence({ ...editEvidence, supporting_documents: e.target.value })} placeholder="Supporting document reference(s) *" rows={2} className="w-full px-3 py-2 rounded-lg text-sm resize-none" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }} />
+                  <label className="block text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
+                    Supporting document files (you may select multiple)
+                    <input type="file" multiple onChange={(e) => setEditEvidenceFiles(Array.from(e.target.files || []))} className="block w-full mt-1 text-xs" />
+                  </label>
                 </div>
               )}
             </div>

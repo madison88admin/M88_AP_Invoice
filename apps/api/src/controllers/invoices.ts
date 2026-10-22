@@ -262,7 +262,7 @@ export const deleteInvoice = async (
       req.user!.name
     );
     res.json(result);
-    eventBroadcaster.broadcast({ type: 'INVOICE_DELETED', invoiceId: req.params.id, timestamp: Date.now() });
+    eventBroadcaster.broadcast({ type: result.closed ? 'INVOICE_UPDATED' : 'INVOICE_DELETED', invoiceId: req.params.id, timestamp: Date.now() });
   } catch (error) {
     next(error);
   }
@@ -285,8 +285,8 @@ export const deleteInvoicesBulk = async (
       req.user!.name,
     );
     for (const item of result.results) {
-      if (item.deleted) {
-        eventBroadcaster.broadcast({ type: 'INVOICE_DELETED', invoiceId: item.id, timestamp: Date.now() });
+      if (item.deleted || item.closed) {
+        eventBroadcaster.broadcast({ type: item.closed ? 'INVOICE_UPDATED' : 'INVOICE_DELETED', invoiceId: item.id, timestamp: Date.now() });
       }
     }
     res.json(result);

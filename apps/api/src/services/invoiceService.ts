@@ -1373,10 +1373,10 @@ export const deleteInvoice = async (id: string, userId: string, userRole: string
     throw new AppError('Invoice not found', 404);
   }
 
-  // Duplicate submissions are explicitly removable, even if they have
-  // already reached a manager/review stage or carry a retention date. The
-  // surviving canonical invoice remains untouched; this only removes the
-  // duplicate record selected by the user.
+  // Duplicate submissions must remain searchable and auditable. They are
+  // closed as confirmed duplicates rather than hard-deleted, even when the
+  // user invokes the legacy Delete action. Only intake/OCR drafts that have
+  // never entered the AP workflow may be physically removed.
   const normalizedInvoiceNumber = existing.normalized_invoice_number
     || normalizeInvoiceReference(existing.invoice_number);
   // Some isolated service tests provide a minimal Prisma mock without `count`.
@@ -1435,6 +1435,42 @@ export const deleteInvoice = async (id: string, userId: string, userRole: string
     if (liveBatch) {
       throw new AppError(`Cannot delete invoice: it is inside batch ${liveBatch.batch_number}. Remove it from the batch first.`, 400);
     }
+  }
+
+  if (isDuplicateRecord) {
+    const closed = await prisma.invoice.update({
+      where: { id },
+      data: {
+        status: 'CANCELLED' as any,
+        is_duplicate: true,
+        duplicate_review_status: 'CONFIRMED_DUPLICATE' as any,
+        duplicate_review_reason: 'Closed as confirmed duplicate; source record retained for audit.',
+        duplicate_reviewed_by: userId,
+        duplicate_reviewed_at: new Date(),
+        cancellation_reason: 'Confirmed duplicate submission',
+        cancelled_by: userId,
+        cancelled_at: new Date(),
+      } as any,
+    });
+    await prisma.invoiceWorkflowAction.create({
+      data: {
+        invoice_id: id,
+        invoice_revision: existing.revision,
+        action: 'DUPLICATE_CLOSED',
+        from_stage: existing.status,
+        to_stage: 'CANCELLED',
+        reason: 'Confirmed duplicate submission; record retained for audit.',
+        performed_by: userId,
+        performed_by_role: userRole,
+      } as any,
+    });
+    await logAudit({
+      invoice_id: id,
+      performed_by: userName,
+      action: 'DUPLICATE_CLOSED',
+      note: `Invoice ${existing.invoice_number} closed as a confirmed duplicate by ${userName}; record and PDF retained.`,
+    });
+    return { id, deleted: false, closed: true, invoice_number: existing.invoice_number };
   }
 
   // Audit BEFORE deleting. The invoice's audit logs cascade away with it, so
@@ -1501,11 +1537,11 @@ export const deleteInvoicesBulk = async (
     throw new AppError('Bulk delete is limited to 100 invoices per request', 400);
   }
 
-  const results: Array<{ id: string; deleted: boolean; invoice_number?: string; error?: string }> = [];
+  const results: Array<{ id: string; deleted: boolean; closed?: boolean; invoice_number?: string; error?: string }> = [];
   for (const id of uniqueIds) {
     try {
-      const deleted = await deleteInvoice(id, userId, userRole, userName);
-      results.push({ ...deleted, deleted: true });
+      const result = await deleteInvoice(id, userId, userRole, userName);
+      results.push(result as any);
     } catch (error: any) {
       results.push({
         id,
@@ -1516,10 +1552,12 @@ export const deleteInvoicesBulk = async (
   }
 
   const deleted = results.filter((result) => result.deleted).length;
+  const closed = results.filter((result) => result.closed).length;
   return {
     requested: uniqueIds.length,
     deleted,
-    failed: uniqueIds.length - deleted,
+    closed,
+    failed: uniqueIds.length - deleted - closed,
     results,
   };
 };

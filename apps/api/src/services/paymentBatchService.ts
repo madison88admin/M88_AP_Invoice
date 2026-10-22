@@ -1684,15 +1684,14 @@ export async function submitPaymentBatchForReview(batchId: string, userId: strin
   return prisma.paymentBatch.update({
     where: { id: batchId },
     data: {
-      // Accounting Associate now owns the batch end-to-end. REVIEWED is kept
-      // as the existing downstream-ready status for export/process screens;
-      // no supervisor approval or handoff is required.
-      status: PaymentBatchStatus.REVIEWED as any,
+      // The Associate prepares the batch; the Supervisor must independently
+      // review it before it can proceed to bank/CFO controls.
+      status: PaymentBatchStatus.PENDING_SUPERVISOR_REVIEW as any,
       submitted_by: userId,
       submitted_at: new Date(),
-      reviewed_by: userId,
-      reviewed_at: new Date(),
-      review_note: 'Marked ready by Accounting Associate — supervisor review is not required.',
+      reviewed_by: null,
+      reviewed_at: null,
+      review_note: null,
       return_reason: null,
       returned_at: null,
       returned_by: null,
@@ -1701,15 +1700,44 @@ export async function submitPaymentBatchForReview(batchId: string, userId: strin
 }
 
 export async function reviewPaymentBatch(batchId: string, userId: string, note?: string) {
-  const batch = await prisma.paymentBatch.findUnique({ where: { id: batchId } });
+  const batch = await prisma.paymentBatch.findUnique({ where: { id: batchId }, include: { payments: { include: { invoice: true } } } });
   if (!batch) throw new AppError('Payment batch not found', 404);
   if (batch.status !== PaymentBatchStatus.PENDING_SUPERVISOR_REVIEW) {
     throw new AppError('Batch is not pending supervisor review', 400);
   }
+  const payments = Array.isArray((batch as any).payments) ? (batch as any).payments : [];
+  const requiresCfo = Number(batch.total_amount || 0) >= 100000 || payments.some((payment: any) => Boolean(payment.invoice?.bank_match_details?.requires_cfo_approval));
+  const nextStatus = requiresCfo ? PaymentBatchStatus.PENDING_CFO : PaymentBatchStatus.REVIEWED;
   return prisma.paymentBatch.update({
     where: { id: batchId },
-    data: { status: PaymentBatchStatus.REVIEWED as any, reviewed_by: userId, reviewed_at: new Date(), review_note: note || null },
+    data: { status: nextStatus as any, reviewed_by: userId, reviewed_at: new Date(), review_note: note || null },
   });
+}
+
+export async function approveCfoPaymentBatch(batchId: string, userId: string, note?: string) {
+  const batch = await prisma.paymentBatch.findUnique({ where: { id: batchId } });
+  if (!batch) throw new AppError('Payment batch not found', 404);
+  if (batch.status !== PaymentBatchStatus.PENDING_CFO) throw new AppError('Batch is not pending CFO approval', 400);
+  const updated = await prisma.paymentBatch.update({
+    where: { id: batchId },
+    data: { status: PaymentBatchStatus.REVIEWED as any, cfo_approved_by: userId, cfo_approved_at: new Date(), cfo_note: note?.trim() || null } as any,
+  });
+  await prisma.auditLog.create({ data: { action: 'PAYMENT_BATCH_CFO_APPROVED', performed_by: userId, note: `CFO approved payment batch ${batch.batch_number}${note ? `: ${note.trim()}` : ''}` } });
+  return updated;
+}
+
+export async function rejectCfoPaymentBatch(batchId: string, userId: string, reason: string) {
+  const trimmed = String(reason || '').trim();
+  if (!trimmed) throw new AppError('CFO rejection reason is required', 400);
+  const batch = await prisma.paymentBatch.findUnique({ where: { id: batchId } });
+  if (!batch) throw new AppError('Payment batch not found', 404);
+  if (batch.status !== PaymentBatchStatus.PENDING_CFO) throw new AppError('Batch is not pending CFO approval', 400);
+  const updated = await prisma.paymentBatch.update({
+    where: { id: batchId },
+    data: { status: PaymentBatchStatus.RETURNED_FOR_CORRECTION as any, cfo_note: trimmed, returned_by: userId, returned_at: new Date(), return_reason: trimmed } as any,
+  });
+  await prisma.auditLog.create({ data: { action: 'PAYMENT_BATCH_CFO_REJECTED', performed_by: userId, note: `CFO returned payment batch ${batch.batch_number}: ${trimmed}` } });
+  return updated;
 }
 
 export async function returnPaymentBatch(batchId: string, userId: string, reason: string) {

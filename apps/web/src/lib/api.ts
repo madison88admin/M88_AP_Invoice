@@ -205,6 +205,8 @@ export const paymentBatchApi = {
   submit: (batchId: string) => api.post(`/api/payment-batches/${batchId}/submit`),
   review: (batchId: string, note?: string) => api.post(`/api/payment-batches/${batchId}/review`, { note }),
   returnForCorrection: (batchId: string, reason: string) => api.post(`/api/payment-batches/${batchId}/return`, { reason }),
+  approveCfo: (batchId: string, note?: string) => api.post(`/api/payment-batches/${batchId}/cfo-approve`, { note }),
+  rejectCfo: (batchId: string, reason: string) => api.post(`/api/payment-batches/${batchId}/cfo-reject`, { reason }),
   returnInvoices: (batchId: string, paymentIds: string[], reason: string) => api.post(`/api/payment-batches/${batchId}/return-invoices`, { paymentIds, reason }),
   updatePaymentBillsSetup: (batchId: string, data: { paymentMethod?: string | null; bankAccount?: string | null; paymentDate?: string | null }) => api.post(`/api/payment-batches/${batchId}/payment-setup`, data),
   applyBankCharge: (batchId: string, paymentId: string, amount: number, note?: string) => api.post(`/api/payment-batches/${batchId}/bank-charge`, { paymentId, amount, note }),
@@ -297,6 +299,12 @@ export const vendorApi = {
   getBankDetails: () => api.get('/api/vendors/bank-details/masterlist'),
   getBankDetailsById: (id: string) => api.get(`/api/vendors/${id}/bank-details`),
   updateBankDetails: (id: string, data: any) => api.patch(`/api/vendors/${id}/bank-details`, data),
+  uploadBankChangeEvidence: (vendorId: string, requestId: string, file: File) => {
+    const form = new FormData();
+    form.append('request_id', requestId);
+    form.append('file', file);
+    return api.post(`/api/vendors/${vendorId}/bank-change-evidence`, form, { headers: { 'Content-Type': 'multipart/form-data' } });
+  },
 };
 
 export const auditLogApi = {

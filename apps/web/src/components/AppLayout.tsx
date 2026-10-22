@@ -13,7 +13,7 @@ import {
   Menu, X, LogOut, Upload, Pause, Activity, Gauge, History,
   ClipboardList, Landmark,
   RotateCcw, Clock3,
-  CheckCircle, XCircle, GitCompare,
+  CheckCircle, XCircle, GitCompare, DollarSign,
 } from 'lucide-react';
 
 interface AppLayoutProps {
@@ -75,6 +75,7 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
       label: 'Accounting',
       items: [
         { icon: Package, label: 'Payment Batches', path: '/payment-batches', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'batches', badgeColor: 'lime' },
+        { icon: DollarSign, label: 'CFO Approval', path: '/cfo-approval', roles: ['CFO', 'IT_ADMIN', 'SUPERADMIN'] },
         { icon: XCircle, label: 'Cancelled Payment Batches', path: '/cancelled-payment-batches', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'cancelledBatches', badgeColor: 'red' },
         { icon: FileSearch, label: 'Accounting Review', path: '/accounting-review', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'review', badgeColor: 'blue' },
         { icon: CheckCircle, label: 'Approved Invoices', path: '/accounting-approved-invoices', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'accountingApproved', badgeColor: 'lime' },

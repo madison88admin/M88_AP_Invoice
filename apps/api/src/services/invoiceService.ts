@@ -14,6 +14,7 @@ import { parseMPOReference } from '../utils/mpoReference';
 import { Prisma } from '@prisma/client';
 import { getVendorPaymentTermDefault, preferExtractedPaymentTerms } from './vendorDefaultsService';
 import { captureInvoiceBankSnapshotRevision, ensureInvoiceBankSnapshot } from './invoiceBankSnapshotService';
+import { normalizeInvoiceReference } from './accountingControlService';
 
 // Keep update/read endpoints safe during a rolling deploy where the API may
 // briefly load an older shared-package build.  Older builds did not export the
@@ -1376,7 +1377,24 @@ export const deleteInvoice = async (id: string, userId: string, userRole: string
   // already reached a manager/review stage or carry a retention date. The
   // surviving canonical invoice remains untouched; this only removes the
   // duplicate record selected by the user.
-  const isDuplicateRecord = Boolean(existing.is_duplicate)
+  const normalizedInvoiceNumber = existing.normalized_invoice_number
+    || normalizeInvoiceReference(existing.invoice_number);
+  // Some isolated service tests provide a minimal Prisma mock without `count`.
+  // In production Prisma always exposes it; falling back to zero keeps the
+  // existing flag/status based duplicate path backwards-compatible.
+  const sameInvoiceNumberCount = normalizedInvoiceNumber && typeof prisma.invoice.count === 'function'
+    ? await prisma.invoice.count({
+      where: {
+        id: { not: id },
+        OR: [
+          { normalized_invoice_number: normalizedInvoiceNumber },
+          ...(existing.invoice_number ? [{ invoice_number: existing.invoice_number }] : []),
+        ],
+      },
+    })
+    : 0;
+  const isDuplicateRecord = sameInvoiceNumberCount > 0
+    || Boolean(existing.is_duplicate)
     || ['PENDING', 'DUPLICATE_SUBMISSION', 'CONFIRMED_DUPLICATE'].includes(
       String((existing as any).duplicate_review_status || '').toUpperCase(),
     )

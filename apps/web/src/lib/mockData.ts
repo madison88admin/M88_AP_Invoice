@@ -31,6 +31,10 @@ export interface MockInvoice {
   material_name?: string;
   qty_shipped?: number;
   status: InvoiceStatus;
+  normalized_invoice_number?: string;
+  workflow_status?: string;
+  duplicate_review_status?: string;
+  is_duplicate?: boolean;
   cancellation_requested_by?: string;
   cancellation_requested_at?: string;
   cancellation_request_reason?: string;

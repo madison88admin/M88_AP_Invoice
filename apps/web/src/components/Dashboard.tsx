@@ -201,6 +201,17 @@ function isDuplicateInvoice(invoice: MockInvoice): boolean {
     || ['DUPLICATE_REVIEW', 'REVISION_REVIEW'].includes(workflowStatus);
 }
 
+/** Match the accounting duplicate key while keeping the printed number intact. */
+function invoiceNumberKey(invoice: MockInvoice): string {
+  const record = invoice as any;
+  const raw = String(record.normalized_invoice_number || invoice.invoice_number || '').trim().toUpperCase();
+  if (!raw) return '';
+  return raw.replace(/[^A-Z0-9]/g, '')
+    .replace(/(?:REV(?:ISION)?|CORR(?:ECTED)?|REPLACEMENT)$/i, '')
+    .replace(/^0+(?=\d)/, '')
+    .replace(/^([A-Z]+)0+(?=\d)/, '$1');
+}
+
 /** True when a coordinator still needs to resolve a PO or vendor problem. */
 function hasCoordinatorValidationIssue(invoice: MockInvoice): boolean {
   const validation = invoice.po_validation as any;
@@ -495,6 +506,21 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
     return true;
   });
 
+  // Some legacy/imported rows predate persisted duplicate flags. Build the
+  // duplicate view from the invoice number as the source of truth as well.
+  const invoiceNumberCounts = new Map<string, number>();
+  for (const invoice of roleFilteredInvoices) {
+    const key = invoiceNumberKey(invoice);
+    if (key) invoiceNumberCounts.set(key, (invoiceNumberCounts.get(key) || 0) + 1);
+  }
+  const repeatedInvoiceNumberKeys = new Set(
+    [...invoiceNumberCounts.entries()].filter(([, count]) => count > 1).map(([key]) => key),
+  );
+  const hasRepeatedInvoiceNumber = (invoice: MockInvoice) => {
+    const key = invoiceNumberKey(invoice);
+    return Boolean(key && repeatedInvoiceNumberKeys.has(key));
+  };
+
   // Apply quick filter (returned / urgent)
   const quickFilteredInvoices = filteredInvoices.filter(inv => {
     if (quickFilter === 'all') return true;
@@ -521,7 +547,7 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
         && hasCoordinatorValidationIssue(inv);
     }
     if (quickFilter === 'duplicates') {
-      return isDuplicateInvoice(inv);
+      return isDuplicateInvoice(inv) || hasRepeatedInvoiceNumber(inv);
     }
     return true;
   });
@@ -535,7 +561,9 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
   const coordinatorIssuesCount = filteredInvoices.filter(inv =>
     inv.status === InvoiceStatus.PENDING_COORDINATOR && hasCoordinatorValidationIssue(inv)
   ).length;
-  const duplicateInvoicesCount = filteredInvoices.filter(isDuplicateInvoice).length;
+  const duplicateInvoicesCount = filteredInvoices.filter((invoice) =>
+    isDuplicateInvoice(invoice) || hasRepeatedInvoiceNumber(invoice),
+  ).length;
 
   // Count how many filters are currently active (for the "Clear" affordance)
   const activeFilterCount = Object.values(filters).filter(v => v !== undefined && v !== '').length;

@@ -19,7 +19,7 @@ import { cn } from '../lib/utils';
 import { getAuditActorDisplay } from '../lib/auditActor';
 import { getPendingApprovalsForUser, getReturnedInvoicesForUser, isReturnedSignatureForUser } from '../lib/approvalQueue';
 import { displayInvoiceStatus, isCoordinatorQueueStatus } from '../lib/coordinatorQueue';
-import { FileText, Clock, CalendarDays, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, RotateCcw, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, ChevronRight, LogOut, Edit, Unlock, Pause, Users, Loader2, Menu, X, Trash2, Landmark, Paperclip, Upload, Download, Eye, Info, PenTool, Zap } from 'lucide-react';
+import { FileText, Clock, CalendarDays, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, RotateCcw, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, ChevronRight, LogOut, Edit, Unlock, Pause, Users, Loader2, Menu, X, Trash2, Landmark, Paperclip, Upload, Download, Eye, Info, PenTool, Zap, Copy } from 'lucide-react';
 import { Skeleton, SkeletonBar } from './ui/Skeleton';
 
 const CANCELLATION_APPROVER_BY_USER_ROLE: Record<string, string> = {
@@ -185,7 +185,21 @@ function displayApRecordId(invoice: any): string {
   return `AP-${year}-${compact}`;
 }
 
-type QuickFilter = 'all' | 'returned' | 'urgent' | 'issues';
+type QuickFilter = 'all' | 'returned' | 'urgent' | 'issues' | 'duplicates';
+
+/**
+ * Keep duplicate triage in one place so the repository filter and the delete
+ * affordance use the same definition as the backend duplicate workflow.
+ * A row may be flagged either by the detector or by a coordinator's review.
+ */
+function isDuplicateInvoice(invoice: MockInvoice): boolean {
+  const record = invoice as any;
+  const reviewStatus = String(record.duplicate_review_status || '').toUpperCase();
+  const workflowStatus = String(record.workflow_status || '').toUpperCase();
+  return Boolean(record.is_duplicate)
+    || ['PENDING', 'DUPLICATE_SUBMISSION', 'CONFIRMED_DUPLICATE'].includes(reviewStatus)
+    || ['DUPLICATE_REVIEW', 'REVISION_REVIEW'].includes(workflowStatus);
+}
 
 /** True when a coordinator still needs to resolve a PO or vendor problem. */
 function hasCoordinatorValidationIssue(invoice: MockInvoice): boolean {
@@ -506,6 +520,9 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
         && inv.status === InvoiceStatus.PENDING_COORDINATOR
         && hasCoordinatorValidationIssue(inv);
     }
+    if (quickFilter === 'duplicates') {
+      return isDuplicateInvoice(inv);
+    }
     return true;
   });
 
@@ -518,6 +535,7 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
   const coordinatorIssuesCount = filteredInvoices.filter(inv =>
     inv.status === InvoiceStatus.PENDING_COORDINATOR && hasCoordinatorValidationIssue(inv)
   ).length;
+  const duplicateInvoicesCount = filteredInvoices.filter(isDuplicateInvoice).length;
 
   // Count how many filters are currently active (for the "Clear" affordance)
   const activeFilterCount = Object.values(filters).filter(v => v !== undefined && v !== '').length;
@@ -565,7 +583,7 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
     }
     setRepoAtTop(true);
     setRepoRange(null);
-  }, [filters]);
+  }, [filters, quickFilter]);
 
   // Fetch vendor list for filter dropdown
   useEffect(() => {
@@ -2575,6 +2593,21 @@ ${dataRows}
                     )}
                   </button>
                 )}
+                <button
+                  onClick={() => setQuickFilter('duplicates')}
+                  className="px-3 py-1.5 rounded-full text-xs font-medium transition-all inline-flex items-center gap-1.5"
+                  style={quickFilter === 'duplicates'
+                    ? { background: 'var(--accent-amber)', color: 'var(--text-inverse)' }
+                    : { background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', color: 'var(--accent-amber)', border: '1px solid color-mix(in srgb, var(--accent-amber) 25%, transparent)' }}
+                >
+                  <Copy className="h-3 w-3" strokeWidth={2} />
+                  Duplicate Invoices
+                  {duplicateInvoicesCount > 0 && (
+                    <span className="ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: 'rgba(0,0,0,0.2)' }}>
+                      {duplicateInvoicesCount}
+                    </span>
+                  )}
+                </button>
               </div>
               {/* Primary filters — always visible */}
               <div className="flex flex-col md:flex-row items-start md:items-center gap-3">

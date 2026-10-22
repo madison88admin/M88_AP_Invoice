@@ -1379,6 +1379,9 @@ export const deleteInvoice = async (id: string, userId: string, userRole: string
   const isDuplicateRecord = Boolean(existing.is_duplicate)
     || ['PENDING', 'DUPLICATE_SUBMISSION', 'CONFIRMED_DUPLICATE'].includes(
       String((existing as any).duplicate_review_status || '').toUpperCase(),
+    )
+    || ['DUPLICATE_REVIEW', 'REVISION_REVIEW'].includes(
+      String((existing as any).workflow_status || '').toUpperCase(),
     );
 
   // Hard-delete is reserved for intake/OCR mistakes that never entered the

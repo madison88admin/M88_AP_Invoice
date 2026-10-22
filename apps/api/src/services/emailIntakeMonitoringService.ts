@@ -23,8 +23,8 @@ export type EmailIntakeStage =
 type IntakeEventInput = {
   source: 'GRAPH' | 'POWER_AUTOMATE' | 'SHAREPOINT' | 'MANUAL_UPLOAD' | string;
   stage: EmailIntakeStage;
-  /** REVIEW_REQUIRED is a terminal routing outcome, not a system failure. */
-  status?: 'SUCCESS' | 'COMPLETED' | 'REVIEW_REQUIRED' | 'FAILED';
+  /** REVIEW_REQUIRED and BLOCKED are terminal routing outcomes, not system failures. */
+  status?: 'SUCCESS' | 'COMPLETED' | 'REVIEW_REQUIRED' | 'FAILED' | 'BLOCKED';
   mailbox?: string;
   messageId?: string;
   attachmentId?: string;
@@ -114,6 +114,12 @@ async function createReviewInvoiceRecord(input: {
       : ['statement', 'debit_note', 'credit_note'].some((value) => lowerType.includes(value))
         ? 'NON_PAYABLE_REVIEW'
         : 'PURCHASING_REVIEW';
+    // The intake channel (GRAPH/POWER_AUTOMATE/SHAREPOINT) is retained in
+    // the review metadata, while Invoice.source must stay within the Prisma
+    // InvoiceSource enum.
+    const invoiceSource = ['EMAIL', 'MANUAL_UPLOAD', 'PORTAL'].includes(String(input.source).toUpperCase())
+      ? String(input.source).toUpperCase()
+      : 'EMAIL';
     const retentionUntil = new Date();
     retentionUntil.setFullYear(retentionUntil.getFullYear() + 7);
     const extractedDate = metadata.invoice_date ? new Date(String(metadata.invoice_date)) : null;
@@ -129,7 +135,7 @@ async function createReviewInvoiceRecord(input: {
         invoice_type: invoiceType,
         status: InvoiceStatus.EXCEPTION_FLAGGED,
         workflow_status: workflowStatus,
-        source: 'EMAIL' as any,
+        source: invoiceSource as any,
         source_document_type: rawType || null,
         source_message_id: input.messageId || input.intakeId,
         source_attachment_id: input.attachmentId || null,

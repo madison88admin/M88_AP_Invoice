@@ -18,6 +18,12 @@ export function validateWorkflowTransition(from: string | null | undefined, to: 
   const previous = String(from || 'RECEIVED').toUpperCase();
   const next = String(to || previous).toUpperCase();
   if (previous === next) return { ok: true };
+  // A replacement intake may close an unprotected prior row as SUPERSEDED.
+  // This is an auditable terminal projection, not a route back into payment.
+  if (next === 'SUPERSEDED') return { ok: true };
+  if (previous === 'SUPERSEDED' && !context.allowCorrection) {
+    return { ok: false, reason: `SUPERSEDED records are immutable and cannot transition to ${next}.` };
+  }
   if (TERMINAL.has(previous) && !context.allowCorrection) {
     return { ok: false, reason: `${previous} records are immutable and cannot transition to ${next}.` };
   }

@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { checkEmailDuplicate, generateFileHash } from '../services/emailDuplicateService';
+import { checkEmailDuplicate, generateFileHash, getDuplicateReplacementDecision, isHardDuplicate, supersedeInvoiceForReplacement } from '../services/emailDuplicateService';
 import { createJob, completeJob, failJob, cleanupOldJobs } from '../services/jobStore';
 import { analyzeInvoice } from '../services/ocrService';
 import { matchVendor } from '../services/vendorMatchingService';
@@ -68,6 +68,7 @@ async function processSingleEmailInvoice(
   error?: string;
 }> {
   const partLabel = splitIndex !== undefined ? ` [part ${splitIndex + 1}]` : '';
+  let replacementParentId: string | null = null;
 
   try {
     // Step 1: Pre-OCR duplicate check (Level 1: email message ID, Level 2: file hash)
@@ -76,7 +77,18 @@ async function processSingleEmailInvoice(
       conversationId: emailMetadata.conversationId,
     });
 
-    // Matching email/hash is retained as a new AP record and reviewed later.
+    // Exact re-delivery of an unprotected invoice becomes a replacement
+    // cycle. Protected invoices remain blocked before any new row is created.
+    if (isHardDuplicate(preOcrDuplicate) && preOcrDuplicate.existingInvoiceId) {
+      const replacement = await getDuplicateReplacementDecision(preOcrDuplicate.existingInvoiceId);
+      if (!replacement?.canReplace) {
+        const reason = replacement?.reason || `Duplicate blocked: identical email/PDF already captured as ${preOcrDuplicate.existingInvoiceNumber || preOcrDuplicate.existingInvoiceId}.`;
+        logger.warn(`[${requestId}] ${reason}${partLabel}`);
+        return { success: false, duplicate: true, duplicateLevel: preOcrDuplicate.level, invoiceId: preOcrDuplicate.existingInvoiceId, invoiceNumber: preOcrDuplicate.existingInvoiceNumber, status: 'DUPLICATE_BLOCKED', error: reason };
+      }
+      replacementParentId = replacement.existingInvoiceId;
+      logger.info(`[${requestId}] Exact duplicate will replace unprotected invoice ${replacement.existingInvoiceNumber}${partLabel}`);
+    }
 
     // Step 1b: Upload to VPS Supabase Storage FIRST (before OCR — ensures file is saved even if OCR fails)
     let storagePath: string | undefined;
@@ -122,7 +134,16 @@ async function processSingleEmailInvoice(
       invoiceDate: ocrResult.invoice_date,
     });
 
-    // Keep processing; the new row will be marked DUPLICATE_REVIEW after save.
+    if (isHardDuplicate(postOcrDuplicate) && postOcrDuplicate.existingInvoiceId) {
+      const replacement = await getDuplicateReplacementDecision(postOcrDuplicate.existingInvoiceId);
+      if (!replacement?.canReplace) {
+        const reason = replacement?.reason || `Duplicate blocked: identical PDF already captured as ${postOcrDuplicate.existingInvoiceNumber || postOcrDuplicate.existingInvoiceId}.`;
+        logger.warn(`[${requestId}] ${reason}${partLabel}`);
+        return { success: false, duplicate: true, duplicateLevel: postOcrDuplicate.level, invoiceId: postOcrDuplicate.existingInvoiceId, invoiceNumber: postOcrDuplicate.existingInvoiceNumber, status: 'DUPLICATE_BLOCKED', error: reason };
+      }
+      replacementParentId = replacement.existingInvoiceId;
+      logger.info(`[${requestId}] Post-OCR exact duplicate will replace unprotected invoice ${replacement.existingInvoiceNumber}${partLabel}`);
+    }
 
     // Step 4: Vendor matching
     let vendorId: string | undefined;
@@ -165,6 +186,7 @@ async function processSingleEmailInvoice(
     const invoice = await prisma.invoice.create({
       data: {
         invoice_number: ocrResult.invoice_number,
+        ...(replacementParentId ? { parent_invoice_id: replacementParentId, revision: 1 } : {}),
         invoice_date: ocrResult.invoice_date,
         due_date: ocrResult.due_date ? new Date(ocrResult.due_date) : null,
         invoice_received_date: new Date(emailMetadata.receivedDate),
@@ -226,7 +248,7 @@ async function processSingleEmailInvoice(
         } : {}),
       },
     });
-    const duplicateCandidate = postOcrDuplicate.isDuplicate ? postOcrDuplicate : preOcrDuplicate;
+    const duplicateCandidate = replacementParentId ? null : (postOcrDuplicate.isDuplicate ? postOcrDuplicate : preOcrDuplicate);
     if (duplicateCandidate?.isDuplicate && duplicateCandidate.existingInvoiceId) {
       await createDuplicateRevisionReviewFromCandidate({
         invoiceId: invoice.id,
@@ -243,6 +265,9 @@ async function processSingleEmailInvoice(
         reason: `${fileName} matches existing invoice ${duplicateCandidate.existingInvoiceNumber || duplicateCandidate.existingInvoiceId}; Purchasing Coordinator classification required.`,
       });
       await prisma.invoice.update({ where: { id: invoice.id }, data: { status: InvoiceStatus.EXCEPTION_FLAGGED } as any });
+    }
+    if (replacementParentId) {
+      await supersedeInvoiceForReplacement(replacementParentId, invoice.id, 'email-intake');
     }
     await ensureInvoiceBankSnapshot(invoice.id, 'email-controller');
 
@@ -340,12 +365,22 @@ async function processSingleManualInvoice(
   error?: string;
 }> {
   const partLabel = splitIndex !== undefined ? ` [part ${splitIndex + 1}]` : '';
+  let replacementParentId: string | null = null;
 
   try {
     // Check file hash duplicate
     const dupCheck = await checkEmailDuplicate(fileBuffer);
 
-    // Matching hash is retained as a new AP record and reviewed later.
+    if (isHardDuplicate(dupCheck) && dupCheck.existingInvoiceId) {
+      const replacement = await getDuplicateReplacementDecision(dupCheck.existingInvoiceId);
+      if (!replacement?.canReplace) {
+        const reason = replacement?.reason || `Duplicate blocked: identical PDF already captured as ${dupCheck.existingInvoiceNumber || dupCheck.existingInvoiceId}.`;
+        logger.warn(`[${requestId}] ${reason}${partLabel}`);
+        return { success: false, duplicate: true, duplicateLevel: dupCheck.level, invoiceId: dupCheck.existingInvoiceId, invoiceNumber: dupCheck.existingInvoiceNumber, status: 'DUPLICATE_BLOCKED', error: reason };
+      }
+      replacementParentId = replacement.existingInvoiceId;
+      logger.info(`[${requestId}] Exact duplicate will replace unprotected invoice ${replacement.existingInvoiceNumber}${partLabel}`);
+    }
 
     // Upload to VPS Supabase Storage FIRST (before OCR — ensures file is saved even if OCR fails)
     let storagePath: string | undefined;
@@ -389,7 +424,16 @@ async function processSingleManualInvoice(
       invoiceDate: ocrResult.invoice_date,
     });
 
-    // Keep processing; the new row will be marked DUPLICATE_REVIEW after save.
+    if (isHardDuplicate(bizDup) && bizDup.existingInvoiceId) {
+      const replacement = await getDuplicateReplacementDecision(bizDup.existingInvoiceId);
+      if (!replacement?.canReplace) {
+        const reason = replacement?.reason || `Duplicate blocked: identical PDF already captured as ${bizDup.existingInvoiceNumber || bizDup.existingInvoiceId}.`;
+        logger.warn(`[${requestId}] ${reason}${partLabel}`);
+        return { success: false, duplicate: true, duplicateLevel: bizDup.level, invoiceId: bizDup.existingInvoiceId, invoiceNumber: bizDup.existingInvoiceNumber, status: 'DUPLICATE_BLOCKED', error: reason };
+      }
+      replacementParentId = replacement.existingInvoiceId;
+      logger.info(`[${requestId}] Post-OCR exact duplicate will replace unprotected invoice ${replacement.existingInvoiceNumber}${partLabel}`);
+    }
 
     // Vendor match
     let vendorId: string | undefined;
@@ -426,6 +470,7 @@ async function processSingleManualInvoice(
     const invoice = await prisma.invoice.create({
       data: {
         invoice_number: ocrResult.invoice_number,
+        ...(replacementParentId ? { parent_invoice_id: replacementParentId, revision: 1 } : {}),
         invoice_date: ocrResult.invoice_date,
         due_date: ocrResult.due_date ? new Date(ocrResult.due_date) : null,
         invoice_received_date: new Date(),
@@ -466,7 +511,7 @@ async function processSingleManualInvoice(
         } : {}),
       },
     });
-    const duplicateCandidate = bizDup.isDuplicate ? bizDup : dupCheck;
+    const duplicateCandidate = replacementParentId ? null : (bizDup.isDuplicate ? bizDup : dupCheck);
     if (duplicateCandidate?.isDuplicate && duplicateCandidate.existingInvoiceId) {
       await createDuplicateRevisionReviewFromCandidate({
         invoiceId: invoice.id,
@@ -483,6 +528,9 @@ async function processSingleManualInvoice(
         reason: `${fileName} matches existing invoice ${duplicateCandidate.existingInvoiceNumber || duplicateCandidate.existingInvoiceId}; Purchasing Coordinator classification required.`,
       });
       await prisma.invoice.update({ where: { id: invoice.id }, data: { status: InvoiceStatus.EXCEPTION_FLAGGED } as any });
+    }
+    if (replacementParentId) {
+      await supersedeInvoiceForReplacement(replacementParentId, invoice.id, uploadedBy || 'manual-upload');
     }
     await ensureInvoiceBankSnapshot(invoice.id, uploadedBy || 'email-controller');
 

@@ -19,7 +19,7 @@ import { analyzeWithRetry, describeIntakeError } from './intakeRetryService';
 import { hasStrongNonInvoiceHeading } from './nonInvoiceSuppression';
 import { PDFDocument } from 'pdf-lib';
 import { buildIntakeIdempotencyKey, evaluateIntakeControls } from './intakeControlService';
-import { checkEmailDuplicate, generateFileHash } from './emailDuplicateService';
+import { checkEmailDuplicate, generateFileHash, getDuplicateReplacementDecision, isHardDuplicate, supersedeInvoiceForReplacement } from './emailDuplicateService';
 import { getPayableBlockReason, isValidCommercialInvoice } from './payableDocumentGuard';
 import { normalizeInvoiceReference, createDuplicateRevisionReviewFromCandidate } from './accountingControlService';
 
@@ -269,7 +269,60 @@ type AtomicIntakeEvent = {
  */
 async function createInvoiceAndIntakeEvent(invoiceData: any, event: AtomicIntakeEvent): Promise<any> {
   return prisma.$transaction(async (tx) => {
+    let replacementParentId: string | null = null;
+    // Serialize the exact-file check per hash so two concurrent intake
+    // workers cannot both pass the pre-OCR check and create duplicate AP
+    // records. Revisions with a changed PDF hash are still allowed through
+    // the normal duplicate/revision review workflow.
+    const invoiceHash = String(invoiceData?.invoice_hash || '').trim();
+    if (invoiceHash) {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${invoiceHash}))`;
+      const existing = await tx.invoice.findFirst({
+        where: { invoice_hash: invoiceHash },
+        select: { id: true, invoice_number: true },
+      });
+      if (existing) {
+        const replacement = await getDuplicateReplacementDecision(existing.id, tx);
+        if (!replacement?.canReplace) {
+          const reason = replacement?.reason || `Duplicate blocked: identical PDF already captured as ${existing.invoice_number || existing.id}.`;
+          await tx.emailIntakeEvent.create({
+            data: {
+              source: event.source,
+              intake_id: event.intakeId,
+              mailbox: event.mailbox,
+              message_id: event.messageId || event.intakeId,
+              attachment_id: event.attachmentId,
+              file_name: event.fileName,
+              stage: 'DUPLICATE',
+              status: 'BLOCKED',
+              invoice_id: existing.id,
+              error: reason,
+              metadata: {
+                ...(event.metadata || {}),
+                duplicate_level: 'FILE_HASH',
+                existing_invoice_id: existing.id,
+                existing_invoice_number: existing.invoice_number,
+                file_hash: invoiceHash,
+              },
+            },
+          } as any);
+          return {
+            ...existing,
+            __duplicateBlocked: true,
+            duplicateBlockedReason: reason,
+          };
+        }
+        // Exact re-delivery of an unprotected invoice is a replacement cycle.
+        // Supersede the old row inside this same transaction, then create the
+        // new row below so the repository shows only the new intake.
+        replacementParentId = existing.id;
+        invoiceData = { ...invoiceData, parent_invoice_id: existing.id };
+      }
+    }
     const invoice = await tx.invoice.create({ data: invoiceData, include: { vendor: true } });
+    if (replacementParentId) {
+      await supersedeInvoiceForReplacement(replacementParentId, invoice.id, `intake:${event.source}`, tx);
+    }
     const { ensureInvoiceBankSnapshot } = await import('./invoiceBankSnapshotService');
     await ensureInvoiceBankSnapshot(invoice.id, 'email-intake', tx, event.source);
     await tx.emailIntakeEvent.create({
@@ -625,8 +678,21 @@ async function processSingleInvoiceAttachment(
       lineItemsSignature: Array.isArray((ocrResult as any).line_items) ? JSON.stringify((ocrResult as any).line_items) : undefined,
       documentLayoutFingerprint: ocrResult.document_layout_fingerprint,
     });
-    // A duplicate is retained as a new AP record. The coordinator will
-    // classify it after creation; never overwrite the existing PDF.
+    if (isHardDuplicate(graphDuplicate) && graphDuplicate.existingInvoiceId) {
+      const replacement = await getDuplicateReplacementDecision(graphDuplicate.existingInvoiceId);
+      if (!replacement?.canReplace) {
+        const reason = replacement?.reason || `Duplicate blocked: identical email/PDF already captured as ${graphDuplicate.existingInvoiceNumber || graphDuplicate.existingInvoiceId}.`;
+        await recordEmailIntakeEvent({
+          source: 'GRAPH', stage: 'DUPLICATE', status: 'BLOCKED', mailbox: mailboxAddress,
+          messageId: message.id, attachmentId, fileName, invoiceId: graphDuplicate.existingInvoiceId,
+          error: reason,
+          metadata: { duplicate_level: graphDuplicate.level, existing_invoice_id: graphDuplicate.existingInvoiceId, storage_path: storagePath, intake_id: graphIdempotencyKey },
+        });
+        logger.warn(`[Email Intake] ${fileName} duplicate blocked: ${reason}`);
+        return;
+      }
+      logger.info(`[Email Intake] ${fileName} exact duplicate will replace unprotected invoice ${replacement.existingInvoiceNumber}`);
+    }
 
     // OCR confidence threshold check — flag low confidence for manual review
     const OCR_CONFIDENCE_THRESHOLD = parseFloat(process.env.OCR_CONFIDENCE_THRESHOLD || '0.60');
@@ -773,6 +839,10 @@ async function processSingleInvoiceAttachment(
       },
     );
 
+    if ((invoice as any).__duplicateBlocked) {
+      logger.warn(`[Email Intake] ${fileName} duplicate blocked: ${(invoice as any).duplicateBlockedReason}`);
+      return;
+    }
     await flagDuplicateIntake(invoice, graphDuplicate, 'GRAPH', fileName);
 
     // Create signature records if detected
@@ -982,8 +1052,20 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
       lineItemsSignature: Array.isArray((ocrResult as any).line_items) ? JSON.stringify((ocrResult as any).line_items) : undefined,
       documentLayoutFingerprint: ocrResult.document_layout_fingerprint,
     });
-    // Keep the incoming PDF as a separate record; duplicate classification is
-    // performed after the record is committed.
+    if (isHardDuplicate(sharePointDuplicate) && sharePointDuplicate.existingInvoiceId) {
+      const replacement = await getDuplicateReplacementDecision(sharePointDuplicate.existingInvoiceId);
+      if (!replacement?.canReplace) {
+        const reason = replacement?.reason || `Duplicate blocked: identical PDF already captured as ${sharePointDuplicate.existingInvoiceNumber || sharePointDuplicate.existingInvoiceId}.`;
+        await recordEmailIntakeEvent({
+          source: 'SHAREPOINT', stage: 'DUPLICATE', status: 'BLOCKED', messageId: intakeKey,
+          fileName: data.fileName, invoiceId: sharePointDuplicate.existingInvoiceId, error: reason,
+          metadata: { duplicate_level: sharePointDuplicate.level, existing_invoice_id: sharePointDuplicate.existingInvoiceId, storage_path: storagePath, intake_id: sharePointIdempotencyKey },
+        });
+        logger.warn(`[SharePoint Intake] ${data.fileName} duplicate blocked: ${reason}`);
+        return { success: false, status: 'DUPLICATE_BLOCKED', error: reason, duplicate: true, invoiceId: sharePointDuplicate.existingInvoiceId } as any;
+      }
+      logger.info(`[SharePoint Intake] ${data.fileName} exact duplicate will replace unprotected invoice ${replacement.existingInvoiceNumber}`);
+    }
 
     // OCR confidence threshold check
     const OCR_CONFIDENCE_THRESHOLD = parseFloat(process.env.OCR_CONFIDENCE_THRESHOLD || '0.60');
@@ -1097,6 +1179,11 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
       },
     );
 
+    if ((invoice as any).__duplicateBlocked) {
+      const reason = (invoice as any).duplicateBlockedReason || 'Duplicate invoice blocked.';
+      logger.warn(`[SharePoint Intake] ${data.fileName} duplicate blocked: ${reason}`);
+      return { success: false, status: 'DUPLICATE_BLOCKED', error: reason, duplicate: true, invoiceId: invoice.id } as any;
+    }
     await flagDuplicateIntake(invoice, sharePointDuplicate, 'SHAREPOINT', data.fileName);
 
     // Create signature records if detected
@@ -1319,8 +1406,20 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
       lineItemsSignature: Array.isArray((ocrResult as any).line_items) ? JSON.stringify((ocrResult as any).line_items) : undefined,
       documentLayoutFingerprint: ocrResult.document_layout_fingerprint,
     });
-    // Keep the incoming PDF as a separate record; duplicate classification is
-    // performed after the record is committed.
+    if (isHardDuplicate(powerAutomateDuplicate) && powerAutomateDuplicate.existingInvoiceId) {
+      const replacement = await getDuplicateReplacementDecision(powerAutomateDuplicate.existingInvoiceId);
+      if (!replacement?.canReplace) {
+        const reason = replacement?.reason || `Duplicate blocked: identical PDF already captured as ${powerAutomateDuplicate.existingInvoiceNumber || powerAutomateDuplicate.existingInvoiceId}.`;
+        await recordEmailIntakeEvent({
+          source: 'POWER_AUTOMATE', stage: 'DUPLICATE', status: 'BLOCKED', messageId: intakeKey,
+          attachmentId: data.attachmentId, fileName: data.fileName, invoiceId: powerAutomateDuplicate.existingInvoiceId, error: reason,
+          metadata: { duplicate_level: powerAutomateDuplicate.level, existing_invoice_id: powerAutomateDuplicate.existingInvoiceId, storage_path: storagePath, intake_id: powerAutomateIdempotencyKey, ...provenance },
+        });
+        logger.warn(`[Power Automate] ${data.fileName} duplicate blocked: ${reason}`);
+        return { success: false, status: 'DUPLICATE_BLOCKED', error: reason, duplicate: true, invoiceId: powerAutomateDuplicate.existingInvoiceId } as any;
+      }
+      logger.info(`[Power Automate] ${data.fileName} exact duplicate will replace unprotected invoice ${replacement.existingInvoiceNumber}`);
+    }
 
     // OCR confidence threshold check
     const OCR_CONFIDENCE_THRESHOLD = parseFloat(process.env.OCR_CONFIDENCE_THRESHOLD || '0.60');
@@ -1472,6 +1571,11 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
       },
     );
 
+    if ((invoice as any).__duplicateBlocked) {
+      const reason = (invoice as any).duplicateBlockedReason || 'Duplicate invoice blocked.';
+      logger.warn(`[Power Automate] ${data.fileName} duplicate blocked: ${reason}`);
+      return { success: false, status: 'DUPLICATE_BLOCKED', error: reason, duplicate: true, invoiceId: invoice.id } as any;
+    }
     await flagDuplicateIntake(invoice, powerAutomateDuplicate, 'POWER_AUTOMATE', data.fileName);
 
     // Create signature records if detected

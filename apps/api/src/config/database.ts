@@ -12,6 +12,7 @@ function canonicalWorkflowStatus(
   sourceDocumentType?: unknown,
   documentClassification?: unknown,
 ): string {
+  if (String(duplicateReviewStatus || '').toUpperCase() === 'SUPERSEDED') return 'SUPERSEDED';
   if (String(duplicateReviewStatus || '').toUpperCase() === 'PENDING') return 'DUPLICATE_REVIEW';
   if (['CORRECTED_REVISED', 'REPLACEMENT'].includes(String(duplicateReviewStatus || '').toUpperCase())) return 'REVISION_REVIEW';
   const classificationType = documentClassification && typeof documentClassification === 'object'

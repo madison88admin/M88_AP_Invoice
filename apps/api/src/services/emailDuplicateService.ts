@@ -12,6 +12,118 @@ export interface EmailDuplicateResult {
 }
 
 /**
+ * Exact duplicate levels are intake idempotency failures, not revision
+ * candidates. The same email message or identical PDF must never create a
+ * second AP invoice row. A changed PDF may still continue through the normal
+ * revision/duplicate-review workflow.
+ */
+export function isHardDuplicate(result: EmailDuplicateResult | null | undefined): boolean {
+  return Boolean(result?.isDuplicate && (result.level === 'EMAIL' || result.level === 'FILE_HASH'));
+}
+
+const REPLACEMENT_PROTECTED_STATUSES = new Set([
+  'APPROVED',
+  'POSTED_TO_QB',
+  'PAYMENT_SCHEDULED',
+  'PAID',
+  'PAYMENT_CONFIRMATION_SENT',
+]);
+
+export type DuplicateReplacementDecision = {
+  canReplace: boolean;
+  existingInvoiceId: string;
+  existingInvoiceNumber: string;
+  reason?: string;
+};
+
+/**
+ * Decide whether an exact duplicate may start a fresh intake cycle.  The old
+ * row is never deleted: when replacement is allowed it is marked CANCELLED /
+ * SUPERSEDED and linked to the new row.  Approved, paid, batched, or
+ * legal-held records remain immutable and therefore keep the duplicate blocked.
+ */
+export async function getDuplicateReplacementDecision(
+  existingInvoiceId: string,
+  client: any = prisma,
+): Promise<DuplicateReplacementDecision | null> {
+  const existing = await client.invoice.findUnique({
+    where: { id: existingInvoiceId },
+    select: {
+      id: true,
+      invoice_number: true,
+      status: true,
+      workflow_status: true,
+      legal_hold: true,
+      payments: { select: { id: true }, take: 1 },
+    },
+  });
+  if (!existing) return null;
+
+  const status = String(existing.status || '').toUpperCase();
+  const workflowStatus = String(existing.workflow_status || '').toUpperCase();
+  const hasPayment = Array.isArray(existing.payments) && existing.payments.length > 0;
+  const protectedRecord = Boolean(existing.legal_hold)
+    || hasPayment
+    || REPLACEMENT_PROTECTED_STATUSES.has(status)
+    || ['POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID'].includes(workflowStatus);
+  if (protectedRecord) {
+    return {
+      canReplace: false,
+      existingInvoiceId: existing.id,
+      existingInvoiceNumber: existing.invoice_number,
+      reason: `Exact duplicate matches protected invoice ${existing.invoice_number}. Approved, paid, batched, or legal-held invoices cannot be superseded automatically.`,
+    };
+  }
+  return {
+    canReplace: true,
+    existingInvoiceId: existing.id,
+    existingInvoiceNumber: existing.invoice_number,
+  };
+}
+
+/** Mark an old intake row as superseded while retaining its audit trail. */
+export async function supersedeInvoiceForReplacement(
+  existingInvoiceId: string,
+  replacementInvoiceId: string,
+  source: string,
+  client: any = prisma,
+): Promise<void> {
+  const decision = await getDuplicateReplacementDecision(existingInvoiceId, client);
+  if (!decision) throw new Error(`Invoice ${existingInvoiceId} was not found for replacement`);
+  if (!decision.canReplace) throw new Error(decision.reason || 'Invoice is protected from replacement');
+
+  const note = `Superseded by replacement invoice ${replacementInvoiceId}; the replacement restarts the coordinator workflow.`;
+  await client.invoice.update({
+    where: { id: existingInvoiceId },
+    data: {
+      status: 'CANCELLED' as any,
+      workflow_status: 'SUPERSEDED',
+      is_duplicate: true,
+      duplicate_review_status: 'SUPERSEDED',
+      duplicate_review_reason: note,
+      duplicate_reviewed_by: source,
+      duplicate_reviewed_at: new Date(),
+      cancelled_by: source,
+      cancelled_at: new Date(),
+      cancellation_reason: note,
+    },
+  });
+  await client.auditLog.create({
+    data: {
+      invoice_id: existingInvoiceId,
+      action: 'INVOICE_SUPERSEDED_BY_REPLACEMENT',
+      performed_by: source,
+      note,
+      metadata: {
+        replacement_invoice_id: replacementInvoiceId,
+        existing_invoice_number: decision.existingInvoiceNumber,
+        reason: 'IDENTICAL_FILE_REDELIVERY',
+      },
+    },
+  });
+}
+
+/**
  * Level 1: Check by Internet Message ID (same email forwarded/re-sent)
  */
 async function checkByEmailMessageId(internetMessageId: string): Promise<{ invoiceId: string; invoiceNumber: string } | null> {

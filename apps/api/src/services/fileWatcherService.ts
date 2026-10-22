@@ -6,7 +6,7 @@ import { analyzeInvoice } from './ocrService';
 import { getUnknownVendorPlaceholder, matchOrCreateVendor } from './vendorMatchingService';
 import { getVendorPaymentTermDefault, preferExtractedPaymentTerms } from './vendorDefaultsService';
 import { validateInvoice } from './validationService';
-import { checkEmailDuplicate, generateFileHash } from './emailDuplicateService';
+import { checkEmailDuplicate, generateFileHash, getDuplicateReplacementDecision, isHardDuplicate, supersedeInvoiceForReplacement } from './emailDuplicateService';
 import { checkDuplicateInvoice } from './duplicateDetectionService';
 import { uploadToStorage } from './supabaseStorageService';
 import { InvoiceStatus, InvoiceSource, SignatureType, ExceptionReason, determineApprovalTier, BrandTier, isTop10Brand, TOP_10_BRANDS, UserRole } from '@ap-invoice/shared';
@@ -874,9 +874,9 @@ async function processSingleInvoiceBuffer(
   }
   ocrResult.invoice_number = recoveredInvoiceNumber;
 
-  // Step 4: Duplicate/revision detection. Every incoming attachment gets its
-  // own AP record and immutable PDF. Matching an existing invoice only creates
-  // a review flag; it must never replace or cancel an already approved record.
+  // Step 4: Duplicate/revision detection. An identical PDF is blocked before
+  // AP creation. A changed PDF remains immutable and may enter the separate
+  // revision/duplicate-review workflow without replacing an approved record.
   const fileHash = generateFileHash(fileBuffer);
   // Step 4b: retain the best matching record only as a review candidate. Do
   // not auto-supersede the candidate; the Purchasing Coordinator decides.
@@ -918,6 +918,28 @@ async function processSingleInvoiceBuffer(
       invoiceDate: ocrResult.invoice_date,
     });
 
+  // Exact re-delivery of an unprotected invoice starts a replacement cycle:
+  // the new row goes through coordinator review from the beginning and the
+  // old row is retained as SUPERSEDED. Protected rows remain blocked.
+  let replacementParentId: string | null = null;
+  if (isHardDuplicate(dupResult) && dupResult.existingInvoiceId) {
+    const replacement = await getDuplicateReplacementDecision(dupResult.existingInvoiceId);
+    if (!replacement?.canReplace) {
+      const reason = replacement?.reason || `Identical PDF already captured as ${dupResult.existingInvoiceNumber || dupResult.existingInvoiceId}; duplicate invoice creation blocked.`;
+      logger.warn(`[File Watcher] ${fileName}${partLabel} → duplicate blocked: ${reason}`);
+      safeMove(currentProcessingPath, DUPLICATES_DIR);
+      await createAuditLog(dupResult.existingInvoiceId, 'WATCHER_DUPLICATE_BLOCKED', reason);
+      await recordWatcherIntakeEvent(runIntakeId, {
+        source: 'POWER_AUTOMATE', stage: 'DUPLICATE', status: 'BLOCKED', fileName,
+        invoiceId: dupResult.existingInvoiceId, error: reason,
+        metadata: { duplicate_level: dupResult.level, existing_invoice_id: dupResult.existingInvoiceId, existing_invoice_number: dupResult.existingInvoiceNumber, file_hash: fileHash },
+      });
+      return { fileName, terminalStage: 'DUPLICATE', invoiceId: dupResult.existingInvoiceId, invoiceNumber: dupResult.existingInvoiceNumber, error: reason };
+    }
+    replacementParentId = replacement.existingInvoiceId;
+    logger.info(`[File Watcher] ${fileName}${partLabel} exact duplicate will replace unprotected invoice ${replacement.existingInvoiceNumber}`);
+  }
+
   // A matching hash/business key is a candidate, not a reason to drop the
   // attachment. Keep the PDF in the normal processing path and flag the new
   // record after it is committed.
@@ -928,8 +950,8 @@ async function processSingleInvoiceBuffer(
     });
     if (existing && !revisionParent && !normalizedRevisionCandidate) normalizedRevisionCandidate = existing;
   }
-  let duplicateCandidate: any = revisionParent || normalizedRevisionCandidate || null;
-  if (!duplicateCandidate && dupResult?.isDuplicate && dupResult.existingInvoiceId) {
+  let duplicateCandidate: any = replacementParentId ? null : (revisionParent || normalizedRevisionCandidate || null);
+  if (!replacementParentId && !duplicateCandidate && dupResult?.isDuplicate && dupResult.existingInvoiceId) {
     duplicateCandidate = await prisma.invoice.findUnique({
       where: { id: dupResult.existingInvoiceId },
       select: { id: true, revision: true, status: true, vendor_id: true, vendor_name_raw: true, invoice_number: true, normalized_invoice_number: true, total_amount: true, currency: true, invoice_date: true, invoice_hash: true, mpo_number: true, customer_po_number: true, document_layout_fingerprint: true, line_items_signature: true },
@@ -1026,8 +1048,10 @@ async function processSingleInvoiceBuffer(
     }
     const baseData: any = {
         invoice_number: effectiveInvoiceNumber,
-        revision: duplicateCandidate ? Number(duplicateCandidate.revision || 1) + 1 : 1,
-        ...(duplicateCandidate ? { parent_invoice_id: duplicateCandidate.id } : {}),
+        revision: replacementParentId ? 1 : (duplicateCandidate ? Number(duplicateCandidate.revision || 1) + 1 : 1),
+        ...(replacementParentId
+          ? { parent_invoice_id: replacementParentId }
+          : (duplicateCandidate ? { parent_invoice_id: duplicateCandidate.id } : {})),
         invoice_date: ocrResult.invoice_date,
         due_date: ocrResult.due_date ? new Date(ocrResult.due_date) : null,
         invoice_received_date: (() => {
@@ -1139,6 +1163,9 @@ async function processSingleInvoiceBuffer(
     // path instead of moving the file away and leaving a stale processing path
     // in the invoice row (the cause of the blank-PDF incident for 254616).
     invoiceId = invoice.id;
+    if (replacementParentId) {
+      await supersedeInvoiceForReplacement(replacementParentId, invoice.id, 'file_watcher');
+    }
     try {
       await ensureInvoiceBankSnapshot(invoice.id, 'power-automate-watcher');
     } catch (snapshotError) {

@@ -318,6 +318,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
     cutoffDate: nextWednesdayInputValue(),
     asOfDate: new Date().toISOString().slice(0, 10),
     scheduleRef: '',
+    applyCutoff: true,
   });
   const [bulkReleasing, setBulkReleasing] = useState(false);
   const [bulkPostingAll, setBulkPostingAll] = useState(false);
@@ -395,7 +396,16 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
 
   const loadScheduledPayments = useCallback(async () => {
     try {
-      const response = await paymentBatchApi.getScheduledPayments(Object.fromEntries(Object.entries(filters).filter(([, value]) => value)));
+      const queueFilters = {
+        ...filters,
+        // The selected weekly cut-off is the default eligibility view. Clear
+        // the checkbox to inspect future-due invoices for an explicit early-
+        // payment override (the API still requires a reason when batching).
+        ...(weeklyContext.applyCutoff && weeklyContext.cutoffDate && !filters.dueFrom && !filters.dueTo && !filters.dueMonth
+          ? { dueTo: weeklyContext.cutoffDate }
+          : {}),
+      };
+      const response = await paymentBatchApi.getScheduledPayments(Object.fromEntries(Object.entries(queueFilters).filter(([, value]) => value)));
       const data = response.data?.payments || response.data || [];
       setFilteredTotals(response.data?.totals || []);
       const mapped = data.map((p: any) => ({
@@ -456,7 +466,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
       setScheduledPayments([]);
       setFilteredTotals([]);
     }
-  }, [filters, user?.id, user?.role]);
+  }, [filters, weeklyContext.applyCutoff, weeklyContext.cutoffDate, user?.id, user?.role]);
 
   // Bulk approve all pending-review invoices at once (Supervisor)
   const handleBulkApproveAll = async () => {
@@ -1679,7 +1689,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
               </div>
 
               {isAssociate && (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4 rounded-xl p-3" style={{ background: 'color-mix(in srgb, var(--accent-blue) 5%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-blue) 15%, transparent)' }}>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4 rounded-xl p-3" style={{ background: 'color-mix(in srgb, var(--accent-blue) 5%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-blue) 15%, transparent)' }}>
                   <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
                     Weekly cut-off date
                     <input
@@ -1710,6 +1720,15 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                       className="mt-1 w-full rounded-lg px-2 py-1.5 text-xs"
                       style={{ color: 'var(--text-primary)', background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}
                     />
+                  </label>
+                  <label className="flex items-center gap-2 text-xs font-medium self-end pb-2" style={{ color: 'var(--text-secondary)' }} title="When enabled, the queue defaults to invoices due on or before the weekly cut-off date">
+                    <input
+                      type="checkbox"
+                      checked={weeklyContext.applyCutoff}
+                      onChange={(event) => setWeeklyContext((prev) => ({ ...prev, applyCutoff: event.target.checked }))}
+                      className="h-4 w-4"
+                    />
+                    Apply cut-off to queue
                   </label>
                 </div>
               )}

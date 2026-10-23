@@ -436,7 +436,10 @@ router.post('/bank-change-requests/:id/reject', authorize(UserRole.ACCOUNTING_SU
 });
 
 // Bank Details Masterlist — must be before /:id
-router.get('/bank-details/masterlist', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN, UserRole.SUPERADMIN), async (req: Request, res: Response, next: NextFunction) => {
+// Coordinators can view the masked vendor list so they can select an existing
+// vendor when submitting a bank-detail request. They still cannot edit or
+// retrieve unmasked bank account details; approval remains Accounting-owned.
+router.get('/bank-details/masterlist', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN, UserRole.SUPERADMIN), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const vendors = await prisma.vendor.findMany({
       where: { is_active: true },

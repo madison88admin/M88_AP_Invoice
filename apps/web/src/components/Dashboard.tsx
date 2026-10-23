@@ -188,6 +188,26 @@ function displayApRecordId(invoice: any): string {
 type QuickFilter = 'all' | 'returned' | 'urgent' | 'issues' | 'duplicates';
 
 /**
+ * Parse a date input without the browser's UTC interpretation of YYYY-MM-DD.
+ * Date inputs represent a local calendar day, so using the local midnight/end
+ * of day keeps the inclusive range correct in every timezone.
+ */
+function parseFilterDate(value: unknown, endOfDay = false): Date | null {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(text);
+  const parsed = new Date(dateOnly
+    ? `${text}T${endOfDay ? '23:59:59.999' : '00:00:00'}`
+    : text);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function invoiceDateTime(value: unknown): number | null {
+  const parsed = parseFilterDate(value);
+  return parsed ? parsed.getTime() : null;
+}
+
+/**
  * Keep duplicate triage in one place so the repository filter and the delete
  * affordance use the same definition as the backend duplicate workflow.
  * A row may be flagged either by the detector or by a coordinator's review.
@@ -429,45 +449,60 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
 
   // Filter invoices based on filters
   const filteredInvoices = roleFilteredInvoices.filter(inv => {
+    const invoiceStatus = String(inv.status || '').toUpperCase();
     if (filters.status && (filters.status === InvoiceStatus.PENDING_COORDINATOR
-      ? !isCoordinatorQueueStatus(String(inv.status))
-      : inv.status !== filters.status)) return false;
+      ? !isCoordinatorQueueStatus(invoiceStatus)
+      : invoiceStatus !== String(filters.status).toUpperCase())) return false;
     if (filters.category && inv.category !== filters.category) return false;
     if (filters.type && inv.invoice_type !== filters.type) return false;
     if (filters.brand && inv.brand !== filters.brand) return false;
     if (filters.brand_code && inv.brand_code !== filters.brand_code) return false;
     if (filters.vendorId && inv.vendor_id !== filters.vendorId) return false;
     if (filters.search) {
-      const term = filters.search.toLowerCase();
-      const searchable = [
-        inv.invoice_number,
-        inv.vendor_name,
-        inv.vendor?.name,
-        inv.brand,
-        inv.brand_code,
-        inv.po_number,
-        inv.mpo_number,
-      ].filter(Boolean).join(' ').toLowerCase();
-      if (!searchable.includes(term)) return false;
+      const term = filters.search.trim().toLowerCase();
+      if (term) {
+        const record = inv as any;
+        const searchable = [
+          inv.id,
+          record.ap_record_id,
+          inv.invoice_number,
+          record.normalized_invoice_number,
+          inv.vendor_name,
+          record.vendor_name_raw,
+          inv.vendor?.name,
+          inv.brand,
+          inv.brand_code,
+          inv.po_number,
+          inv.customer_po_number,
+          inv.mpo_number,
+          inv.material_code,
+          inv.material_name,
+          inv.uploaded_by,
+        ].filter(Boolean).join(' ').toLowerCase();
+        if (!searchable.includes(term)) return false;
+      }
     }
     if (filters.dateFrom || filters.dateTo) {
-      const invDate = new Date(inv.invoice_date);
-      if (filters.dateFrom && invDate < new Date(filters.dateFrom)) return false;
-      if (filters.dateTo && invDate > new Date(filters.dateTo)) return false;
+      const invoiceDate = invoiceDateTime(inv.invoice_date);
+      const from = parseFilterDate(filters.dateFrom);
+      const to = parseFilterDate(filters.dateTo, true);
+      // A malformed/missing invoice date cannot match an explicit date range.
+      if (invoiceDate === null) return false;
+      if (from && invoiceDate < from.getTime()) return false;
+      if (to && invoiceDate > to.getTime()) return false;
     }
-    // Purchasing can triage by when the invoice entered the system, rather
-    // than by the supplier's invoice date.
+    // Triage by when the invoice entered the system, rather than by the
+    // supplier's invoice date. These controls are currently shown to
+    // Purchasing roles.
     if (user?.role === 'PURCHASING_COORDINATOR' || user?.role === 'PURCHASING_MANAGER') {
-      const receivedAt = new Date(inv.created_at || inv.invoice_received_date || inv.invoice_date);
+      const receivedAt = invoiceDateTime(inv.created_at || inv.invoice_received_date || inv.invoice_date);
       if (filters.receivedFrom) {
-        const from = new Date(filters.receivedFrom);
-        from.setHours(0, 0, 0, 0);
-        if (receivedAt < from) return false;
+        const from = parseFilterDate(filters.receivedFrom);
+        if (from && (receivedAt === null || receivedAt < from.getTime())) return false;
       }
       if (filters.receivedTo) {
-        const to = new Date(filters.receivedTo);
-        to.setHours(23, 59, 59, 999);
-        if (receivedAt > to) return false;
+        const to = parseFilterDate(filters.receivedTo, true);
+        if (to && (receivedAt === null || receivedAt > to.getTime())) return false;
       }
     }
     if (filters.agingBucket) {
@@ -485,8 +520,8 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
       if (!inv.due_date) {
         if (filters.agingBucket !== 'current') return false;
       } else {
-        const dueDate = new Date(inv.due_date);
-        dueDate.setHours(0, 0, 0, 0);
+        const dueDate = parseFilterDate(inv.due_date);
+        if (!dueDate) return filters.agingBucket === 'current';
         const diffDays = Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
         if (filters.agingBucket === 'current' && diffDays > 0) return false;
         if (filters.agingBucket === '1-30' && (diffDays <= 0 || diffDays > 30)) return false;
@@ -498,8 +533,8 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
       if (!inv.due_date) return false;
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-      const dueDate = new Date(inv.due_date);
-      dueDate.setHours(0, 0, 0, 0);
+      const dueDate = parseFilterDate(inv.due_date);
+      if (!dueDate) return false;
       const diffDays = Math.floor((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
       if (diffDays > 7) return false; // only due within 7 days or overdue
     }
@@ -567,22 +602,23 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
 
   // Count how many filters are currently active (for the "Clear" affordance)
   const activeFilterCount = Object.values(filters).filter(v => v !== undefined && v !== '').length;
+  const hasActiveFilter = activeFilterCount > 0 || quickFilter !== 'all';
 
   // The repository is a deadline work queue: show the nearest due date first
   // (including overdue invoices), then keep undated records at the bottom.
   // The dashboard keeps its existing newest-first behavior.
   const sortedInvoices = [...quickFilteredInvoices].sort((a, b) => {
     if (mode === 'repository') {
-      const dueA = a.due_date ? new Date(a.due_date).getTime() : Number.POSITIVE_INFINITY;
-      const dueB = b.due_date ? new Date(b.due_date).getTime() : Number.POSITIVE_INFINITY;
+      const dueA = a.due_date ? (invoiceDateTime(a.due_date) ?? Number.POSITIVE_INFINITY) : Number.POSITIVE_INFINITY;
+      const dueB = b.due_date ? (invoiceDateTime(b.due_date) ?? Number.POSITIVE_INFINITY) : Number.POSITIVE_INFINITY;
       if (dueA !== dueB) return dueA - dueB;
     }
-    const dateA = new Date(a.created_at || a.invoice_received_date || a.invoice_date);
-    const dateB = new Date(b.created_at || b.invoice_received_date || b.invoice_date);
+    const dateA = invoiceDateTime(a.created_at || a.invoice_received_date || a.invoice_date) ?? 0;
+    const dateB = invoiceDateTime(b.created_at || b.invoice_received_date || b.invoice_date) ?? 0;
     if ((user?.role === 'PURCHASING_COORDINATOR' || user?.role === 'PURCHASING_MANAGER') && filters.receivedOrder === 'oldest') {
-      return dateA.getTime() - dateB.getTime();
+      return dateA - dateB;
     }
-    return dateB.getTime() - dateA.getTime(); // Descending order (newest first)
+    return dateB - dateA; // Descending order (newest first)
   });
 
   // Pagination: show 4 invoices per page on the dashboard. The Invoice
@@ -2675,14 +2711,17 @@ ${dataRows}
                   Advanced
                 </button>
                 <button
-                  onClick={() => setFilters({ status: undefined, category: undefined, type: undefined, brand: undefined, brand_code: undefined, vendorId: undefined, search: undefined, dateFrom: undefined, dateTo: undefined, receivedFrom: undefined, receivedTo: undefined, receivedOrder: undefined, agingBucket: undefined, urgentDue: undefined })}
-                  disabled={activeFilterCount === 0}
+                  onClick={() => {
+                    setFilters({ status: undefined, category: undefined, type: undefined, brand: undefined, brand_code: undefined, vendorId: undefined, search: undefined, dateFrom: undefined, dateTo: undefined, receivedFrom: undefined, receivedTo: undefined, receivedOrder: undefined, agingBucket: undefined, urgentDue: undefined });
+                    setQuickFilter('all');
+                  }}
+                  disabled={!hasActiveFilter}
                   className="h-9 w-full md:w-auto px-4 rounded-full transition-colors text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed"
-                  style={activeFilterCount > 0
+                  style={hasActiveFilter
                     ? { color: 'var(--accent-violet)', background: 'color-mix(in srgb, var(--accent-violet) 10%, transparent)' }
                     : { color: 'var(--text-secondary)' }}
-                  onMouseEnter={(e) => { if (activeFilterCount > 0) { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-violet) 18%, transparent)'; } }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = activeFilterCount > 0 ? 'color-mix(in srgb, var(--accent-violet) 10%, transparent)' : 'transparent'; }}
+                  onMouseEnter={(e) => { if (hasActiveFilter) { e.currentTarget.style.background = 'color-mix(in srgb, var(--accent-violet) 18%, transparent)'; } }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = hasActiveFilter ? 'color-mix(in srgb, var(--accent-violet) 10%, transparent)' : 'transparent'; }}
                 >
                   Clear{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
                 </button>

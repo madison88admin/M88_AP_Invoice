@@ -50,11 +50,62 @@ model Vendor {
   invoices                Invoice[]
   bank_change_requests    VendorBankChangeRequest[]
   bank_versions           VendorBankVersion[]
+  vendor_documents        VendorDocument[]
+  master_change_requests  VendorMasterChangeRequest[]
   vendor_bill_stubs       VendorBillStub[]
   
   @@index([name])
   @@index([is_active])
   @@map("APInvoice_Vendor")
+}
+
+// Supporting documents uploaded while onboarding a new vendor (for example,
+// a bank certificate or supplier master form). These files are immutable
+// evidence linked to the vendor master and are separate from bank-change
+// request evidence.
+model VendorDocument {
+  id            String   @id @default(uuid())
+  vendor_id     String
+  vendor        Vendor   @relation(fields: [vendor_id], references: [id], onDelete: Cascade)
+  document_type String   @default("SUPPLIER_SUPPORTING_DOCUMENT")
+  file_name     String
+  storage_path  String
+  mime_type     String
+  sha256        String
+  uploaded_by   String?
+  created_at    DateTime @default(now())
+
+  @@index([vendor_id])
+  @@map("APInvoice_VendorDocument")
+}
+
+// Segregated vendor-master onboarding/change requests. Purchasing
+// Coordination submits the proposed values; Accounting Associate reviews and
+// applies them. NEW_VENDOR requests do not create an active vendor until they
+// are approved.
+model VendorMasterChangeRequest {
+  id                  String   @id @default(uuid())
+  request_type        String   // NEW_VENDOR | BANK_UPDATE
+  vendor_id           String?
+  vendor              Vendor?  @relation(fields: [vendor_id], references: [id], onDelete: SetNull)
+  proposed_data       Json
+  reason              String
+  attachment_filename String?
+  attachment_data     Bytes?
+  attachment_mimetype String?
+  requested_by        String
+  requested_by_id     String?
+  status              String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  reviewed_by         String?
+  reviewed_by_id      String?
+  reviewed_at         DateTime?
+  synced_invoice_count Int     @default(0)
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  @@index([status, created_at])
+  @@index([vendor_id, status])
+  @@map("APInvoice_VendorMasterChangeRequest")
 }
 
 model Invoice {

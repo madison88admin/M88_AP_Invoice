@@ -81,6 +81,7 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
         { icon: CheckCircle, label: 'Approved Invoices', path: '/accounting-approved-invoices', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'accountingApproved', badgeColor: 'lime' },
         { icon: XCircle, label: 'Rejected Invoices', path: '/accounting-rejected-invoices', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'accountingRejected', badgeColor: 'red' },
         { icon: Landmark, label: 'Bank Details', path: '/bank-details', roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'] },
+        { icon: Landmark, label: 'Vendor Requests', path: '/vendor-requests', roles: ['PURCHASING_COORDINATOR', 'ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeColor: 'amber' },
       ],
     },
     {

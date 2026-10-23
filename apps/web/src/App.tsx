@@ -25,6 +25,7 @@ import FinanceControlsDashboard from './components/FinanceControlsDashboard';
 import AccountingInvoiceArchive from './components/AccountingInvoiceArchive';
 import PurchasingWorkbench from './components/PurchasingWorkbench';
 import CFOApproval from './components/CFOApproval';
+import VendorMasterRequests from './components/VendorMasterRequests';
 
 import ProtectedRoute from './components/ProtectedRoute';
 import NotFound from './components/NotFound';
@@ -213,6 +214,13 @@ function App() {
                   <ProtectedRoute>
                     <AppLayout title="Bank Details Masterlist" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-blue), var(--accent-purple))' }}><Landmark className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
                       <BankDetailsMasterlist />
+                    </AppLayout>
+                  </ProtectedRoute>
+                } />
+                <Route path="/vendor-requests" element={
+                  <ProtectedRoute roles={['PURCHASING_COORDINATOR', 'ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN']}>
+                    <AppLayout title="Vendor / Bank Requests" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-amber), var(--accent-purple))' }}><Landmark className="h-5 w-5 text-white" /></div>}>
+                      <VendorMasterRequests />
                     </AppLayout>
                   </ProtectedRoute>
                 } />

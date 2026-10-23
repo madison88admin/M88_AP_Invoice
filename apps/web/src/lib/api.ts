@@ -292,6 +292,24 @@ export const vendorApi = {
   getAll: (params?: { search?: string; limit?: number }) => api.get('/api/vendors', { params }),
   getById: (id: string) => api.get(`/api/vendors/${id}`),
   create: (data: any) => api.post('/api/vendors', data),
+  uploadVendorDocuments: (vendorId: string, files: File[]) => {
+    const form = new FormData();
+    files.forEach((file) => form.append('files', file));
+    return api.post(`/api/vendors/${vendorId}/vendor-documents`, form, { headers: { 'Content-Type': 'multipart/form-data' } });
+  },
+  getVendorDocuments: (vendorId: string) => api.get(`/api/vendors/${vendorId}/vendor-documents`),
+  getMasterRequests: (status?: string) => api.get('/api/vendors/master-requests', { params: status ? { status } : undefined }),
+  createMasterRequest: (requestType: 'NEW_VENDOR' | 'BANK_UPDATE', proposedData: Record<string, any>, reason: string, attachment?: File) => {
+    const form = new FormData();
+    form.append('request_type', requestType);
+    form.append('proposed_data', JSON.stringify(proposedData));
+    form.append('reason', reason);
+    if (attachment) form.append('attachment', attachment);
+    return api.post('/api/vendors/master-requests', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+  },
+  downloadMasterRequestAttachment: (requestId: string) => api.get(`/api/vendors/master-requests/${requestId}/attachment`, { responseType: 'blob' }),
+  approveMasterRequest: (requestId: string) => api.post(`/api/vendors/master-requests/${requestId}/approve`),
+  rejectMasterRequest: (requestId: string, reason?: string) => api.post(`/api/vendors/master-requests/${requestId}/reject`, reason ? { reason } : {}),
   update: (id: string, data: any) => api.patch(`/api/vendors/${id}`, data),
   delete: (id: string) => api.delete(`/api/vendors/${id}`),
   bulkDelete: (ids: string[]) => api.delete('/api/vendors/bulk', { data: { ids } }),

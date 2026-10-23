@@ -2086,15 +2086,15 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                                 </div>
                               )}
                             </td>
-                            <td className="px-4 py-4 align-top">
+                            <td className="px-4 py-4 align-top min-w-[130px]">
                               <div className="flex items-center gap-2">
-                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium" style={getPaymentStatusStyle(payment.status)}>
+                                <span className="inline-flex items-center whitespace-nowrap px-2.5 py-0.5 rounded-full text-xs font-medium" style={getPaymentStatusStyle(payment.status)}>
                                   {getPaymentStatusLabel(payment.status)}
                                 </span>
                                 {isSelected && <span className="text-[11px] font-medium" style={{ color: 'var(--accent-purple)' }}>Selected</span>}
                               </div>
                             </td>
-                            <td className="px-4 py-4 align-top">
+                            <td className="px-4 py-4 align-top min-w-[190px]">
                               <div className="flex flex-wrap items-center gap-2">
                                 {isAssociate && (
                                   <>
@@ -2112,7 +2112,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                                       <button
                                         onClick={(e) => { e.stopPropagation(); handleHoldPayment(payment); }}
                                         disabled={actionLoading}
-                                        className="px-2 py-1 rounded-lg text-[11px] font-medium transition-colors disabled:opacity-50"
+                                        className="whitespace-nowrap px-2 py-1 rounded-lg text-[11px] font-medium transition-colors disabled:opacity-50"
                                         style={{ background: 'color-mix(in srgb, var(--accent-amber) 12%, transparent)', color: 'var(--accent-amber)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}
                                       >
                                         Hold
@@ -2124,7 +2124,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                                   <button
                                     onClick={(e) => { e.stopPropagation(); handleApproveHeld(payment); }}
                                     disabled={actionLoading}
-                                    className="px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors disabled:opacity-50"
+                                    className="whitespace-nowrap px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors disabled:opacity-50"
                                     style={{ background: 'var(--accent-green)', color: 'white' }}
                                   >
                                     Release Hold
@@ -2135,7 +2135,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                                     <button
                                       onClick={(e) => { e.stopPropagation(); handleBelowThresholdDecision(payment, 'PROCEED'); }}
                                       disabled={actionLoading}
-                                      className="px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors disabled:opacity-50"
+                                      className="whitespace-nowrap px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors disabled:opacity-50"
                                       style={{ background: 'var(--accent-green)', color: 'white' }}
                                     >Proceed &lt;$100</button>
                                     <button
@@ -2150,7 +2150,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                                   <button
                                     onClick={(e) => { e.stopPropagation(); handlePostFromList(payment); }}
                                     disabled={postingInvoiceId === payment.invoice?.id}
-                                    className="px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors disabled:opacity-50"
+                                    className="whitespace-nowrap px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors disabled:opacity-50"
                                     style={{ background: 'var(--accent-purple)', color: 'white' }}
                                   >
                                     {postingInvoiceId === payment.invoice?.id ? <Loader2 className="h-3 w-3 mr-1 animate-spin inline" /> : <Send className="h-3 w-3 mr-1 inline" />}

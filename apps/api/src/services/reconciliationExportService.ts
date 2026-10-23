@@ -73,6 +73,9 @@ export async function exportPaymentReconciliation(filters: ReconciliationFilters
 
       paymentRows.push({
         'Batch #': batch.batch_number,
+        'Weekly Schedule': batch.weekly_schedule_ref || '',
+        'Weekly Cutoff': fmtDate(batch.weekly_cutoff_date),
+        'Weekly As Of': fmtDate(batch.weekly_as_of_date),
         'Invoice #': p.invoice?.invoice_number || '',
         'Vendor': p.invoice?.vendor?.name || '',
         'Amount': amount,
@@ -84,6 +87,11 @@ export async function exportPaymentReconciliation(filters: ReconciliationFilters
         'Reference': p.bill_stub?.reference || p.reference || '',
         'Paid Date': fmtDate(p.paid_at),
         'Payment Status': p.status,
+        'Paid Amount': Number(p.paid_amount || 0),
+        'Outstanding': Math.max(0, amount - Number(p.paid_amount || 0)),
+        'Remarks': p.remarks || '',
+        'Below-$100 Decision': p.below_threshold_decision || '',
+        'Decision Reason': p.below_threshold_reason || '',
         'Batch Status': batch.status,
       });
 
@@ -127,6 +135,9 @@ export async function exportPaymentReconciliation(filters: ReconciliationFilters
     const chargesTotal = (batch.payments as any[]).reduce((s: number, p: any) => s + (p.bank_charge_amount != null ? Number(p.bank_charge_amount) || 0 : 0), 0);
     return {
       'Batch #': batch.batch_number,
+      'Weekly Schedule': batch.weekly_schedule_ref || '',
+      'Weekly Cutoff': fmtDate(batch.weekly_cutoff_date),
+      'Weekly As Of': fmtDate(batch.weekly_as_of_date),
       'Created': fmtDate(batch.created_at),
       'Payments': batch.payment_count || (batch.payments as any[]).length,
       'Payments Total': Math.round(paymentsTotal * 100) / 100,
@@ -134,6 +145,9 @@ export async function exportPaymentReconciliation(filters: ReconciliationFilters
       'Grand Total (incl. Charge)': Math.round((paymentsTotal + chargesTotal) * 100) / 100,
       'Status': batch.status,
       'Processed At': fmtDate(batch.processed_at),
+      'Supervisor Reviewed By': batch.reviewed_by || '',
+      'Supervisor Reviewed At': fmtDate(batch.reviewed_at),
+      'Supervisor Review Note': batch.review_note || '',
     };
   });
 
@@ -141,11 +155,11 @@ export async function exportPaymentReconciliation(filters: ReconciliationFilters
   const wb = XLSX.utils.book_new();
 
   const wsPayments = XLSX.utils.json_to_sheet(paymentRows, {
-    header: ['Batch #', 'Invoice #', 'Vendor', 'Amount', 'Bank Charge', 'Total (incl. Charge)', 'Currency', 'Payment Date', 'Payment Source', 'Reference', 'Paid Date', 'Payment Status', 'Batch Status'],
+    header: ['Batch #', 'Weekly Schedule', 'Weekly Cutoff', 'Weekly As Of', 'Invoice #', 'Vendor', 'Amount', 'Bank Charge', 'Total (incl. Charge)', 'Currency', 'Payment Date', 'Payment Source', 'Reference', 'Paid Date', 'Payment Status', 'Paid Amount', 'Outstanding', 'Remarks', 'Below-$100 Decision', 'Decision Reason', 'Batch Status'],
   });
   wsPayments['!cols'] = [
-    { wch: 16 }, { wch: 20 }, { wch: 30 }, { wch: 14 }, { wch: 12 }, { wch: 16 },
-    { wch: 10 }, { wch: 12 }, { wch: 18 }, { wch: 22 }, { wch: 12 }, { wch: 16 }, { wch: 20 },
+    { wch: 16 }, { wch: 18 }, { wch: 12 }, { wch: 12 }, { wch: 20 }, { wch: 30 }, { wch: 14 }, { wch: 12 }, { wch: 16 },
+    { wch: 10 }, { wch: 12 }, { wch: 18 }, { wch: 22 }, { wch: 12 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 28 }, { wch: 22 }, { wch: 35 }, { wch: 20 },
   ];
   XLSX.utils.book_append_sheet(wb, wsPayments, 'Payments');
 
@@ -156,7 +170,7 @@ export async function exportPaymentReconciliation(filters: ReconciliationFilters
   XLSX.utils.book_append_sheet(wb, wsCharges, 'Bank Charges');
 
   const wsBatches = XLSX.utils.json_to_sheet(batchRows, {
-    header: ['Batch #', 'Created', 'Payments', 'Payments Total', 'Bank Charge', 'Grand Total (incl. Charge)', 'Status', 'Processed At'],
+    header: ['Batch #', 'Weekly Schedule', 'Weekly Cutoff', 'Weekly As Of', 'Created', 'Payments', 'Payments Total', 'Bank Charge', 'Grand Total (incl. Charge)', 'Status', 'Processed At', 'Supervisor Reviewed By', 'Supervisor Reviewed At', 'Supervisor Review Note'],
   });
   wsBatches['!cols'] = [
     { wch: 16 }, { wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 20 }, { wch: 20 }, { wch: 12 },

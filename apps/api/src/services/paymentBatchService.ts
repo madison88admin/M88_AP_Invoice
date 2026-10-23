@@ -17,6 +17,18 @@ function getNextWednesday(date: Date = new Date()): Date {
   return d;
 }
 
+/** Thursday 09:00 local time is the purchasing response deadline for the
+ * weekly payment run. Expired unanswered holds are marked NO_RESPONSE. */
+function getNextPurchasingDeadline(date: Date = new Date()): Date {
+  const d = new Date(date);
+  const result = new Date(d);
+  const daysUntilThursday = (4 - d.getDay() + 7) % 7;
+  result.setDate(result.getDate() + daysUntilThursday);
+  result.setHours(9, 0, 0, 0);
+  if (result <= d) result.setDate(result.getDate() + 7);
+  return result;
+}
+
 /**
  * Check if today is Wednesday
  */
@@ -85,6 +97,18 @@ export interface ScheduledPaymentFilters {
 }
 
 export async function getScheduledPaymentsForBatch(filters: ScheduledPaymentFilters = {}) {
+  await prisma.payment.updateMany({
+    where: {
+      status: 'HELD_BELOW_100',
+      below_threshold_decision: null,
+      below_threshold_deadline: { lte: new Date() },
+    },
+    data: {
+      below_threshold_decision: 'NO_RESPONSE',
+      below_threshold_reason: 'Purchasing response deadline passed without a decision',
+      below_threshold_decided_at: new Date(),
+    } as any,
+  });
   // No implicit payment-date bound: since payments auto-schedule on posting
   // with payment_date = invoice due date, past-due (overdue) invoices must
   // remain visible in the batch list. Only explicit dateFrom/dateTo bound it.
@@ -207,6 +231,10 @@ export async function getScheduledPaymentsForBatch(filters: ScheduledPaymentFilt
       selected_for_batch: existingPayment?.selected_for_batch || false,
       selected_by: existingPayment?.selected_by || null,
       remarks: existingPayment?.remarks || null,
+      below_threshold_decision: existingPayment?.below_threshold_decision || null,
+      below_threshold_reason: existingPayment?.below_threshold_reason || null,
+      below_threshold_deadline: existingPayment?.below_threshold_deadline || null,
+      paid_amount: existingPayment ? Number(existingPayment.paid_amount || 0) : 0,
       created_at: inv.created_at,
       // Keep signatures at top-level so enrichment can read approval_date
       signatures,
@@ -502,8 +530,7 @@ export async function holdScheduledPayment(paymentId: string, userId: string, re
   }
 
   const holdReason = reason?.trim() || 'Accounting Associate placed the payment on hold for review';
-  const holdReviewDate = new Date();
-  holdReviewDate.setUTCDate(holdReviewDate.getUTCDate() + 7);
+  const holdReviewDate = getNextPurchasingDeadline();
   const updated = await prisma.payment.update({
     where: { id: paymentId },
     data: {
@@ -529,6 +556,47 @@ export async function holdScheduledPayment(paymentId: string, userId: string, re
   });
 
   return updated;
+}
+
+/** Purchasing Coordinator/Manager decision for a vendor subtotal below USD
+ * 100. Accounting cannot approve its own exception. PROCEED releases the
+ * payment back to SCHEDULED; HOLD and NO_RESPONSE preserve the hold. */
+export async function setBelowThresholdDecision(
+  paymentIds: string[],
+  decision: 'PROCEED' | 'HOLD' | 'NO_RESPONSE',
+  reason: string | undefined,
+  userId: string,
+) {
+  const ids = [...new Set(paymentIds || [])];
+  if (!ids.length) throw new AppError('Select at least one held payment', 400);
+  const normalizedReason = reason?.trim() || (decision === 'NO_RESPONSE' ? 'Purchasing response deadline passed without a decision' : 'Purchasing decision recorded');
+  if (decision !== 'NO_RESPONSE' && !reason?.trim()) throw new AppError('A reason is required for a below-threshold decision', 400);
+  const payments = await prisma.payment.findMany({ where: { id: { in: ids } }, select: { id: true, invoice_id: true, status: true } });
+  if (payments.length !== ids.length) throw new AppError('One or more payments were not found', 404);
+  if (payments.some((p: any) => p.status !== 'HELD_BELOW_100')) throw new AppError('Only HELD_BELOW_100 payments can receive a purchasing decision', 400);
+  const updated = await prisma.payment.updateMany({
+    where: { id: { in: ids } },
+    data: {
+      below_threshold_decision: decision,
+      below_threshold_reason: normalizedReason,
+      below_threshold_decided_by: userId,
+      below_threshold_decided_at: new Date(),
+      status: decision === 'PROCEED' ? 'SCHEDULED' : 'HELD_BELOW_100',
+      hold_reason: decision === 'PROCEED' ? null : normalizedReason,
+      remarks: normalizedReason,
+    } as any,
+  });
+  for (const payment of payments) {
+    await prisma.auditLog.create({
+      data: {
+        invoice_id: payment.invoice_id,
+        action: `PAYMENT_BELOW_THRESHOLD_${decision}`,
+        performed_by: userId,
+        note: normalizedReason,
+      },
+    });
+  }
+  return { updated: updated.count, decision, payment_ids: ids };
 }
 
 /**
@@ -900,7 +968,7 @@ export async function matchPaymentConfirmation(
   });
   if (!batch) throw new AppError('Payment batch not found', 404);
 
-  const endorsed = (batch.payments as any[]).filter((p) => p.status === 'ENDORSED');
+  const endorsed = (batch.payments as any[]).filter((p) => p.status === 'ENDORSED' || p.status === 'PARTIALLY_PAID');
   if (endorsed.length === 0) {
     throw new AppError('No endorsed payments in this batch to match — endorse bill stubs first', 400);
   }
@@ -935,26 +1003,37 @@ export async function matchPaymentConfirmation(
   const paidAt = input.paidDate ? new Date(input.paidDate) : new Date();
   const confirmationRef = input.reference?.trim() || 'payment confirmation';
   for (const payment of matched) {
+    if (payment.status !== 'ENDORSED' && normalizePaymentReference(payment.reference) === normalizePaymentReference(confirmationRef)) {
+      throw new AppError(`Payment ${payment.id} was already confirmed with reference "${confirmationRef}"`, 409);
+    }
+    const alreadyPaid = Number(payment.paid_amount || 0);
+    const requestedAmount = input.amount != null && matched.length === 1 ? Number(input.amount) : Number(payment.amount);
+    const confirmedAmount = Math.max(0, Math.min(Number(payment.amount), requestedAmount));
+    const totalPaid = alreadyPaid + confirmedAmount;
+    const isPartial = totalPaid + 0.005 < Number(payment.amount);
     await prisma.payment.update({
       where: { id: payment.id },
       data: {
-        status: 'PAID',
+        status: isPartial ? 'PARTIALLY_PAID' : 'PAID',
         paid_at: paidAt,
+        paid_amount: totalPaid,
         // Preserve the bank confirmation reference that actually matched so
         // reconciliation and later bulk imports can see the exact value.
         reference: confirmationRef,
       },
     });
-    await prisma.invoice.update({
-      where: { id: payment.invoice_id },
-      data: { status: InvoiceStatus.PAID as any },
-    });
+    if (!isPartial) {
+      await prisma.invoice.update({
+        where: { id: payment.invoice_id },
+        data: { status: InvoiceStatus.PAID as any },
+      });
+    }
     await prisma.auditLog.create({
       data: {
         invoice_id: payment.invoice_id,
-        action: 'PAYMENT_CONFIRMATION_MATCHED',
+        action: isPartial ? 'PAYMENT_PARTIAL_CONFIRMATION_MATCHED' : 'PAYMENT_CONFIRMATION_MATCHED',
         performed_by: userId,
-        note: `Payment matched by confirmation (ref ${confirmationRef}) and tagged PAID in batch ${batch.batch_number}`,
+        note: `Payment matched by confirmation (ref ${confirmationRef}) and tagged ${isPartial ? 'PARTIALLY_PAID' : 'PAID'} in batch ${batch.batch_number}`,
       },
     });
     await inAppNotificationService.notifyStageTransition(
@@ -962,7 +1041,7 @@ export async function matchPaymentConfirmation(
       payment.invoice?.invoice_number || '',
       payment.invoice?.vendor?.name || 'Unknown',
       'PAYMENT_SCHEDULED',
-      'PAID',
+      isPartial ? 'PAYMENT_SCHEDULED' : 'PAID',
       UserRole.PURCHASING_COORDINATOR,
     );
   }
@@ -990,7 +1069,7 @@ export async function matchPaymentConfirmation(
     });
   }
 
-  logger.info(`[PaymentBatch] Matched ${matched.length} payment(s) as PAID in batch ${batch.batch_number}`);
+  logger.info(`[PaymentBatch] Matched ${matched.length} payment(s) in batch ${batch.batch_number}`);
   return {
     batch_id: batchId,
     batch_number: batch.batch_number,
@@ -1012,7 +1091,7 @@ export async function findPaymentBatchByConfirmationReference(reference: string,
   if (!normalizedRef) return null;
 
   const payments = await prisma.payment.findMany({
-    where: { status: 'ENDORSED' },
+    where: { status: { in: ['ENDORSED', 'PARTIALLY_PAID'] } },
     include: { bill_stub: true, batch: true },
   });
   let matches = (payments as any[]).filter((payment) =>
@@ -1150,7 +1229,8 @@ export async function getPaymentBatchStatistics() {
 
 export async function createPaymentBatch(
   paymentIds: string[],
-  userId: string
+  userId: string,
+  weeklyContext?: { scheduleRef?: string; cutoffDate?: Date; asOfDate?: Date }
 ) {
   if (!Array.isArray(paymentIds) || paymentIds.length === 0) {
     throw new AppError('Select at least one scheduled payment to create a batch', 400);
@@ -1223,10 +1303,10 @@ export async function createPaymentBatch(
     current.total += Number(payment.amount || 0);
     subtotalGroups.set(key, current);
   }
-  const belowThreshold = [...subtotalGroups.values()].filter(group => group.total < 100);
+  const belowThreshold = [...subtotalGroups.values()].filter(group => group.total < 100 &&
+    (payments as any[]).filter((p) => group.ids.includes(p.id)).some((p) => p.below_threshold_decision !== 'PROCEED'));
   if (belowThreshold.length > 0) {
-    const reviewDate = new Date();
-    reviewDate.setUTCDate(reviewDate.getUTCDate() + 7);
+    const reviewDate = getNextPurchasingDeadline();
     for (const group of belowThreshold) {
       const reason = `${group.currency} ${group.total.toFixed(2)} subtotal for ${group.vendor} is below the 100 threshold; consolidate with another payment or obtain Accounting approval.`;
       await prisma.payment.updateMany({
@@ -1240,6 +1320,9 @@ export async function createPaymentBatch(
           hold_reason: reason,
           hold_owner: userId,
           hold_review_date: reviewDate,
+          below_threshold_deadline: reviewDate,
+          below_threshold_decision: null,
+          below_threshold_reason: null,
           hold_evidence: { threshold: 100, currency: group.currency, subtotal: Number(group.total.toFixed(2)), vendor: group.vendor },
         } as any,
       });
@@ -1275,6 +1358,9 @@ export async function createPaymentBatch(
       created_by: userId,
       payment_method: 'EFT',
       payment_date: getNextWednesday(),
+      weekly_schedule_ref: weeklyContext?.scheduleRef || null,
+      weekly_cutoff_date: weeklyContext?.cutoffDate || null,
+      weekly_as_of_date: weeklyContext?.asOfDate || null,
       payments: {
         connect: paymentIds.map((id) => ({ id })),
       },
@@ -1311,7 +1397,7 @@ export async function createPaymentBatch(
  * Associates select payments across vendors and they land in the same batch;
  * each payment keeps its own vendor's bank details for the export.
  */
-export async function createGroupedPaymentBatches(paymentIds: string[], userId: string) {
+export async function createGroupedPaymentBatches(paymentIds: string[], userId: string, weeklyContext?: { cutoffDate?: Date; asOfDate?: Date; scheduleRef?: string }) {
   const uniquePaymentIds = [...new Set(paymentIds)];
   const selected = await prisma.payment.findMany({
     where: { id: { in: uniquePaymentIds } },
@@ -1331,10 +1417,12 @@ export async function createGroupedPaymentBatches(paymentIds: string[], userId: 
   }
   const batches = [];
   const heldPaymentIds: string[] = [];
-  const reviewDate = new Date();
-  reviewDate.setUTCDate(reviewDate.getUTCDate() + 7);
+  const reviewDate = getNextPurchasingDeadline();
+  const scheduleRef = weeklyContext?.scheduleRef || `WPS-${new Date().getUTCFullYear()}-${String(Date.now()).slice(-4)}`;
   for (const group of groups.values()) {
-    if (group.total < 100) {
+    const groupPayments = await prisma.payment.findMany({ where: { id: { in: group.ids } }, select: { id: true, below_threshold_decision: true } });
+    const hasPurchasingProceed = groupPayments.length === group.ids.length && groupPayments.every((p: any) => p.below_threshold_decision === 'PROCEED');
+    if (group.total < 100 && !hasPurchasingProceed) {
       const reason = `${group.currency} ${group.total.toFixed(2)} subtotal for ${group.vendor} is below the 100 threshold; consolidate with another payment or obtain Accounting approval.`;
       heldPaymentIds.push(...group.ids);
       await prisma.payment.updateMany({
@@ -1342,6 +1430,7 @@ export async function createGroupedPaymentBatches(paymentIds: string[], userId: 
         data: {
           status: 'HELD_BELOW_100', selected_for_batch: false, selected_by: null, selected_at: null,
           remarks: reason, hold_reason: reason, hold_owner: userId, hold_review_date: reviewDate,
+          below_threshold_deadline: reviewDate, below_threshold_decision: null, below_threshold_reason: null,
           hold_evidence: { threshold: 100, currency: group.currency, subtotal: Number(group.total.toFixed(2)), vendor: group.vendor },
         } as any,
       });
@@ -1361,7 +1450,7 @@ export async function createGroupedPaymentBatches(paymentIds: string[], userId: 
       } as any);
       continue;
     }
-    batches.push(await createPaymentBatch(group.ids, userId));
+    batches.push(await createPaymentBatch(group.ids, userId, { ...weeklyContext, scheduleRef }));
   }
 
   return {

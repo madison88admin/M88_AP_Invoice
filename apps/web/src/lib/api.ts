@@ -245,6 +245,7 @@ export const paymentBatchApi = {
   },
   cancel: (batchId: string, reason: string) => api.post(`/api/payment-batches/${batchId}/cancel`, { reason }),
   getScheduledPayments: (filters?: any) => api.get('/api/payment-batches/scheduled-payments', { params: filters }),
+  belowThresholdDecision: (paymentIds: string[], decision: 'PROCEED' | 'HOLD' | 'NO_RESPONSE', reason?: string) => api.post('/api/payment-batches/payments/below-threshold-decision', { paymentIds, decision, reason }),
   selectPayments: (paymentIds: string[]) => api.post('/api/payment-batches/select', { paymentIds }),
   deselectPayments: (paymentIds: string[]) => api.post('/api/payment-batches/deselect', { paymentIds }),
   setPaymentRemarks: (paymentId: string, remarks: string) => api.post(`/api/payment-batches/payments/${paymentId}/remarks`, { remarks }),
@@ -266,6 +267,7 @@ export const qbApi = {
   listReconciliations: (params?: { result?: string; resolution_status?: string; invoice_id?: string }) =>
     api.get('/api/qb/reconciliation', { params }),
   recordReconciliation: (data: any) => api.post('/api/qb/reconciliation', data),
+  importFile: (file: File, asOfDate?: string) => { const form = new FormData(); form.append('file', file); if (asOfDate) form.append('asOfDate', asOfDate); return api.post('/api/qb/reconciliation/import-file', form, { headers: { 'Content-Type': 'multipart/form-data' } }); },
   resolveReconciliation: (id: string, comments?: string) => api.patch(`/api/qb/reconciliation/${id}/resolve`, { comments }),
 };
 

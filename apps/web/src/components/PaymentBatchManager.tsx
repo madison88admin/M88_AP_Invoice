@@ -23,6 +23,10 @@ interface ScheduledPayment {
   aging_days?: number | null;
   open_balance: number;
   remarks?: string | null;
+  below_threshold_decision?: string | null;
+  below_threshold_reason?: string | null;
+  below_threshold_deadline?: string | null;
+  paid_amount?: number;
   supervisor_action?: string | null;
   supervisor_note?: string | null;
   payment_date_source?: string;
@@ -325,6 +329,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
 
   const isAssociate = user?.role === 'ACCOUNTING_ASSOCIATE';
   const isSupervisor = user?.role === 'ACCOUNTING_SUPERVISOR';
+  const isPurchasing = ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER'].includes(user?.role || '');
   // Payment holds are Accounting Associate decisions. Supervisors can still
   // release legacy HELD_BELOW_100 rows created before this rule changed.
   const canReleaseHeld = isAssociate || isSupervisor;
@@ -403,6 +408,10 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
         aging_days: p.aging_days ?? null,
         open_balance: Number(p.open_balance || 0),
         remarks: p.remarks || null,
+        below_threshold_decision: p.below_threshold_decision || null,
+        below_threshold_reason: p.below_threshold_reason || null,
+        below_threshold_deadline: p.below_threshold_deadline || null,
+        paid_amount: Number(p.paid_amount || 0),
         supervisor_action: p.supervisor_action || null,
         supervisor_note: p.supervisor_note || null,
         payment_date_source: p.payment_date_source || 'DUE_DATE',
@@ -428,7 +437,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
       // Payment-level supervisor approval has been retired. Existing legacy
       // FOR_PAYMENT rows are treated as selectable scheduled payments.
       setPendingReviewCount(0);
-      if (['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR'].includes(user?.role || '')) {
+      if (['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'PURCHASING_COORDINATOR', 'PURCHASING_MANAGER'].includes(user?.role || '')) {
         paymentBatchApi.getScheduledPayments({ status: 'HELD_BELOW_100' })
           .then((r) => setPendingHeldCount(Number(r.data?.filtered_count ?? r.data?.payments?.length ?? 0)))
           .catch(() => setPendingHeldCount(0));
@@ -858,6 +867,20 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
     } finally {
       setActionLoading(false);
     }
+  };
+
+  const handleBelowThresholdDecision = async (payment: ScheduledPayment, decision: 'PROCEED' | 'HOLD' | 'NO_RESPONSE') => {
+    const defaultReason = decision === 'PROCEED' ? 'Purchasing approved inclusion in the weekly payment run' : decision === 'HOLD' ? 'Purchasing elected to hold for a later run' : 'No Purchasing response by Thursday 09:00';
+    const reason = window.prompt('Decision reason:', defaultReason);
+    if (reason === null) return;
+    setActionLoading(true);
+    try {
+      await paymentBatchApi.belowThresholdDecision([payment.id], decision, reason.trim() || defaultReason);
+      showToast(`Below-$100 decision recorded: ${decision}`, 'success');
+      await loadScheduledPayments();
+    } catch (error: any) {
+      showToast(error?.response?.data?.error?.message || 'Failed to record Purchasing decision', 'error');
+    } finally { setActionLoading(false); }
   };
 
   const handleHoldPayment = async (payment: ScheduledPayment) => {
@@ -2007,6 +2030,22 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                                   >
                                     Release Hold
                                   </button>
+                                )}
+                                {isPurchasing && payment.status === 'HELD_BELOW_100' && (
+                                  <>
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); handleBelowThresholdDecision(payment, 'PROCEED'); }}
+                                      disabled={actionLoading}
+                                      className="px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors disabled:opacity-50"
+                                      style={{ background: 'var(--accent-green)', color: 'white' }}
+                                    >Proceed &lt;$100</button>
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); handleBelowThresholdDecision(payment, 'HOLD'); }}
+                                      disabled={actionLoading}
+                                      className="px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors disabled:opacity-50"
+                                      style={{ background: 'color-mix(in srgb, var(--accent-amber) 12%, transparent)', color: 'var(--accent-amber)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}
+                                    >Hold</button>
+                                  </>
                                 )}
                                 {isAssociate && payment.status === 'AWAITING_POSTING' && (
                                   <button

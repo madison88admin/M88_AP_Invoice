@@ -1,4 +1,5 @@
 import prisma from '../config/database';
+import { InvoiceStatus } from '@ap-invoice/shared';
 
 export const QUICKBOOKS_RECONCILIATION_RESULTS = [
   'MATCHED',
@@ -39,6 +40,9 @@ export async function recordQuickBooksReconciliation(input: {
   review_owner?: string;
   comments?: string;
   source?: string;
+  report_as_of_date?: Date;
+  source_filename?: string;
+  import_key?: string;
 }, actorId?: string) {
   if (!QUICKBOOKS_RECONCILIATION_RESULTS.includes(input.result as any)) {
     throw new Error(`Unsupported QuickBooks reconciliation result: ${input.result}`);
@@ -50,8 +54,7 @@ export async function recordQuickBooksReconciliation(input: {
     const invoice = await prisma.invoice.findUnique({ where: { id: input.invoice_id }, select: { id: true } });
     if (!invoice) throw new Error('Invoice not found');
   }
-  return prisma.quickBooksReconciliation.create({
-    data: {
+  const data: any = {
       invoice_id: input.invoice_id,
       result: input.result,
       qb_transaction_id: input.qb_transaction_id || null,
@@ -65,10 +68,17 @@ export async function recordQuickBooksReconciliation(input: {
       review_owner: input.review_owner || null,
       comments: input.comments || null,
       source: input.source || 'MANUAL',
+      report_as_of_date: input.report_as_of_date || null,
+      source_filename: input.source_filename || null,
+      import_key: input.import_key || null,
       resolution_status: input.result === 'MATCHED' ? 'RESOLVED' : 'OPEN',
       resolved_by: input.result === 'MATCHED' ? actorId || null : null,
       resolved_at: input.result === 'MATCHED' ? new Date() : null,
-    },
+    };
+  const existing = input.import_key ? await prisma.quickBooksReconciliation.findFirst({ where: { import_key: input.import_key } }) : null;
+  if (existing) return prisma.quickBooksReconciliation.update({ where: { id: existing.id }, data });
+  return prisma.quickBooksReconciliation.create({
+    data,
   });
 }
 
@@ -94,6 +104,9 @@ export type QuickBooksImportRow = {
   open_balance?: number;
   currency?: string;
   comments?: string;
+  as_of_date?: string | Date;
+  invoice_date?: string | Date;
+  due_date?: string | Date;
 };
 
 /**
@@ -102,7 +115,7 @@ export type QuickBooksImportRow = {
  * import path with deterministic result categories and no invoice-number-only
  * matching.
  */
-export async function importQuickBooksRows(rows: QuickBooksImportRow[], actorId: string) {
+export async function importQuickBooksRows(rows: QuickBooksImportRow[], actorId: string, options: { asOfDate?: string | Date; sourceFilename?: string } = {}) {
   if (!Array.isArray(rows) || rows.length === 0) throw new Error('At least one QuickBooks row is required');
   const invoices = await prisma.invoice.findMany({
     where: { status: { notIn: ['CANCELLED'] as any } },
@@ -110,8 +123,12 @@ export async function importQuickBooksRows(rows: QuickBooksImportRow[], actorId:
     take: 10000,
   });
   const normalize = (value: unknown) => String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const vendors = await prisma.vendor.findMany({ select: { id: true, name: true } });
   const results = [];
+  const normalizeVendor = (value: unknown) => normalize(value);
   for (const row of rows) {
+    const reportAsOfCandidate = row.as_of_date ? new Date(row.as_of_date) : (options.asOfDate ? new Date(options.asOfDate) : new Date());
+    const reportAsOf = Number.isNaN(reportAsOfCandidate.getTime()) ? new Date() : reportAsOfCandidate;
     const reference = row.ap_record_id || row.reference || row.invoice_number;
     const candidates = invoices.filter((invoice) => {
       const refMatch = reference && (invoice.ap_record_id === reference || invoice.invoice_number === reference || normalize(invoice.invoice_number) === normalize(row.invoice_number));
@@ -130,6 +147,39 @@ export async function importQuickBooksRows(rows: QuickBooksImportRow[], actorId:
       else if (row.amount != null && Math.abs(Number(row.amount) - Number(invoice!.total_amount)) > 0.01) result = 'AMOUNT_DIFFERENCE';
       else result = 'MATCHED';
     }
+    // A QB-only row remains searchable/schedulable when its vendor exists in
+    // the master. Re-imports update the same canonical invoice instead of
+    // creating another invoice record.
+    if (!invoice && result === 'QUICKBOOKS_ONLY' && row.vendor_name && row.invoice_number) {
+      const matchedVendor = vendors.find((v) => normalizeVendor(v.name) === normalizeVendor(row.vendor_name));
+      if (matchedVendor) {
+        const existingQbInvoice = await prisma.invoice.findFirst({ where: { invoice_number: row.invoice_number, vendor_id: matchedVendor.id, source_document_type: 'QUICKBOOKS_ONLY' }, select: { id: true, ap_record_id: true, invoice_number: true, vendor_name_raw: true, total_amount: true, currency: true } });
+        const amount = row.open_balance ?? row.amount ?? 0;
+        invoice = existingQbInvoice || await prisma.invoice.create({
+          data: {
+            invoice_number: row.invoice_number,
+            vendor_id: matchedVendor.id,
+            vendor_name_raw: row.vendor_name,
+            total_amount: amount,
+            currency: row.currency || 'USD',
+            invoice_type: 'INVOICE' as any,
+            status: InvoiceStatus.EXCEPTION_FLAGGED as any,
+            workflow_status: 'ACCOUNTING_REVIEW',
+            source: 'PORTAL' as any,
+            source_document_type: 'QUICKBOOKS_ONLY',
+            qb_open_balance: amount,
+            qb_balance_as_of: reportAsOf,
+            invoice_date: row.invoice_date ? new Date(row.invoice_date) : undefined,
+            due_date: row.due_date ? new Date(row.due_date) : undefined,
+          },
+          select: { id: true, ap_record_id: true, invoice_number: true, vendor_name_raw: true, total_amount: true, currency: true },
+        });
+      }
+    }
+    if (invoice && (row.open_balance != null || row.amount != null)) {
+      await prisma.invoice.update({ where: { id: invoice.id }, data: { qb_open_balance: row.open_balance ?? row.amount ?? null, qb_balance_as_of: reportAsOf } as any });
+    }
+    const importKey = [row.transaction_id || row.reference || row.ap_record_id || row.invoice_number || '', normalize(row.vendor_name), reportAsOf.toISOString().slice(0, 10)].join('|');
     results.push(await recordQuickBooksReconciliation({
       invoice_id: invoice?.id,
       result,
@@ -142,6 +192,9 @@ export async function importQuickBooksRows(rows: QuickBooksImportRow[], actorId:
       difference_amount: invoice && row.amount != null ? Number(row.amount) - Number(invoice.total_amount) : undefined,
       comments: row.comments,
       source: 'QUICKBOOKS_IMPORT',
+      report_as_of_date: reportAsOf,
+      source_filename: options.sourceFilename,
+      import_key: importKey,
     }, actorId));
   }
   return { imported: results.length, results };

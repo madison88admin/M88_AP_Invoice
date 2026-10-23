@@ -4,7 +4,7 @@ import path from 'path';
 import crypto from 'crypto';
 import XLSX from 'xlsx';
 import { AuthRequest } from '../middleware/auth';
-import { createGroupedPaymentBatches, getPaymentBatches, getPaymentBatchById, getScheduledPaymentsForBatch, processPaymentBatch, cancelPaymentBatch, selectPaymentsForBatch, deselectPaymentsForBatch, submitPaymentBatchForReview, updatePaymentBillsSetup, reviewPaymentBatch, returnPaymentBatch, returnInvoicesFromBatch, markPaymentBatchExported, setPaymentRemarks, markPaymentForPayment, approvePaymentForPayment, rejectPaymentForPayment, bulkApprovePaymentsForPayment, applyBankCharge, removeBankCharge, endorseBillStub, matchPaymentConfirmation, findPaymentBatchByConfirmationReference, approveHeldPayment, holdScheduledPayment, getStuckBatches, approveCfoPaymentBatch, rejectCfoPaymentBatch } from '../services/paymentBatchService';
+import { createGroupedPaymentBatches, getPaymentBatches, getPaymentBatchById, getScheduledPaymentsForBatch, processPaymentBatch, cancelPaymentBatch, selectPaymentsForBatch, deselectPaymentsForBatch, submitPaymentBatchForReview, updatePaymentBillsSetup, reviewPaymentBatch, returnPaymentBatch, returnInvoicesFromBatch, markPaymentBatchExported, setPaymentRemarks, markPaymentForPayment, approvePaymentForPayment, rejectPaymentForPayment, bulkApprovePaymentsForPayment, applyBankCharge, removeBankCharge, endorseBillStub, matchPaymentConfirmation, findPaymentBatchByConfirmationReference, approveHeldPayment, holdScheduledPayment, setBelowThresholdDecision, getStuckBatches, approveCfoPaymentBatch, rejectCfoPaymentBatch } from '../services/paymentBatchService';
 import { exportPaymentReconciliation } from '../services/reconciliationExportService';
 import { exportBatchPerVendor } from '../services/perVendorExportService';
 import { isDbEnabled } from '../config/database';
@@ -15,8 +15,12 @@ export const createPaymentBatchController = async (
   next: NextFunction
 ) => {
   try {
-    const { paymentIds } = req.body;
-    const result = await createGroupedPaymentBatches(paymentIds, req.user!.id);
+    const { paymentIds, cutoffDate, asOfDate, scheduleRef } = req.body;
+    const result = await createGroupedPaymentBatches(paymentIds, req.user!.id, {
+      cutoffDate: cutoffDate ? new Date(cutoffDate) : undefined,
+      asOfDate: asOfDate ? new Date(asOfDate) : undefined,
+      scheduleRef: scheduleRef?.trim() || undefined,
+    });
     res.json(result);
   } catch (error) {
     next(error);
@@ -349,6 +353,16 @@ export const holdScheduledPaymentController = async (
   } catch (error) {
     next(error);
   }
+};
+
+export const setBelowThresholdDecisionController = async (
+  req: AuthRequest, res: Response, next: NextFunction
+) => {
+  try {
+    const { paymentIds, decision, reason } = req.body || {};
+    const result = await setBelowThresholdDecision(paymentIds, decision, reason, req.user!.id);
+    res.json(result);
+  } catch (error) { next(error); }
 };
 
 export const endorseBillStubController = async (

@@ -84,6 +84,10 @@ model Invoice {
   min_order_charge      Decimal?
   finance_surcharge     Decimal?
   total_amount          Decimal
+    // Latest outstanding balance reported by QuickBooks, when a QB report has
+    // been imported. This never overwrites the original invoice total.
+    qb_open_balance       Decimal?      @db.Decimal(15, 2)
+    qb_balance_as_of      DateTime?
   currency              String        @default("USD")
   invoice_currency_original String?
   exchange_rate_to_usd  Decimal?
@@ -280,6 +284,9 @@ model QuickBooksReconciliation {
   review_owner        String?
   comments            String?
   source              String?
+    report_as_of_date   DateTime?
+    source_filename     String?
+    import_key          String?
   resolution_status   String   @default("OPEN")
   resolved_by        String?
   resolved_at        DateTime?
@@ -290,6 +297,8 @@ model QuickBooksReconciliation {
 
   @@index([invoice_id, reconciled_at])
   @@index([result, resolution_status])
+    @@index([import_key])
+    @@index([qb_transaction_id])
   @@map("APInvoice_QuickBooksReconciliation")
 }
 
@@ -641,6 +650,15 @@ model Payment {
   hold_evidence Json?
   hold_owner    String?
   hold_review_date DateTime?
+    // Purchasing decision for vendor/currency subtotals below the weekly
+    // payment threshold. The original hold remains auditable.
+    below_threshold_decision String?
+    below_threshold_reason String?
+    below_threshold_decided_by String?
+    below_threshold_decided_at DateTime?
+    below_threshold_deadline DateTime?
+    // Amount confirmed by the bank. Supports partial payment confirmations.
+    paid_amount Decimal @default(0) @db.Decimal(15, 2)
   // Immutable payment-authorisation snapshot. Exports must read these fields,
   // never the mutable Vendor Master record.
   beneficiary_name_snapshot String?
@@ -699,6 +717,9 @@ model PaymentBatch {
   cancelled_by         String?
   cancelled_at         DateTime?
   cancellation_reason  String?
+    weekly_schedule_ref  String?
+    weekly_cutoff_date   DateTime?
+    weekly_as_of_date    DateTime?
   // QuickBooks "Pay Bills"-style payment setup chosen by the Accounting
   // Associate while the batch is DRAFT / RETURNED_FOR_CORRECTION, before it is
   // submitted for supervisor review. Mirrors the QB Pay Bills dialog (method,
@@ -710,6 +731,7 @@ model PaymentBatch {
   bill_stubs           BillStub[]
   vendor_bill_stubs    VendorBillStub[]
   created_at           DateTime           @default(now())
+    @@index([weekly_schedule_ref])
   @@map("APInvoice_PaymentBatch")
 }
 

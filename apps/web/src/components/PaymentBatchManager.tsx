@@ -312,6 +312,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
   const [quickSubmittingId, setQuickSubmittingId] = useState<string | null>(null);
   const [bulkEndorsing, setBulkEndorsing] = useState(false);
   const [qbExporting, setQbExporting] = useState(false);
+  const [qbImporting, setQbImporting] = useState(false);
   const [bulkReleasing, setBulkReleasing] = useState(false);
   const [bulkPostingAll, setBulkPostingAll] = useState(false);
   const [bulkMarking, setBulkMarking] = useState(false);
@@ -738,6 +739,19 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
     } finally {
       setQbExporting(false);
     }
+  };
+
+  const handleImportQBReport = async (file: File | undefined) => {
+    if (!file) return;
+    setQbImporting(true);
+    try {
+      const response = await qbApi.importFile(file, new Date().toISOString().slice(0, 10));
+      const imported = Number(response.data?.imported || 0);
+      showToast(`${imported} QuickBooks row(s) imported and reconciled. Re-imports update existing rows.`, 'success');
+      await loadScheduledPayments();
+    } catch (error: any) {
+      showToast(error?.response?.data?.error?.message || 'Failed to import QuickBooks report', 'error');
+    } finally { setQbImporting(false); }
   };
 
   const handleExportReconciliation = async () => {
@@ -1631,6 +1645,17 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                     {qbExporting ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Download className="h-3.5 w-3.5 mr-1.5" strokeWidth={1.75} />}
                     Export QB Bills
                   </button>
+                  {isAssociate && (
+                    <label
+                      className="flex items-center px-3 py-2 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                      title="Upload the QuickBooks Unpaid Bills report; matching invoices receive their latest open balance"
+                      style={{ background: 'color-mix(in srgb, var(--accent-green) 12%, transparent)', color: 'var(--accent-green)', border: '1px solid color-mix(in srgb, var(--accent-green) 20%, transparent)' }}
+                    >
+                      {qbImporting ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Upload className="h-3.5 w-3.5 mr-1.5" strokeWidth={1.75} />}
+                      Import QB Report
+                      <input type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={qbImporting} onChange={(event) => { void handleImportQBReport(event.target.files?.[0]); event.currentTarget.value = ''; }} />
+                    </label>
+                  )}
                 </div>
               </div>
 

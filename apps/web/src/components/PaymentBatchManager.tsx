@@ -313,6 +313,12 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
   const [bulkEndorsing, setBulkEndorsing] = useState(false);
   const [qbExporting, setQbExporting] = useState(false);
   const [qbImporting, setQbImporting] = useState(false);
+  const [qbAsOfDate, setQbAsOfDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [weeklyContext, setWeeklyContext] = useState({
+    cutoffDate: nextWednesdayInputValue(),
+    asOfDate: new Date().toISOString().slice(0, 10),
+    scheduleRef: '',
+  });
   const [bulkReleasing, setBulkReleasing] = useState(false);
   const [bulkPostingAll, setBulkPostingAll] = useState(false);
   const [bulkMarking, setBulkMarking] = useState(false);
@@ -745,9 +751,10 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
     if (!file) return;
     setQbImporting(true);
     try {
-      const response = await qbApi.importFile(file, new Date().toISOString().slice(0, 10));
+      const response = await qbApi.importFile(file, qbAsOfDate);
       const imported = Number(response.data?.imported || 0);
-      showToast(`${imported} QuickBooks row(s) imported and reconciled. Re-imports update existing rows.`, 'success');
+      const skipped = Number(response.data?.cleanup?.skipped_rows || 0);
+      showToast(`${imported} QuickBooks row(s) imported and reconciled${skipped ? `; ${skipped} report row(s) skipped during cleanup` : ''}. Re-imports update existing rows.`, 'success');
       await loadScheduledPayments();
     } catch (error: any) {
       showToast(error?.response?.data?.error?.message || 'Failed to import QuickBooks report', 'error');
@@ -984,7 +991,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
     setProcessing(true);
     setActionMessage(null);
     try {
-      const response = await paymentBatchApi.create(payableSelectedIds);
+      const response = await paymentBatchApi.create(payableSelectedIds, weeklyContext);
       const batchCount = Number(response.data?.batch_count || 1);
       const paymentCount = Number(response.data?.payment_count || payableSelectedIds.length);
       await Promise.all([loadBatches(), loadScheduledPayments()]);
@@ -1012,7 +1019,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
     }
     setProcessing(true);
     try {
-      const response = await paymentBatchApi.create(payableSelectedIds);
+      const response = await paymentBatchApi.create(payableSelectedIds, weeklyContext);
       const firstBatch = response.data?.batches?.[0] || response.data?.batch;
       const batchCount = Number(response.data?.batch_count || 1);
       setSelectedPaymentIds(new Set());
@@ -1617,6 +1624,18 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                   <p className="text-xs" style={{ color: 'var(--text-muted)' }}>All accounting-stage invoices — awaiting posting, scheduled, held, and pending review</p>
                 </div>
                 <div className="flex items-center gap-3">
+                  {isAssociate && (
+                    <div className="flex items-center gap-2 rounded-lg px-2 py-1" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
+                      <label className="text-[10px] font-semibold uppercase" style={{ color: 'var(--text-muted)' }} title="As-of date printed on the QuickBooks Unpaid Bills report">QB as-of</label>
+                      <input
+                        type="date"
+                        value={qbAsOfDate}
+                        onChange={(event) => setQbAsOfDate(event.target.value)}
+                        className="rounded px-1.5 py-1 text-xs"
+                        style={{ color: 'var(--text-primary)', background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}
+                      />
+                    </div>
+                  )}
                   <button
                     onClick={handleSelectAll}
                     disabled={actionLoading || scheduledPayments.length === 0}
@@ -1658,6 +1677,42 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                   )}
                 </div>
               </div>
+
+              {isAssociate && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4 rounded-xl p-3" style={{ background: 'color-mix(in srgb, var(--accent-blue) 5%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-blue) 15%, transparent)' }}>
+                  <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+                    Weekly cut-off date
+                    <input
+                      type="date"
+                      value={weeklyContext.cutoffDate}
+                      onChange={(event) => setWeeklyContext((prev) => ({ ...prev, cutoffDate: event.target.value }))}
+                      className="mt-1 w-full rounded-lg px-2 py-1.5 text-xs"
+                      style={{ color: 'var(--text-primary)', background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}
+                    />
+                  </label>
+                  <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+                    Schedule as-of date
+                    <input
+                      type="date"
+                      value={weeklyContext.asOfDate}
+                      onChange={(event) => setWeeklyContext((prev) => ({ ...prev, asOfDate: event.target.value }))}
+                      className="mt-1 w-full rounded-lg px-2 py-1.5 text-xs"
+                      style={{ color: 'var(--text-primary)', background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}
+                    />
+                  </label>
+                  <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+                    Weekly schedule reference (optional)
+                    <input
+                      type="text"
+                      value={weeklyContext.scheduleRef}
+                      onChange={(event) => setWeeklyContext((prev) => ({ ...prev, scheduleRef: event.target.value }))}
+                      placeholder="WPS-2026-0042"
+                      className="mt-1 w-full rounded-lg px-2 py-1.5 text-xs"
+                      style={{ color: 'var(--text-primary)', background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}
+                    />
+                  </label>
+                </div>
+              )}
 
               {/* Status Summary Cards */}
               {(isAssociate || isSupervisor) && scheduledPayments.length > 0 && (

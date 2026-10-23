@@ -96,6 +96,14 @@ export interface ScheduledPaymentFilters {
   status?: string; // explicit status view; blank returns the complete post-Accounting queue
 }
 
+/** Factory payments are handled through a separate process and must never be
+ * surfaced in the weekly AP payment queue. Keep the source invoice intact so
+ * it remains available for reconciliation and audit. */
+export function isSeparateFactoryVendor(name: unknown): boolean {
+  const normalized = String(name || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+  return ['greatmanagement', 'sunup', 'maview'].some((excluded) => normalized.includes(excluded));
+}
+
 export async function getScheduledPaymentsForBatch(filters: ScheduledPaymentFilters = {}) {
   await prisma.payment.updateMany({
     where: {
@@ -206,6 +214,7 @@ export async function getScheduledPaymentsForBatch(filters: ScheduledPaymentFilt
 
   // Filter out invoices that already have an active payment in a batch
   const unbatched = invoices.filter((inv: any) => {
+    if (isSeparateFactoryVendor(inv.vendor?.name || inv.vendor_name_raw)) return false;
     const activePayments = (inv.payments || []).filter((p: any) =>
       p.batch_id !== null && !['CANCELLED', 'VOIDED'].includes(p.status)
     );
@@ -1256,6 +1265,21 @@ export async function createPaymentBatch(
 
   if (payments.length !== paymentIds.length) {
     throw new AppError('Some payments are not found, not selected for batch, or not in SCHEDULED/APPROVED_FOR_PAYMENT status', 400);
+  }
+
+  // A future-due invoice can be included in a weekly run only as an explicit
+  // manual override. The existing payment remarks are the audit reason field;
+  // without one, reject the batch before any records are linked.
+  if (weeklyContext?.cutoffDate) {
+    const cutoff = new Date(weeklyContext.cutoffDate);
+    cutoff.setHours(23, 59, 59, 999);
+    const earlyPayments = (payments as any[]).filter((payment) => {
+      const due = payment.invoice?.due_date ? new Date(payment.invoice.due_date) : null;
+      return due && !Number.isNaN(due.getTime()) && due > cutoff && !String(payment.remarks || '').trim();
+    });
+    if (earlyPayments.length > 0) {
+      throw new AppError(`Future-due invoice(s) require a payment reason before the batch can be created: ${earlyPayments.slice(0, 8).map((p: any) => p.invoice?.invoice_number || p.invoice_id).join(', ')}`, 400);
+    }
   }
 
   // A payment batch is a payment-authorisation boundary. Do not allow an

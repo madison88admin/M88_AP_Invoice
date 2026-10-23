@@ -201,7 +201,8 @@ export const paymentBatchApi = {
   getAll: () => api.get('/api/payment-batches'),
   getStuckBatches: (days?: number) => api.get('/api/payment-batches/stuck', { params: days ? { days } : {} }),
   getById: (batchId: string) => api.get(`/api/payment-batches/${batchId}`),
-  create: (paymentIds: string[]) => api.post('/api/payment-batches', { paymentIds }),
+  create: (paymentIds: string[], weeklyContext?: { cutoffDate?: string; asOfDate?: string; scheduleRef?: string }) =>
+    api.post('/api/payment-batches', { paymentIds, ...weeklyContext }),
   submit: (batchId: string) => api.post(`/api/payment-batches/${batchId}/submit`),
   review: (batchId: string, note?: string) => api.post(`/api/payment-batches/${batchId}/review`, { note }),
   returnForCorrection: (batchId: string, reason: string) => api.post(`/api/payment-batches/${batchId}/return`, { reason }),

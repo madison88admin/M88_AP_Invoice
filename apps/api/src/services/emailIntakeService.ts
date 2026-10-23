@@ -76,7 +76,7 @@ function normalizeFakturPajakExtraction(ocrResult: any): void {
   const invoiceNumber = rawText.match(/\bInvoice\s+([A-Z0-9][A-Z0-9/-]{4,})\b/i)?.[1];
   const vendorName = rawText.match(/\b(PT\s+[A-Z][A-Z0-9 .,&-]{3,}?)(?=\s*:\s*(?:GEDUNG|JL\.|JALAN|NPWP|Alamat)\b)/i)?.[1]
     || rawText.match(/\b(PT\s+[A-Z][A-Z0-9 .,&-]{3,})\b/i)?.[1];
-  const amountToken = rawText.match(/(?:Harga\s+Jual\s*\/\s*Penggantian\s*\/\s*Uang\s*Muka\s*\/\s*Termin|Harga\s+Jual)\s*[:\-]?\s*([0-9][0-9.,]*)/i)?.[1];
+  const amountToken = rawText.match(/(?:Harga\s+Jual\s*\/\s*Penggantian\s*\/\s*Uang\s*Muka\s*\/\s*Termin|Harga\s+Jual)\s*[:-]?\s*([0-9][0-9.,]*)/i)?.[1];
   const amount = amountToken ? Number(amountToken.replace(/\./g, '').replace(',', '.')) : NaN;
   if (!invoiceNumber || !vendorName || !Number.isFinite(amount) || amount <= 0) return;
   ocrResult.invoice_number = invoiceNumber;

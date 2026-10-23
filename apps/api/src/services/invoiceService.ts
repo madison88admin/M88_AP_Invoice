@@ -1438,7 +1438,7 @@ export const deleteInvoice = async (id: string, userId: string, userRole: string
   }
 
   if (isDuplicateRecord) {
-    const closed = await prisma.invoice.update({
+    await prisma.invoice.update({
       where: { id },
       data: {
         status: 'CANCELLED' as any,

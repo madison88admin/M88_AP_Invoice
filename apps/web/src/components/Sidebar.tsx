@@ -41,7 +41,7 @@ const navItems: NavItem[] = [
   { label: 'On-Hold Queue', path: '/on-hold-queue', icon: Pause, roles: ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'] },
   { label: 'Vendors', path: '/vendors', icon: Building2, roles: ['PURCHASING_COORDINATOR', 'IT_ADMIN', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE'], badgeKey: 'vendors' },
   { label: 'Bank Details', path: '/bank-details', icon: Landmark, roles: ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'] },
-  { label: 'Batches', path: '/payment-batches', icon: Package, roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'batches' },
+  { label: 'Payment Schedule', path: '/payment-batches', icon: Package, roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'CFO'], badgeKey: 'batches' },
   { label: 'Reports', path: '/reports', icon: BarChart3, roles: ['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'ACCOUNTING_ASSOCIATE', 'CC_REPORTS'] },
   { label: 'Review', path: '/accounting-review', icon: FileSearch, roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'review' },
   { label: 'Audit Logs', path: '/audit-logs', icon: ClipboardList, roles: ['ACCOUNTING_SUPERVISOR', 'IT_ADMIN', 'ACCOUNTING_ASSOCIATE'] },
@@ -64,6 +64,11 @@ export default function Sidebar() {
   };
 
   const visibleItems = navItems.filter((item) => {
+    // Payment scheduling is restricted to the two Accounting roles even
+    // when a broader admin role would normally bypass item role filters.
+    if (item.path === '/payment-batches' && !['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR'].includes(user?.role || '')) {
+      return false;
+    }
     if (user?.role === 'SUPERADMIN') {
       // SUPERADMIN is for system maintenance only — no invoice/workflow/accounting/analytics items
       return ['Audit Logs'].includes(item.label);

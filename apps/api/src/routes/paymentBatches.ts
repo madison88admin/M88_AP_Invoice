@@ -4,10 +4,17 @@ import { authenticate, authorize } from '../middleware/auth';
 import * as paymentBatchController from '../controllers/paymentBatch';
 import upload from '../middleware/upload';
 import { UserRole } from '@ap-invoice/shared';
+import { previewBatchAmountReconciliation, reconcileBatchAmounts } from '../services/batchAmountReconciliation';
 
 const router: Router = Router();
 
 router.use(authenticate);
+router.get('/:batchId/amount-reconciliation', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), async (req, res, next) => {
+  try { res.json(await previewBatchAmountReconciliation(req.params.batchId)); } catch (error) { next(error); }
+});
+router.post('/:batchId/amount-reconciliation', authorize(UserRole.ACCOUNTING_ASSOCIATE), async (req, res, next) => {
+  try { res.json(await reconcileBatchAmounts(req.params.batchId, (req as any).user.id, req.body.reason, req.body.previewToken)); } catch (error) { next(error); }
+});
 
 router.get('/scheduled-payments', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.PURCHASING_COORDINATOR, UserRole.IT_ADMIN), paymentBatchController.getScheduledPaymentsForBatchController);
 router.get('/reconciliation', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR, UserRole.IT_ADMIN), paymentBatchController.exportReconciliationController);
@@ -25,7 +32,7 @@ router.post('/payments/bulk-approve-for-payment', authorize(UserRole.ACCOUNTING_
 router.post('/payments/:paymentId/remarks', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.setPaymentRemarksController);
 router.post('/payments/:paymentId/for-payment', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.markPaymentForPaymentController);
 router.post('/payments/:paymentId/hold', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.holdScheduledPaymentController);
-router.post('/payments/below-threshold-decision', authorize(UserRole.PURCHASING_COORDINATOR, UserRole.PURCHASING_MANAGER, UserRole.IT_ADMIN, UserRole.SUPERADMIN), paymentBatchController.setBelowThresholdDecisionController);
+router.post('/payments/below-threshold-decision', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.setBelowThresholdDecisionController);
 router.post('/payments/:paymentId/approve-for-payment', authorize(UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.approvePaymentForPaymentController);
 router.post('/payments/:paymentId/reject-for-payment', authorize(UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.rejectPaymentForPaymentController);
 router.post('/payments/:paymentId/approve-held', authorize(UserRole.ACCOUNTING_ASSOCIATE, UserRole.ACCOUNTING_SUPERVISOR), paymentBatchController.approveHeldPaymentController);

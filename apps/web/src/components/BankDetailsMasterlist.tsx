@@ -78,6 +78,7 @@ export default function BankDetailsMasterlist() {
   const [requestFile, setRequestFile] = useState<File | null>(null);
 
   const canEditBank = user && ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role);
+  const canAddVendor = user && ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE'].includes(user.role);
   const isCoordinator = user?.role === 'PURCHASING_COORDINATOR';
 
   useEffect(() => {
@@ -463,7 +464,7 @@ export default function BankDetailsMasterlist() {
               {bulkDeleting ? 'Deleting...' : selectedVisibleCount > 0 ? `Delete selected (${selectedVisibleCount})` : 'Delete selected'}
             </button>
           )}
-          {canEditBank && (
+          {canAddVendor && (
             <button
               onClick={() => setShowAddModal(true)}
               className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium"

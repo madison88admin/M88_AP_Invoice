@@ -538,7 +538,10 @@ router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
   }
 });
 
-router.post('/', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE, UserRole.IT_ADMIN, UserRole.SUPERADMIN), async (req: AuthRequest, res: Response, next: NextFunction) => {
+// Direct vendor-master creation is Accounting-owned. Purchasing must use the
+// vendor-master request workflow so a new supplier is not activated until an
+// Accounting Associate approves it.
+router.post('/', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_ASSOCIATE), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     // Phase 11: duplicate vendor check — block when an active vendor already
     // has the same normalized name (case/space-insensitive).
@@ -575,6 +578,14 @@ router.post('/', authorize(UserRole.ACCOUNTING_SUPERVISOR, UserRole.ACCOUNTING_A
         await alertBankAccountReuse(vendor.name, req.body.account_number, reuse, req.user?.id);
       }
     }
+
+    await prisma.auditLog.create({
+      data: {
+        action: 'VENDOR_MASTER_CREATED_MANUAL',
+        performed_by: req.user!.id,
+        note: `Vendor "${vendor.name}" manually added by ${req.user!.name || req.user!.id}.`,
+      },
+    }).catch(() => {});
 
     res.status(201).json(vendor);
   } catch (error) {

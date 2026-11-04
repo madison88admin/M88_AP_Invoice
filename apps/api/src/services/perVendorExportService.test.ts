@@ -26,6 +26,20 @@ beforeEach(() => {
 });
 
 describe('payment batch bank export', () => {
+  it('blocks legacy mixed-vendor batches before generating a remittance file', async () => {
+    paymentBatchFindUnique.mockResolvedValue({
+      id: 'batch-mixed', batch_number: 'PB-MIXED', total_amount: 225, payment_count: 2,
+      currency: 'USD', status: 'REVIEWED', created_at: new Date(),
+      payments: [
+        { id: 'pay-1', amount: 100, currency: 'USD', bank_snapshot_hash: 'bank-a', invoice: { vendor_id: 'vendor-a', vendor: { id: 'vendor-a', name: 'Vendor A' } } },
+        { id: 'pay-2', amount: 125, currency: 'USD', bank_snapshot_hash: 'bank-b', invoice: { vendor_id: 'vendor-b', vendor: { id: 'vendor-b', name: 'Vendor B' } } },
+      ],
+    });
+
+    await expect(exportBatchPerVendor('batch-mixed', 'accounting-1'))
+      .rejects.toThrow('multiple vendors');
+  });
+
   it('exports the immutable ABA snapshot for a domestic vendor without SWIFT', async () => {
     paymentBatchFindUnique.mockResolvedValue({
       id: 'batch-1',

@@ -22,7 +22,7 @@ vi.mock('./fieldDecisionEngine', () => ({ fieldDecisionEngine: { decide: vi.fn()
 vi.mock('./inAppNotificationService', () => ({ inAppNotificationService: { create: vi.fn(), notifyStageTransition: vi.fn() } }));
 vi.mock('../utils/mpoReference', () => ({ parseMPOReference: vi.fn() }));
 
-import { getDuplicateInvoices } from './invoiceService';
+import { getDuplicateInvoices, getInvoices } from './invoiceService';
 
 function makeRow(overrides: Record<string, any> = {}) {
   return {
@@ -86,5 +86,32 @@ describe('getDuplicateInvoices', () => {
     const where = invoiceFindMany.mock.calls[0][0].where;
     expect(where.invoice_number).toEqual({ not: '' });
     expect(where.status).toEqual({ notIn: ['CANCELLED', 'REJECTED'] });
+  });
+});
+
+describe('getInvoices role/status filtering', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns the coordinator repository rows by default and excludes cancelled rows', async () => {
+    invoiceFindMany.mockResolvedValue([makeRow({ id: 'active-invoice' })]);
+
+    const result = await getInvoices({}, 'PURCHASING_COORDINATOR');
+
+    expect(result).toHaveLength(1);
+    expect(invoiceFindMany.mock.calls[0][0].where.status).toEqual({
+      in: expect.arrayContaining(['RECEIVED', 'EXCEPTION_FLAGGED', 'PENDING_COORDINATOR']),
+      not: 'CANCELLED',
+    });
+  });
+
+  it('allows an explicitly selected cancelled status when the role can access it', async () => {
+    invoiceFindMany.mockResolvedValue([makeRow({ id: 'cancelled-invoice', status: 'CANCELLED' })]);
+
+    const result = await getInvoices({ status: 'CANCELLED' }, 'PURCHASING_COORDINATOR');
+
+    expect(result).toHaveLength(1);
+    expect(invoiceFindMany.mock.calls[0][0].where.status).toBe('CANCELLED');
   });
 });

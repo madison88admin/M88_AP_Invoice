@@ -51,7 +51,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       description: options.description,
       message: options.title || '',
       type: options.type || 'info',
-      duration: options.duration ?? 4000,
+      // Action feedback is presented as a blocking in-app dialog. Keep it open
+      // until the user acknowledges it instead of disappearing like a toast.
+      duration: options.duration ?? 0,
       action: options.action,
     };
     setToasts(prev => [...prev, toast]);
@@ -83,27 +85,29 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={{ showToast, toast: { add: addToast, close: dismissToast } }}>
       {children}
-      <div className="fixed bottom-4 right-4 z-[9999] flex flex-col gap-2 max-w-[calc(100vw-2rem)]">
-        {toasts.map(toast => {
+      {toasts.length > 0 && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/45 p-4 backdrop-blur-[2px]" role="presentation">
+        {toasts.slice(0, 1).map(toast => {
           const Icon = iconMap[toast.type];
           const color = colorMap[toast.type];
           return (
             <div
               key={toast.id}
-              className="rounded-xl border shadow-2xl animate-slide-in-right flex items-start gap-3 p-3 pr-2"
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby={`notification-title-${toast.id}`}
+              className="w-full max-w-md rounded-2xl border shadow-2xl animate-modal-in flex items-start gap-3 p-5"
               style={{
                 background: 'var(--bg-card)',
                 borderLeft: `3px solid ${color}`,
                 borderColor: 'var(--border-color)',
                 boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-                minWidth: '300px',
-                maxWidth: '420px',
-                borderRadius: '12px',
+                borderRadius: '16px',
               }}
             >
               <Icon className="h-5 w-5 flex-shrink-0 mt-0.5" style={{ color }} strokeWidth={1.75} />
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                <p id={`notification-title-${toast.id}`} className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                   {toast.title || toast.message}
                 </p>
                 {toast.description && (
@@ -129,6 +133,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                     {toast.action.label}
                   </button>
                 )}
+                {!toast.action && (
+                  <button
+                    type="button"
+                    onClick={() => dismissToast(toast.id)}
+                    className="mt-4 rounded-lg px-4 py-2 text-sm font-semibold"
+                    style={{ background: color, color: 'var(--text-inverse)' }}
+                  >OK</button>
+                )}
               </div>
               <button
                 onClick={() => dismissToast(toast.id)}
@@ -140,7 +152,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             </div>
           );
         })}
-      </div>
+        </div>
+      )}
     </ToastContext.Provider>
   );
 }

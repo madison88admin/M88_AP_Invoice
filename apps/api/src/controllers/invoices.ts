@@ -388,7 +388,7 @@ export const getDueDateChangeRequestsForInvoice = async (req: AuthRequest, res: 
 };
 
 export const approveDueDateChange = async (req: AuthRequest, res: Response, next: NextFunction) => {
-  try { res.json(await approveInvoiceDueDateChange(req.params.requestId, req.user!.id, req.user!.name || req.user!.email)); }
+  try { res.json(await approveInvoiceDueDateChange(req.params.requestId, req.user!.id, req.user!.name || req.user!.email, req.body?.approval_impact_review)); }
   catch (error) { next(error); }
 };
 

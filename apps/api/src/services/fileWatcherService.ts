@@ -128,6 +128,35 @@ async function recordWatcherIntakeEvent(intakeId: string, input: IntakeEventReco
   });
 }
 
+/**
+ * Park a watcher attachment for review without leaving it visible only in the
+ * filesystem.  REVIEW_REQUIRED is a valid terminal intake outcome, but the
+ * PDF still needs a searchable repository review row so the coordinator can
+ * find it, inspect the source document, and correct the extraction.
+ */
+async function recordWatcherReviewRequired(
+  intakeId: string,
+  sourcePath: string,
+  fileName: string,
+  reason: string,
+  metadata: Record<string, unknown> = {},
+): Promise<string | null> {
+  const finalPath = safeMove(sourcePath, MANUAL_REVIEW_DIR);
+  await recordWatcherIntakeEvent(intakeId, {
+    source: 'POWER_AUTOMATE',
+    stage: 'REVIEW_REQUIRED',
+    status: 'REVIEW_REQUIRED',
+    fileName,
+    error: reason,
+    metadata: {
+      ...metadata,
+      storage_path: finalPath || path.join(MANUAL_REVIEW_DIR, path.basename(fileName)),
+      review_required: true,
+    },
+  });
+  return finalPath;
+}
+
 function eventIntakeId(event: IntakeEventSummary): string | undefined {
   if (typeof event.intake_id === 'string' && event.intake_id.trim()) return event.intake_id;
   const metadata = event.metadata;
@@ -599,16 +628,11 @@ async function processFileInternal(filePath: string, fileName: string, intakeId:
   if (isObviouslyNonInvoiceFilename(fileName)) {
     const reason = nonInvoiceSuppressionReason(fileName);
     logger.info(`[File Watcher] ${fileName} → ManualReview without OCR: ${reason}`);
-    safeMove(processingPath, MANUAL_REVIEW_DIR);
-    await createAuditLog(null, 'WATCHER_NON_INVOICE_SUPPRESSED', reason);
-    await recordWatcherIntakeEvent(intakeId, {
-      source: 'POWER_AUTOMATE',
-      stage: 'REVIEW_REQUIRED',
-      status: 'REVIEW_REQUIRED',
-      fileName,
-      error: reason,
-      metadata: { suppressed_before_ocr: true, suppression_rule: 'obvious_filename_pattern' },
+    await recordWatcherReviewRequired(intakeId, processingPath, fileName, reason, {
+      suppressed_before_ocr: true,
+      suppression_rule: 'obvious_filename_pattern',
     });
+    await createAuditLog(null, 'WATCHER_NON_INVOICE_SUPPRESSED', reason);
     return;
   }
 
@@ -803,9 +827,18 @@ async function processSingleInvoiceBuffer(
   const reviewReason = intakeReviewReason(ocrResult, fileName);
   if (reviewReason) {
     logger.info(`[File Watcher] ${fileName}${partLabel} → ManualReview: ${reviewReason}`);
-    safeMove(currentProcessingPath, MANUAL_REVIEW_DIR);
+    await recordWatcherReviewRequired(runIntakeId, currentProcessingPath, fileName, reviewReason, {
+      invoice_number: ocrResult.invoice_number,
+      invoice_type: ocrResult.invoice_type,
+      document_type: ocrResult.document_type,
+      vendor_name: ocrResult.vendor_name,
+      total_amount: ocrResult.total_amount,
+      currency: ocrResult.currency,
+      invoice_date: ocrResult.invoice_date,
+      payment_terms: ocrResult.payment_terms,
+      confidence: ocrResult.ocr_confidence_score,
+    });
     await createAuditLog(null, 'WATCHER_REVIEW_REQUIRED', `${fileName}${partLabel}: ${reviewReason}`);
-    await recordWatcherIntakeEvent(runIntakeId, { source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', fileName, error: reviewReason });
     return { fileName, terminalStage: 'REVIEW_REQUIRED', error: reviewReason };
   }
 
@@ -813,9 +846,18 @@ async function processSingleInvoiceBuffer(
   if (intakeControls.reasons.length > 0) {
     const reason = intakeControls.reasons.join(' ');
     logger.info(`[File Watcher] ${fileName}${partLabel} → ManualReview: ${reason}`);
-    safeMove(currentProcessingPath, MANUAL_REVIEW_DIR);
+    await recordWatcherReviewRequired(runIntakeId, currentProcessingPath, fileName, reason, {
+      invoice_number: ocrResult.invoice_number,
+      invoice_type: ocrResult.invoice_type,
+      document_type: ocrResult.document_type,
+      vendor_name: ocrResult.vendor_name,
+      total_amount: ocrResult.total_amount,
+      currency: ocrResult.currency,
+      invoice_date: ocrResult.invoice_date,
+      confidence: ocrResult.ocr_confidence_score,
+      intake_controls: intakeControls,
+    });
     await createAuditLog(null, 'WATCHER_INTAKE_CONTROL_REVIEW', `${fileName}${partLabel}: ${reason}`);
-    await recordWatcherIntakeEvent(runIntakeId, { source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', fileName, error: reason, metadata: { intake_controls: intakeControls } });
     await alertEmailIntakeFailure({ source: 'Power Automate intake control', fileName, error: reason });
     return { fileName, terminalStage: 'REVIEW_REQUIRED', error: reason };
   }
@@ -828,20 +870,23 @@ async function processSingleInvoiceBuffer(
     logger.warn(
       `[File Watcher] Low OCR confidence (${(ocrConfidence * 100).toFixed(1)}% < ${(OCR_CONFIDENCE_THRESHOLD * 100).toFixed(0)}%) for ${fileName}${partLabel} → ManualReview`
     );
-    safeMove(currentProcessingPath, MANUAL_REVIEW_DIR);
+    await recordWatcherReviewRequired(runIntakeId, currentProcessingPath, fileName, `OCR confidence ${(ocrConfidence * 100).toFixed(1)}% below threshold`, {
+      invoice_number: ocrResult.invoice_number,
+      invoice_type: ocrResult.invoice_type,
+      document_type: ocrResult.document_type,
+      vendor_name: ocrResult.vendor_name,
+      total_amount: ocrResult.total_amount,
+      currency: ocrResult.currency,
+      invoice_date: ocrResult.invoice_date,
+      confidence: ocrResult.ocr_confidence_score,
+      reason: 'LOW_OCR_CONFIDENCE',
+      split_index: splitIndex ?? null,
+    });
     await createAuditLog(
       null,
       'WATCHER_LOW_OCR_CONFIDENCE',
       `OCR confidence ${(ocrConfidence * 100).toFixed(1)}% below threshold ${(OCR_CONFIDENCE_THRESHOLD * 100).toFixed(0)}% for ${fileName}${partLabel}. Routed to manual review.`
     );
-    await recordWatcherIntakeEvent(runIntakeId, {
-      source: 'POWER_AUTOMATE',
-      stage: 'REVIEW_REQUIRED',
-      status: 'REVIEW_REQUIRED',
-      fileName,
-      error: `OCR confidence ${(ocrConfidence * 100).toFixed(1)}% below threshold ${(OCR_CONFIDENCE_THRESHOLD * 100).toFixed(0)}%`,
-      metadata: { reason: 'LOW_OCR_CONFIDENCE', split_index: splitIndex ?? null },
-    });
     return { fileName, terminalStage: 'REVIEW_REQUIRED', error: `OCR confidence ${(ocrConfidence * 100).toFixed(1)}% below threshold` };
   }
 
@@ -867,9 +912,16 @@ async function processSingleInvoiceBuffer(
   if (!recoveredInvoiceNumber || SFTP_PLACEHOLDER_INVOICE_NUMBER.test(recoveredInvoiceNumber)) {
     const reason = `Invoice number could not be extracted for ${fileName}${partLabel}; placeholder invoice numbers are disabled`;
     logger.warn(`[File Watcher] ${fileName}${partLabel} → ManualReview: ${reason}`);
-    safeMove(currentProcessingPath, MANUAL_REVIEW_DIR);
+    await recordWatcherReviewRequired(runIntakeId, currentProcessingPath, fileName, reason, {
+      invoice_type: ocrResult.invoice_type,
+      document_type: ocrResult.document_type,
+      vendor_name: ocrResult.vendor_name,
+      total_amount: ocrResult.total_amount,
+      currency: ocrResult.currency,
+      invoice_date: ocrResult.invoice_date,
+      confidence: ocrResult.ocr_confidence_score,
+    });
     await createAuditLog(null, 'WATCHER_REVIEW_REQUIRED', reason);
-    await recordWatcherIntakeEvent(runIntakeId, { source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', fileName, error: reason });
     return { fileName, terminalStage: 'REVIEW_REQUIRED', error: reason };
   }
   ocrResult.invoice_number = recoveredInvoiceNumber;

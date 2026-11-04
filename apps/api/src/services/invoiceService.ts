@@ -144,7 +144,11 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
     is_handwritten,
     priority_flag,
     priority_pay_date,
+    priority_reason,
+    priority_evidence_reference,
     is_urgent,
+    late_submission_reason,
+    late_submission_source,
     qb_memo,
     qb_account_class,
     vendor_name_raw,
@@ -209,7 +213,8 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
     brand_tier = BrandTier.OTHER;
   }
 
-  // Resolve vendor_id: use provided ID, match by name, or create new vendor
+  // Resolve vendor_id: use provided ID, match by name, or allow an Accounting
+  // user to add the supplier manually. Intake/OCR callers cannot create rows.
   let resolvedVendorId = vendor_id;
   if (!resolvedVendorId) {
     const vendorName = vendor_name_raw || '';
@@ -234,6 +239,13 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
         },
       });
       resolvedVendorId = newVendor.id;
+      await prisma.auditLog.create({
+        data: {
+          action: 'VENDOR_MASTER_CREATED_MANUAL',
+          performed_by: userId,
+          note: `Vendor "${newVendor.name}" manually added during invoice entry by Accounting.`,
+        },
+      }).catch(() => {});
     }
   }
 
@@ -302,7 +314,11 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
       is_handwritten: is_handwritten || false,
       priority_flag: priority_flag || false,
       priority_pay_date: safeDate(priority_pay_date),
+      priority_reason: priority_reason || null,
+      priority_evidence_reference: priority_evidence_reference || null,
       is_urgent: is_urgent || false,
+      late_submission_reason: late_submission_reason || null,
+      late_submission_source: late_submission_source || null,
       qb_memo,
       qb_account_class,
       vendor_name_raw: vendor_name_raw || '',
@@ -512,15 +528,11 @@ export const getDistinctBrands = async (): Promise<string[]> => {
 export const getInvoices = async (filters: any, userRole?: string) => {
   const where: any = {};
 
-  // A replaced invoice remains in the database for audit, but the normal
-  // repository should show only the current revision.  Keep cancelled records
-  // visible when the user explicitly filters for CANCELLED; otherwise hide a
-  // cancelled parent that has a live child revision.
+  // Superseded/replaced invoices remain in the database for audit, but they
+  // must not appear as active repository records. A user can still retrieve
+  // them deliberately by applying the explicit CANCELLED status filter.
   if (!filters.status) {
-    where.NOT = {
-      status: InvoiceStatus.CANCELLED,
-      child_invoices: { some: { status: { not: InvoiceStatus.CANCELLED } } },
-    };
+    where.status = { not: InvoiceStatus.CANCELLED };
   }
 
   if (filters.status) {
@@ -537,14 +549,17 @@ export const getInvoices = async (filters: any, userRole?: string) => {
     const accessibleStages = ROLE_STAGE_ACCESS[userRole];
     if (accessibleStages && accessibleStages.length > 0) {
       // If a specific status filter is applied, check if it's allowed for the role
-      if (where.status) {
-        if (!accessibleStages.includes(where.status)) {
+      if (filters.status) {
+        if (!accessibleStages.includes(filters.status)) {
           // Role doesn't have access to this status — return empty
           return [];
         }
       } else {
-        // No specific status filter — restrict to accessible stages
-        where.status = { in: accessibleStages };
+        // No specific status filter — restrict to accessible stages while
+        // preserving the default exclusion of cancelled/superseded invoices.
+        // Do not test `where.status` here: it may already be a Prisma filter
+        // object ({ not: CANCELLED }), not a status string.
+        where.status = { in: accessibleStages, not: InvoiceStatus.CANCELLED };
       }
     }
   }
@@ -847,8 +862,11 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
 
   const manualVendorName = String(invoiceData.new_vendor_name || '').trim();
   if (manualVendorName) {
-    if (!canReassignVendor) {
-      throw new AppError('Not authorized to create or reassign an invoice vendor', 403);
+    // A Purchasing user may reassign to an existing vendor, but may not create
+    // a new Vendor Master row from the invoice editor. New suppliers must go
+    // through the vendor-master request workflow and Accounting approval.
+    if (!accountingRoles.includes(userRole)) {
+      throw new AppError('New vendors must be submitted through the vendor-master request workflow for Accounting approval.', 403);
     }
     if (!String(invoiceData.edit_reason || '').trim()) {
       throw new AppError('A reason is required when changing the invoice vendor', 400);
@@ -871,6 +889,13 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
         },
         select: { id: true, name: true },
       });
+      await prisma.auditLog.create({
+        data: {
+          action: 'VENDOR_MASTER_CREATED_MANUAL',
+          performed_by: userId,
+          note: `Vendor "${selectedVendor.name}" manually added during invoice correction by Accounting.`,
+        },
+      }).catch(() => {});
     }
     data.vendor_id = selectedVendor.id;
     data.vendor_name_raw = selectedVendor.name;

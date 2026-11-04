@@ -139,6 +139,7 @@ model Invoice {
     // been imported. This never overwrites the original invoice total.
     qb_open_balance       Decimal?      @db.Decimal(15, 2)
     qb_balance_as_of      DateTime?
+    qb_bank_charge_included Boolean      @default(false)
   currency              String        @default("USD")
   invoice_currency_original String?
   exchange_rate_to_usd  Decimal?
@@ -203,7 +204,15 @@ model Invoice {
   current_approver_role String?
   priority_flag         Boolean       @default(false)
   priority_pay_date     DateTime?
+  priority_reason       String?
+  priority_evidence_reference String?
   is_urgent             Boolean       @default(false)
+  late_submission_reason String?
+  late_submission_source String?
+  hold_reason           String?
+  hold_evidence_reference String?
+  hold_owner            String?
+  hold_review_date      DateTime?
   
   // Validation
   is_duplicate          Boolean       @default(false)
@@ -330,6 +339,7 @@ model QuickBooksReconciliation {
   qb_invoice_number   String?
   qb_amount           Decimal? @db.Decimal(15, 2)
   qb_open_balance     Decimal? @db.Decimal(15, 2)
+  qb_currency         String?
   difference_amount   Decimal? @db.Decimal(15, 2)
   exception_code      String?
   review_owner        String?
@@ -557,6 +567,7 @@ model InvoiceDueDateChangeRequest {
   reviewed_by         String?
   reviewed_by_id      String?
   reviewed_at         DateTime?
+  approval_impact_review String?
   created_at          DateTime @default(now())
   updated_at          DateTime @updatedAt
 
@@ -762,6 +773,11 @@ model PaymentBatch {
   cfo_approved_at      DateTime?
   cfo_note             String?
   exported_at          DateTime?
+  execution_reference String?
+  execution_bank      String?
+  execution_remarks   String?
+  execution_proof_url String?
+  execution_proof_name String?
   returned_by          String?
   returned_at          DateTime?
   return_reason        String?
@@ -781,6 +797,8 @@ model PaymentBatch {
   payments             Payment[]
   bill_stubs           BillStub[]
   vendor_bill_stubs    VendorBillStub[]
+  payment_confirmations PaymentConfirmation[]
+  payment_confirmation_imports PaymentConfirmationImport[]
   created_at           DateTime           @default(now())
     @@index([weekly_schedule_ref])
   @@map("APInvoice_PaymentBatch")
@@ -855,11 +873,20 @@ model PaymentConfirmation {
   invoice_id      String
   invoice         Invoice  @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
   payment_id      String?
+  batch_id        String?
+  batch           PaymentBatch? @relation(fields: [batch_id], references: [id], onDelete: SetNull)
+  import_id       String?
+  import          PaymentConfirmationImport? @relation(fields: [import_id], references: [id], onDelete: SetNull)
   vendor_name     String
   vendor_email    String?
   amount          Decimal  @db.Decimal(15, 2)
+  allocated_amount Decimal? @db.Decimal(15, 2)
   currency        String   @default("USD")
   payment_reference String?
+  bank_transaction_reference String?
+  payment_date    DateTime?
+  source          String   @default("SUPPLIER_EMAIL")
+  confirmation_fingerprint String? @unique
   email_sent      Boolean  @default(false)
   cc_email        String?
   sent_by         String?
@@ -867,8 +894,35 @@ model PaymentConfirmation {
   created_at      DateTime @default(now())
 
   @@index([invoice_id])
+  @@index([batch_id])
+  @@index([import_id])
+  @@index([payment_reference])
   @@index([sent_at])
   @@map("APInvoice_PaymentConfirmation")
+}
+
+// Immutable record of each uploaded Citibank confirmation file. The SHA-256
+// fingerprint is unique so repeated uploads cannot create duplicate payment
+// confirmations, even when the same file is uploaded through a different UI.
+model PaymentConfirmationImport {
+  id            String   @id @default(uuid())
+  sha256        String   @unique
+  file_name     String
+  storage_path  String?
+  mime_type     String?
+  source        String   @default("CITIBANK_UPLOAD")
+  uploaded_by   String?
+  batch_id      String?
+  batch         PaymentBatch? @relation(fields: [batch_id], references: [id], onDelete: SetNull)
+  status        String   @default("QUEUED")
+  error_message String?
+  received_at   DateTime @default(now())
+  processed_at  DateTime?
+  confirmations PaymentConfirmation[]
+
+  @@index([batch_id])
+  @@index([status, received_at])
+  @@map("APInvoice_PaymentConfirmationImport")
 }
 
 model ApiKey {

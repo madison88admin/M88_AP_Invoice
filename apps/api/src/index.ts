@@ -298,8 +298,10 @@ const startServer = async () => {
     server.setTimeout(600000); // 10 minutes
     const sideEffectsEnabled = process.env.DISABLE_SIDE_EFFECTS !== 'true';
     const databaseConnected = await isDbConnected();
-    if (databaseConnected) {
+    if (databaseConnected && sideEffectsEnabled) {
       await startDurableJobWorker();
+    } else if (databaseConnected) {
+      logger.info('Durable finance job worker disabled by DISABLE_SIDE_EFFECTS=true');
     } else {
       logger.warn('Durable finance job worker disabled because the database is unavailable');
     }
@@ -432,7 +434,7 @@ const startServer = async () => {
 
     // Nightly deterministic Finance controls. Disabled only by explicit config;
     // each run is persisted for dashboard history and auditability.
-    const financeControlInterval = setInterval(async () => {
+    const financeControlInterval = sideEffectsEnabled ? setInterval(async () => {
       try {
         await runAnomalyScan('nightly-scheduler');
         await runFourWayReconciliation('nightly-scheduler');
@@ -440,8 +442,8 @@ const startServer = async () => {
       } catch (err) {
         logger.error('Nightly Finance controls failed:', err);
       }
-    }, Number(process.env.FINANCE_RECONCILIATION_INTERVAL_MS || 24 * 60 * 60 * 1000));
-    financeControlInterval.unref();
+    }, Number(process.env.FINANCE_RECONCILIATION_INTERVAL_MS || 24 * 60 * 60 * 1000)) : undefined;
+    financeControlInterval?.unref();
 
     // Run once on startup after 30 seconds
     const initialSlaTimer = sideEffectsEnabled ? setTimeout(async () => {
@@ -485,7 +487,7 @@ const startServer = async () => {
       if (initialSlaTimer) clearTimeout(initialSlaTimer);
       if (ocrDateSanityInterval) clearInterval(ocrDateSanityInterval);
       if (initialDateSanityTimer) clearTimeout(initialDateSanityTimer);
-      clearInterval(financeControlInterval);
+      if (financeControlInterval) clearInterval(financeControlInterval);
       stopDurableJobWorker();
       server.close();
       await disconnectDatabase();

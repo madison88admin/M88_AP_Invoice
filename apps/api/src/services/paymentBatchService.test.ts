@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock the prisma client before importing the service.
-const { paymentFindMany, auditLogFindMany, paymentUpdateMany, auditLogCreate, paymentBatchFindUnique, paymentBatchFindMany, paymentBatchFindFirst, paymentUpdate, paymentBatchUpdate, paymentBatchCreate, billStubUpsert, invoiceUpdate, invoiceFindMany, paymentCount, paymentFindUnique, notificationCreate } = vi.hoisted(() => ({
+const { paymentFindMany, auditLogFindMany, paymentUpdateMany, auditLogCreate, paymentBatchFindUnique, paymentBatchFindMany, paymentBatchFindFirst, paymentUpdate, paymentBatchUpdate, paymentBatchCreate, billStubUpsert, invoiceUpdate, invoiceFindMany, paymentCount, paymentFindUnique, paymentConfirmationCreate, notificationCreate, duplicateReviewFindMany } = vi.hoisted(() => ({
   paymentFindMany: vi.fn(),
   auditLogFindMany: vi.fn(),
   paymentUpdateMany: vi.fn(),
@@ -17,7 +17,9 @@ const { paymentFindMany, auditLogFindMany, paymentUpdateMany, auditLogCreate, pa
   invoiceFindMany: vi.fn().mockResolvedValue([]),
   paymentCount: vi.fn(),
   paymentFindUnique: vi.fn(),
+  paymentConfirmationCreate: vi.fn(),
   notificationCreate: vi.fn(),
+  duplicateReviewFindMany: vi.fn(),
 }));
 
 vi.mock('../config/database', () => ({
@@ -25,6 +27,8 @@ vi.mock('../config/database', () => ({
     payment: { findMany: paymentFindMany, updateMany: paymentUpdateMany, update: paymentUpdate, count: paymentCount, findUnique: paymentFindUnique },
     paymentBatch: { findUnique: paymentBatchFindUnique, findMany: paymentBatchFindMany, findFirst: paymentBatchFindFirst, update: paymentBatchUpdate, create: paymentBatchCreate },
     invoice: { update: invoiceUpdate, findMany: invoiceFindMany },
+    paymentConfirmation: { create: paymentConfirmationCreate },
+    duplicateRevisionReview: { findMany: duplicateReviewFindMany },
     billStub: { upsert: billStubUpsert },
     auditLog: { findMany: auditLogFindMany, create: auditLogCreate },
     // Callback-form transaction: run the callback against the same mocked models.
@@ -39,27 +43,24 @@ vi.mock('./inAppNotificationService', () => ({
   inAppNotificationService: { create: notificationCreate, notifyStageTransition: vi.fn() },
 }));
 
-import { getScheduledPaymentsForBatch, bulkApprovePaymentsForPayment, applyBankCharge, removeBankCharge, endorseBillStub, matchPaymentConfirmation, findPaymentBatchByConfirmationReference, approveHeldPayment, holdScheduledPayment, markPaymentForPayment, returnInvoicesFromBatch, getStuckBatches, markPaymentBatchExported, createPaymentBatch, createGroupedPaymentBatches, reviewPaymentBatch, processPaymentBatch, autoBatchPaymentOnPost, updatePaymentBillsSetup, submitPaymentBatchForReview } from './paymentBatchService';
+import { getScheduledPaymentsForBatch, bulkApprovePaymentsForPayment, applyBankCharge, removeBankCharge, endorseBillStub, matchPaymentConfirmation, findPaymentBatchByConfirmationReference, approveHeldPayment, holdScheduledPayment, markPaymentForPayment, returnInvoicesFromBatch, getStuckBatches, markPaymentBatchExported, createPaymentBatch, createGroupedPaymentBatches, reviewPaymentBatch, processPaymentBatch, autoBatchPaymentOnPost, updatePaymentBillsSetup, submitPaymentBatchForReview, approveCfoPaymentBatch } from './paymentBatchService';
 
 describe('payment batch segregation of duties', () => {
-  it('allows the Accounting Associate to finalize a legacy pending batch without supervisor approval', async () => {
+  it('blocks supervisor review of an empty legacy batch', async () => {
     paymentBatchFindUnique.mockResolvedValue({
       id: 'batch-1', status: 'PENDING_SUPERVISOR_REVIEW', created_by: 'same-user', submitted_by: 'same-user',
     });
-    await reviewPaymentBatch('batch-1', 'same-user');
-    expect(paymentBatchUpdate).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: 'batch-1' },
-      data: expect.objectContaining({ status: 'REVIEWED', reviewed_by: 'same-user' }),
-    }));
+    await expect(reviewPaymentBatch('batch-1', 'same-user')).rejects.toThrow('Batch integrity check failed');
+    expect(paymentBatchUpdate).not.toHaveBeenCalled();
   });
 
   it('does not use preparer/reviewer segregation for execution, but still requires bill-stub evidence', async () => {
     paymentBatchFindUnique.mockResolvedValue({
-      id: 'batch-1', batch_number: 'PB1', status: 'REVIEWED', created_by: 'preparer',
-      submitted_by: 'preparer', reviewed_by: 'reviewer', payments: [{ id: 'pay-1', invoice: { invoice_number: 'INV-1' }, bill_stub: null }],
+      id: 'batch-1', batch_number: 'PB1', status: 'EXPORTED_TO_BANK', created_by: 'preparer',
+      submitted_by: 'preparer', reviewed_by: 'reviewer', payments: [makePayment({ id: 'pay-1', invoice: { vendor_id: 'vendor-1', invoice_number: 'INV-1' }, bill_stub: null })],
     });
-    await expect(processPaymentBatch('batch-1', 'preparer')).rejects.toThrow('uploaded bill stub file');
-    await expect(processPaymentBatch('batch-1', 'reviewer')).rejects.toThrow('uploaded bill stub file');
+    await expect(processPaymentBatch('batch-1', 'preparer', { reference: 'BANK-REF' })).rejects.toThrow('uploaded bill stub file');
+    await expect(processPaymentBatch('batch-1', 'reviewer', { reference: 'BANK-REF' })).rejects.toThrow('uploaded bill stub file');
   });
 });
 
@@ -84,6 +85,7 @@ function makePayment(overrides: Record<string, any> = {}) {
     batch_id: overrides.batch_id ?? null,
     bank_charge_amount: overrides.bank_charge_amount ?? null,
     bank_charge_note: overrides.bank_charge_note ?? null,
+    paid_amount: overrides.paid_amount ?? 0,
     beneficiary_name_snapshot: overrides.beneficiary_name_snapshot ?? 'Test Beneficiary',
     account_number_snapshot: overrides.account_number_snapshot ?? '000123456789',
     aba_routing_number_snapshot: overrides.aba_routing_number_snapshot ?? null,
@@ -99,6 +101,9 @@ function makePayment(overrides: Record<string, any> = {}) {
       due_date: invoice.due_date ?? null,
       currency: invoice.currency ?? 'USD',
       total_amount: invoice.total_amount ?? overrides.amount ?? 100,
+      qb_open_balance: invoice.qb_open_balance ?? null,
+      qb_bank_charge_included: invoice.qb_bank_charge_included ?? false,
+      bank_match_details: invoice.bank_match_details ?? null,
       brand: invoice.brand ?? 'TEST_BRAND',
       season: invoice.season ?? 'SS27',
       payment_terms: invoice.payment_terms ?? '30 DAYS',
@@ -130,7 +135,7 @@ function makeInvoice(overrides: Record<string, any> = {}) {
     brand: overrides.brand ?? 'TEST_BRAND',
     category: overrides.category ?? null,
     qb_memo: overrides.qb_memo ?? null,
-    status: overrides.status ?? 'PENDING_ACCOUNTING',
+    status: overrides.status ?? 'PAYMENT_SCHEDULED',
     created_at: overrides.created_at ?? new Date(),
     vendor: overrides.vendor ?? { id: 'vendor-1', name: 'Test Vendor' },
     payments: overrides.payments ?? [],
@@ -143,6 +148,7 @@ function makeBatch(overrides: Record<string, any> = {}) {
     id: overrides.id ?? 'batch-1',
     batch_number: overrides.batch_number ?? 'PB202608110001',
     status: overrides.status ?? 'DRAFT',
+    total_amount: overrides.total_amount ?? 100,
     exported_at: overrides.exported_at ?? null,
     created_at: overrides.created_at ?? new Date(),
     payments: overrides.payments ?? [makePayment({ id: 'pay-1', invoice_id: 'inv-1' })],
@@ -164,7 +170,9 @@ beforeEach(() => {
   invoiceUpdate.mockReset();
   paymentCount.mockReset();
   paymentFindUnique.mockReset();
+  paymentConfirmationCreate.mockReset();
   notificationCreate.mockReset();
+  duplicateReviewFindMany.mockReset().mockResolvedValue([]);
 });
 
 describe('getScheduledPaymentsForBatch', () => {
@@ -173,9 +181,7 @@ describe('getScheduledPaymentsForBatch', () => {
     auditLogFindMany.mockResolvedValue([]);
     await getScheduledPaymentsForBatch({});
     const options = lastFindManyCall();
-    expect(options.where.status).toEqual({
-      in: ['PENDING_ACCOUNTING', 'APPROVED', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED'],
-    });
+    expect(options.where.status).toEqual({ in: ['POSTED_TO_QB', 'PAYMENT_SCHEDULED'] });
   });
 
   it('passes an explicit status filter', async () => {
@@ -280,16 +286,81 @@ describe('getScheduledPaymentsForBatch', () => {
     const result = await getScheduledPaymentsForBatch({});
     expect(result.filtered_count).toBe(1);
     expect(result.payments[0].id).toContain('inv-unbatched');
+    expect(lastFindManyCall().where.payments).toEqual({ none: { batch_id: { not: null }, status: { notIn: ['CANCELLED', 'VOIDED'] } } });
   });
 
-  it('returns AWAITING_POSTING for invoices without payments', async () => {
+  it('does not return pre-posting invoices as payment batch candidates', async () => {
     invoiceFindMany.mockResolvedValue([
-      makeInvoice({ id: 'inv-new', total_amount: 500, payments: [] }),
+      makeInvoice({ id: 'inv-new', status: 'PENDING_ACCOUNTING', total_amount: 500, payments: [] }),
     ]);
     auditLogFindMany.mockResolvedValue([]);
     const result = await getScheduledPaymentsForBatch({});
-    expect(result.payments[0].status).toBe('AWAITING_POSTING');
-    expect(result.payments[0].open_balance).toBe(500);
+    expect(result.payments).toHaveLength(0);
+  });
+
+  it('applies explicit payment status filters to the mapped queue rows', async () => {
+    invoiceFindMany.mockResolvedValue([
+      makeInvoice({
+        id: 'inv-scheduled',
+        payments: [{ id: 'pay-scheduled', batch_id: null, status: 'SCHEDULED', amount: 100, currency: 'USD' }],
+      }),
+      makeInvoice({
+        id: 'inv-held',
+        payments: [{ id: 'pay-held', batch_id: null, status: 'HELD_BELOW_100', amount: 50, currency: 'USD' }],
+      }),
+      makeInvoice({ id: 'inv-awaiting', payments: [] }),
+    ]);
+    auditLogFindMany.mockResolvedValue([]);
+    const result = await getScheduledPaymentsForBatch({ status: 'SCHEDULED' });
+    expect(result.payments.map((p: any) => p.status)).toEqual(['SCHEDULED']);
+    expect(result.filtered_count).toBe(1);
+  });
+
+  it('applies currency filters after payment/invoice mapping', async () => {
+    invoiceFindMany.mockResolvedValue([
+      makeInvoice({
+        id: 'inv-usd',
+        currency: 'USD',
+        payments: [{ id: 'pay-usd', batch_id: null, status: 'SCHEDULED', amount: 100, currency: 'USD' }],
+      }),
+      makeInvoice({
+        id: 'inv-eur',
+        currency: 'EUR',
+        payments: [{ id: 'pay-eur', batch_id: null, status: 'SCHEDULED', amount: 80, currency: 'EUR' }],
+      }),
+    ]);
+    auditLogFindMany.mockResolvedValue([]);
+    const result = await getScheduledPaymentsForBatch({ currency: 'EUR' });
+    expect(result.payments).toHaveLength(1);
+    expect(result.payments[0].currency).toBe('EUR');
+    expect(result.totals).toEqual([{ currency: 'EUR', count: 1, total: 80 }]);
+  });
+
+  it('keeps currency and status filters when applying aging', async () => {
+    invoiceFindMany.mockResolvedValue([
+      makeInvoice({
+        id: 'inv-eur-overdue',
+        currency: 'EUR',
+        due_date: new Date('2026-01-01'),
+        payments: [{ id: 'pay-eur-overdue', batch_id: null, status: 'SCHEDULED', amount: 80, currency: 'EUR' }],
+      }),
+      makeInvoice({
+        id: 'inv-usd-overdue',
+        currency: 'USD',
+        due_date: new Date('2026-01-01'),
+        payments: [{ id: 'pay-usd-overdue', batch_id: null, status: 'SCHEDULED', amount: 100, currency: 'USD' }],
+      }),
+      makeInvoice({
+        id: 'inv-eur-future',
+        currency: 'EUR',
+        due_date: new Date('2099-01-01'),
+        payments: [{ id: 'pay-eur-future', batch_id: null, status: 'SCHEDULED', amount: 90, currency: 'EUR' }],
+      }),
+    ]);
+    auditLogFindMany.mockResolvedValue([]);
+    const result = await getScheduledPaymentsForBatch({ currency: 'EUR', status: 'SCHEDULED', aging: 'overdue' });
+    expect(result.payments.map((p: any) => p.id)).toEqual(['pay-eur-overdue']);
+    expect(result.totals).toEqual([{ currency: 'EUR', count: 1, total: 80 }]);
   });
 });
 
@@ -397,7 +468,23 @@ describe('applyBankCharge', () => {
     expect(paymentBatchUpdate).not.toHaveBeenCalled();
   });
 
-  it('allows a charge for a DIFFERENT vendor in the same batch (multi-vendor batch)', async () => {
+  it('blocks a charge when the QuickBooks open balance already includes the fee', async () => {
+    paymentBatchFindUnique.mockResolvedValue(makeBatch({
+      payments: [makePayment({
+        id: 'pay-qb',
+        invoice_id: 'inv-qb',
+        amount: 100,
+        invoice: { total_amount: 100, qb_open_balance: 125, vendor_id: 'vendor-qb' },
+      })],
+    }));
+
+    await expect(applyBankCharge('batch-1', 'pay-qb', 25, undefined, 'assoc-1'))
+      .rejects.toThrow('open balance already includes');
+    expect(paymentUpdate).not.toHaveBeenCalled();
+    expect(paymentBatchUpdate).not.toHaveBeenCalled();
+  });
+
+  it('blocks bank-charge edits on a legacy multi-vendor batch', async () => {
     paymentBatchFindUnique.mockResolvedValue(makeBatch({
       payments: [
         makePayment({ id: 'pay-1', invoice_id: 'inv-1', vendor_id: 'vendor-1', amount: 100, bank_charge_amount: 10 }),
@@ -405,18 +492,10 @@ describe('applyBankCharge', () => {
       ],
     }));
 
-    const result = await applyBankCharge('batch-1', 'pay-2', 15, 'vendor-2 fee', 'assoc-1');
-
-    expect(paymentUpdate).toHaveBeenCalledWith({
-      where: { id: 'pay-2' },
-      data: { bank_charge_amount: 15, bank_charge_note: 'vendor-2 fee' },
-    });
-    // 100 + 50 + 10 (existing vendor-1 charge) + 15 (new vendor-2 charge) = 175
-    expect(paymentBatchUpdate).toHaveBeenCalledWith({
-      where: { id: 'batch-1' },
-      data: { total_amount: '175.00' },
-    });
-    expect(result).toMatchObject({ payment_id: 'pay-2', bank_charge_amount: 15, total_amount: 175 });
+    await expect(applyBankCharge('batch-1', 'pay-2', 15, 'vendor-2 fee', 'assoc-1'))
+      .rejects.toThrow('multiple vendors');
+    expect(paymentUpdate).not.toHaveBeenCalled();
+    expect(paymentBatchUpdate).not.toHaveBeenCalled();
   });
 
   it('rejects a payment that is not part of the batch', async () => {
@@ -550,6 +629,13 @@ describe('endorseBillStub', () => {
 });
 
 describe('matchPaymentConfirmation', () => {
+  const confirmation = (overrides: Record<string, any> = {}) => ({
+    paidDate: new Date().toISOString().slice(0, 10),
+    currency: 'USD',
+    beneficiary: 'Test Beneficiary',
+    accountMask: '6789',
+    ...overrides,
+  });
   function endorsedBatch(overrides: Record<string, any> = {}) {
     return makeBatch({
       status: 'EXPORTED_TO_BANK',
@@ -563,7 +649,7 @@ describe('matchPaymentConfirmation', () => {
     paymentBatchFindUnique.mockResolvedValue(endorsedBatch());
     paymentCount.mockResolvedValue(1);
 
-    const result = await matchPaymentConfirmation('batch-1', { reference: 'REF-123', paidDate: '2026-08-11' }, 'assoc-1');
+    const result = await matchPaymentConfirmation('batch-1', confirmation({ reference: 'REF-123' }), 'assoc-1');
 
     expect(paymentUpdate).toHaveBeenCalledWith({
       where: { id: 'pay-1' },
@@ -579,16 +665,78 @@ describe('matchPaymentConfirmation', () => {
     expect(result).toMatchObject({ matched: 1, batch_processed: false });
   });
 
+  it('rejects confirmation when currency, beneficiary, or account mask does not match', async () => {
+    paymentBatchFindUnique.mockResolvedValue(endorsedBatch({ execution_reference: 'REF-123' }));
+    await expect(matchPaymentConfirmation('batch-1', confirmation({ reference: 'REF-123', currency: 'EUR' }), 'assoc-1')).rejects.toThrow('currency must match USD');
+    await expect(matchPaymentConfirmation('batch-1', confirmation({ reference: 'REF-123', beneficiary: 'Other Payee' }), 'assoc-1')).rejects.toThrow('beneficiary does not match');
+    await expect(matchPaymentConfirmation('batch-1', confirmation({ reference: 'REF-123', accountMask: '1111' }), 'assoc-1')).rejects.toThrow('account mask must match');
+    expect(paymentUpdate).not.toHaveBeenCalled();
+  });
+
+  it('does not auto-mark payments paid during external bank execution and routes qualifying batches to CFO', async () => {
+    const payment = makePayment({
+      id: 'pay-1', status: 'ENDORSED',
+      bill_stub: { reference: 'STUB-1', proof_file_url: '/stub.pdf' },
+      invoice: { vendor_id: 'vendor-1', bank_match_details: { requires_cfo_approval: true } },
+    });
+    paymentBatchFindUnique.mockResolvedValue(makeBatch({ status: 'EXPORTED_TO_BANK', total_amount: 120000, payments: [payment] }));
+    paymentBatchUpdate.mockResolvedValue({ id: 'batch-1', status: 'PENDING_CFO', execution_reference: 'BANK-EXEC-1' });
+
+    const result = await processPaymentBatch('batch-1', 'assoc-1', { reference: 'BANK-EXEC-1', bankUsed: 'Citibank' });
+    expect(result.status).toBe('PENDING_CFO');
+    expect(paymentBatchUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ execution_reference: 'BANK-EXEC-1', status: 'PENDING_CFO' }) }));
+    expect(paymentUpdate).not.toHaveBeenCalled();
+    expect(invoiceUpdate).not.toHaveBeenCalled();
+
+    paymentBatchFindUnique.mockResolvedValue({ id: 'batch-1', batch_number: 'PB1', status: 'PENDING_CFO' });
+    paymentBatchUpdate.mockResolvedValue({ id: 'batch-1', status: 'PROCESSING' });
+    await approveCfoPaymentBatch('batch-1', 'cfo-1', 'Approved');
+    expect(paymentBatchUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'PROCESSING', cfo_approved_by: 'cfo-1' }) }));
+  });
+
   it('normalizes case and spacing in confirmation references', async () => {
     paymentBatchFindUnique.mockResolvedValue(endorsedBatch());
     paymentCount.mockResolvedValue(1);
 
-    const result = await matchPaymentConfirmation('batch-1', { reference: ' ref - 123 ' }, 'assoc-1');
+    const result = await matchPaymentConfirmation('batch-1', confirmation({ reference: ' ref - 123 ' }), 'assoc-1');
 
     expect(result).toMatchObject({ matched: 1 });
     expect(paymentUpdate).toHaveBeenCalledWith(expect.objectContaining({
         data: expect.objectContaining({ status: 'PAID', reference: 'ref - 123' }),
     }));
+  });
+
+  it('settles a transfer including the separate bank fee without inflating invoice principal', async () => {
+    paymentBatchFindUnique.mockResolvedValue(endorsedBatch({ payments: [makePayment({ amount: 106.10, bank_charge_amount: 30, status: 'ENDORSED', bill_stub: { reference: 'BANK-136' } })] }));
+    paymentCount.mockResolvedValue(1);
+    await matchPaymentConfirmation('batch-1', confirmation({ reference: 'BANK-136', amount: 136.10, source: { importId: 'i1' } }), 'assoc-1');
+    expect(paymentUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'PAID', paid_amount: 106.10 }) }));
+    expect(paymentConfirmationCreate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ allocated_amount: 136.10, amount: 106.10 }) }));
+  });
+
+  it('leaves a final transfer without its separate bank charge unpaid', async () => {
+    paymentBatchFindUnique.mockResolvedValue(endorsedBatch({ payments: [makePayment({ amount: 100, bank_charge_amount: 30, status: 'ENDORSED', bill_stub: { reference: 'REF-FEE' } })] }));
+    await expect(matchPaymentConfirmation('batch-1', confirmation({ reference: 'REF-FEE', amount: 100 }), 'assoc-1')).rejects.toThrow('final transfer must include');
+    expect(paymentUpdate).not.toHaveBeenCalled();
+    await expect(matchPaymentConfirmation('batch-1', confirmation({ reference: 'REF-FEE' }), 'assoc-1')).rejects.toThrow('including the separate bank charge');
+  });
+
+  it('settles only the outstanding principal plus fee after a partial payment and blocks overpayment', async () => {
+    paymentBatchFindUnique.mockResolvedValue(endorsedBatch({ payments: [makePayment({ amount: 100, paid_amount: 40, bank_charge_amount: 30, status: 'PARTIALLY_PAID', reference: 'OLD', bill_stub: { reference: 'REF-FINAL' } })] }));
+    await expect(matchPaymentConfirmation('batch-1', confirmation({ reference: 'REF-FINAL', amount: 130 }), 'assoc-1')).rejects.toThrow('cannot exceed');
+    expect(paymentUpdate).not.toHaveBeenCalled();
+    paymentCount.mockResolvedValue(1);
+    await matchPaymentConfirmation('batch-1', confirmation({ reference: 'REF-FINAL', amount: 90 }), 'assoc-1');
+    expect(paymentUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ paid_amount: 100, status: 'PAID' }) }));
+  });
+
+  it('validates all selected beneficiaries before writing the first allocation', async () => {
+    paymentBatchFindUnique.mockResolvedValue(endorsedBatch({ payments: [
+      makePayment({ id: 'p1', status: 'ENDORSED' }),
+      makePayment({ id: 'p2', status: 'ENDORSED', beneficiary_name_snapshot: 'Wrong Beneficiary' }),
+    ] }));
+    await expect(matchPaymentConfirmation('batch-1', confirmation({ paymentIds: ['p1', 'p2'], amount: 200 }), 'assoc-1')).rejects.toThrow('beneficiary does not match');
+    expect(paymentUpdate).not.toHaveBeenCalled();
   });
 
   it('throws when the reference matches multiple payments and the amount cannot disambiguate', async () => {
@@ -599,7 +747,7 @@ describe('matchPaymentConfirmation', () => {
       ],
     }));
 
-    await expect(matchPaymentConfirmation('batch-1', { reference: 'REF-X' }, 'assoc-1'))
+    await expect(matchPaymentConfirmation('batch-1', confirmation({ reference: 'REF-X' }), 'assoc-1'))
       .rejects.toThrow('select the matching payments explicitly');
     expect(paymentUpdate).not.toHaveBeenCalled();
   });
@@ -613,7 +761,7 @@ describe('matchPaymentConfirmation', () => {
     }));
     paymentCount.mockResolvedValue(1);
 
-    const result = await matchPaymentConfirmation('batch-1', { reference: 'REF-X', amount: 250 }, 'assoc-1');
+    const result = await matchPaymentConfirmation('batch-1', confirmation({ reference: 'REF-X', amount: 250 }), 'assoc-1');
 
     expect(paymentUpdate).toHaveBeenCalledWith({
       where: { id: 'pay-2' },
@@ -631,10 +779,16 @@ describe('matchPaymentConfirmation', () => {
     }));
     paymentCount.mockResolvedValue(1);
 
-    const result = await matchPaymentConfirmation('batch-1', { paymentIds: ['pay-2'], paidDate: '2026-08-11' }, 'assoc-1');
+    const result = await matchPaymentConfirmation('batch-1', confirmation({
+      paymentIds: ['pay-2'],
+      source: { importId: 'import-1', fileHash: 'abc123', fileName: 'citibank.xlsx' },
+    }), 'assoc-1');
 
     expect(paymentUpdate).toHaveBeenCalledTimes(1);
     expect(paymentUpdate.mock.calls[0][0].where.id).toBe('pay-2');
+    expect(paymentConfirmationCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ import_id: 'import-1', payment_id: 'pay-2', source: 'CITIBANK_UPLOAD' }),
+    }));
     expect(result).toMatchObject({ matched: 1 });
   });
 
@@ -642,7 +796,7 @@ describe('matchPaymentConfirmation', () => {
     paymentBatchFindUnique.mockResolvedValue(endorsedBatch());
     paymentCount.mockResolvedValue(0);
 
-    const result = await matchPaymentConfirmation('batch-1', { reference: 'REF-123' }, 'assoc-1');
+    const result = await matchPaymentConfirmation('batch-1', confirmation({ reference: 'REF-123' }), 'assoc-1');
 
     expect(paymentBatchUpdate).toHaveBeenCalledWith({
       where: { id: 'batch-1' },
@@ -654,7 +808,7 @@ describe('matchPaymentConfirmation', () => {
   it('requires endorsed payments and a reference when not selecting explicitly', async () => {
     paymentBatchFindUnique.mockResolvedValue(endorsedBatch({ payments: [] }));
 
-    await expect(matchPaymentConfirmation('batch-1', { reference: 'REF-X' }, 'assoc-1'))
+    await expect(matchPaymentConfirmation('batch-1', confirmation({ reference: 'REF-X' }), 'assoc-1'))
       .rejects.toThrow('No endorsed payments');
 
     paymentBatchFindUnique.mockResolvedValue(endorsedBatch());
@@ -736,7 +890,11 @@ describe('holdScheduledPayment', () => {
     paymentFindUnique.mockResolvedValue(makePayment({ id: 'pay-hold', status: 'SCHEDULED', batch_id: null }));
     paymentUpdate.mockResolvedValue({ id: 'pay-hold', status: 'HELD_BELOW_100' });
 
-    const result = await holdScheduledPayment('pay-hold', 'assoc-1', 'Waiting for bank confirmation');
+    const result = await holdScheduledPayment('pay-hold', 'assoc-1', {
+      reason: 'Waiting for bank confirmation',
+      evidenceReference: 'Supplier email E-123',
+      reviewDate: new Date(Date.now() + 86400000).toISOString().slice(0, 10),
+    });
 
     expect(result.status).toBe('HELD_BELOW_100');
     expect(paymentUpdate).toHaveBeenCalledWith(expect.objectContaining({
@@ -999,18 +1157,22 @@ describe('getStuckBatches', () => {
 });
 
 describe('createPaymentBatch / createGroupedPaymentBatches (multi-vendor)', () => {
-  it('holds a vendor group below 100 even when the combined selection exceeds 100', async () => {
+  it('blocks batching an existing invoice while a corrected revision is awaiting coordinator review', async () => {
+    paymentFindMany.mockResolvedValue([makePayment({ id: 'pay-old', invoice_id: 'inv-old' })]);
+    duplicateReviewFindMany.mockResolvedValue([{ candidate_invoice_id: 'inv-old' }]);
+
+    await expect(createPaymentBatch(['pay-old'], 'assoc-1')).rejects.toThrow(/possible corrected invoice is awaiting Purchasing review/);
+    expect(paymentBatchCreate).not.toHaveBeenCalled();
+  });
+
+  it('rejects a mixed-vendor legacy batch request before threshold processing', async () => {
     paymentFindMany.mockResolvedValue([
       makePayment({ id: 'pay-1', invoice_id: 'inv-1', vendor_id: 'vendor-1', amount: 100 }),
       makePayment({ id: 'pay-2', invoice_id: 'inv-2', vendor_id: 'vendor-2', amount: 50 }),
     ]);
-    await expect(createPaymentBatch(['pay-1', 'pay-2'], 'assoc-1')).rejects.toThrow(/below the 100 threshold/);
+    await expect(createPaymentBatch(['pay-1', 'pay-2'], 'assoc-1')).rejects.toThrow(/only one vendor/);
     expect(paymentBatchCreate).not.toHaveBeenCalled();
-    expect(paymentUpdateMany).toHaveBeenCalledWith({
-      where: { id: { in: ['pay-2'] } },
-      data: expect.objectContaining({ status: 'HELD_BELOW_100', hold_owner: 'assoc-1', selected_for_batch: false }),
-    });
-    expect(auditLogCreate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'PAYMENT_THRESHOLD_HOLD_PLACED' }) }));
+    expect(paymentUpdateMany).not.toHaveBeenCalled();
   });
 
   it('createGroupedPaymentBatches separates mixed-vendor selection by vendor/account group', async () => {
@@ -1033,26 +1195,27 @@ describe('createPaymentBatch / createGroupedPaymentBatches (multi-vendor)', () =
 
     const result = await createGroupedPaymentBatches(['pay-1', 'pay-2', 'pay-3'], 'assoc-1');
 
-    expect(result.batch_count).toBe(1);
+    expect(result.batch_count).toBe(2);
     expect(result.payment_count).toBe(3);
-    expect(result.held_payment_ids).toEqual(['pay-2']);
-    expect(paymentBatchCreate).toHaveBeenCalledTimes(1);
+    expect(result.held_payment_ids).toEqual([]);
+    expect(paymentBatchCreate).toHaveBeenCalledTimes(2);
     expect(paymentBatchCreate.mock.calls[0][0].data.payments.connect).toHaveLength(2);
+    expect(paymentBatchCreate.mock.calls[1][0].data.payments.connect).toHaveLength(1);
   });
 });
 
 describe('autoBatchPaymentOnPost (posting → batch)', () => {
   it('creates a new DRAFT batch when the poster has no open batch of that currency', async () => {
-    paymentBatchFindFirst.mockResolvedValue(null);
+    paymentBatchFindMany.mockResolvedValue([]);
     paymentBatchCreate.mockResolvedValue({ id: 'batch-new', batch_number: 'PB202608140010', status: 'DRAFT' });
 
     const result = await autoBatchPaymentOnPost(
-      { id: 'pay-1', invoice_id: 'inv-1', amount: 250, currency: 'USD', status: 'SCHEDULED' },
+      { id: 'pay-1', invoice_id: 'inv-1', amount: 250, currency: 'USD', status: 'SCHEDULED', vendor_id: 'vendor-1', bank_snapshot_hash: 'bank-1' },
       'assoc-1',
       { invoice_number: 'INV-100', vendor_name: 'Acme Co' }
     );
 
-    expect(paymentBatchFindFirst).toHaveBeenCalledWith(
+    expect(paymentBatchFindMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ status: 'DRAFT', created_by: 'assoc-1', currency: 'USD' }) })
     );
     expect(paymentBatchCreate).toHaveBeenCalledWith({
@@ -1082,7 +1245,7 @@ describe('autoBatchPaymentOnPost (posting → batch)', () => {
   });
 
   it('adds the payment to the poster\'s open DRAFT batch instead of creating another', async () => {
-    paymentBatchFindFirst.mockResolvedValue({
+    paymentBatchFindMany.mockResolvedValue([{
       id: 'batch-open',
       batch_number: 'PB202608140009',
       status: 'DRAFT',
@@ -1090,10 +1253,11 @@ describe('autoBatchPaymentOnPost (posting → batch)', () => {
       currency: 'USD',
       total_amount: '100.00',
       payment_count: 1,
-    });
+      payments: [{ vendor_id: 'vendor-1', bank_snapshot_hash: 'bank-1', invoice: { vendor_id: 'vendor-1' } }],
+    }]);
 
     const result = await autoBatchPaymentOnPost(
-      { id: 'pay-2', invoice_id: 'inv-2', amount: 50, currency: 'USD', status: 'SCHEDULED' },
+      { id: 'pay-2', invoice_id: 'inv-2', amount: 50, currency: 'USD', status: 'SCHEDULED', vendor_id: 'vendor-1', bank_snapshot_hash: 'bank-1' },
       'assoc-1'
     );
 
@@ -1129,22 +1293,22 @@ describe('autoBatchPaymentOnPost (posting → batch)', () => {
     );
 
     expect(result).toEqual({ batched: false, reason: 'MANUAL_HOLD' });
-    expect(paymentBatchFindFirst).not.toHaveBeenCalled();
+    expect(paymentBatchFindMany).not.toHaveBeenCalled();
     expect(paymentBatchCreate).not.toHaveBeenCalled();
     expect(notificationCreate).not.toHaveBeenCalled();
   });
 
   it('does not reuse another user\'s open DRAFT batch', async () => {
-    paymentBatchFindFirst.mockResolvedValue(null);
+    paymentBatchFindMany.mockResolvedValue([]);
     paymentBatchCreate.mockResolvedValue({ id: 'batch-other', batch_number: 'PB202608140011', status: 'DRAFT' });
 
     await autoBatchPaymentOnPost(
-      { id: 'pay-4', invoice_id: 'inv-4', amount: 30, currency: 'USD', status: 'SCHEDULED' },
+      { id: 'pay-4', invoice_id: 'inv-4', amount: 30, currency: 'USD', status: 'SCHEDULED', vendor_id: 'vendor-1', bank_snapshot_hash: 'bank-1' },
       'assoc-2'
     );
 
     // The lookup is scoped to the poster, so someone else's draft is never returned
-    expect(paymentBatchFindFirst).toHaveBeenCalledWith(
+    expect(paymentBatchFindMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ created_by: 'assoc-2' }) })
     );
     expect(paymentBatchCreate).toHaveBeenCalledTimes(1);
@@ -1225,11 +1389,11 @@ describe('QB Pay Bills-style payment setup', () => {
   });
 
   it('pre-fills the QB Pay Bills defaults (EFT, next Wednesday) on auto-created batches', async () => {
-    paymentBatchFindFirst.mockResolvedValue(null);
+    paymentBatchFindMany.mockResolvedValue([]);
     paymentBatchCreate.mockResolvedValue({ id: 'batch-x', status: 'DRAFT' });
 
     await autoBatchPaymentOnPost(
-      { id: 'pay-5', invoice_id: 'inv-5', amount: 100, currency: 'USD', status: 'SCHEDULED' },
+      { id: 'pay-5', invoice_id: 'inv-5', amount: 100, currency: 'USD', status: 'SCHEDULED', vendor_id: 'vendor-1', bank_snapshot_hash: 'bank-1' },
       'assoc-3'
     );
 

@@ -124,8 +124,11 @@ export const holdInvoiceController = async (
 ) => {
   try {
     const { id } = req.params;
-    const { reason } = req.body;
-    const result = await holdInvoiceForBatchThreshold(id, req.user!.id, reason);
+    const result = await holdInvoiceForBatchThreshold(id, req.user!.id, {
+      reason: req.body?.reason,
+      evidenceReference: req.body?.evidenceReference,
+      reviewDate: req.body?.reviewDate,
+    });
     res.json(result);
   } catch (error) {
     next(error);
@@ -186,7 +189,7 @@ export const sendPaymentConfirmationController = async (
         throw new AppError('Failed to send payment confirmation email — please try again', 500);
       }
     } else {
-      logger.info(`No vendor contact email for invoice ${invoice.invoice_number} — marking confirmation as sent without email`);
+      throw new AppError('An approved supplier contact email is required before sending payment confirmation. The invoice remains Paid.', 400);
     }
 
     // 4. Update invoice status + timestamp

@@ -6,7 +6,7 @@ import { logAudit } from '../services/auditLogService';
 import { fieldDecisionEngine } from '../services/fieldDecisionEngine';
 import { correctionLogService } from '../services/correctionLogService';
 import { matchMPOLines } from '../utils/mpoLineMatching';
-import { resolveDuplicateRevisionReview } from '../services/accountingControlService';
+import { normalizeInvoiceReference, resolveDuplicateRevisionReview } from '../services/accountingControlService';
 
 const invoiceInclude = { vendor: true, invoice_lines: true, parent_invoice: true, child_invoices: true } as const;
 
@@ -136,12 +136,29 @@ export async function relate(req: AuthRequest, res: Response, next: NextFunction
 
 export async function duplicates(_req: AuthRequest, res: Response, next: NextFunction) {
   try {
-    const flagged = await prisma.invoice.findMany({ where: { OR: [{ is_duplicate: true }, { duplicate_review_status: 'PENDING' }] }, include: { ...invoiceInclude, duplicate_reviews: { orderBy: { created_at: 'desc' }, take: 3 } }, orderBy: { created_at: 'desc' } });
+    const flagged = await prisma.invoice.findMany({
+      where: { OR: [{ is_duplicate: true }, { duplicate_review_status: 'PENDING' }], status: { not: 'CANCELLED' } },
+      include: { ...invoiceInclude, duplicate_reviews: { orderBy: { created_at: 'desc' }, take: 3 } },
+      orderBy: { created_at: 'desc' },
+    });
     const pairs = await Promise.all(flagged.map(async invoice => {
-      const match = await prisma.invoice.findFirst({ where: { id: { not: invoice.id }, vendor_id: invoice.vendor_id, OR: [{ invoice_number: invoice.invoice_number }, { total_amount: invoice.total_amount }] }, include: invoiceInclude });
-      return { invoice, match, review: (invoice as any).duplicate_reviews?.[0] || null };
+      const review = (invoice as any).duplicate_reviews?.find((candidate: any) => candidate.status === 'PENDING') || null;
+      const match = review?.candidate_invoice_id
+        ? await prisma.invoice.findUnique({ where: { id: review.candidate_invoice_id }, include: invoiceInclude })
+        : await prisma.invoice.findFirst({
+          where: {
+            id: { not: invoice.id },
+            vendor_id: invoice.vendor_id,
+            invoice_number: { equals: invoice.invoice_number, mode: 'insensitive' },
+            status: { not: 'CANCELLED' },
+          },
+          include: invoiceInclude,
+        });
+      // Never pair an unrelated same-amount invoice as the comparison target.
+      const sameReference = match && normalizeInvoiceReference(match.invoice_number) === normalizeInvoiceReference(invoice.invoice_number);
+      return { invoice, match: sameReference ? match : null, review };
     }));
-    res.json(pairs.filter(x => x.match));
+    res.json(pairs.filter(x => x.review && x.match));
   } catch (e) { next(e); }
 }
 
@@ -163,6 +180,9 @@ export async function resolveDuplicate(req: AuthRequest, res: Response, next: Ne
         reason: note || `Purchasing classified as ${classification}`,
         evidence: { related_invoice_id, resolution },
       });
+      const updated = await prisma.invoice.findUnique({ where: { id: req.params.id }, include: invoiceInclude });
+      res.json(updated);
+      return;
     }
     const data: any = { is_duplicate: resolution === 'MARK_DUPLICATE' };
     if (['PROFORMA_TO_FINAL','REVISION_OF'].includes(resolution)) data.parent_invoice_id = related_invoice_id;

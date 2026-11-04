@@ -3,6 +3,7 @@ import { Upload, FileText, X, Sparkles, CheckCircle, AlertTriangle, Save, Lock, 
 import { useQueryClient } from '@tanstack/react-query';
 import { invoiceApi } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 
 interface UploadInvoiceModalProps {
   isOpen: boolean;
@@ -11,6 +12,7 @@ interface UploadInvoiceModalProps {
 
 export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceModalProps) {
   const { user } = useAuth();
+  const { showToast } = useToast();
   console.log('UploadInvoiceModal render, isOpen:', isOpen);
   const queryClient = useQueryClient();
   const [file, setFile] = useState<File | null>(null);
@@ -219,11 +221,11 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
         priority: 'medium',
       });
       const serverMessage = error?.response?.data?.message || error?.response?.data?.error?.message;
-      alert(serverMessage || error?.message || 'OCR extraction failed. Please try uploading the file again.');
+      showToast(serverMessage || error?.message || 'OCR extraction failed. Please try uploading the file again.', 'error');
     } finally {
       setIsExtracting(false);
     }
-  }, []);
+  }, [showToast]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -474,7 +476,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
       console.error('Upload failed:', error);
       setIsUploading(false);
       const serverMessage = error?.response?.data?.message || error?.response?.data?.error?.message;
-      alert(serverMessage || 'Failed to save invoice to the server. Please try again.');
+      showToast(serverMessage || 'Failed to save invoice to the server. Please try again.', 'error');
     }
   };
 
@@ -555,7 +557,7 @@ export default function UploadInvoiceModal({ isOpen, onClose }: UploadInvoiceMod
     } catch (error: any) {
       console.error('Failed to save correction:', error);
       const message = error?.response?.data?.message || error?.response?.data?.error?.message || error?.message || 'Failed to save correction. Please try again.';
-      alert(message);
+      showToast(message, 'error');
     } finally {
       setIsSavingCorrection(false);
     }

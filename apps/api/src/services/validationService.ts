@@ -206,7 +206,7 @@ export async function validateInvoiceWithData(
 
 export async function validateInvoice(
   invoiceId: string,
-  options?: { skipAutoAdvance?: boolean }
+  options?: { skipAutoAdvance?: boolean; freshRevision?: boolean }
 ): Promise<InvoiceValidationResult> {
   if (!isDbEnabled()) {
     throw new AppError('Database not available', 500);
@@ -256,7 +256,7 @@ export async function validateInvoice(
   // Both waived and resolved reasons are explicitly accepted by a coordinator.
   // Re-creating them would cause an infinite resolve → revalidate → re-create loop.
   // The coordinator said "I accept this" (waive) or "I fixed it" (resolve) — trust them.
-  const previouslyHandled = await prisma.exception.findMany({
+  const previouslyHandled = options?.freshRevision ? [] : await prisma.exception.findMany({
     where: {
       invoice_id: invoiceId,
       status: { in: ['WAIVED', 'RESOLVED'] as any },

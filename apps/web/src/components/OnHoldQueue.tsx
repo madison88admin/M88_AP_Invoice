@@ -4,6 +4,7 @@ import { ArrowLeft, Pause, AlertTriangle, Clock, Download, Unlock, Loader2 } fro
 import { onHoldQueueApi, invoiceApi } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 import { hasPermission } from '../lib/roleAccess';
+import { useToast } from '../contexts/ToastContext';
 
 interface HoldQueueItem {
   id: string;
@@ -50,6 +51,7 @@ const reasonLabels: Record<string, string> = {
 };
 
 export default function OnHoldQueue() {
+  const { showToast } = useToast();
   const { user } = useAuth();
   const [data, setData] = useState<HoldQueueResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -80,7 +82,7 @@ export default function OnHoldQueue() {
       await fetchQueue();
     } catch (error: any) {
       console.error('Failed to release invoice:', error);
-      alert(error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to release invoice');
+      showToast(error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to release invoice', 'error');
     } finally {
       setReleasingId(null);
     }

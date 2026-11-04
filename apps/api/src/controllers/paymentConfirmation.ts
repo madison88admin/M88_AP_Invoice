@@ -4,6 +4,8 @@ import { analyzeInvoice } from '../services/ocrService';
 import prisma from '../config/database';
 import { logger } from '../utils/logger';
 import crypto from 'crypto';
+import fs from 'fs/promises';
+import path from 'path';
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
 
@@ -165,6 +167,12 @@ export const uploadPaymentConfirmation = async (
 
     const fileBuffer = req.file.buffer;
     const fileSize = req.file.size;
+    const fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+
+    const existingImport = await (prisma as any).paymentConfirmationImport.findUnique({ where: { sha256: fileHash } });
+    if (existingImport) {
+      return res.status(409).json({ success: false, status: 'DUPLICATE_UPLOAD', importId: existingImport.id, message: 'This Citibank confirmation file was already uploaded.' });
+    }
 
     if (fileSize > MAX_FILE_SIZE) {
       return res.status(413).json({
@@ -174,6 +182,23 @@ export const uploadPaymentConfirmation = async (
         detail: `File size ${fileSize} bytes exceeds 25MB limit`,
       });
     }
+
+    const uploadRoot = process.env.PAYMENT_CONFIRMATION_DIR || path.join(process.cwd(), 'data', 'payment-confirmations');
+    await fs.mkdir(uploadRoot, { recursive: true });
+    const safeName = String(req.file.originalname || 'citibank-confirmation.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
+    const storageName = `${Date.now()}_${fileHash.slice(0, 12)}_${safeName}`;
+    const storagePath = path.join(uploadRoot, storageName);
+    await fs.writeFile(storagePath, fileBuffer);
+    const confirmationImport = await (prisma as any).paymentConfirmationImport.create({
+      data: {
+        sha256: fileHash,
+        file_name: req.file.originalname || safeName,
+        storage_path: path.relative(process.cwd(), storagePath).replace(/\\/g, '/'),
+        mime_type: req.file.mimetype || null,
+        uploaded_by: 'powerautomate',
+        status: 'PROCESSING',
+      },
+    });
 
     const _emailMetadata = {
       senderEmail: req.body.senderEmail || req.body.fromAddress || '',
@@ -220,6 +245,29 @@ export const uploadPaymentConfirmation = async (
             `;
           }
 
+          const matchedPayment = matchResult.paymentId
+            ? await prisma.payment.findUnique({ where: { id: matchResult.paymentId }, select: { batch_id: true, amount: true, currency: true } })
+            : null;
+          await (prisma as any).paymentConfirmation.create({
+            data: {
+              invoice_id: matchResult.invoiceId,
+              payment_id: matchResult.paymentId || null,
+              batch_id: matchedPayment?.batch_id || null,
+              import_id: confirmationImport.id,
+              vendor_name: extractedData.vendorName || 'Unknown',
+              amount: Number(matchedPayment?.amount || extractedData.amount || 0),
+              allocated_amount: Number(extractedData.amount || matchedPayment?.amount || 0),
+              currency: matchedPayment?.currency || 'USD',
+              payment_reference: extractedData.paymentReference || null,
+              bank_transaction_reference: extractedData.paymentReference || null,
+              payment_date: extractedData.paymentDate ? new Date(extractedData.paymentDate) : null,
+              source: 'CITIBANK_UPLOAD',
+              sent_by: 'powerautomate',
+              email_sent: false,
+              confirmation_fingerprint: crypto.createHash('sha256').update(`${fileHash}|${matchResult.paymentId || matchResult.invoiceId}|${extractedData.paymentReference || ''}`).digest('hex'),
+            },
+          });
+
           // Update invoice status to PAID
           await prisma.$executeRaw`
             UPDATE "AP_Invoice"."APInvoice_Invoice"
@@ -249,9 +297,31 @@ export const uploadPaymentConfirmation = async (
             paymentReference: matchResult.paymentReference,
             message: 'Invoice auto-marked as PAID. Payment confirmation NOT sent to supplier.',
           });
+          await (prisma as any).paymentConfirmationImport.update({ where: { id: confirmationImport.id }, data: { status: 'PROCESSED', processed_at: new Date() } });
         }
         // Step 5: If needs review, store for manual review
         else if (matchResult.requiresReview && matchResult.invoiceId) {
+          // Keep the uploaded source linked even when the confidence score is
+          // not high enough to auto-pay. Accounting can review the same file
+          // and invoice without losing the original remittance evidence.
+          await (prisma as any).paymentConfirmation.create({
+            data: {
+              invoice_id: matchResult.invoiceId,
+              payment_id: matchResult.paymentId || null,
+              import_id: confirmationImport.id,
+              vendor_name: extractedData.vendorName || 'Unknown',
+              amount: Number(extractedData.amount || 0),
+              allocated_amount: null,
+              currency: 'USD',
+              payment_reference: extractedData.paymentReference || null,
+              bank_transaction_reference: extractedData.paymentReference || null,
+              payment_date: extractedData.paymentDate ? new Date(extractedData.paymentDate) : null,
+              source: 'CITIBANK_UPLOAD',
+              sent_by: 'powerautomate',
+              email_sent: false,
+              confirmation_fingerprint: crypto.createHash('sha256').update(`${fileHash}|review|${matchResult.paymentId || matchResult.invoiceId}|${extractedData.paymentReference || ''}`).digest('hex'),
+            },
+          });
           // Create exception for manual review
           await prisma.exception.create({
             data: {
@@ -280,6 +350,7 @@ export const uploadPaymentConfirmation = async (
             paymentReference: matchResult.paymentReference,
             message: 'Payment confirmation requires manual review by Accounting Supervisor.',
           });
+          await (prisma as any).paymentConfirmationImport.update({ where: { id: confirmationImport.id }, data: { status: 'REVIEW_REQUIRED', processed_at: new Date() } });
         }
         // Step 6: No match — store for manual review
         else {
@@ -291,9 +362,11 @@ export const uploadPaymentConfirmation = async (
             extractedData,
             message: 'No matching payment found. Stored for manual review.',
           });
+          await (prisma as any).paymentConfirmationImport.update({ where: { id: confirmationImport.id }, data: { status: 'NO_MATCH', processed_at: new Date() } });
         }
       } catch (error: any) {
         logger.error(`[${requestId}] Citibank processing failed:`, error);
+        await (prisma as any).paymentConfirmationImport.update({ where: { id: confirmationImport.id }, data: { status: 'FAILED', error_message: error.message || String(error), processed_at: new Date() } }).catch(() => undefined);
         failJob(jobId, error.message || String(error));
       }
       cleanupOldJobs();
@@ -302,6 +375,8 @@ export const uploadPaymentConfirmation = async (
     res.status(202).json({
       success: true,
       jobId,
+      importId: confirmationImport.id,
+      fileHash,
       status: 'QUEUED',
       message: 'Citibank payment confirmation received, processing started',
     });

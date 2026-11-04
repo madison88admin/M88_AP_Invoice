@@ -7,6 +7,7 @@ export const QUICKBOOKS_RECONCILIATION_RESULTS = [
   'QUICKBOOKS_ONLY',
   'AMOUNT_DIFFERENCE',
   'VENDOR_DIFFERENCE',
+  'CURRENCY_DIFFERENCE',
   'POSSIBLE_DUPLICATE_POSTING',
   'AMBIGUOUS_MATCH',
   'MISSING_INVALID_REFERENCE',
@@ -35,6 +36,7 @@ export async function recordQuickBooksReconciliation(input: {
   qb_invoice_number?: string;
   qb_amount?: number;
   qb_open_balance?: number;
+  qb_currency?: string;
   difference_amount?: number;
   exception_code?: string;
   review_owner?: string;
@@ -63,6 +65,7 @@ export async function recordQuickBooksReconciliation(input: {
       qb_invoice_number: input.qb_invoice_number || null,
       qb_amount: input.qb_amount ?? null,
       qb_open_balance: input.qb_open_balance ?? null,
+      qb_currency: input.qb_currency || null,
       difference_amount: input.difference_amount ?? null,
       exception_code: input.exception_code || null,
       review_owner: input.review_owner || null,
@@ -123,7 +126,9 @@ export async function importQuickBooksRows(rows: QuickBooksImportRow[], actorId:
     take: 10000,
   });
   const normalize = (value: unknown) => String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
-  const vendors = await prisma.vendor.findMany({ select: { id: true, name: true } });
+  // Only approved/active vendors are eligible for an automatic match.  A
+  // QuickBooks import must never create or activate a Vendor Master record.
+  const vendors = await prisma.vendor.findMany({ where: { is_active: true }, select: { id: true, name: true } });
   const results = [];
   const normalizeVendor = (value: unknown) => normalize(value);
   for (const row of rows) {
@@ -144,29 +149,41 @@ export async function importQuickBooksRows(rows: QuickBooksImportRow[], actorId:
       const existingPosting = await prisma.quickBooksReconciliation.findFirst({ where: { invoice_id: invoice!.id, ...(row.transaction_id ? { qb_transaction_id: row.transaction_id } : {}) } });
       if (existingPosting) result = 'POSSIBLE_DUPLICATE_POSTING';
       else if (row.vendor_name && normalize(row.vendor_name) !== normalize(invoice!.vendor_name_raw)) result = 'VENDOR_DIFFERENCE';
+      else if (row.currency && normalize(row.currency) !== normalize(invoice!.currency || 'USD')) result = 'CURRENCY_DIFFERENCE';
       else if (row.amount != null && Math.abs(Number(row.amount) - Number(invoice!.total_amount)) > 0.01) result = 'AMOUNT_DIFFERENCE';
       else result = 'MATCHED';
     }
-    // A QB-only row remains searchable/schedulable when its vendor exists in
-    // the master. Re-imports update the same canonical invoice instead of
-    // creating another invoice record.
+    // A QB-only row may be materialized against the single seeded UNKNOWN
+    // VENDOR placeholder so it remains searchable and auditable. No new
+    // Vendor Master row is created by this import path.
+    let qbOnlyMaterializationNote: string | undefined;
     if (!invoice && result === 'QUICKBOOKS_ONLY' && row.vendor_name && row.invoice_number) {
       const matchedVendor = vendors.find((v) => normalizeVendor(v.name) === normalizeVendor(row.vendor_name));
-      if (matchedVendor) {
-        const existingQbInvoice = await prisma.invoice.findFirst({ where: { invoice_number: row.invoice_number, vendor_id: matchedVendor.id, source_document_type: 'QUICKBOOKS_ONLY' }, select: { id: true, ap_record_id: true, invoice_number: true, vendor_name_raw: true, total_amount: true, currency: true } });
+      // Reuse the single seeded UNKNOWN VENDOR placeholder for an unapproved
+      // supplier.  Do not create a new placeholder (or any other Vendor row)
+      // during import; Accounting must add/approve the supplier in Vendor
+      // Master before the invoice can be assigned and scheduled.
+      const vendor = matchedVendor || await prisma.vendor.findFirst({
+        where: { name: 'UNKNOWN VENDOR', is_active: true },
+        select: { id: true, name: true },
+      });
+      if (vendor) {
+        const existingQbInvoice = await prisma.invoice.findFirst({ where: { invoice_number: row.invoice_number, vendor_id: vendor.id, source_document_type: 'QUICKBOOKS_ONLY' }, select: { id: true, ap_record_id: true, invoice_number: true, vendor_name_raw: true, total_amount: true, currency: true } });
         const amount = row.open_balance ?? row.amount ?? 0;
         invoice = existingQbInvoice || await prisma.invoice.create({
           data: {
             invoice_number: row.invoice_number,
-            vendor_id: matchedVendor.id,
+            vendor_id: vendor.id,
             vendor_name_raw: row.vendor_name,
             total_amount: amount,
             currency: row.currency || 'USD',
             invoice_type: 'INVOICE' as any,
+            invoice_template_type: 'NO_DATA' as any,
             status: InvoiceStatus.EXCEPTION_FLAGGED as any,
             workflow_status: 'ACCOUNTING_REVIEW',
             source: 'PORTAL' as any,
             source_document_type: 'QUICKBOOKS_ONLY',
+            duplicate_review_reason: matchedVendor ? null : 'QuickBooks-only invoice requires Accounting vendor verification',
             qb_open_balance: amount,
             qb_balance_as_of: reportAsOf,
             invoice_date: row.invoice_date ? new Date(row.invoice_date) : undefined,
@@ -174,10 +191,25 @@ export async function importQuickBooksRows(rows: QuickBooksImportRow[], actorId:
           },
           select: { id: true, ap_record_id: true, invoice_number: true, vendor_name_raw: true, total_amount: true, currency: true },
         });
+      } else {
+        // Keep the reconciliation exception auditable without materializing a
+        // schedulable AP record or inventing a Vendor Master entry.
+        qbOnlyMaterializationNote = 'QuickBooks-only row requires Accounting vendor verification; no active UNKNOWN VENDOR placeholder is available';
       }
     }
     if (invoice && (row.open_balance != null || row.amount != null)) {
-      await prisma.invoice.update({ where: { id: invoice.id }, data: { qb_open_balance: row.open_balance ?? row.amount ?? null, qb_balance_as_of: reportAsOf } as any });
+      const bankChargeMentioned = /bank\s*(?:charge|fee)|wire\s*fee|tt\s*fee/i.test(String(row.comments || ''));
+      const importedOpenBalance = Number(row.open_balance ?? row.amount ?? 0);
+      await prisma.$transaction([
+        prisma.invoice.update({ where: { id: invoice.id }, data: { qb_open_balance: importedOpenBalance, qb_balance_as_of: reportAsOf, ...(bankChargeMentioned ? { qb_bank_charge_included: true } : {}) } as any }),
+        // Keep an already scheduled, unbatched payment aligned to the current
+        // QuickBooks unpaid balance. Never rewrite a batch snapshot or a
+        // payment already in progress.
+        prisma.payment.updateMany({
+          where: { invoice_id: invoice.id, batch_id: null, status: 'SCHEDULED' },
+          data: { amount: importedOpenBalance },
+        }),
+      ]);
     }
     const importKey = [row.transaction_id || row.reference || row.ap_record_id || row.invoice_number || '', normalize(row.vendor_name), reportAsOf.toISOString().slice(0, 10)].join('|');
     results.push(await recordQuickBooksReconciliation({
@@ -189,8 +221,9 @@ export async function importQuickBooksRows(rows: QuickBooksImportRow[], actorId:
       qb_invoice_number: row.invoice_number,
       qb_amount: row.amount,
       qb_open_balance: row.open_balance,
+      qb_currency: row.currency || 'USD',
       difference_amount: invoice && row.amount != null ? Number(row.amount) - Number(invoice.total_amount) : undefined,
-      comments: row.comments,
+      comments: [row.comments, qbOnlyMaterializationNote].filter(Boolean).join(' | ') || undefined,
       source: 'QUICKBOOKS_IMPORT',
       report_as_of_date: reportAsOf,
       source_filename: options.sourceFilename,

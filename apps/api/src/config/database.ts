@@ -5,7 +5,7 @@ const DB_ENABLED = process.env.DATABASE_URL && process.env.DATABASE_URL.length >
 
 let realPrisma: PrismaClient | null = null;
 
-function canonicalWorkflowStatus(
+export function canonicalWorkflowStatus(
   status: unknown,
   duplicateReviewStatus?: unknown,
   invoiceType?: unknown,
@@ -35,8 +35,8 @@ function canonicalWorkflowStatus(
     case 'PENDING_ACCOUNTING': return 'ACCOUNTING_REVIEW';
     case 'APPROVED': return 'APPROVED';
     case 'POSTED_TO_QB': return 'POSTED_TO_QB';
-    case 'PAYMENT_SCHEDULED':
-    case 'PAYMENT_CONFIRMATION_SENT': return 'PAYMENT_SCHEDULED';
+    case 'PAYMENT_SCHEDULED': return 'PAYMENT_SCHEDULED';
+    case 'PAYMENT_CONFIRMATION_SENT':
     case 'PAID': return 'PAID';
     case 'ON_HOLD': return 'ON_HOLD';
     case 'REJECTED': return 'REJECTED';

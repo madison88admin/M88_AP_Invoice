@@ -175,6 +175,22 @@ export async function postInvoice(invoiceId: string, userId: string, bypassVaria
     throw new AppError('Invoice not found', 404);
   }
 
+  if (invoice.subtotal == null || !Number.isFinite(Number(invoice.subtotal)) || Number(invoice.subtotal) <= 0) {
+    throw new AppError('Invoice subtotal is required before posting. Enter the goods/services subtotal excluding bank charges, then retry.', 400);
+  }
+
+  if (invoice.is_urgent || invoice.priority_flag) {
+    const hasRequestedPaymentDate = invoice.priority_pay_date instanceof Date
+      ? !Number.isNaN(invoice.priority_pay_date.getTime())
+      : Boolean(invoice.priority_pay_date);
+    if (!hasRequestedPaymentDate || !String(invoice.priority_reason || '').trim() || !String(invoice.priority_evidence_reference || '').trim()) {
+      throw new AppError('Urgent or priority invoices require a requested payment date, reason, and supporting escalation/approval evidence reference before posting.', 400);
+    }
+  }
+  if (Boolean(invoice.late_submission_reason) !== Boolean(invoice.late_submission_source)) {
+    throw new AppError('Late-submission invoices require both a late-submission reason and accountable source before posting.', 400);
+  }
+
   // In Finance advisory mode, invoices held only for NextGen/PO advisory
   // exceptions (PO_NOT_FOUND etc.) are auto-released here and flow straight
   // through to posting. Payment holds are an explicit Accounting Associate
@@ -702,11 +718,20 @@ export async function schedulePayment(
         ? 'DUE_DATE'
         : 'DEFAULT';
 
+  // Payment selection and the USD threshold are based on invoice subtotal.
+  // Bank charges are entered separately by Accounting on the payment batch.
+  const payableSubtotal = invoice.qb_balance_as_of && invoice.qb_open_balance != null
+    ? Number(invoice.qb_open_balance)
+    : Number(invoice.subtotal);
+  if (!Number.isFinite(payableSubtotal) || payableSubtotal <= 0) {
+    throw new AppError('QuickBooks shows no positive unpaid balance for this invoice; verify the bill before posting it for payment.', 400);
+  }
+
   // Create payment record
   const payment = await prisma.payment.create({
     data: {
       invoice_id: invoiceId,
-      amount: Number(invoice.total_amount),
+      amount: payableSubtotal,
       currency: invoice.currency,
       payment_date: resolvedPaymentDate,
       payment_date_source: paymentDateSource,
@@ -763,7 +788,7 @@ export async function schedulePayment(
       invoice_id: invoiceId,
       action: 'PAYMENT_SCHEDULED',
       performed_by: userId,
-      note: `Payment of ${invoice.currency} ${Number(invoice.total_amount).toFixed(2)} scheduled for ${resolvedPaymentDate.toISOString().split('T')[0]} — no automatic amount-based hold; Accounting Associate may hold or release it manually`,
+        note: `Payment of ${invoice.currency} ${payableSubtotal.toFixed(2)} (invoice subtotal; bank charges entered separately on the batch) scheduled for ${resolvedPaymentDate.toISOString().split('T')[0]} — no automatic amount-based hold; Accounting Associate may hold or release it manually`,
     },
   });
 
@@ -950,7 +975,7 @@ export async function releaseFromHold(invoiceId: string, userId: string) {
   // Update invoice status back to PENDING_ACCOUNTING so it can be re-posted
   await prisma.invoice.update({
     where: { id: invoiceId },
-    data: { status: InvoiceStatus.PENDING_ACCOUNTING as any },
+    data: { status: InvoiceStatus.PENDING_ACCOUNTING as any, hold_reason: null, hold_evidence_reference: null, hold_owner: null, hold_review_date: null },
   });
 
   // Re-enter PENDING_ACCOUNTING stage since the previous one was exited when the pre-post check failed
@@ -981,7 +1006,7 @@ export async function releaseFromHold(invoiceId: string, userId: string) {
  * cumulative amount for a vendor. The invoice stays on hold until more invoices
  * for the same vendor arrive and the cumulative reaches the threshold.
  */
-export async function holdInvoiceForBatchThreshold(invoiceId: string, userId: string, reason?: string) {
+export async function holdInvoiceForBatchThreshold(invoiceId: string, userId: string, input: { reason?: string; evidenceReference?: string; reviewDate?: string } = {}) {
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
     include: { vendor: true, exceptions: { where: { status: 'PENDING' as any } } },
@@ -1002,14 +1027,13 @@ export async function holdInvoiceForBatchThreshold(invoiceId: string, userId: st
     throw new AppError(`Cannot hold invoice in ${invoice.status}. ON_HOLD is available only in PENDING_ACCOUNTING.`, 400);
   }
 
-  const threshold = 100;
-  const openForVendor = await prisma.invoice.findMany({
-    where: { vendor_id: invoice.vendor_id, status: { in: ['PENDING_ACCOUNTING', 'APPROVED', 'ON_HOLD'] as any } },
-    select: { id: true, total_amount: true },
-  });
-  const cumulative = openForVendor.reduce((sum, item) => sum + Number(item.total_amount || 0), 0);
-  if (cumulative >= threshold) {
-    throw new AppError(`Vendor cumulative amount is already ${cumulative.toFixed(2)}, at or above the ${threshold.toFixed(2)} threshold. Create a payment batch instead of placing this invoice on hold.`, 400);
+  const holdReason = input.reason?.trim() || '';
+  const evidenceReference = input.evidenceReference?.trim() || '';
+  const holdReviewDate = input.reviewDate ? new Date(input.reviewDate) : null;
+  if (!holdReason) throw new AppError('A hold reason is required', 400);
+  if (!evidenceReference) throw new AppError('Supporting evidence or a reference is required for a hold', 400);
+  if (!holdReviewDate || Number.isNaN(holdReviewDate.getTime()) || holdReviewDate < new Date(new Date().toDateString())) {
+    throw new AppError('A valid expected response/review date (today or later) is required', 400);
   }
 
   const previousStatus = invoice.status;
@@ -1017,16 +1041,12 @@ export async function holdInvoiceForBatchThreshold(invoiceId: string, userId: st
   // Update invoice status to ON_HOLD
   await prisma.invoice.update({
     where: { id: invoiceId },
-    data: { status: InvoiceStatus.ON_HOLD as any },
-  });
-
-  // Create batch threshold exception
-  const holdReason = reason || `Vendor cumulative amount ${cumulative.toFixed(2)} is below ${threshold.toFixed(2)} batch threshold.`;
-  await prisma.exception.create({
     data: {
-      invoice_id: invoiceId,
-      reason: ExceptionReason.BATCH_THRESHOLD_NOT_MET as any,
-      detail: holdReason,
+      status: InvoiceStatus.ON_HOLD as any,
+      hold_reason: holdReason,
+      hold_evidence_reference: evidenceReference,
+      hold_owner: userId,
+      hold_review_date: holdReviewDate,
     },
   });
 
@@ -1036,7 +1056,7 @@ export async function holdInvoiceForBatchThreshold(invoiceId: string, userId: st
       invoice_id: invoiceId,
       action: 'MANUAL_HOLD',
       performed_by: userId,
-      note: `Invoice manually put ON_HOLD by Accounting Associate. Previous status: ${previousStatus}. Reason: ${holdReason}`,
+      note: `Invoice manually put ON_HOLD by Accounting Associate. Previous status: ${previousStatus}. Reason: ${holdReason}. Evidence: ${evidenceReference}. Review date: ${holdReviewDate.toISOString()}`,
     },
   });
 
@@ -1056,12 +1076,10 @@ export async function holdInvoiceForBatchThreshold(invoiceId: string, userId: st
   logger.info(`Invoice ${invoiceId} manually held by ${userId}. Previous status: ${previousStatus}`);
 
   return {
-    message: 'Invoice put on hold for batch threshold',
+    message: 'Invoice placed on manual Accounting hold',
     invoice_id: invoiceId,
     previous_status: previousStatus,
     vendor: invoice.vendor?.name,
-    cumulative_amount: Number(cumulative.toFixed(2)),
-    threshold_amount: threshold,
     amount: Number(invoice.total_amount),
   };
 }

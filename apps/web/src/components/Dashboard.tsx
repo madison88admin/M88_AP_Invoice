@@ -3,6 +3,8 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { InvoiceStatus, InvoiceCategory, InvoiceType, calcWorkingHoursElapsed, normalizePaymentTerm } from '@ap-invoice/shared';
 import { invoiceApi, notificationApi, vendorApi, exceptionApi, aliasApi } from '../lib/api';
 import InvoiceTable from './InvoiceTable';
+import { ReceivedDateTimeRange } from './ReceivedDateTimeRange';
+import { matchesReceivedTimeRange } from '../lib/receivedTimeFilter';
 import UploadInvoiceModal from './UploadInvoiceModal';
 import BottleneckView from './BottleneckView';
 import AuditLogViewer from './AuditLogViewer';
@@ -13,6 +15,7 @@ import StatCard from './ui/StatCard';
 import { ThemeToggle } from './ThemeToggle';
 import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 import { MockInvoice } from '../lib/mockData';
 import { hasPermission, filterInvoicesByRole, canUserApproveStatus, isWithinRoleThreshold } from '../lib/roleAccess';
 import { cn } from '../lib/utils';
@@ -258,6 +261,7 @@ function isDueWithin24HoursOrOverdue(invoice: MockInvoice): boolean {
 }
 
 export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' | 'repository' } = {}) {
+  const { showToast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuth();
@@ -305,8 +309,8 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
     search: undefined as string | undefined,
     dateFrom: undefined as string | undefined,
     dateTo: undefined as string | undefined,
-    receivedFrom: undefined as string | undefined,
-    receivedTo: undefined as string | undefined,
+    receivedTimeFrom: undefined as string | undefined,
+    receivedTimeTo: undefined as string | undefined,
     receivedOrder: undefined as 'oldest' | 'newest' | undefined,
     agingBucket: undefined as 'current' | '1-30' | '31-60' | '60+' | undefined,
     urgentDue: undefined as boolean | undefined,
@@ -314,7 +318,6 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
-  const [toasts, setToasts] = useState<{ id: string; message: string; type: 'success' | 'error' | 'warning' | 'info' }[]>([]);
   const [countUpStarted, setCountUpStarted] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showBankChangeModal, setShowBankChangeModal] = useState(false);
@@ -329,7 +332,9 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
   const [dueDateChangeReason, setDueDateChangeReason] = useState('');
   const [submittingDueDateChange, setSubmittingDueDateChange] = useState(false);
   const [showHoldModal, setShowHoldModal] = useState(false);
-  const [holdReason, setHoldReason] = useState('Vendor cumulative amount below $100 batch threshold');
+  const [holdReason, setHoldReason] = useState('');
+  const [holdEvidenceReference, setHoldEvidenceReference] = useState('');
+  const [holdReviewDate, setHoldReviewDate] = useState(new Date().toISOString().slice(0, 10));
   const [loading, setLoading] = useState(true);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -491,20 +496,11 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
       if (from && invoiceDate < from.getTime()) return false;
       if (to && invoiceDate > to.getTime()) return false;
     }
-    // Triage by when the invoice entered the system, rather than by the
-    // supplier's invoice date. These controls are currently shown to
-    // Purchasing roles.
-    if (user?.role === 'PURCHASING_COORDINATOR' || user?.role === 'PURCHASING_MANAGER') {
-      const receivedAt = invoiceDateTime(inv.created_at || inv.invoice_received_date || inv.invoice_date);
-      if (filters.receivedFrom) {
-        const from = parseFilterDate(filters.receivedFrom);
-        if (from && (receivedAt === null || receivedAt < from.getTime())) return false;
-      }
-      if (filters.receivedTo) {
-        const to = parseFilterDate(filters.receivedTo, true);
-        if (to && (receivedAt === null || receivedAt > to.getTime())) return false;
-      }
-    }
+    // Accounting's cut-off is based on the actual intake timestamp, not the
+    // supplier invoice date. The repository uses one combined date/time range
+    // so the Tuesday weekly run can distinguish invoices received before/after
+    // the cut-off precisely.
+    if (!matchesReceivedTimeRange(inv.source_received_at || inv.invoice_received_date, filters.receivedTimeFrom, filters.receivedTimeTo)) return false;
     if (filters.agingBucket) {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -604,20 +600,21 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
   const activeFilterCount = Object.values(filters).filter(v => v !== undefined && v !== '').length;
   const hasActiveFilter = activeFilterCount > 0 || quickFilter !== 'all';
 
-  // The repository is a deadline work queue: show the nearest due date first
-  // (including overdue invoices), then keep undated records at the bottom.
-  // The dashboard keeps its existing newest-first behavior.
+  // The repository is an Accounting FIFO queue: urgent/priority payments are
+  // always first, followed by the earliest actual intake timestamp. This is
+  // deliberately different from the dashboard's newest-first activity view.
   const sortedInvoices = [...quickFilteredInvoices].sort((a, b) => {
     if (mode === 'repository') {
-      const dueA = a.due_date ? (invoiceDateTime(a.due_date) ?? Number.POSITIVE_INFINITY) : Number.POSITIVE_INFINITY;
-      const dueB = b.due_date ? (invoiceDateTime(b.due_date) ?? Number.POSITIVE_INFINITY) : Number.POSITIVE_INFINITY;
-      if (dueA !== dueB) return dueA - dueB;
+      const urgentA = Boolean(a.is_urgent || a.priority_flag);
+      const urgentB = Boolean(b.is_urgent || b.priority_flag);
+      if (urgentA !== urgentB) return urgentA ? -1 : 1;
+      const receivedA = invoiceDateTime(a.source_received_at || a.invoice_received_date) ?? Number.POSITIVE_INFINITY;
+      const receivedB = invoiceDateTime(b.source_received_at || b.invoice_received_date) ?? Number.POSITIVE_INFINITY;
+      if (filters.receivedOrder === 'newest') return receivedB - receivedA;
+      return receivedA - receivedB;
     }
     const dateA = invoiceDateTime(a.created_at || a.invoice_received_date || a.invoice_date) ?? 0;
     const dateB = invoiceDateTime(b.created_at || b.invoice_received_date || b.invoice_date) ?? 0;
-    if ((user?.role === 'PURCHASING_COORDINATOR' || user?.role === 'PURCHASING_MANAGER') && filters.receivedOrder === 'oldest') {
-      return dateA - dateB;
-    }
     return dateB - dateA; // Descending order (newest first)
   });
 
@@ -802,15 +799,6 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
   const draftBatchCount = paymentBatches.filter(b => b.status === 'DRAFT').length;
   const reviewPendingCount = allInvoices.filter(i => ['PENDING_ACCOUNTING', 'APPROVED', 'POSTED_TO_QB', 'PAID'].includes(i.status)).length;
   const vendorsPendingVerification = vendors.filter(v => !v.bank_verified_at).length;
-
-  const showToast = (message: string, type: 'success' | 'error' | 'warning' | 'info' = 'info') => {
-    const id = Date.now().toString();
-    const newToast = { id, message, type };
-    setToasts(prev => [...prev, newToast]);
-    setTimeout(() => {
-      setToasts(prev => prev.filter(t => t.id !== id));
-    }, 3000);
-  };
 
   useEffect(() => {
     // Trigger count-up animations after component mounts
@@ -1131,6 +1119,10 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
       is_urgent: invoice.is_urgent || false,
       is_handwritten: invoice.is_handwritten || false,
       priority_pay_date: invoice.priority_pay_date ? new Date(invoice.priority_pay_date).toISOString().split('T')[0] : '',
+      priority_reason: (invoice as any).priority_reason || '',
+      priority_evidence_reference: (invoice as any).priority_evidence_reference || '',
+      late_submission_reason: (invoice as any).late_submission_reason || '',
+      late_submission_source: (invoice as any).late_submission_source || '',
       date_range_start: invoice.date_range_start ? new Date(invoice.date_range_start).toISOString().split('T')[0] : '',
       date_range_end: invoice.date_range_end ? new Date(invoice.date_range_end).toISOString().split('T')[0] : '',
     });
@@ -1249,6 +1241,10 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
         is_urgent: canEditAll ? (editFormData.is_urgent === true ? true : editFormData.is_urgent === false ? false : undefined) : undefined,
         priority_flag: canEditAll ? (editFormData.priority_flag === true ? true : editFormData.priority_flag === false ? false : undefined) : undefined,
         priority_pay_date: canEditAll ? parseString(editFormData.priority_pay_date) : undefined,
+        priority_reason: canEditAll ? parseString(editFormData.priority_reason) : undefined,
+        priority_evidence_reference: canEditAll ? parseString(editFormData.priority_evidence_reference) : undefined,
+        late_submission_reason: canEditAll ? parseString(editFormData.late_submission_reason) : undefined,
+        late_submission_source: canEditAll ? parseString(editFormData.late_submission_source) : undefined,
         date_range_start: canEditAll ? parseString(editFormData.date_range_start) : undefined,
         date_range_end: canEditAll ? parseString(editFormData.date_range_end) : undefined,
       };
@@ -1543,16 +1539,22 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
   const [holdingInvoice, setHoldingInvoice] = useState(false);
 
   const handleHoldForBatchThreshold = () => {
-    setHoldReason('Vendor cumulative amount below $100 batch threshold');
+    setHoldReason('');
+    setHoldEvidenceReference('');
+    setHoldReviewDate(new Date().toISOString().slice(0, 10));
     setShowHoldModal(true);
   };
 
   const confirmHoldForBatchThreshold = async () => {
     if (!selectedInvoice) return;
+    if (!holdReason.trim() || !holdEvidenceReference.trim() || !holdReviewDate) {
+      showToast('Reason, evidence/reference, and expected review date are required', 'error');
+      return;
+    }
     try {
       setHoldingInvoice(true);
-      await invoiceApi.holdForBatchThreshold(selectedInvoice.id, holdReason || undefined);
-      showToast('Invoice put on hold for batch threshold', 'success');
+      await invoiceApi.holdForBatchThreshold(selectedInvoice.id, { reason: holdReason.trim(), evidenceReference: holdEvidenceReference.trim(), reviewDate: holdReviewDate });
+      showToast('Invoice placed on a documented manual Accounting hold', 'success');
       setShowHoldModal(false);
       await refresh();
       setSelectedInvoice(null);
@@ -1716,11 +1718,12 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
     setSendingConfirmation(true);
     try {
       const res = await invoiceApi.sendPaymentConfirmation(selectedInvoice.id);
-      showToast(res.data.sent_to ? `Payment confirmation sent to ${res.data.sent_to}` : 'Payment confirmation marked as sent (no vendor email)', 'success');
+      showToast(`Payment confirmation sent to ${res.data.sent_to}`, 'success');
+      setSelectedInvoice((current) => current ? { ...current, status: InvoiceStatus.PAYMENT_CONFIRMATION_SENT, confirmation_sent_at: res.data.sent_at } : current);
       await refresh();
       setShowConfirmSendModal(false);
     } catch (error: any) {
-      const msg = error?.response?.data?.message || 'Failed to send payment confirmation';
+      const msg = error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to send payment confirmation';
       showToast(msg, 'error');
     } finally {
       setSendingConfirmation(false);
@@ -2712,7 +2715,7 @@ ${dataRows}
                 </button>
                 <button
                   onClick={() => {
-                    setFilters({ status: undefined, category: undefined, type: undefined, brand: undefined, brand_code: undefined, vendorId: undefined, search: undefined, dateFrom: undefined, dateTo: undefined, receivedFrom: undefined, receivedTo: undefined, receivedOrder: undefined, agingBucket: undefined, urgentDue: undefined });
+                    setFilters({ status: undefined, category: undefined, type: undefined, brand: undefined, brand_code: undefined, vendorId: undefined, search: undefined, dateFrom: undefined, dateTo: undefined, receivedTimeFrom: undefined, receivedTimeTo: undefined, receivedOrder: undefined, agingBucket: undefined, urgentDue: undefined });
                     setQuickFilter('all');
                   }}
                   disabled={!hasActiveFilter}
@@ -2738,28 +2741,13 @@ ${dataRows}
                 </button>
               </div>
 
+              {mode === 'repository' && (
+                <ReceivedDateTimeRange from={filters.receivedTimeFrom} to={filters.receivedTimeTo} onChange={(bound, value) => setFilters((previous) => ({ ...previous, [bound === 'from' ? 'receivedTimeFrom' : 'receivedTimeTo']: value || undefined }))} />
+              )}
+
               {/* Advanced filters — collapsible */}
               {showAdvancedFilters && (
                 <div className="flex flex-col md:flex-row items-start md:items-center gap-3 mt-3 pt-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-                  {(user?.role === 'PURCHASING_COORDINATOR' || user?.role === 'PURCHASING_MANAGER') && (
-                    <>
-                      <select
-                        value={filters.receivedOrder || ''}
-                        onChange={(e) => setFilters({ ...filters, receivedOrder: (e.target.value || undefined) as 'oldest' | 'newest' | undefined })}
-                        className="h-9 w-full md:w-auto px-4 rounded-full focus:outline-none text-sm appearance-none cursor-pointer"
-                        style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
-                      >
-                        <option value="">Received order</option>
-                        <option value="oldest">Earliest received first</option>
-                        <option value="newest">Latest received first</option>
-                      </select>
-                      <div className="flex items-center gap-2 w-full md:w-auto" title="Filter by the date the invoice entered the system">
-                        <input type="date" value={filters.receivedFrom || ''} onChange={(e) => setFilters({ ...filters, receivedFrom: e.target.value || undefined })} className="h-9 px-3 rounded-full text-sm focus:outline-none" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }} aria-label="Received from" />
-                        <span style={{ color: 'var(--text-subtle)' }}>-</span>
-                        <input type="date" value={filters.receivedTo || ''} onChange={(e) => setFilters({ ...filters, receivedTo: e.target.value || undefined })} className="h-9 px-3 rounded-full text-sm focus:outline-none" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }} aria-label="Received to" />
-                      </div>
-                    </>
-                  )}
                   <select
                     value={filters.category || ''}
                     onChange={(e) => setFilters({ ...filters, category: e.target.value as InvoiceCategory | undefined })}
@@ -2868,7 +2856,7 @@ ${dataRows}
               <div className="flex flex-wrap items-center gap-2">
                 <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-violet) 12%, transparent)', color: 'var(--accent-violet)', border: '1px solid color-mix(in srgb, var(--accent-violet) 28%, transparent)' }}>
                   <PenTool className="h-3.5 w-3.5" />
-                  Handwritten · {displayedInvoices.filter((invoice) => invoice.is_handwritten).length}
+                  Prioritization Flags · {displayedInvoices.filter((invoice) => invoice.is_handwritten || invoice.is_urgent || invoice.priority_flag).length}
                 </span>
                 <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-red) 12%, transparent)', color: 'var(--accent-red)', border: '1px solid color-mix(in srgb, var(--accent-red) 28%, transparent)' }}>
                   <Zap className="h-3.5 w-3.5" fill="currentColor" />
@@ -4117,7 +4105,7 @@ ${dataRows}
                 </button>
               )}
 
-              {/* Hold for Batch Threshold — Accounting can manually hold invoices below $100 vendor cumulative */}
+              {/* Manual Accounting hold; no automatic below-$100 hold is applied. */}
               {selectedInvoice.status === (InvoiceStatus.PENDING_ACCOUNTING as any) &&
                 user && hasPermission(user.role, 'canHoldInvoice') && (
                 <button
@@ -4127,7 +4115,7 @@ ${dataRows}
                   style={holdingInvoice ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' } : { background: 'color-mix(in srgb, var(--accent-amber) 15%, transparent)', color: 'var(--accent-amber)', border: '1px solid color-mix(in srgb, var(--accent-amber) 25%, transparent)' }}
                 >
                   {holdingInvoice ? <Loader2 className="h-4 w-4 mr-2 animate-spin" strokeWidth={1.75} /> : <Pause className="h-4 w-4 mr-2" strokeWidth={1.75} />}
-                  {holdingInvoice ? 'Holding...' : 'Hold for Batch Threshold'}
+                  {holdingInvoice ? 'Holding...' : 'Manual Accounting Hold'}
                 </button>
               )}
 
@@ -4759,9 +4747,9 @@ ${dataRows}
                   </>
                 ) : (
                   <>
-                    Mark payment confirmation as sent for <strong>{selectedInvoice.vendor?.name}</strong>?
+                    Supplier email is missing for <strong>{selectedInvoice.vendor?.name}</strong>.
                     <br /><br />
-                    <span style={{ color: 'var(--accent-amber)' }}>No vendor email on file — email will be skipped. Invoice will be marked as confirmation sent for tracking purposes.</span>
+                    <span style={{ color: 'var(--accent-amber)' }}>Add the approved supplier contact email before sending. The invoice remains Paid until notification succeeds.</span>
                   </>
                 )}
               </p>
@@ -4777,7 +4765,7 @@ ${dataRows}
                 </button>
                 <button
                   onClick={handleSendPaymentConfirmation}
-                  disabled={sendingConfirmation}
+                  disabled={sendingConfirmation || !selectedInvoice.vendor?.contact_email}
                   className="px-4 py-2 rounded-xl transition-colors text-sm font-medium flex items-center gap-2"
                   style={sendingConfirmation
                     ? { background: 'var(--bg-card-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' }
@@ -4907,7 +4895,7 @@ ${dataRows}
                   { label: 'QTY SHIPPED', field: 'qty_shipped', type: 'number' },
                 ]},
                 { title: 'Financial Details', fields: [
-                  { label: 'Subtotal', field: 'subtotal', type: 'number' },
+                  { label: 'Invoice Subtotal (excludes bank charges)', field: 'subtotal', type: 'number', required: true },
                   { label: 'Tax Amount', field: 'tax_amount', type: 'number' },
                   { label: 'Discount', field: 'discount_amount', type: 'number' },
                   { label: 'Bank Charges', field: 'bank_charges', type: 'number' },
@@ -4928,6 +4916,10 @@ ${dataRows}
                   { label: 'Date Range Start', field: 'date_range_start', type: 'date' },
                   { label: 'Date Range End', field: 'date_range_end', type: 'date' },
                   { label: 'Priority Pay Date', field: 'priority_pay_date', type: 'date' },
+                  { label: 'Priority / Pay Today Reason', field: 'priority_reason', type: 'text' },
+                  { label: 'Escalation / Approval Evidence Reference', field: 'priority_evidence_reference', type: 'text' },
+                  { label: 'Late Submission Reason', field: 'late_submission_reason', type: 'text' },
+                  { label: 'Accountable Source', field: 'late_submission_source', type: 'text' },
                 ]},
               ] as any[]).map((section) => {
                 const isCollapsed = editCollapsed[section.title];
@@ -5091,7 +5083,7 @@ ${dataRows}
                 <p className="text-sm font-medium mb-3" style={{ color: 'var(--text-primary)' }}>Flags</p>
                 <div className="flex flex-wrap gap-4">
                   {[
-                    { label: 'Handwritten', field: 'is_handwritten' },
+                    { label: 'Prioritization (handwritten)', field: 'is_handwritten' },
                     { label: 'Urgent', field: 'is_urgent' },
                     { label: 'Priority Flag', field: 'priority_flag' },
                   ].map(({ label, field }) => (
@@ -5138,49 +5130,6 @@ ${dataRows}
         </div>
       )}
 
-      {/* Toast Notifications */}
-      <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
-        {toasts.map((toast) => (
-          <div 
-            key={toast.id}
-            className="rounded-xl border shadow-2xl animate-slide-in-right"
-            style={{ 
-              background: 'var(--bg-card)',
-              borderLeft: toast.type === 'success' ? '3px solid var(--accent-lime)' : toast.type === 'error' ? '3px solid var(--accent-red)' : toast.type === 'warning' ? '3px solid var(--accent-amber)' : '3px solid var(--accent-purple)',
-              borderColor: 'var(--border-color)',
-              boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-              padding: '12px 16px',
-              minWidth: '280px',
-              maxWidth: '400px',
-              borderRadius: '12px',
-            }}
-          >
-            <div className="flex items-center gap-3">
-              {toast.type === 'success' ? (
-                <CheckCircle className="h-5 w-5 flex-shrink-0" style={{ color: 'var(--accent-lime)' }} strokeWidth={1.75} />
-              ) : toast.type === 'error' ? (
-                <XCircle className="h-5 w-5 flex-shrink-0" style={{ color: 'var(--accent-red)' }} strokeWidth={1.75} />
-              ) : toast.type === 'warning' ? (
-                <AlertTriangle className="h-5 w-5 flex-shrink-0" style={{ color: 'var(--accent-amber)' }} strokeWidth={1.75} />
-              ) : (
-                <Bell className="h-5 w-5 flex-shrink-0" style={{ color: 'var(--accent-purple)' }} strokeWidth={1.75} />
-              )}
-              <span className="text-sm" style={{ color: 'var(--text-primary)' }}>{toast.message}</span>
-            </div>
-            <div className="mt-2 h-0.5 rounded-full overflow-hidden" style={{ background: 'var(--bg-elevated)' }}>
-              <div 
-                className="h-full rounded-full"
-                style={{ 
-                  background: toast.type === 'success' ? 'var(--accent-lime)' : toast.type === 'error' ? 'var(--accent-red)' : toast.type === 'warning' ? 'var(--accent-amber)' : 'var(--accent-purple)',
-                  animation: 'progressFill 3s linear forwards',
-                  '--progress-width': '100%',
-                } as React.CSSProperties}
-              />
-            </div>
-          </div>
-        ))}
-      </div>
-
       {/* Upload Invoice Modal */}
       {mode === 'repository' && <UploadInvoiceModal isOpen={showUploadModal} onClose={() => setShowUploadModal(false)} />}
 
@@ -5193,8 +5142,8 @@ ${dataRows}
                 <Pause className="h-5 w-5" style={{ color: 'var(--accent-amber)' }} strokeWidth={1.75} />
               </div>
               <div>
-                <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Hold for Batch Threshold</h3>
-                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Invoice will be held until vendor cumulative reaches $100</p>
+                <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Manual Accounting Hold</h3>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>There is no automatic under-$100 hold. Record why Accounting is holding this invoice and when it should be reviewed.</p>
               </div>
             </div>
 
@@ -5215,7 +5164,7 @@ ${dataRows}
               </div>
 
               <div>
-                <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-muted)' }}>Reason</label>
+                <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-muted)' }}>Required reason</label>
                 <textarea
                   value={holdReason}
                   onChange={(e) => setHoldReason(e.target.value)}
@@ -5229,6 +5178,14 @@ ${dataRows}
                   }}
                   placeholder="Enter reason for holding this invoice..."
                 />
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-muted)' }}>Required evidence / document reference</label>
+                <input value={holdEvidenceReference} onChange={(e) => setHoldEvidenceReference(e.target.value)} disabled={holdingInvoice} className="w-full rounded-xl px-3 py-2 text-sm" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }} placeholder="Supplier response, email, or evidence ID" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-muted)' }}>Expected response / review date</label>
+                <input type="date" value={holdReviewDate} min={new Date().toISOString().slice(0, 10)} onChange={(e) => setHoldReviewDate(e.target.value)} disabled={holdingInvoice} className="w-full rounded-xl px-3 py-2 text-sm" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }} />
               </div>
             </div>
 

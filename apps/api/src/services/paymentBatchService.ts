@@ -1,10 +1,12 @@
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { PaymentBatchStatus, InvoiceStatus, UserRole } from '@ap-invoice/shared';
-import { PaymentExecutionInput, processPayment } from './postingService';
+import { PaymentExecutionInput } from './postingService';
 import { inAppNotificationService } from './inAppNotificationService';
 import { logger } from '../utils/logger';
 import { getApprovalReadiness } from './approvalReadinessService';
+import crypto from 'crypto';
+import { expectedPaymentAmount } from './batchAmountReconciliation';
 
 /**
  * Get the next Wednesday date from a given date
@@ -105,18 +107,6 @@ export function isSeparateFactoryVendor(name: unknown): boolean {
 }
 
 export async function getScheduledPaymentsForBatch(filters: ScheduledPaymentFilters = {}) {
-  await prisma.payment.updateMany({
-    where: {
-      status: 'HELD_BELOW_100',
-      below_threshold_decision: null,
-      below_threshold_deadline: { lte: new Date() },
-    },
-    data: {
-      below_threshold_decision: 'NO_RESPONSE',
-      below_threshold_reason: 'Purchasing response deadline passed without a decision',
-      below_threshold_decided_at: new Date(),
-    } as any,
-  });
   // No implicit payment-date bound: since payments auto-schedule on posting
   // with payment_date = invoice due date, past-due (overdue) invoices must
   // remain visible in the batch list. Only explicit dateFrom/dateTo bound it.
@@ -146,11 +136,11 @@ export async function getScheduledPaymentsForBatch(filters: ScheduledPaymentFilt
   if (filters.approvalFrom) approvalRange.gte = new Date(filters.approvalFrom);
   if (filters.approvalTo) approvalRange.lte = new Date(`${filters.approvalTo}T23:59:59.999Z`);
 
-  // The Accounting Payment Queue shows invoices pending accounting action,
-  // including payments created after posting. PAYMENT_SCHEDULED must remain
-  // visible until an Associate explicitly selects it for a batch.
+  // The weekly payment-selection queue contains only posted, unpaid AP bills.
+  // Pre-posting work belongs in Accounting Review and must not be presented as
+  // a payment-batch candidate.
   const defaultInvoiceStatuses = {
-    in: ['PENDING_ACCOUNTING', 'APPROVED', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED'],
+    in: ['POSTED_TO_QB', 'PAYMENT_SCHEDULED'],
   };
 
   const invoiceBaseWhere: any = {
@@ -183,21 +173,18 @@ export async function getScheduledPaymentsForBatch(filters: ScheduledPaymentFilt
   // Payment queue status filters apply to the payment row, not the invoice
   // lifecycle status. Keeping this distinction is important for manual holds:
   // a held payment still belongs to a PAYMENT_SCHEDULED invoice.
-  const paymentStatusValues = new Set(['SCHEDULED', 'FOR_PAYMENT', 'APPROVED_FOR_PAYMENT', 'HELD_BELOW_100', 'AWAITING_POSTING']);
-  const paymentStatusFilter = filters.status && paymentStatusValues.has(filters.status)
-    ? { status: filters.status }
-    : { status: { notIn: ['CANCELLED', 'VOIDED'] } };
+  const paymentStatusValues = new Set(['SCHEDULED', 'FOR_PAYMENT', 'APPROVED_FOR_PAYMENT', 'HELD_BELOW_100']);
   const invoiceWhere = filters.status && !paymentStatusValues.has(filters.status)
     ? { ...invoiceBaseWhere, status: filters.status }
     : { ...invoiceBaseWhere, status: defaultInvoiceStatuses };
 
   // Query invoices directly — exclude any that already have a Payment in a batch
   const invoices = await prisma.invoice.findMany({
-    where: invoiceWhere,
+    where: { ...invoiceWhere, payments: { none: { batch_id: { not: null }, status: { notIn: ['CANCELLED', 'VOIDED'] } } } },
     include: {
       vendor: true,
       payments: {
-        where: { ...paymentStatusFilter, batch_id: null },
+        where: { status: { notIn: ['CANCELLED', 'VOIDED'] } },
       },
       signatures: {
         where: {
@@ -214,7 +201,14 @@ export async function getScheduledPaymentsForBatch(filters: ScheduledPaymentFilt
 
   // Filter out invoices that already have an active payment in a batch
   const unbatched = invoices.filter((inv: any) => {
+    const eligibleInvoiceStatuses = filters.status && !paymentStatusValues.has(filters.status)
+      ? new Set([filters.status])
+      : new Set(['POSTED_TO_QB', 'PAYMENT_SCHEDULED']);
+    if (!eligibleInvoiceStatuses.has(String(inv.status))) return false;
     if (isSeparateFactoryVendor(inv.vendor?.name || inv.vendor_name_raw)) return false;
+    // A QB report is the source of truth for the unpaid amount once imported.
+    // Do not offer fully-paid/zero-balance bills for a new weekly payment.
+    if (inv.qb_balance_as_of && inv.qb_open_balance != null && Number(inv.qb_open_balance) <= 0) return false;
     const activePayments = (inv.payments || []).filter((p: any) =>
       p.batch_id !== null && !['CANCELLED', 'VOIDED'].includes(p.status)
     );
@@ -231,7 +225,14 @@ export async function getScheduledPaymentsForBatch(filters: ScheduledPaymentFilt
       id: existingPayment?.id || `inv-${inv.id}`,
       invoice_id: inv.id,
       status: existingPayment?.status || 'AWAITING_POSTING',
-      amount: existingPayment ? Number(existingPayment.amount) : Number(inv.total_amount || 0),
+      // The weekly payment selection is based on the invoice subtotal. Any
+      // bank charge is entered separately by Accounting on the batch and
+      // must never inflate the payable/threshold amount here.
+      amount: inv.qb_balance_as_of && inv.qb_open_balance != null
+        ? Number(inv.qb_open_balance)
+        : existingPayment
+          ? Number(existingPayment.amount)
+          : Number(inv.subtotal ?? 0),
       currency: existingPayment?.currency || inv.currency || 'USD',
       payment_date: existingPayment?.payment_date || inv.due_date || null,
       payment_date_source: existingPayment?.payment_date_source || 'DUE_DATE',
@@ -255,7 +256,11 @@ export async function getScheduledPaymentsForBatch(filters: ScheduledPaymentFilt
       qb_memo: inv.qb_memo || null,
       approval_date: signatures?.[0]?.signed_at || null,
       aging_days: null,
-      open_balance: existingPayment ? Number(existingPayment.amount) : Number(inv.total_amount || 0),
+      open_balance: inv.qb_balance_as_of && inv.qb_open_balance != null
+        ? Number(inv.qb_open_balance)
+        : existingPayment
+          ? Number(existingPayment.amount)
+          : Number(inv.subtotal ?? 0),
     };
   });
 
@@ -319,8 +324,32 @@ export async function getScheduledPaymentsForBatch(filters: ScheduledPaymentFilt
 
   // Aging filter (derived) applied in memory
   let filtered = enriched;
+  // Explicit payment-queue filters must be applied after mapping because
+  // invoices without an existing payment row are represented as the
+  // synthetic AWAITING_POSTING item.  Filtering only the Prisma relation
+  // would otherwise leak those synthetic rows into a selected status view.
+  if (filters.currency) {
+    const currency = filters.currency.trim().toUpperCase();
+    filtered = filtered.filter((p: any) => String(p.currency || '').toUpperCase() === currency);
+  }
+  if (filters.status && paymentStatusValues.has(filters.status)) {
+    filtered = filtered.filter((p: any) => p.status === filters.status);
+  }
+  if (filters.dateFrom || filters.dateTo) {
+    const from = filters.dateFrom ? new Date(filters.dateFrom).getTime() : null;
+    const to = filters.dateTo ? new Date(`${filters.dateTo}T23:59:59.999Z`).getTime() : null;
+    filtered = filtered.filter((p: any) => {
+      const paymentTime = p.payment_date ? new Date(p.payment_date).getTime() : NaN;
+      if (Number.isNaN(paymentTime)) return false;
+      if (from !== null && paymentTime < from) return false;
+      if (to !== null && paymentTime > to) return false;
+      return true;
+    });
+  }
   if (filters.aging) {
-    filtered = enriched.filter((p: any) => {
+    // Preserve currency/status/date filters already applied above.  Re-filter
+    // the current result set rather than restarting from the full enrichment.
+    filtered = filtered.filter((p: any) => {
       const days = p.aging_days;
       if (filters.aging === 'overdue') return days !== null && days > 0;
       if (filters.aging === 'not-due') return days !== null && days < 0;
@@ -525,7 +554,7 @@ export async function approveHeldPayment(paymentId: string, userId: string) {
  * This replaces the old amount-based automatic hold and keeps the decision
  * with the person managing the payment queue.
  */
-export async function holdScheduledPayment(paymentId: string, userId: string, reason?: string) {
+export async function holdScheduledPayment(paymentId: string, userId: string, input: { reason?: string; evidenceReference?: string; reviewDate?: string } = {}) {
   const payment = await prisma.payment.findUnique({
     where: { id: paymentId },
     include: { invoice: { include: { vendor: true } } },
@@ -538,8 +567,14 @@ export async function holdScheduledPayment(paymentId: string, userId: string, re
     throw new AppError('Remove the payment from its batch before placing it on hold', 400);
   }
 
-  const holdReason = reason?.trim() || 'Accounting Associate placed the payment on hold for review';
-  const holdReviewDate = getNextPurchasingDeadline();
+  const holdReason = input.reason?.trim() || '';
+  const evidenceReference = input.evidenceReference?.trim() || '';
+  const holdReviewDate = input.reviewDate ? new Date(input.reviewDate) : null;
+  if (!holdReason) throw new AppError('A hold reason is required', 400);
+  if (!evidenceReference) throw new AppError('Supporting evidence or reference is required for a hold', 400);
+  if (!holdReviewDate || Number.isNaN(holdReviewDate.getTime()) || holdReviewDate < new Date(new Date().toDateString())) {
+    throw new AppError('A valid expected response/review date (today or later) is required', 400);
+  }
   const updated = await prisma.payment.update({
     where: { id: paymentId },
     data: {
@@ -551,7 +586,7 @@ export async function holdScheduledPayment(paymentId: string, userId: string, re
       hold_reason: holdReason,
       hold_owner: userId,
       hold_review_date: holdReviewDate,
-      hold_evidence: { manual: true, reason: holdReason, review_date: holdReviewDate.toISOString() },
+      hold_evidence: { manual: true, evidence_reference: evidenceReference, reason: holdReason, review_date: holdReviewDate.toISOString() },
     },
   });
 
@@ -710,10 +745,9 @@ export async function rejectPaymentForPayment(paymentId: string, reason: string,
 /**
  * Apply a bank charge to ONE payment in a batch (Accounting Associate).
  *
- * - At most ONE charged payment PER VENDOR per batch (a batch may combine
- *   multiple vendors, so each vendor gets its own single charge). Duplicates
- *   for the same vendor are blocked — the existing charge must be removed
- *   before a different one can be applied.
+ * - At most ONE charged payment per single-vendor batch. Duplicates are
+ *   blocked — the existing charge must be removed before a different one can
+ *   be applied.
  * - Only allowed while the batch is DRAFT or RETURNED_FOR_CORRECTION.
  * - batch.total_amount is recomputed to include the charge (payments + charge).
  */
@@ -742,8 +776,30 @@ export async function applyBankCharge(
   const target = batch.payments.find((p: any) => p.id === paymentId);
   if (!target) throw new AppError('Payment is not part of this batch', 400);
 
-  // Duplicate block — one bank charge per vendor per batch (batches may now
-  // combine multiple vendors, so only the same vendor's charge is blocked).
+  const batchVendors = new Set((batch.payments as any[]).map((p: any) => p.invoice?.vendor_id || p.vendor_id || 'UNKNOWN'));
+  if (batchVendors.size > 1) {
+    throw new AppError('This batch contains multiple vendors and cannot receive additional charges. Return it and create separate vendor batches.', 400);
+  }
+
+  if (Boolean(target.invoice?.qb_bank_charge_included)) {
+    throw new AppError('QuickBooks already includes the bank charge for this invoice. Remove the duplicate charge before continuing.', 400);
+  }
+
+  // Some QuickBooks exports do not carry the explicit bank-charge flag but do
+  // expose an open balance that is exactly the invoice amount plus the fee.
+  // Treat that deterministic delta as already included as well, preventing a
+  // second charge from being added in the payment batch.
+  const invoiceTotal = Number(target.invoice?.total_amount);
+  const qbOpenBalance = Number(target.invoice?.qb_open_balance);
+  if (Number.isFinite(invoiceTotal) && Number.isFinite(qbOpenBalance)
+    && qbOpenBalance > invoiceTotal + 0.005
+    && Math.abs((qbOpenBalance - invoiceTotal) - rounded) <= 0.01) {
+    throw new AppError('QuickBooks open balance already includes this bank charge. Remove the duplicate charge before continuing.', 400);
+  }
+
+  // Duplicate block — one bank charge per vendor per batch. The creation and
+  // export guards keep this batch single-vendor, while this check protects
+  // legacy rows that may still contain mixed records.
   const existingCharge = batch.payments.find(
     (p: any) => p.bank_charge_amount != null && p.invoice?.vendor_id === target.invoice?.vendor_id
   );
@@ -874,6 +930,29 @@ function requireBillStubFiles(payments: any[], action: string): void {
   );
 }
 
+function batchIntegrityIssues(batch: any): string[] {
+  const payments = Array.isArray(batch?.payments) ? batch.payments : [];
+  const issues: string[] = [];
+  if (!payments.length) return ['Batch has no linked payments'];
+  const vendorIds = new Set(payments.map((p: any) => p.vendor_id || p.invoice?.vendor_id).filter(Boolean));
+  const currencies = new Set(payments.map((p: any) => String(p.currency || p.invoice?.currency || 'USD').toUpperCase()));
+  const bankHashes = new Set(payments.map((p: any) => p.bank_snapshot_hash).filter(Boolean));
+  if (vendorIds.size !== 1 || payments.some((p: any) => !(p.vendor_id || p.invoice?.vendor_id))) issues.push('Linked invoices do not all belong to one resolved vendor');
+  if (currencies.size !== 1) issues.push('Linked payments contain more than one currency');
+  if (bankHashes.size > 1) issues.push('Linked payments use different confirmed bank-account snapshots');
+  if (payments.some((p: any) => !p.bank_snapshot_hash || !p.account_number_snapshot)) issues.push('One or more payments lack a confirmed bank-account snapshot');
+  for (const payment of payments) {
+    const expected = expectedPaymentAmount(payment);
+    if (expected != null && Math.abs(Number(payment.amount) - expected) >= 0.005) issues.push(`${payment.invoice?.invoice_number || payment.id}: payment ${Number(payment.amount).toFixed(2)} differs from current invoice/QB principal ${expected.toFixed(2)}; return for amount reconciliation`);
+  }
+  return issues;
+}
+
+function requireBatchIntegrity(batch: any): void {
+  const issues = batchIntegrityIssues(batch);
+  if (issues.length) throw new AppError(`Batch integrity check failed: ${issues.join('; ')}. Keep the batch unpaid and correct the linked records.`, 409);
+}
+
 /**
  * Accounting Associate (or Supervisor) endorses a bill stub for ONE payment in
  * the batch — tagging the invoice as in the payment process. The payment goes
@@ -966,9 +1045,28 @@ function normalizePaymentReference(value: unknown): string {
  *
  * When every payment in the batch is PAID, the batch is marked PROCESSED.
  */
+function outstandingTransferAmount(payment: any): number {
+  return Math.round((Number(payment.amount || 0) - Number(payment.paid_amount || 0) + Number(payment.bank_charge_amount || 0)) * 100) / 100;
+}
+
 export async function matchPaymentConfirmation(
   batchId: string,
-  input: { reference?: string; amount?: number; paidDate?: string; paymentIds?: string[] },
+  input: {
+    reference?: string;
+    amount?: number;
+    paidDate?: string;
+    currency?: string;
+    beneficiary?: string;
+    accountMask?: string;
+    paymentIds?: string[];
+    source?: {
+      importId?: string;
+      fileName?: string;
+      fileHash?: string;
+      filePath?: string;
+      mimeType?: string;
+    };
+  },
   userId: string
 ) {
   const batch = await prisma.paymentBatch.findUnique({
@@ -976,13 +1074,20 @@ export async function matchPaymentConfirmation(
     include: { payments: { include: { bill_stub: true, invoice: { include: { vendor: true } } } } },
   });
   if (!batch) throw new AppError('Payment batch not found', 404);
+  if (!['PROCESSING', 'EXPORTED_TO_BANK'].includes(String(batch.status))) {
+    throw new AppError('The batch must be exported and any required CFO review completed before confirmation matching.', 409);
+  }
 
   const endorsed = (batch.payments as any[]).filter((p) => p.status === 'ENDORSED' || p.status === 'PARTIALLY_PAID');
   if (endorsed.length === 0) {
     throw new AppError('No endorsed payments in this batch to match — endorse bill stubs first', 400);
   }
+  requireBatchIntegrity(batch);
 
   let matched: any[];
+  if (input.amount != null && (!Number.isFinite(Number(input.amount)) || Number(input.amount) <= 0)) {
+    throw new AppError('Confirmation transfer amount must be a positive finite number.', 400);
+  }
   if (Array.isArray(input.paymentIds) && input.paymentIds.length > 0) {
     const selected = new Set(input.paymentIds);
     matched = endorsed.filter((p) => selected.has(p.id));
@@ -999,7 +1104,7 @@ export async function matchPaymentConfirmation(
     }
     if (matched.length > 1 && input.amount != null && isFinite(Number(input.amount))) {
       const amt = Number(input.amount);
-      matched = matched.filter((p) => Math.abs(Number(p.amount) - amt) < 0.005);
+      matched = matched.filter((p) => Math.abs(outstandingTransferAmount(p) - amt) < 0.005);
     }
     if (matched.length > 1) {
       throw new AppError(
@@ -1010,16 +1115,57 @@ export async function matchPaymentConfirmation(
   }
 
   const paidAt = input.paidDate ? new Date(input.paidDate) : new Date();
+  if (Number.isNaN(paidAt.getTime())) throw new AppError('Confirmation payment date is invalid', 400);
+  if (!input.paidDate) throw new AppError('A payment date is required to reconcile the bank confirmation', 400);
+  const referenceDate = batch.processed_at ? new Date(batch.processed_at) : new Date(batch.exported_at || batch.created_at);
+  if (Math.abs(paidAt.getTime() - referenceDate.getTime()) > 7 * 86400000) {
+    throw new AppError('Confirmation date is more than 7 days from the recorded bank execution/export date; leave unpaid and investigate.', 409);
+  }
+  if (matched.length > 1 && input.amount != null) {
+    const expectedTotal = matched.reduce((sum, payment) => sum + outstandingTransferAmount(payment), 0);
+    if (Math.abs(Number(input.amount) - expectedTotal) >= 0.005) throw new AppError(`Confirmation total does not match the selected payments (${expectedTotal.toFixed(2)}).`, 409);
+  }
   const confirmationRef = input.reference?.trim() || 'payment confirmation';
-  for (const payment of matched) {
+  // Validate every allocation before writing any payment in a multi-invoice remittance.
+  const allocations = matched.map((payment) => {
+    const currency = String(payment.currency || payment.invoice?.currency || 'USD').toUpperCase();
+    if (!input.currency || String(input.currency).trim().toUpperCase() !== currency) {
+      throw new AppError(`Confirmation currency must match ${currency} for payment ${payment.invoice?.invoice_number || payment.id}`, 409);
+    }
+    const beneficiary = String(payment.beneficiary_name_snapshot || payment.invoice?.vendor?.beneficiary_name || payment.invoice?.vendor?.name || '').trim().toUpperCase().replace(/\s+/g, ' ');
+    if (!input.beneficiary || String(input.beneficiary).trim().toUpperCase().replace(/\s+/g, ' ') !== beneficiary) {
+      throw new AppError(`Confirmation beneficiary does not match the bank snapshot for payment ${payment.invoice?.invoice_number || payment.id}`, 409);
+    }
+    const accountDigits = String(payment.account_number_snapshot || '').replace(/\D/g, '');
+    const expectedMask = accountDigits ? accountDigits.slice(-4) : '';
+    const suppliedMask = String(input.accountMask || '').replace(/\D/g, '');
+    if (!expectedMask || suppliedMask.slice(-4) !== expectedMask) {
+      throw new AppError(`Confirmation account mask must match the bank snapshot for payment ${payment.invoice?.invoice_number || payment.id}`, 409);
+    }
+    if (batch.execution_reference && normalizePaymentReference(batch.execution_reference) !== normalizePaymentReference(confirmationRef)) {
+      throw new AppError('Confirmation reference does not match the batch execution reference', 409);
+    }
     if (payment.status !== 'ENDORSED' && normalizePaymentReference(payment.reference) === normalizePaymentReference(confirmationRef)) {
       throw new AppError(`Payment ${payment.id} was already confirmed with reference "${confirmationRef}"`, 409);
     }
     const alreadyPaid = Number(payment.paid_amount || 0);
-    const requestedAmount = input.amount != null && matched.length === 1 ? Number(input.amount) : Number(payment.amount);
-    const confirmedAmount = Math.max(0, Math.min(Number(payment.amount), requestedAmount));
-    const totalPaid = alreadyPaid + confirmedAmount;
+    const outstanding = Math.round((Number(payment.amount) - alreadyPaid) * 100);
+    const fee = Math.round(Number(payment.bank_charge_amount || 0) * 100);
+    if (fee && input.amount == null) throw new AppError('Enter the confirmation transfer amount including the separate bank charge.', 400);
+    const transfer = input.amount != null && matched.length === 1 ? Math.round(Number(input.amount) * 100) : outstanding + fee;
+    if (!Number.isFinite(transfer) || transfer <= 0 || transfer > outstanding + fee || outstanding <= 0) {
+      throw new AppError('Confirmation amount must be positive and cannot exceed the outstanding payment balance plus bank charge', 400);
+    }
+    const fullTransfer = transfer === outstanding + fee;
+    // Partial installments reduce principal only. The separate fee is settled
+    // on the final transfer, never counted as invoice principal or paid twice.
+    if (!fullTransfer && transfer >= outstanding) throw new AppError('The final transfer must include the separate bank charge; leave unpaid pending reconciliation.', 409);
+    const confirmedAmount = (fullTransfer ? outstanding : transfer) / 100;
+    const totalPaid = Math.round((alreadyPaid + confirmedAmount) * 100) / 100;
     const isPartial = totalPaid + 0.005 < Number(payment.amount);
+    return { payment, confirmedAmount, totalPaid, isPartial, transferAmount: transfer / 100 };
+  });
+  for (const { payment, confirmedAmount, totalPaid, isPartial, transferAmount } of allocations) {
     await prisma.payment.update({
       where: { id: payment.id },
       data: {
@@ -1042,7 +1188,7 @@ export async function matchPaymentConfirmation(
         invoice_id: payment.invoice_id,
         action: isPartial ? 'PAYMENT_PARTIAL_CONFIRMATION_MATCHED' : 'PAYMENT_CONFIRMATION_MATCHED',
         performed_by: userId,
-        note: `Payment matched by confirmation (ref ${confirmationRef}) and tagged ${isPartial ? 'PARTIALLY_PAID' : 'PAID'} in batch ${batch.batch_number}`,
+        note: `Payment matched by confirmation (ref ${confirmationRef}): transfer ${transferAmount.toFixed(2)}, invoice principal ${confirmedAmount.toFixed(2)}, bank charge ${(transferAmount - confirmedAmount).toFixed(2)}; tagged ${isPartial ? 'PARTIALLY_PAID' : 'PAID'} in batch ${batch.batch_number}`,
       },
     });
     await inAppNotificationService.notifyStageTransition(
@@ -1053,6 +1199,38 @@ export async function matchPaymentConfirmation(
       isPartial ? 'PAYMENT_SCHEDULED' : 'PAID',
       UserRole.PURCHASING_COORDINATOR,
     );
+
+    // Persist the source file and allocation for every matched invoice, not
+    // only when the final invoice in the batch closes the batch. This keeps a
+    // Citibank remittance traceable at invoice level even for partial or
+    // multi-row imports.
+    if (input.source?.importId && (prisma as any).paymentConfirmation?.create) {
+      const fingerprint = crypto.createHash('sha256').update([
+        input.source.fileHash || input.source.importId,
+        payment.id,
+        confirmationRef,
+        confirmedAmount.toFixed(2),
+      ].join('|')).digest('hex');
+      await (prisma as any).paymentConfirmation.create({
+        data: {
+          invoice_id: payment.invoice_id,
+          payment_id: payment.id,
+          batch_id: batchId,
+          import_id: input.source.importId,
+          vendor_name: payment.invoice?.vendor?.name || 'Unknown',
+          amount: Number(payment.amount),
+          allocated_amount: transferAmount,
+          currency: payment.currency || payment.invoice?.currency || 'USD',
+          payment_reference: confirmationRef,
+          bank_transaction_reference: confirmationRef,
+          payment_date: paidAt,
+          source: 'CITIBANK_UPLOAD',
+          sent_by: userId,
+          email_sent: false,
+          confirmation_fingerprint: fingerprint,
+        },
+      });
+    }
   }
 
   // If every payment in the batch is now PAID, mark the batch PROCESSED
@@ -1110,7 +1288,7 @@ export async function findPaymentBatchByConfirmationReference(reference: string,
 
   if (matches.length > 1 && amount != null && isFinite(Number(amount))) {
     const numericAmount = Number(amount);
-    matches = matches.filter((payment) => Math.abs(Number(payment.amount) - numericAmount) < 0.005);
+    matches = matches.filter((payment) => Math.abs(outstandingTransferAmount(payment) - numericAmount) < 0.005);
   }
   if (matches.length === 0) return null;
   if (matches.length > 1) {
@@ -1267,6 +1445,21 @@ export async function createPaymentBatch(
     throw new AppError('Some payments are not found, not selected for batch, or not in SCHEDULED/APPROVED_FOR_PAYMENT status', 400);
   }
 
+  const candidateInvoiceIds = [...new Set(payments.map((payment: any) => payment.invoice_id))];
+  const pendingRevisionReviews = candidateInvoiceIds.length
+    ? await prisma.duplicateRevisionReview.findMany({
+      where: { candidate_invoice_id: { in: candidateInvoiceIds }, status: 'PENDING' },
+      select: { candidate_invoice_id: true },
+    })
+    : [];
+  if (pendingRevisionReviews.length > 0) {
+    const heldIds = new Set(pendingRevisionReviews.map((review: any) => review.candidate_invoice_id));
+    const heldNumbers = payments
+      .filter((payment: any) => heldIds.has(payment.invoice_id))
+      .map((payment: any) => payment.invoice?.invoice_number || payment.invoice_id);
+    throw new AppError(`Payment batch blocked while a possible corrected invoice is awaiting Purchasing review: ${heldNumbers.slice(0, 8).join(', ')}`, 400);
+  }
+
   // A future-due invoice can be included in a weekly run only as an explicit
   // manual override. The existing payment remarks are the audit reason field;
   // without one, reject the batch before any records are linked.
@@ -1289,6 +1482,10 @@ export async function createPaymentBatch(
   const currencies = new Set(payments.map((p: any) => String(p.currency || p.invoice?.currency || 'USD').toUpperCase()));
   if (currencies.size > 1) {
     throw new AppError('A payment batch may contain only one currency', 400);
+  }
+  const vendors = new Set(payments.map((p: any) => p.invoice?.vendor_id || p.vendor_id || 'UNKNOWN'));
+  if (vendors.size > 1) {
+    throw new AppError('A payment batch may contain only one vendor. Split the selection into separate vendor batches.', 400);
   }
   const invalid: string[] = [];
   for (const payment of payments as any[]) {
@@ -1315,56 +1512,12 @@ export async function createPaymentBatch(
     throw new AppError(`Cannot create payment batch until all invoices pass validation: ${invalid.slice(0, 8).join('; ')}${invalid.length > 8 ? `; and ${invalid.length - 8} more` : ''}`, 400);
   }
 
-  // The USD 100 rule is evaluated at the vendor + currency + confirmed-bank
-  // account subtotal, never per invoice. A low-value group is explicitly
-  // held with an owner/evidence/review date so it can be consolidated later.
-  const subtotalGroups = new Map<string, { ids: string[]; total: number; vendor: string; currency: string }>();
-  for (const payment of payments as any[]) {
-    const currency = String(payment.currency || payment.invoice?.currency || 'USD').toUpperCase();
-    const key = [payment.invoice?.vendor_id || payment.vendor_id || 'UNKNOWN', currency, payment.bank_snapshot_hash || 'NO_BANK_SNAPSHOT'].join('|');
-    const current: { ids: string[]; total: number; vendor: string; currency: string } = subtotalGroups.get(key) || { ids: [], total: 0, vendor: payment.invoice?.vendor?.name || 'Unknown vendor', currency };
-    current.ids.push(payment.id);
-    current.total += Number(payment.amount || 0);
-    subtotalGroups.set(key, current);
-  }
-  const belowThreshold = [...subtotalGroups.values()].filter(group => group.total < 100 &&
-    (payments as any[]).filter((p) => group.ids.includes(p.id)).some((p) => p.below_threshold_decision !== 'PROCEED'));
-  if (belowThreshold.length > 0) {
-    const reviewDate = getNextPurchasingDeadline();
-    for (const group of belowThreshold) {
-      const reason = `${group.currency} ${group.total.toFixed(2)} subtotal for ${group.vendor} is below the 100 threshold; consolidate with another payment or obtain Accounting approval.`;
-      await prisma.payment.updateMany({
-        where: { id: { in: group.ids } },
-        data: {
-          status: 'HELD_BELOW_100',
-          selected_for_batch: false,
-          selected_by: null,
-          selected_at: null,
-          remarks: reason,
-          hold_reason: reason,
-          hold_owner: userId,
-          hold_review_date: reviewDate,
-          below_threshold_deadline: reviewDate,
-          below_threshold_decision: null,
-          below_threshold_reason: null,
-          hold_evidence: { threshold: 100, currency: group.currency, subtotal: Number(group.total.toFixed(2)), vendor: group.vendor },
-        } as any,
-      });
-      await prisma.auditLog.create({
-        data: {
-          action: 'PAYMENT_THRESHOLD_HOLD_PLACED',
-          performed_by: userId,
-          note: reason,
-          metadata: { payment_ids: group.ids, threshold: 100, currency: group.currency, subtotal: Number(group.total.toFixed(2)), review_date: reviewDate.toISOString() },
-        } as any,
-      });
-    }
-    throw new AppError(`Payment group subtotal is below the 100 threshold and has been placed on hold: ${belowThreshold.map(group => `${group.vendor} ${group.currency} ${group.total.toFixed(2)}`).join('; ')}`, 400);
-  }
+  // The USD 100 amount is guidance for Accounting, not a system gate. The
+  // Associate may place a selected payment on a documented manual hold, but
+  // batch creation must never auto-hold or reject a below-threshold group.
 
-  // A batch may combine payments from ANY vendors (Accounting Associate decides
-  // the grouping). Banking controls are preserved at export time — each payment
-  // row carries its own vendor's bank details in the exported file.
+  // The direct/legacy helper is intentionally single-vendor. Mixed selections
+  // are split by createGroupedPaymentBatches before they reach this function.
 
   // Calculate total batch amount
   const totalAmount = payments.reduce((sum: number, p: any) => sum + Number(p.amount), 0);
@@ -1417,9 +1570,10 @@ export async function createPaymentBatch(
 }
 
 /**
- * Create ONE batch for all selected payments — regardless of vendor. Accounting
- * Associates select payments across vendors and they land in the same batch;
- * each payment keeps its own vendor's bank details for the export.
+ * Create vendor-safe batches for a selected set. Each batch is limited to one
+ * vendor, currency, and confirmed bank snapshot so a remittance can never mix
+ * suppliers or bank destinations. The amount threshold is a Purchasing
+ * decision, not an automatic hold in this Accounting path.
  */
 export async function createGroupedPaymentBatches(paymentIds: string[], userId: string, weeklyContext?: { cutoffDate?: Date; asOfDate?: Date; scheduleRef?: string }) {
   const uniquePaymentIds = [...new Set(paymentIds)];
@@ -1440,40 +1594,8 @@ export async function createGroupedPaymentBatches(paymentIds: string[], userId: 
     groups.set(key, group);
   }
   const batches = [];
-  const heldPaymentIds: string[] = [];
-  const reviewDate = getNextPurchasingDeadline();
   const scheduleRef = weeklyContext?.scheduleRef || `WPS-${new Date().getUTCFullYear()}-${String(Date.now()).slice(-4)}`;
   for (const group of groups.values()) {
-    const groupPayments = await prisma.payment.findMany({ where: { id: { in: group.ids } }, select: { id: true, below_threshold_decision: true } });
-    const hasPurchasingProceed = groupPayments.length === group.ids.length && groupPayments.every((p: any) => p.below_threshold_decision === 'PROCEED');
-    if (group.total < 100 && !hasPurchasingProceed) {
-      const reason = `${group.currency} ${group.total.toFixed(2)} subtotal for ${group.vendor} is below the 100 threshold; consolidate with another payment or obtain Accounting approval.`;
-      heldPaymentIds.push(...group.ids);
-      await prisma.payment.updateMany({
-        where: { id: { in: group.ids } },
-        data: {
-          status: 'HELD_BELOW_100', selected_for_batch: false, selected_by: null, selected_at: null,
-          remarks: reason, hold_reason: reason, hold_owner: userId, hold_review_date: reviewDate,
-          below_threshold_deadline: reviewDate, below_threshold_decision: null, below_threshold_reason: null,
-          hold_evidence: { threshold: 100, currency: group.currency, subtotal: Number(group.total.toFixed(2)), vendor: group.vendor },
-        } as any,
-      });
-      await prisma.auditLog.create({
-        data: {
-          action: 'PAYMENT_THRESHOLD_HOLD_PLACED',
-          performed_by: userId,
-          note: reason,
-          metadata: {
-            payment_ids: group.ids,
-            threshold: 100,
-            currency: group.currency,
-            subtotal: Number(group.total.toFixed(2)),
-            review_date: reviewDate.toISOString(),
-          },
-        },
-      } as any);
-      continue;
-    }
     batches.push(await createPaymentBatch(group.ids, userId, { ...weeklyContext, scheduleRef }));
   }
 
@@ -1481,7 +1603,7 @@ export async function createGroupedPaymentBatches(paymentIds: string[], userId: 
     batches,
     batch_count: batches.length,
     payment_count: uniquePaymentIds.length,
-    held_payment_ids: heldPaymentIds,
+    held_payment_ids: [],
   };
 }
 
@@ -1500,7 +1622,7 @@ export async function createGroupedPaymentBatches(paymentIds: string[], userId: 
  * know a new batch is ready to process.
  */
 export async function autoBatchPaymentOnPost(
-  payment: { id: string; invoice_id: string | null; amount: number; currency?: string | null; status: string },
+  payment: { id: string; invoice_id: string | null; amount: number; currency?: string | null; status: string; vendor_id?: string | null; bank_snapshot_hash?: string | null },
   userId: string,
   invoiceInfo?: { invoice_number?: string | null; vendor_name?: string | null }
 ) {
@@ -1514,12 +1636,19 @@ export async function autoBatchPaymentOnPost(
 
   const currency = String(payment.currency || 'USD').toUpperCase();
 
-  // Reuse the poster's most recent open DRAFT batch of the same currency so a
-  // run of postings lands in one batch instead of one tiny batch per invoice.
-  const openBatch = await prisma.paymentBatch.findFirst({
+  // Reuse an open DRAFT batch only when vendor, currency, and the confirmed
+  // beneficiary snapshot all match. This keeps the automatic posting path
+  // compliant with the one-vendor/one-remittance rule.
+  const openBatches = payment.vendor_id ? await prisma.paymentBatch.findMany({
     where: { status: PaymentBatchStatus.DRAFT as any, created_by: userId, currency },
+    include: { payments: { select: { vendor_id: true, bank_snapshot_hash: true, invoice: { select: { vendor_id: true } } } } },
     orderBy: { created_at: 'desc' },
-  });
+    take: 25,
+  }) : [];
+  const openBatch = (openBatches as any[]).find((candidate) => candidate.payments?.every((p: any) =>
+    (p.vendor_id || p.invoice?.vendor_id) === payment.vendor_id
+    && (!payment.bank_snapshot_hash || p.bank_snapshot_hash === payment.bank_snapshot_hash)
+  ));
 
   if (openBatch) {
     await prisma.payment.update({
@@ -1626,7 +1755,7 @@ export async function getPaymentBatches() {
     },
   });
 
-  return batches;
+  return batches.map((batch) => ({ ...batch, integrity_issues: batchIntegrityIssues(batch) }));
 }
 
 export async function getPaymentBatchById(batchId: string) {
@@ -1651,7 +1780,9 @@ export async function getPaymentBatchById(batchId: string) {
     throw new AppError('Payment batch not found', 404);
   }
 
-  return batch;
+  const integrityIssues = batchIntegrityIssues(batch);
+
+  return { ...batch, integrity_issues: integrityIssues };
 }
 
 export async function processPaymentBatch(
@@ -1670,39 +1801,26 @@ export async function processPaymentBatch(
     throw new AppError('Payment batch not found', 404);
   }
 
-  if (![PaymentBatchStatus.REVIEWED, PaymentBatchStatus.EXPORTED_TO_BANK].includes(batch.status as any)) {
-    throw new AppError('Batch must be marked ready for payment before processing', 400);
+  if (batch.status !== PaymentBatchStatus.EXPORTED_TO_BANK) {
+    throw new AppError('Batch must be exported to the external bank before recording execution', 400);
   }
+  requireBatchIntegrity(batch);
+  const reference = String(execution.reference || '').trim();
+  if (!reference) throw new AppError('Bank execution reference is required. The batch will remain unpaid until confirmation is reconciled.', 400);
   requireBillStubFiles(batch.payments as any[], 'process');
-
-  await prisma.paymentBatch.update({ where: { id: batchId }, data: { status: PaymentBatchStatus.PROCESSING as any } });
-
-  // Process each payment in the batch via processPayment for consistent behavior
-  // (email notifications, payment references, in-app notifications, stage timestamps)
-  for (const payment of batch.payments) {
-    if (payment.status === 'PAID') {
-      logger.warn(`Payment ${payment.id} in batch ${batch.batch_number} is already PAID — skipping`);
-      continue;
-    }
-    if (payment.status !== 'SCHEDULED') {
-      logger.warn(`Payment ${payment.id} in batch ${batch.batch_number} has status ${payment.status} — skipping`);
-      continue;
-    }
-    try {
-      await processPayment(payment.id, userId, execution);
-    } catch (err) {
-      logger.error(`Failed to process payment ${payment.id} in batch ${batch.batch_number}:`, err);
-      throw new AppError(`Payment ${payment.id} failed to process: ${err instanceof Error ? err.message : 'unknown error'}`, 500);
-    }
-  }
-
-  // Mark batch as PROCESSED
+  const payments = batch.payments as any[];
+  const requiresCfo = Number(batch.total_amount || 0) >= 100000 || payments.some((payment) => Boolean(payment.invoice?.bank_match_details?.requires_cfo_approval));
   const updatedBatch = await prisma.paymentBatch.update({
     where: { id: batchId },
     data: {
-      status: PaymentBatchStatus.PROCESSED as any,
+      status: (requiresCfo ? PaymentBatchStatus.PENDING_CFO : PaymentBatchStatus.PROCESSING) as any,
       processed_by: userId,
       processed_at: new Date(),
+      execution_reference: reference,
+      execution_bank: execution.bankUsed?.trim() || null,
+      execution_remarks: execution.remarks?.trim() || null,
+      execution_proof_url: execution.proofFileUrl || null,
+      execution_proof_name: execution.proofFileName || null,
     },
   });
 
@@ -1710,7 +1828,7 @@ export async function processPaymentBatch(
     data: {
       action: 'PAYMENT_BATCH_PROCESSED',
       performed_by: userId,
-    note: `Payment batch ${batch.batch_number} processed by Accounting Associate. ${batch.payments.length} payments processed, invoices marked as PAID, remittance advice sent.`,
+    note: `External bank execution recorded for batch ${batch.batch_number} (reference ${reference}). Invoices remain unpaid pending confirmation reconciliation${requiresCfo ? ' and CFO approval' : ''}.`,
     },
   });
 
@@ -1818,12 +1936,10 @@ export async function reviewPaymentBatch(batchId: string, userId: string, note?:
   if (batch.status !== PaymentBatchStatus.PENDING_SUPERVISOR_REVIEW) {
     throw new AppError('Batch is not pending supervisor review', 400);
   }
-  const payments = Array.isArray((batch as any).payments) ? (batch as any).payments : [];
-  const requiresCfo = Number(batch.total_amount || 0) >= 100000 || payments.some((payment: any) => Boolean(payment.invoice?.bank_match_details?.requires_cfo_approval));
-  const nextStatus = requiresCfo ? PaymentBatchStatus.PENDING_CFO : PaymentBatchStatus.REVIEWED;
+  requireBatchIntegrity(batch);
   return prisma.paymentBatch.update({
     where: { id: batchId },
-    data: { status: nextStatus as any, reviewed_by: userId, reviewed_at: new Date(), review_note: note || null },
+    data: { status: PaymentBatchStatus.REVIEWED as any, reviewed_by: userId, reviewed_at: new Date(), review_note: note || null },
   });
 }
 
@@ -1833,7 +1949,7 @@ export async function approveCfoPaymentBatch(batchId: string, userId: string, no
   if (batch.status !== PaymentBatchStatus.PENDING_CFO) throw new AppError('Batch is not pending CFO approval', 400);
   const updated = await prisma.paymentBatch.update({
     where: { id: batchId },
-    data: { status: PaymentBatchStatus.REVIEWED as any, cfo_approved_by: userId, cfo_approved_at: new Date(), cfo_note: note?.trim() || null } as any,
+    data: { status: PaymentBatchStatus.PROCESSING as any, cfo_approved_by: userId, cfo_approved_at: new Date(), cfo_note: note?.trim() || null } as any,
   });
   await prisma.auditLog.create({ data: { action: 'PAYMENT_BATCH_CFO_APPROVED', performed_by: userId, note: `CFO approved payment batch ${batch.batch_number}${note ? `: ${note.trim()}` : ''}` } });
   return updated;
@@ -1847,9 +1963,9 @@ export async function rejectCfoPaymentBatch(batchId: string, userId: string, rea
   if (batch.status !== PaymentBatchStatus.PENDING_CFO) throw new AppError('Batch is not pending CFO approval', 400);
   const updated = await prisma.paymentBatch.update({
     where: { id: batchId },
-    data: { status: PaymentBatchStatus.RETURNED_FOR_CORRECTION as any, cfo_note: trimmed, returned_by: userId, returned_at: new Date(), return_reason: trimmed } as any,
+    data: { status: PaymentBatchStatus.PENDING_CFO as any, cfo_note: `REJECTED: ${trimmed}` } as any,
   });
-  await prisma.auditLog.create({ data: { action: 'PAYMENT_BATCH_CFO_REJECTED', performed_by: userId, note: `CFO returned payment batch ${batch.batch_number}: ${trimmed}` } });
+  await prisma.auditLog.create({ data: { action: 'PAYMENT_BATCH_CFO_REJECTED', performed_by: userId, note: `CFO rejected external payment execution for batch ${batch.batch_number}: ${trimmed}. Payments remain unpaid and pending reconciliation.` } });
   return updated;
 }
 
@@ -1876,6 +1992,7 @@ export async function returnPaymentBatch(batchId: string, userId: string, reason
 export async function markPaymentBatchExported(batchId: string, userId: string) {
   const batch = await prisma.paymentBatch.findUnique({ where: { id: batchId }, include: { payments: { include: { invoice: true, bill_stub: true } } } });
   if (!batch) throw new AppError('Payment batch not found', 404);
+  requireBatchIntegrity(batch);
   if (batch.status !== PaymentBatchStatus.REVIEWED) throw new AppError('Only a batch marked ready for payment can be exported', 400);
   requireBillStubFiles(batch.payments as any[], 'export');
   // Payment-level bill-stub files were validated above. Export only records
@@ -1893,7 +2010,7 @@ export async function markPaymentBatchExported(batchId: string, userId: string) 
   if (vendorBillStub) {
     for (const [, payments] of groups) {
       const first = payments[0];
-      const total = payments.reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
+      const total = payments.reduce((sum: number, p: any) => sum + Number(p.amount || 0) + Number(p.bank_charge_amount || 0), 0);
       const existing = await vendorBillStub.findFirst({ where: { batch_id: batchId, vendor_id: first.vendor_id || first.invoice.vendor_id } });
       const stub = existing || await vendorBillStub.create({ data: {
         batch_id: batchId,

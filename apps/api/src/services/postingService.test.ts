@@ -52,6 +52,8 @@ function makeInvoice(overrides: Record<string, any> = {}) {
     id: overrides.id ?? 'inv-1',
     invoice_number: overrides.invoice_number ?? 'INV-001',
     total_amount: overrides.total_amount ?? 100,
+    subtotal: overrides.subtotal ?? overrides.total_amount ?? 100,
+    bank_charges: overrides.bank_charges,
     currency: overrides.currency ?? 'USD',
     due_date: overrides.due_date ?? new Date('2026-08-15'),
     status: 'POSTED_TO_QB',
@@ -131,6 +133,19 @@ describe('schedulePayment — Accounting-controlled holds', () => {
     expect(notificationCreate).not.toHaveBeenCalled();
   });
 
+  it('uses the invoice subtotal for payment selection and keeps bank charges out of the amount', async () => {
+    invoiceFindUnique.mockResolvedValue(makeInvoice({ total_amount: 215.5, subtotal: 185.5, bank_charges: 30 }));
+
+    await schedulePayment('inv-1', undefined, 'assoc-1');
+
+    expect(paymentCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ amount: 185.5 }),
+    }));
+    expect(auditLogCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ note: expect.stringContaining('invoice subtotal; bank charges entered separately') }),
+    }));
+  });
+
   it('uses the manual payment date and records MANUAL source even for a low-value payment', async () => {
     invoiceFindUnique.mockResolvedValue(makeInvoice({ total_amount: 49.67 }));
     paymentCreate.mockResolvedValue({ id: 'pay-scheduled', status: 'SCHEDULED' });
@@ -174,6 +189,7 @@ describe('postInvoice — payment holds are controlled by Accounting', () => {
       invoice_date: new Date('2026-08-01'),
       due_date: new Date('2026-08-15'),
       total_amount: 49.67,
+      subtotal: 49.67,
       currency: 'USD',
       mpo_number: null,
       po_number: null,
@@ -200,6 +216,24 @@ describe('postInvoice — payment holds are controlled by Accounting', () => {
       ...overrides,
     };
   }
+
+  it('requires urgent/priority payment date, reason, and evidence before posting', async () => {
+    invoiceFindUnique.mockResolvedValue(makePostableInvoice({ is_urgent: true }));
+
+    await expect(postInvoice('inv-post', 'assoc-1')).rejects.toThrow(
+      'Urgent or priority invoices require a requested payment date, reason, and supporting escalation/approval evidence reference before posting.'
+    );
+    expect(paymentCreate).not.toHaveBeenCalled();
+  });
+
+  it('requires a late-submission reason and accountable source together', async () => {
+    invoiceFindUnique.mockResolvedValue(makePostableInvoice({ late_submission_reason: 'Submitted after cut-off' }));
+
+    await expect(postInvoice('inv-post', 'assoc-1')).rejects.toThrow(
+      'Late-submission invoices require both a late-submission reason and accountable source before posting.'
+    );
+    expect(paymentCreate).not.toHaveBeenCalled();
+  });
 
   it('posts a sub-$50 invoice and schedules its payment without an automatic hold', async () => {
     invoiceFindUnique

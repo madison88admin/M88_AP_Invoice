@@ -5,8 +5,10 @@ import { useMockData } from '../contexts/MockDataContext';
 import { MockInvoice } from '../lib/mockData';
 import { invoiceApi } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 import { FileText, Search, Filter, Download, Eye, CheckCircle, XCircle, Calendar, FileSearch, AlertTriangle, Landmark, Clock, User, Paperclip, Check, X as XIcon, Loader2, Send } from 'lucide-react';
 export default function AccountingReview() {
+  const { showToast } = useToast();
   const { invoices } = useMockData();
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -25,16 +27,9 @@ export default function AccountingReview() {
   const [dueDateRequests, setDueDateRequests] = useState<any[]>([]);
   const [dueDateRequestsLoading, setDueDateRequestsLoading] = useState(false);
   const [bankActionLoading, setBankActionLoading] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [pdfPreview, setPdfPreview] = useState<{ invoice: MockInvoice; url: string } | null>(null);
   const [pdfLoading, setPdfLoading] = useState(false);
-  const [pdfError, setPdfError] = useState<string | null>(null);
   const canReviewDueDateRequests = user?.role === 'ACCOUNTING_ASSOCIATE';
-
-  const showToast = (message: string, type: 'success' | 'error') => {
-    setToast({ message, type });
-    setTimeout(() => setToast(null), 4000);
-  };
 
   const statementInvoices = invoices.filter(i => i.invoice_type === 'STATEMENT');
 
@@ -205,7 +200,6 @@ ${dataRows}
 
   const openInvoicePdf = async (invoice: MockInvoice) => {
     setPdfLoading(true);
-    setPdfError(null);
     if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
     setPdfPreview(null);
     try {
@@ -227,7 +221,6 @@ ${dataRows}
       } else {
         message = responseData?.error?.message || responseData?.message || message;
       }
-      setPdfError(message);
       showToast(message, 'error');
     } finally {
       setPdfLoading(false);
@@ -237,7 +230,6 @@ ${dataRows}
   const closeInvoicePdf = () => {
     if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
     setPdfPreview(null);
-    setPdfError(null);
   };
 
   return (
@@ -315,7 +307,8 @@ ${dataRows}
                       </div>
                       <div className="grid grid-cols-2 gap-3 mb-3"><div className="p-2 rounded-lg" style={{ background: 'var(--bg-elevated)' }}><div className="text-xs" style={{ color: 'var(--text-muted)' }}>Current due date</div><div className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>{req.current_due_date ? new Date(req.current_due_date).toLocaleDateString() : 'Not set'}</div></div><div className="p-2 rounded-lg" style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)' }}><div className="text-xs" style={{ color: 'var(--text-muted)' }}>Requested due date</div><div className="text-sm font-semibold" style={{ color: 'var(--accent-amber)' }}>{new Date(req.requested_due_date).toLocaleDateString()}</div></div></div>
                       <p className="text-sm mb-3" style={{ color: 'var(--text-secondary)' }}><span className="text-xs" style={{ color: 'var(--text-muted)' }}>Reason: </span>{req.reason}</p>
-                      {canReviewDueDateRequests ? <div className="flex justify-end gap-2"><button type="button" onClick={async () => { setBankActionLoading(req.id); try { const res = await invoiceApi.approveDueDateChange(req.id); showToast(res.data?.message || 'Due date updated', 'success'); reloadDueDateRequests(); } catch (error: any) { showToast(error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to approve request', 'error'); } finally { setBankActionLoading(null); } }} disabled={bankActionLoading === req.id} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-lime) 12%, transparent)', color: 'var(--accent-lime)' }}><Check className="h-3.5 w-3.5" />Approve</button><button type="button" onClick={async () => { setBankActionLoading(req.id + '-reject'); try { await invoiceApi.rejectDueDateChange(req.id); showToast('Due-date request rejected', 'success'); reloadDueDateRequests(); } catch (error: any) { showToast(error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to reject request', 'error'); } finally { setBankActionLoading(null); } }} disabled={bankActionLoading === req.id + '-reject'} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-red) 12%, transparent)', color: 'var(--accent-red)' }}><XIcon className="h-3.5 w-3.5" />Reject</button></div> : <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Approval assigned to Accounting Associate</span>}
+                      {req.approval_impact_review && <p className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>Approval/payment impact review: {req.approval_impact_review}</p>}
+                      {canReviewDueDateRequests ? <div className="flex justify-end gap-2"><button type="button" onClick={async () => { const impactReview = window.prompt('Review the approval/payment-schedule impact of this revised due date:'); if (!impactReview?.trim()) { if (impactReview !== null) showToast('Impact review is required before approval', 'error'); return; } setBankActionLoading(req.id); try { const res = await invoiceApi.approveDueDateChange(req.id, impactReview.trim()); showToast(res.data?.message || 'Due date updated', 'success'); reloadDueDateRequests(); } catch (error: any) { showToast(error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to approve request', 'error'); } finally { setBankActionLoading(null); } }} disabled={bankActionLoading === req.id} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-lime) 12%, transparent)', color: 'var(--accent-lime)' }}><Check className="h-3.5 w-3.5" />Approve</button><button type="button" onClick={async () => { setBankActionLoading(req.id + '-reject'); try { await invoiceApi.rejectDueDateChange(req.id); showToast('Due-date request rejected', 'success'); reloadDueDateRequests(); } catch (error: any) { showToast(error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to reject request', 'error'); } finally { setBankActionLoading(null); } }} disabled={bankActionLoading === req.id + '-reject'} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-red) 12%, transparent)', color: 'var(--accent-red)' }}><XIcon className="h-3.5 w-3.5" />Reject</button></div> : <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Approval assigned to Accounting Associate</span>}
                     </div>
                   ))}
                 </div>
@@ -738,35 +731,6 @@ ${dataRows}
             </div>
           )}
 
-          {pdfError && !pdfPreview && (
-            <div className="fixed bottom-20 right-4 z-[60] max-w-md rounded-xl p-3 text-sm" style={{ background: 'var(--bg-card)', color: 'var(--accent-red)', border: '1px solid color-mix(in srgb, var(--accent-red) 30%, transparent)' }} role="alert">{pdfError}</div>
-          )}
-
-      {/* Toast Notification */}
-      {toast && (
-        <div
-          className="fixed bottom-4 right-4 z-50 rounded-xl border shadow-2xl animate-slide-in-right"
-          style={{
-            background: 'var(--bg-card)',
-            borderLeft: toast.type === 'success' ? '3px solid var(--accent-lime)' : '3px solid var(--accent-red)',
-            borderColor: 'var(--border-color)',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-            padding: '12px 16px',
-            minWidth: '300px',
-            maxWidth: '450px',
-            borderRadius: '12px',
-          }}
-        >
-          <div className="flex items-center gap-3">
-            {toast.type === 'success' ? (
-              <CheckCircle className="h-5 w-5 flex-shrink-0" style={{ color: 'var(--accent-lime)' }} strokeWidth={1.75} />
-            ) : (
-              <XCircle className="h-5 w-5 flex-shrink-0" style={{ color: 'var(--accent-red)' }} strokeWidth={1.75} />
-            )}
-            <p className="text-sm" style={{ color: 'var(--text-primary)' }}>{toast.message}</p>
-          </div>
-        </div>
-      )}
         </div>
   );
 }

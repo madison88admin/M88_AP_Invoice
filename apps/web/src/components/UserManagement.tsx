@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 import { userApi } from '../lib/api';
 import {
   ArrowLeft, Users, Search, Plus, Edit, Trash2, Save, X,
@@ -46,6 +47,7 @@ function formatDate(iso: string): string {
 }
 
 export default function UserManagement() {
+  const { showToast } = useToast();
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState<UserAccount[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
@@ -54,7 +56,6 @@ export default function UserManagement() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingUser, setEditingUser] = useState<UserAccount | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<UserAccount | null>(null);
-  const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [saving, setSaving] = useState(false);
 
   // Add/Edit form state
@@ -89,23 +90,15 @@ export default function UserManagement() {
       }
     } catch (err) {
       console.error('Failed to fetch users:', err);
-      setToast({ type: 'error', message: 'Failed to load users' });
+      showToast('Failed to load users', 'error');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [showToast]);
 
   useEffect(() => {
     fetchUsers();
   }, [fetchUsers]);
-
-  // Auto-dismiss toast
-  useEffect(() => {
-    if (toast) {
-      const timer = setTimeout(() => setToast(null), 3500);
-      return () => clearTimeout(timer);
-    }
-  }, [toast]);
 
   const filteredUsers = users.filter(u =>
     u.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -161,7 +154,7 @@ export default function UserManagement() {
         if (formData.password) updates.password = formData.password;
 
         await userApi.update(editingUser.id, updates);
-        setToast({ type: 'success', message: `Updated ${formData.name}` });
+        showToast(`Updated ${formData.name}`, 'success');
       } else {
         await userApi.create({
           name: formData.name,
@@ -170,7 +163,7 @@ export default function UserManagement() {
           password: formData.password,
           active: formData.active,
         });
-        setToast({ type: 'success', message: `Created ${formData.name}` });
+        showToast(`Created ${formData.name}`, 'success');
       }
 
       closeModal();
@@ -188,12 +181,12 @@ export default function UserManagement() {
     setSaving(true);
     try {
       await userApi.delete(deleteConfirm.id);
-      setToast({ type: 'success', message: `Deleted ${deleteConfirm.name}` });
+      showToast(`Deleted ${deleteConfirm.name}`, 'success');
       setDeleteConfirm(null);
       await fetchUsers();
     } catch (err: any) {
       const msg = err?.response?.data?.error?.message || 'Failed to delete user';
-      setToast({ type: 'error', message: msg });
+      showToast(msg, 'error');
       setDeleteConfirm(null);
     } finally {
       setSaving(false);
@@ -203,10 +196,10 @@ export default function UserManagement() {
   const handleToggleActive = async (user: UserAccount) => {
     try {
       await userApi.update(user.id, { active: !user.active });
-      setToast({ type: 'success', message: `${user.name} ${!user.active ? 'activated' : 'deactivated'}` });
+      showToast(`${user.name} ${!user.active ? 'activated' : 'deactivated'}`, 'success');
       await fetchUsers();
     } catch (err: any) {
-      setToast({ type: 'error', message: 'Failed to update user status' });
+      showToast('Failed to update user status', 'error');
     }
   };
 
@@ -624,24 +617,6 @@ export default function UserManagement() {
         </div>
       )}
 
-      {/* Toast */}
-      {toast && (
-        <div
-          className="fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-xl animate-slide-in-right"
-          style={{
-            background: 'var(--bg-card)',
-            border: `1px solid color-mix(in srgb, ${toast.type === 'success' ? 'var(--accent-lime)' : 'var(--accent-red)'} 30%, transparent)`,
-            boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
-          }}
-        >
-          {toast.type === 'success' ? (
-            <CheckCircle className="h-5 w-5" style={{ color: 'var(--accent-lime)' }} />
-          ) : (
-            <AlertCircle className="h-5 w-5" style={{ color: 'var(--accent-red)' }} />
-          )}
-          <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{toast.message}</p>
-        </div>
-      )}
     </div>
   );
 }

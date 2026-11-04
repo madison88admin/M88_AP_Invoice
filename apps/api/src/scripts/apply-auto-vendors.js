@@ -67,7 +67,6 @@ async function main() {
   }
 
   let matched = 0, created = 0, skipped = 0;
-  const newVendorMap = {};
 
   for (const inv of unknownInvoices) {
     const vendorName = (inv.vendor_name_raw || '').trim();
@@ -89,39 +88,11 @@ async function main() {
       continue;
     }
 
-    const normKey = normalize(vendorName);
-    if (newVendorMap[normKey]) {
-      await prisma.invoice.update({
-        where: { id: inv.id },
-        data: { vendor_id: newVendorMap[normKey] },
-      });
-      console.log(`LINK  ${inv.invoice_number}: "${vendorName}" -> previously created vendor`);
-      matched++;
-      continue;
-    }
-
-    try {
-      const newVendor = await prisma.vendor.create({
-        data: {
-          name: vendorName,
-          name_aliases: [],
-          invoice_template_type: 'INVOICE',
-          is_active: true,
-        },
-      });
-      newVendorMap[normKey] = newVendor.id;
-      allVendors.push(newVendor);
-      
-      await prisma.invoice.update({
-        where: { id: inv.id },
-        data: { vendor_id: newVendor.id },
-      });
-      console.log(`CREATE ${inv.invoice_number}: "${vendorName}" -> new vendor (id: ${newVendor.id})`);
-      created++;
-    } catch (err) {
-      console.log(`FAIL  ${inv.invoice_number}: failed to create vendor "${vendorName}": ${err.message}`);
-      skipped++;
-    }
+    // This maintenance script is intentionally read-only for new suppliers.
+    // Unknown names must be submitted through Vendor Master and approved by
+    // Accounting; never create a Vendor row as a side effect of remediation.
+    console.log(`REVIEW ${inv.invoice_number}: "${vendorName}" requires an Accounting vendor-master request`);
+    skipped++;
   }
 
   // Add "Nilorn East Asia Limited" as alias to "Nilorn HK"
@@ -136,7 +107,7 @@ async function main() {
 
   console.log('---');
   console.log(`Matched to existing: ${matched}`);
-  console.log(`New vendors created: ${created}`);
+  console.log(`New vendors created: ${created} (automatic creation disabled)`);
   console.log(`Skipped (garbage/no name): ${skipped}`);
 
   await prisma.$disconnect();

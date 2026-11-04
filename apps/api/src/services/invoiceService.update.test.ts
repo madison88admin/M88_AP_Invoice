@@ -161,4 +161,20 @@ describe('updateInvoice persistence and re-approval controls', () => {
       'April Joy Diasanta'
     )).resolves.toMatchObject({ invoice_type: 'PROFORMA' });
   });
+
+  it('blocks Purchasing from creating a new Vendor Master row in the invoice editor', async () => {
+    invoiceFindUnique.mockResolvedValue(existingInvoice({ status: 'RECEIVED' }));
+
+    await expect(updateInvoice(
+      'inv-edit',
+      { new_vendor_name: 'Unapproved Supplier', edit_reason: 'Supplier correction' },
+      'coordinator-1',
+      'PURCHASING_COORDINATOR',
+      'April Joy Diasanta'
+    )).rejects.toMatchObject({
+      statusCode: 403,
+      message: expect.stringContaining('vendor-master request workflow'),
+    });
+    expect(invoiceUpdate).not.toHaveBeenCalled();
+  });
 });

@@ -7,6 +7,10 @@ import { InvoiceStatus } from '@ap-invoice/shared';
  * UI presents one consistent queue and label.
  */
 export const COORDINATOR_QUEUE_STATUSES = new Set<string>([
+  // A newly-created invoice is still awaiting the automatic validation pass.
+  // It belongs in the coordinator hand-off queue immediately so a slow or
+  // failed validator cannot make a correctly captured invoice look missing.
+  InvoiceStatus.RECEIVED,
   InvoiceStatus.VALIDATION_PENDING,
   InvoiceStatus.EXCEPTION_FLAGGED,
   InvoiceStatus.PENDING_COORDINATOR,

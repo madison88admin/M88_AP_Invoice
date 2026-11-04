@@ -22,52 +22,24 @@ export default function NotificationBell() {
       setNotifications(newNotifs);
       setUnreadCount(newCount);
 
-      // Fire notifications for new unread items (skip on initial load)
-      // Uses browser Notification API when user is NOT on the site (tab hidden/minimized)
-      // Falls back to in-app toast when user IS on the site
+      // Keep all notification feedback inside the application. Browser-native
+      // notifications expose the local origin as "localhost" during testing.
       if (!isInitialLoad.current) {
-        const isPageHidden = document.hidden || document.visibilityState === 'hidden';
-
         for (const n of newNotifs) {
           if (!n.is_read && !shownNotificationIds.current.has(n.id)) {
             shownNotificationIds.current.add(n.id);
-
-            // 1. Browser notification — only when page is NOT visible
-            if (isPageHidden && 'Notification' in window && Notification.permission === 'granted') {
-              try {
-                const browserNotif = new Notification(n.title || 'AP Invoice Notification', {
-                  body: n.message || '',
-                  icon: '/favicon.ico',
-                  tag: n.id,
-                });
-                browserNotif.onclick = () => {
-                  window.focus();
-                  browserNotif.close();
-                };
-                setTimeout(() => browserNotif.close(), 8000);
-              } catch {
-                // ignore
-              }
-            }
-
-            // 2. In-app toast — only when page IS visible (user is on the site)
-            if (!isPageHidden) {
-              const typeMap: Record<string, 'success' | 'warning' | 'error' | 'info'> = {
-                success: 'success',
-                warning: 'warning',
-                error: 'error',
-                info: 'info',
-              };
-              toast.add({
-                title: n.title || 'New Notification',
-                description: n.message || '',
-                type: typeMap[n.type] || 'info',
-                action: n.invoice_number ? {
-                  label: 'View',
-                  onClick: () => window.open(`/repository?invoiceId=${n.invoice_id}`, '_self'),
-                } : undefined,
-              });
-            }
+            const typeMap: Record<string, 'success' | 'warning' | 'error' | 'info'> = {
+              success: 'success', warning: 'warning', error: 'error', info: 'info',
+            };
+            toast.add({
+              title: n.title || 'New Notification',
+              description: n.message || '',
+              type: typeMap[n.type] || 'info',
+              action: n.invoice_number ? {
+                label: 'View invoice',
+                onClick: () => window.open(`/repository?invoiceId=${n.invoice_id}`, '_self'),
+              } : undefined,
+            });
           }
         }
       }
@@ -81,13 +53,6 @@ export default function NotificationBell() {
       // silent fail
     }
   };
-
-  // Request notification permission on mount
-  useEffect(() => {
-    if ('Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission().catch(() => {});
-    }
-  }, []);
 
   useEffect(() => {
     fetchNotifications();
@@ -145,11 +110,11 @@ export default function NotificationBell() {
       </button>
       {showNotifications && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setShowNotifications(false)} />
-          <div className="absolute right-0 top-full mt-2 w-[calc(100vw-2rem)] max-w-96 rounded-2xl z-50 overflow-hidden" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+          <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/45 p-4 backdrop-blur-[2px]" onClick={() => setShowNotifications(false)}>
+          <div role="dialog" aria-modal="true" aria-labelledby="notification-center-title" onClick={(event) => event.stopPropagation()} className="w-full max-w-xl max-h-[min(80vh,720px)] rounded-2xl z-50 overflow-hidden animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
             <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-color)' }}>
               <div className="flex items-center gap-2">
-                <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Notifications</h3>
+                <h3 id="notification-center-title" className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Notifications</h3>
                 {unreadCount > 0 && (
                   <span className="px-2 py-0.5 text-[10px] font-bold rounded-full" style={{ background: 'var(--accent-red)', color: 'white' }}>{unreadCount} new</span>
                 )}
@@ -167,7 +132,7 @@ export default function NotificationBell() {
                 </button>
               </div>
             </div>
-            <div className="max-h-96 overflow-y-auto" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+            <div className="max-h-[calc(min(80vh,720px)-60px)] overflow-y-auto" style={{ borderTop: '1px solid var(--border-subtle)' }}>
               {notifications.length > 0 ? (
                 notifications.map((n) => {
                   const Icon = iconMap[n.type] || Bell;
@@ -216,6 +181,7 @@ export default function NotificationBell() {
                 </div>
               )}
             </div>
+          </div>
           </div>
         </>
       )}

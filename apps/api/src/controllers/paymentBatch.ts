@@ -8,6 +8,7 @@ import { createGroupedPaymentBatches, getPaymentBatches, getPaymentBatchById, ge
 import { exportPaymentReconciliation } from '../services/reconciliationExportService';
 import { exportBatchPerVendor } from '../services/perVendorExportService';
 import { isDbEnabled } from '../config/database';
+import prisma from '../config/database';
 
 export const createPaymentBatchController = async (
   req: AuthRequest,
@@ -348,7 +349,11 @@ export const holdScheduledPaymentController = async (
 ) => {
   try {
     const { paymentId } = req.params;
-    const result = await holdScheduledPayment(paymentId, req.user!.id, req.body?.reason);
+    const result = await holdScheduledPayment(paymentId, req.user!.id, {
+      reason: req.body?.reason,
+      evidenceReference: req.body?.evidenceReference,
+      reviewDate: req.body?.reviewDate,
+    });
     res.json(result);
   } catch (error) {
     next(error);
@@ -416,10 +421,10 @@ export const matchPaymentConfirmationController = async (
 ) => {
   try {
     const { batchId } = req.params;
-    const { reference, amount, paidDate, paymentIds } = req.body;
+    const { reference, amount, paidDate, currency, beneficiary, accountMask, paymentIds } = req.body;
     const result = await matchPaymentConfirmation(
       batchId,
-      { reference, amount, paidDate, paymentIds },
+      { reference, amount, paidDate, currency, beneficiary, accountMask, paymentIds },
       req.user!.id
     );
     res.json(result);
@@ -437,10 +442,38 @@ export const bulkMatchPaymentConfirmationsController = async (
 ) => {
   try {
     if (!req.file) return res.status(400).json({ message: 'A CSV or XLSX confirmation file is required' });
+    const fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+    const existingImport = await (prisma as any).paymentConfirmationImport.findUnique({ where: { sha256: fileHash } });
+    if (existingImport) {
+      return res.status(409).json({ message: 'This Citibank confirmation file was already uploaded and processed.', import_id: existingImport.id, status: existingImport.status });
+    }
+    const uploadRoot = process.env.PAYMENT_CONFIRMATION_DIR || path.join(process.cwd(), 'data', 'payment-confirmations');
+    await fs.mkdir(uploadRoot, { recursive: true });
+    const safeName = String(req.file.originalname || 'citibank-confirmation.xlsx').replace(/[^a-zA-Z0-9._-]/g, '_');
+    const storageName = `${Date.now()}_${fileHash.slice(0, 12)}_${safeName}`;
+    const storagePath = path.join(uploadRoot, storageName);
+    await fs.writeFile(storagePath, req.file.buffer);
+    const confirmationImport = await (prisma as any).paymentConfirmationImport.create({
+      data: {
+        sha256: fileHash,
+        file_name: req.file.originalname || safeName,
+        storage_path: path.relative(process.cwd(), storagePath).replace(/\\/g, '/'),
+        mime_type: req.file.mimetype || null,
+        uploaded_by: req.user!.id,
+        status: 'PROCESSING',
+      },
+    });
     const workbook = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
+    if (!workbook.SheetNames.length) {
+      await (prisma as any).paymentConfirmationImport.update({ where: { id: confirmationImport.id }, data: { status: 'FAILED', error_message: 'Confirmation file contains no worksheets', processed_at: new Date() } });
+      return res.status(400).json({ message: 'Confirmation file contains no worksheets' });
+    }
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
-    if (!rows.length) return res.status(400).json({ message: 'Confirmation file contains no rows' });
+    if (!rows.length) {
+      await (prisma as any).paymentConfirmationImport.update({ where: { id: confirmationImport.id }, data: { status: 'FAILED', error_message: 'Confirmation file contains no rows', processed_at: new Date() } });
+      return res.status(400).json({ message: 'Confirmation file contains no rows' });
+    }
     const results: any[] = [];
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
@@ -450,6 +483,9 @@ export const bulkMatchPaymentConfirmationsController = async (
       const reference = String(get('reference', 'payment_reference', 'payment reference', 'bank_reference') || '').trim();
       const amountRaw = get('amount', 'payment_amount', 'payment amount');
       const paidDateRaw = get('paid_date', 'paid date', 'payment_date', 'payment date');
+      const currency = String(get('currency', 'payment_currency') || '').trim();
+      const beneficiary = String(get('beneficiary', 'beneficiary_name', 'payee') || '').trim();
+      const accountMask = String(get('account_mask', 'account mask', 'account_last4', 'account last 4') || '').trim();
       const idsRaw = String(get('payment_ids', 'payment ids') || '').trim();
       try {
         let resolvedBatchId = batchId;
@@ -467,14 +503,30 @@ export const bulkMatchPaymentConfirmationsController = async (
           reference: reference || undefined,
           amount: confirmationAmount,
           paidDate: paidDateRaw ? new Date(paidDateRaw as any).toISOString() : undefined,
+          currency,
+          beneficiary,
+          accountMask,
           paymentIds: idsRaw ? idsRaw.split(',').map(x => x.trim()).filter(Boolean) : undefined,
+          source: {
+            importId: confirmationImport.id,
+            fileName: req.file?.originalname || safeName,
+            fileHash,
+            filePath: storagePath,
+            mimeType: req.file?.mimetype || undefined,
+          },
         }, req.user!.id);
         results.push({ row: i + 2, ok: true, ...result });
       } catch (error: any) {
         results.push({ row: i + 2, ok: false, error: error?.message || 'Unable to match confirmation' });
       }
     }
-    res.json({ processed: results.length, succeeded: results.filter(x => x.ok).length, failed: results.filter(x => !x.ok).length, results });
+    const succeeded = results.filter(x => x.ok).length;
+    const failed = results.filter(x => !x.ok).length;
+    await (prisma as any).paymentConfirmationImport.update({
+      where: { id: confirmationImport.id },
+      data: { status: failed ? (succeeded ? 'PARTIALLY_PROCESSED' : 'FAILED') : 'PROCESSED', processed_at: new Date(), error_message: failed ? `${failed} confirmation row(s) require review` : null },
+    });
+    res.json({ import_id: confirmationImport.id, file_hash: fileHash, processed: results.length, succeeded, failed, results });
   } catch (error) { next(error); }
 };
 

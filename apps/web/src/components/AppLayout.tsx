@@ -74,7 +74,9 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
     {
       label: 'Accounting',
       items: [
-        { icon: Package, label: 'Payment Batches', path: '/payment-batches', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'batches', badgeColor: 'lime' },
+        // Payment scheduling is an Accounting-only workspace. Purchasing and
+        // admin roles should not see or navigate to this payment queue.
+        { icon: Package, label: 'Payment Schedule', path: '/payment-batches', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'CFO'], badgeKey: 'batches', badgeColor: 'lime' },
         { icon: DollarSign, label: 'CFO Approval', path: '/cfo-approval', roles: ['CFO', 'IT_ADMIN', 'SUPERADMIN'] },
         { icon: XCircle, label: 'Cancelled Payment Batches', path: '/cancelled-payment-batches', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'cancelledBatches', badgeColor: 'red' },
         { icon: FileSearch, label: 'Accounting Review', path: '/accounting-review', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'review', badgeColor: 'blue' },
@@ -130,6 +132,11 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
   const visibleGroups = navGroups.map(group => ({
     ...group,
     items: group.items.filter(item => {
+      // Payment scheduling is restricted to the two Accounting roles even
+      // when a broader admin role would normally bypass item role filters.
+      if (item.path === '/payment-batches' && !['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'CFO'].includes(user?.role || '')) {
+        return false;
+      }
       if (user?.role === 'SUPERADMIN') {
         return true; // SUPERADMIN sees all sidebar items
       }

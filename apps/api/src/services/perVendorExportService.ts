@@ -7,9 +7,8 @@ import { logger } from '../utils/logger';
 /**
  * Export a payment batch as a single Excel file.
  *
- * A batch may combine payments from multiple vendors, so this produces ONE
- * Excel file where each row carries ITS OWN vendor's bank details, plus a
- * TOTAL row. The Summary sheet lists every vendor in the batch.
+ * A payment batch is a single-vendor remittance. Legacy mixed-vendor batches
+ * are rejected before export so no unsafe combined bank file can be produced.
  *
  * QuickBooks "Pay Bills"-complete: every Payments row (and the Summary sheet)
  * also carries the batch's Pay Bills setup — payment method, batch payment
@@ -52,13 +51,26 @@ export async function exportBatchPerVendor(batchId: string, userId?: string): Pr
     throw new AppError('Payment batch has no payments', 400);
   }
 
+  // Every vendor remittance must remain isolated by vendor, currency, and the
+  // immutable confirmed beneficiary snapshot. Older/legacy batches may have
+  // been created before this control existed; block their export instead of
+  // sending an unsafe mixed remittance to QuickBooks/Citibank.
+  const remittanceKeys = new Set((batch.payments as any[]).map((p: any) => [
+    p.invoice?.vendor_id || p.vendor_id || 'UNKNOWN',
+    String(p.currency || batch.currency || 'USD').toUpperCase(),
+    p.bank_snapshot_hash || 'NO_BANK_SNAPSHOT',
+  ].join('|')));
+  if (remittanceKeys.size > 1) {
+    throw new AppError('This batch contains multiple vendors, currencies, or beneficiary bank snapshots. Return it and create separate vendor payment batches before export.', 400);
+  }
+
   // Batch must be reviewed by Accounting Supervisor before export
   if (![PaymentBatchStatus.REVIEWED, PaymentBatchStatus.EXPORTED_TO_BANK, PaymentBatchStatus.PROCESSED].includes(batch.status as any)) {
     throw new AppError('Batch must be reviewed by Accounting Supervisor before export', 400);
   }
 
-  // A batch may combine multiple vendors — each payment row carries its own
-  // vendor's bank details; the summary lists all distinct vendors.
+  // The guard above guarantees one remittance group. Keep the export defensive
+  // for legacy payloads and continue to include the immutable bank snapshot.
   const distinctVendors = Array.from(new Map(
     (batch.payments as any[]).map((p: any) => [p.invoice?.vendor_id ?? 'unknown', p.invoice?.vendor])
   ).values()).filter(Boolean);

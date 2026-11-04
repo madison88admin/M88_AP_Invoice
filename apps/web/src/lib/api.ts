@@ -74,7 +74,7 @@ export const invoiceApi = {
     api.post(`/api/invoices/${id}/request-due-date-change`, data),
   getDueDateChangeRequests: (status?: string) => api.get('/api/invoices/due-date-change-requests', { params: status ? { status } : undefined }),
   getDueDateChangeRequestsForInvoice: (id: string) => api.get(`/api/invoices/${id}/due-date-change-requests`),
-  approveDueDateChange: (requestId: string) => api.post(`/api/invoices/due-date-change-requests/${requestId}/approve`),
+  approveDueDateChange: (requestId: string, approvalImpactReview: string) => api.post(`/api/invoices/due-date-change-requests/${requestId}/approve`, { approval_impact_review: approvalImpactReview }),
   rejectDueDateChange: (requestId: string, reason?: string) => api.post(`/api/invoices/due-date-change-requests/${requestId}/reject`, reason ? { reason } : {}),
   getBankChangeRequests: () => api.get('/api/invoices/bank-change-requests'),
   getBankChangeRequestsForInvoice: (id: string) => api.get(`/api/invoices/${id}/bank-change-requests`),
@@ -145,7 +145,7 @@ export const invoiceApi = {
     return api.post(`${postBase}/invoices/${id}/post`, { bypassVarianceCheck }, { timeout: 300000 });
   },
   releaseHold: (id: string) => api.post(`/api/invoices/${id}/release-hold`),
-  holdForBatchThreshold: (id: string, reason?: string) => api.post(`/api/invoices/${id}/hold`, { reason }),
+  holdForBatchThreshold: (id: string, data: { reason: string; evidenceReference: string; reviewDate: string }) => api.post(`/api/invoices/${id}/hold`, data),
   checkNextGenSync: async (id: string) => {
     const res = await api.post(`/api/invoices/${id}/check-nextgen-sync`, {}, { timeout: 30000 });
     return res;
@@ -201,6 +201,8 @@ export const paymentBatchApi = {
   getAll: () => api.get('/api/payment-batches'),
   getStuckBatches: (days?: number) => api.get('/api/payment-batches/stuck', { params: days ? { days } : {} }),
   getById: (batchId: string) => api.get(`/api/payment-batches/${batchId}`),
+  previewAmounts: (batchId: string) => api.get(`/api/payment-batches/${batchId}/amount-reconciliation`),
+  reconcileAmounts: (batchId: string, reason: string, previewToken: string) => api.post(`/api/payment-batches/${batchId}/amount-reconciliation`, { reason, previewToken }),
   create: (paymentIds: string[], weeklyContext?: { cutoffDate?: string; asOfDate?: string; scheduleRef?: string }) =>
     api.post('/api/payment-batches', { paymentIds, ...weeklyContext }),
   submit: (batchId: string) => api.post(`/api/payment-batches/${batchId}/submit`),
@@ -227,7 +229,7 @@ export const paymentBatchApi = {
     }
     return api.post(`/api/payment-batches/${batchId}/payments/${paymentId}/endorse`, data);
   },
-  matchConfirmation: (batchId: string, data: { reference?: string; amount?: number; paidDate?: string; paymentIds?: string[] }) => api.post(`/api/payment-batches/${batchId}/match-confirmation`, data),
+  matchConfirmation: (batchId: string, data: { reference?: string; amount?: number; paidDate?: string; currency?: string; beneficiary?: string; accountMask?: string; paymentIds?: string[] }) => api.post(`/api/payment-batches/${batchId}/match-confirmation`, data),
   bulkConfirmations: (file: File) => { const form = new FormData(); form.append('file', file); return api.post('/api/payment-batches/bulk-confirmations', form, { headers: { 'Content-Type': 'multipart/form-data' } }); },
   markExported: (batchId: string) => api.post(`/api/payment-batches/${batchId}/export`),
   exportPerVendor: (batchId: string) => api.get(`/api/payment-batches/${batchId}/export-per-vendor`, { responseType: 'blob' }),
@@ -253,7 +255,7 @@ export const paymentBatchApi = {
   markForPayment: (paymentId: string) => api.post(`/api/payment-batches/payments/${paymentId}/for-payment`),
   approveForPayment: (paymentId: string, note?: string) => api.post(`/api/payment-batches/payments/${paymentId}/approve-for-payment`, note ? { note } : {}),
   rejectForPayment: (paymentId: string, reason: string) => api.post(`/api/payment-batches/payments/${paymentId}/reject-for-payment`, { reason }),
-  holdPayment: (paymentId: string, reason?: string) => api.post(`/api/payment-batches/payments/${paymentId}/hold`, reason ? { reason } : {}),
+  holdPayment: (paymentId: string, data: { reason: string; evidenceReference: string; reviewDate: string }) => api.post(`/api/payment-batches/payments/${paymentId}/hold`, data),
   bulkApproveForPayment: (paymentIds: string[], note?: string) => api.post('/api/payment-batches/payments/bulk-approve-for-payment', { paymentIds, note }),
   approveHeld: (paymentId: string) => api.post(`/api/payment-batches/payments/${paymentId}/approve-held`),
 };

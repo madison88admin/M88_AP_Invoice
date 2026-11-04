@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Package, Play, X, XCircle, AlertCircle, CheckCircle, Clock, DollarSign, ArrowLeft, CheckSquare, Calendar, CreditCard, Loader2, Paperclip, Pencil, Download, Upload, ChevronDown, ChevronUp, SlidersHorizontal, Send } from 'lucide-react';
+import { Package, Play, X, XCircle, AlertCircle, CheckCircle, Clock, DollarSign, ArrowLeft, CheckSquare, Calendar, CreditCard, Loader2, Paperclip, Pencil, Download, Upload, ChevronDown, ChevronUp, SlidersHorizontal, Send, FileText } from 'lucide-react';
 import api, { paymentBatchApi, vendorApi, qbApi, invoiceApi } from '../lib/api';
 import { splitServerAndLocalSelections, retainLocalSelections, toggleId, toPayableIds, isLocalOnlySelection } from '../lib/queueSelection';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
+import { AccountingActionModal, AccountingAction, AccountingActionValues } from './AccountingActionModal';
 
 interface ScheduledPayment {
   id: string;
@@ -34,6 +35,8 @@ interface ScheduledPayment {
   invoice: {
     id: string;
     invoice_number: string;
+    subtotal?: number | null;
+    bank_charges?: number | null;
     vendor: {
       id?: string;
       name: string;
@@ -62,6 +65,8 @@ interface Payment {
   remarks?: string;
   bank_charge_amount?: number | null;
   bank_charge_note?: string | null;
+  beneficiary_name_snapshot?: string | null;
+  account_number_snapshot?: string | null;
   bill_stub?: {
     id: string;
     stub_date?: string | null;
@@ -79,6 +84,8 @@ interface Payment {
   invoice: {
     id: string;
     invoice_number: string;
+    subtotal?: number | null;
+    bank_charges?: number | null;
     due_date?: string | null;
     vendor: {
       name: string;
@@ -91,6 +98,7 @@ interface PaymentBatch {
   batch_number: string;
   total_amount: number;
   payment_count: number;
+  currency?: string;
   status: 'DRAFT' | 'PENDING_SUPERVISOR_REVIEW' | 'PENDING_CFO' | 'RETURNED_FOR_CORRECTION' | 'REVIEWED' | 'EXPORTED_TO_BANK' | 'PROCESSING' | 'PROCESSED' | 'PARTIALLY_PAID' | 'FAILED' | 'CANCELLED';
   created_at: string;
   processed_at?: string;
@@ -99,6 +107,9 @@ interface PaymentBatch {
   return_reason?: string;
   review_note?: string;
   cfo_note?: string;
+  integrity_issues?: string[];
+  execution_reference?: string | null;
+  execution_bank?: string | null;
   // QuickBooks "Pay Bills"-style setup chosen by the Associate on the DRAFT batch
   payment_method?: string | null; // CHECK | EFT | WIRE
   payment_bank_account?: string | null;
@@ -124,6 +135,7 @@ function mapBatchPayload(b: any): PaymentBatch {
     batch_number: b.batch_number || b.batch_name || b.name || b.id,
     total_amount: Number(b.total_amount || 0),
     payment_count: b.payment_count || b.invoice_count || 0,
+    currency: b.currency || 'USD',
     status: b.status || 'DRAFT',
     created_at: b.created_at || new Date().toISOString(),
     processed_at: b.processed_at || undefined,
@@ -132,6 +144,9 @@ function mapBatchPayload(b: any): PaymentBatch {
     return_reason: b.return_reason || undefined,
     review_note: b.review_note || undefined,
     cfo_note: b.cfo_note || undefined,
+    integrity_issues: Array.isArray(b.integrity_issues) ? b.integrity_issues : [],
+    execution_reference: b.execution_reference || null,
+    execution_bank: b.execution_bank || null,
     payment_method: b.payment_method || null,
     payment_bank_account: b.payment_bank_account || null,
     payment_date: b.payment_date || null,
@@ -151,6 +166,8 @@ function mapBatchPayload(b: any): PaymentBatch {
       scheduled_date: p.payment_date || p.scheduled_date || new Date().toISOString(),
       payment_date_source: p.payment_date_source || 'DUE_DATE',
       status: p.status || 'SCHEDULED',
+      beneficiary_name_snapshot: p.beneficiary_name_snapshot || null,
+      account_number_snapshot: p.account_number_snapshot || null,
       paid_at: p.paid_at || undefined,
       reference: p.reference || undefined,
       bank_used: p.bank_used || undefined,
@@ -176,6 +193,8 @@ function mapBatchPayload(b: any): PaymentBatch {
       invoice: {
         id: p.invoice?.id || p.invoice_id || '',
         invoice_number: p.invoice?.invoice_number || '',
+        subtotal: p.invoice?.subtotal != null ? Number(p.invoice.subtotal) : null,
+        bank_charges: p.invoice?.bank_charges != null ? Number(p.invoice.bank_charges) : null,
         due_date: p.invoice?.due_date || null,
         vendor: { name: p.invoice?.vendor?.name || '' },
       },
@@ -203,6 +222,32 @@ async function openAuthenticatedPaymentFile(fileUrl: string, fileName?: string):
       anchor.target = '_blank';
       anchor.rel = 'noreferrer';
       anchor.download = fileName || 'payment-document';
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+    }
+  } catch (error) {
+    popup?.close();
+    throw error;
+  }
+}
+
+/** Open an invoice PDF through the authenticated document endpoint. */
+async function openInvoiceDocument(invoiceId: string, invoiceNumber?: string): Promise<void> {
+  if (!invoiceId) throw new Error('Invoice document is unavailable');
+  const popup = typeof window !== 'undefined' ? window.open('about:blank', '_blank') : null;
+  try {
+    const response = await invoiceApi.getDocument(invoiceId);
+    const objectUrl = URL.createObjectURL(response.data);
+    if (popup) {
+      popup.location.href = objectUrl;
+      popup.document.title = invoiceNumber ? `Invoice ${invoiceNumber}` : 'Invoice PDF';
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+    } else {
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.target = '_blank';
+      anchor.rel = 'noreferrer';
+      anchor.download = `${invoiceNumber || 'invoice'}.pdf`;
       anchor.click();
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
     }
@@ -282,9 +327,11 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
   const [showReturnModal, setShowReturnModal] = useState(false);
   const [returnReason, setReturnReason] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
+  const [accountingAction, setAccountingAction] = useState<{ action: AccountingAction; subject: string; payment?: ScheduledPayment; batchId?: string } | null>(null);
+  const [amountPreviewToken, setAmountPreviewToken] = useState('');
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [filters, setFilters] = useState({
-    vendorId: '', currency: '', dateFrom: '', dateTo: '', search: '',
+    vendorId: '', currency: 'USD', dateFrom: '', dateTo: '', search: '',
     dueMonth: '', dueFrom: '', dueTo: '',
     invoiceDateFrom: '', invoiceDateTo: '',
     approvalFrom: '', approvalTo: '',
@@ -330,18 +377,20 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
   const [stubFile, setStubFile] = useState<File | null>(null);
   const [stubSaving, setStubSaving] = useState(false);
   const [showMatchModal, setShowMatchModal] = useState(false);
-  const [matchForm, setMatchForm] = useState({ reference: '', amount: '', paidDate: new Date().toISOString().split('T')[0] });
+  const [matchForm, setMatchForm] = useState({ reference: '', amount: '', paidDate: new Date().toISOString().split('T')[0], currency: 'USD', beneficiary: '', accountMask: '' });
   const [matchSelected, setMatchSelected] = useState<Set<string>>(new Set());
   const [matchSaving, setMatchSaving] = useState(false);
   const [bulkImporting, setBulkImporting] = useState(false);
 
   const isAssociate = user?.role === 'ACCOUNTING_ASSOCIATE';
   const isSupervisor = user?.role === 'ACCOUNTING_SUPERVISOR';
+  const isCfo = user?.role === 'CFO';
+  const isAccountingRole = isAssociate || isSupervisor;
   const isPurchasing = ['PURCHASING_COORDINATOR', 'PURCHASING_MANAGER'].includes(user?.role || '');
   // Payment holds are Accounting Associate decisions. Supervisors can still
   // release legacy HELD_BELOW_100 rows created before this rule changed.
   const canReleaseHeld = isAssociate || isSupervisor;
-  const isBatchable = (p: ScheduledPayment) => ['SCHEDULED', 'FOR_PAYMENT', 'APPROVED_FOR_PAYMENT', 'AWAITING_POSTING'].includes(p.status);
+  const isBatchable = (p: ScheduledPayment) => ['SCHEDULED', 'FOR_PAYMENT', 'APPROVED_FOR_PAYMENT'].includes(p.status);
 
   // Selecting a batch used to leave the details panel far below the list,
   // forcing Accounting to scroll manually. Bring the selected batch into view
@@ -357,8 +406,9 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
     try {
       const response = await paymentBatchApi.bulkConfirmations(file);
       const data = response.data || {};
-      showToast(`${data.succeeded || 0} confirmation(s) matched; ${data.failed || 0} failed.`, data.failed ? 'error' : 'success');
-      await Promise.all([loadBatches(), loadStuckBatches()]);
+      const failures = (data.results || []).filter((result: any) => !result.ok).slice(0, 5).map((result: any) => `Row ${result.row}: ${result.error}`).join(' ');
+      showToast(`${data.succeeded || 0} confirmation(s) matched; ${data.failed || 0} failed.${failures ? ` ${failures}` : ''}`, data.failed ? 'error' : 'success');
+      await Promise.all([loadBatches(), loadStuckBatches(), ...(selectedBatch ? [refreshSelectedBatch(selectedBatch.id)] : [])]);
     } catch (error: any) {
       showToast(error?.response?.data?.message || 'Unable to import payment confirmations.', 'error');
     } finally { setBulkImporting(false); }
@@ -644,7 +694,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
     const init = async () => {
       setLoading(true);
       const [loadedBatches] = await Promise.all([
-        loadBatches(),
+        isPurchasing ? Promise.resolve([] as PaymentBatch[]) : loadBatches(),
         loadScheduledPayments(),
         vendorApi.getAll().then((res) => {
           const vendors = (res.data || []).map((v: any) => ({ id: v.id, name: v.name }));
@@ -673,7 +723,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
   // dependency on loadScheduledPayments recreated this effect on every search
   // keystroke, remounting the loading view and stealing the input focus.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadBatches]);
+  }, [loadBatches, isPurchasing]);
 
   // Filter requests are debounced so typing stays in place and does not cause
   // a full-page refresh for every character. The first request is made by the
@@ -900,26 +950,15 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
     }
   };
 
-  const handleBelowThresholdDecision = async (payment: ScheduledPayment, decision: 'PROCEED' | 'HOLD' | 'NO_RESPONSE') => {
-    const defaultReason = decision === 'PROCEED' ? 'Purchasing approved inclusion in the weekly payment run' : decision === 'HOLD' ? 'Purchasing elected to hold for a later run' : 'No Purchasing response by Thursday 09:00';
-    const reason = window.prompt('Decision reason:', defaultReason);
-    if (reason === null) return;
-    setActionLoading(true);
-    try {
-      await paymentBatchApi.belowThresholdDecision([payment.id], decision, reason.trim() || defaultReason);
-      showToast(`Below-$100 decision recorded: ${decision}`, 'success');
-      await loadScheduledPayments();
-    } catch (error: any) {
-      showToast(error?.response?.data?.error?.message || 'Failed to record Purchasing decision', 'error');
-    } finally { setActionLoading(false); }
+  const handleHoldPayment = (payment: ScheduledPayment) => {
+    setAccountingAction({ action: 'hold', subject: payment.invoice.invoice_number, payment });
   };
 
-  const handleHoldPayment = async (payment: ScheduledPayment) => {
-    const reason = window.prompt('Reason for placing this payment on hold (optional):', 'Held for Accounting review');
-    if (reason === null) return;
+  const saveHoldPayment = async (payment: ScheduledPayment, values: AccountingActionValues) => {
     setActionLoading(true);
     try {
-      await paymentBatchApi.holdPayment(payment.id, reason.trim() || undefined);
+      await paymentBatchApi.holdPayment(payment.id, values);
+      setAccountingAction(null);
       showToast('Payment placed on hold. The Accounting Associate can release it when ready.', 'success');
       await loadScheduledPayments();
     } catch (error: any) {
@@ -1156,20 +1195,18 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
 
   // Payments that still carry the "Endorse Bill Stub" action — the ones a Bulk
   // "Endorse All" would cover (mirrors the per-row button eligibility: batch
-  // reviewed/exported, payment SCHEDULED or APPROVED_FOR_PAYMENT, and the row
-  // that owns the vendor stub when one exists).
+  // reviewed/exported, payment SCHEDULED or APPROVED_FOR_PAYMENT). A vendor
+  // summary stub must not hide endorsement of its other invoice lines.
   const endorsablePayments = (selectedBatch?.payments || []).filter((payment) => {
     if (!selectedBatch) return false;
     if (!['REVIEWED', 'EXPORTED_TO_BANK'].includes(selectedBatch.status)) return false;
     if (!['SCHEDULED', 'APPROVED_FOR_PAYMENT'].includes(payment.status)) return false;
-    const groupedStub = selectedBatch.vendor_bill_stubs?.find((stub) => stub.lines.some((line) => line.payment_id === payment.id));
-    return !groupedStub || groupedStub.lines[0]?.payment_id === payment.id;
+    return true;
   });
 
   const openStubModal = (payment: Payment) => {
     const stub = payment.bill_stub;
-    const groupedStub = selectedBatch?.vendor_bill_stubs?.find((candidate) => candidate.lines.some((line) => line.payment_id === payment.id));
-    const groupedTotal = groupedStub ? groupedStub.total_amount : Number(payment.amount);
+    const groupedTotal = Number(payment.amount);
     setStubTarget(payment);
     setStubForm({
       stubDate: stub?.stub_date ? new Date(stub.stub_date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
@@ -1237,8 +1274,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
     let failed = 0;
     try {
       for (const payment of endorsablePayments) {
-        const groupedStub = selectedBatch.vendor_bill_stubs?.find((stub) => stub.lines.some((line) => line.payment_id === payment.id));
-        const groupedTotal = groupedStub ? groupedStub.total_amount : Number(payment.amount);
+        const groupedTotal = Number(payment.amount);
         try {
           await paymentBatchApi.endorseBillStub(selectedBatch.id, payment.id, {
             stubDate: new Date().toISOString().split('T')[0],
@@ -1266,7 +1302,9 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
     if (!selectedBatch) return;
     const endorsed = selectedBatch.payments.filter(p => p.status === 'ENDORSED');
     setMatchSelected(new Set(endorsed.map(p => p.id)));
-    setMatchForm({ reference: '', amount: '', paidDate: new Date().toISOString().split('T')[0] });
+    const bankSnapshotPayment = endorsed[0] || selectedBatch.payments[0];
+    const accountDigits = String(bankSnapshotPayment?.account_number_snapshot || '').replace(/\D/g, '');
+    setMatchForm({ reference: '', amount: '', paidDate: new Date().toISOString().split('T')[0], currency: bankSnapshotPayment?.currency || selectedBatch.currency || 'USD', beneficiary: bankSnapshotPayment?.beneficiary_name_snapshot || '', accountMask: accountDigits.slice(-4) });
     setShowMatchModal(true);
   };
 
@@ -1278,7 +1316,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
     }
     setMatchSaving(true);
     try {
-      let payload: any = { paidDate: matchForm.paidDate };
+      let payload: any = { paidDate: matchForm.paidDate, currency: matchForm.currency, beneficiary: matchForm.beneficiary, accountMask: matchForm.accountMask };
       if (matchForm.reference.trim()) {
         payload.reference = matchForm.reference.trim();
         if (matchForm.amount) payload.amount = Number(matchForm.amount);
@@ -1318,8 +1356,11 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
     }
   };
 
-  const handleBatchAction = async (action: 'submit' | 'review' | 'return' | 'export', batchId: string) => {
-    const reason = action === 'return' ? window.prompt('Reason for returning this batch to Accounting Associate:') : undefined;
+  const handleBatchAction = async (action: 'submit' | 'review' | 'return' | 'export', batchId: string, reason?: string) => {
+    if (action === 'return' && reason === undefined) {
+      setAccountingAction({ action: 'return', batchId, subject: selectedBatch?.batch_number || batchId });
+      return;
+    }
     if (action === 'return' && !reason?.trim()) return;
     setProcessing(true);
     try {
@@ -1329,6 +1370,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
       if (action === 'export') await paymentBatchApi.markExported(batchId);
       await loadBatches();
       setSelectedBatch(null);
+      setAccountingAction(null);
     } catch (error: any) {
       console.error(`Failed to ${action} batch:`, error);
       const msg = error?.response?.data?.error?.message || `Failed to ${action} batch`;
@@ -1336,6 +1378,26 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
     } finally {
       setProcessing(false);
     }
+  };
+
+  const handleCfoDecision = async (approve: boolean, note?: string) => {
+    if (!selectedBatch) return;
+    if (note === undefined) {
+      setAccountingAction({ action: approve ? 'cfo-approve' : 'cfo-reject', subject: selectedBatch.batch_number });
+      return;
+    }
+    if (!approve && !note.trim()) return;
+    setProcessing(true);
+    try {
+      if (approve) await paymentBatchApi.approveCfo(selectedBatch.id, note.trim() || undefined);
+      else await paymentBatchApi.rejectCfo(selectedBatch.id, note.trim());
+      showToast(approve ? 'CFO approved bank execution; awaiting confirmation reconciliation' : 'CFO rejection recorded; batch remains unpaid for reconciliation', approve ? 'success' : 'error');
+      await loadBatches();
+      await refreshSelectedBatch(selectedBatch.id);
+      setAccountingAction(null);
+    } catch (error: any) {
+      showToast(error?.response?.data?.error?.message || 'Unable to record CFO decision', 'error');
+    } finally { setProcessing(false); }
   };
 
   const handleToggleReturnSelect = (paymentId: string) => {
@@ -1525,7 +1587,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
   const filterLabel: React.CSSProperties = { display: 'block', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4, color: 'var(--text-muted)' };
   const filterInput: React.CSSProperties = { width: '100%', padding: '8px 12px', borderRadius: 8, fontSize: 13, background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' };
   const filterRangeInput: React.CSSProperties = { flex: 1, minWidth: 0, padding: '8px 10px', borderRadius: 8, fontSize: 13, background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' };
-  const emptyFilters = { vendorId: '', currency: '', dateFrom: '', dateTo: '', search: '', dueMonth: '', dueFrom: '', dueTo: '', invoiceDateFrom: '', invoiceDateTo: '', approvalFrom: '', approvalTo: '', brand: '', memo: '', category: '', aging: '', status: '' };
+  const emptyFilters = { vendorId: '', currency: 'USD', dateFrom: '', dateTo: '', search: '', dueMonth: '', dueFrom: '', dueTo: '', invoiceDateFrom: '', invoiceDateTo: '', approvalFrom: '', approvalTo: '', brand: '', memo: '', category: '', aging: '', status: '' };
 
   return (
     <div className="space-y-6">
@@ -1541,14 +1603,14 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
             }
           >
             <Calendar className="h-4 w-4" strokeWidth={1.75} />
-            Accounting Payment Queue
+            {isAccountingRole ? 'Accounting Payment Queue' : 'Payment Review Queue'}
             {scheduledPayments.length > 0 && (
               <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: activeTab === 'scheduled' ? 'rgba(255,255,255,0.2)' : 'var(--bg-elevated)' }}>
                 {scheduledPayments.length}
               </span>
             )}
           </button>
-          <button
+          {!isPurchasing && <button
             onClick={() => { setActiveTab('batches'); setBatchStatusFilter(''); }}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all"
             style={
@@ -1569,8 +1631,8 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                 {activeBatches.length}
               </span>
             )}
-          </button>
-          <button
+          </button>}
+          {!isPurchasing && <button
             onClick={() => { setActiveTab('processed'); setBatchStatusFilter(''); }}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all"
             style={
@@ -1586,8 +1648,8 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                 {processedBatches.length}
               </span>
             )}
-          </button>
-          <button
+          </button>}
+          {!isPurchasing && <button
             onClick={() => { setActiveTab('cancelled'); setBatchStatusFilter(''); }}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all"
             style={
@@ -1603,7 +1665,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                 {cancelledBatches.length}
               </span>
             )}
-          </button>
+          </button>}
         </div>
 
         {actionMessage && (
@@ -1628,10 +1690,10 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
         {activeTab === 'scheduled' && (
           <div className="rounded-2xl" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
             <div className="p-6">
-              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Accounting Payment Queue</h2>
-                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>All accounting-stage invoices — awaiting posting, scheduled, held, and pending review</p>
+                  <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>{isAccountingRole ? 'Accounting Payment Queue' : 'Payment Review Queue'}</h2>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{isAccountingRole ? 'Only posted, unpaid, unbatched invoices can be selected for payment. Invoices awaiting QuickBooks posting are shown as posting work and cannot enter a batch.' : 'Invoices requiring purchasing review'}</p>
                 </div>
                 <div className="flex items-center gap-3">
                   {isAssociate && (
@@ -1646,34 +1708,38 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                       />
                     </div>
                   )}
-                  <button
-                    onClick={handleSelectAll}
-                    disabled={actionLoading || scheduledPayments.length === 0}
-                    className="flex items-center px-3 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
-                    style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}
-                  >
-                    <CheckSquare className="h-3.5 w-3.5 mr-1.5" strokeWidth={1.75} />
-                    Select All
-                  </button>
-                  <button
-                    onClick={handleDeselectAll}
-                    disabled={actionLoading || selectedPaymentIds.size === 0}
-                    className="flex items-center px-3 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
-                    style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}
-                  >
-                    <X className="h-3.5 w-3.5 mr-1.5" strokeWidth={1.75} />
-                    Deselect All
-                  </button>
-                  <button
-                    onClick={handleExportQBBills}
-                    disabled={qbExporting}
-                    className="flex items-center px-3 py-2 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
-                    title="Download an Excel of posted invoices as QuickBooks bills (vendor, amount, memo, GL account, GL class) for manual import"
-                    style={{ background: 'color-mix(in srgb, var(--accent-blue) 12%, transparent)', color: 'var(--accent-blue)', border: '1px solid color-mix(in srgb, var(--accent-blue) 20%, transparent)' }}
-                  >
-                    {qbExporting ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Download className="h-3.5 w-3.5 mr-1.5" strokeWidth={1.75} />}
-                    Export QB Bills
-                  </button>
+                  {isAccountingRole && (
+                    <>
+                      <button
+                        onClick={handleSelectAll}
+                        disabled={actionLoading || scheduledPayments.length === 0}
+                        className="flex items-center px-3 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
+                        style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}
+                      >
+                        <CheckSquare className="h-3.5 w-3.5 mr-1.5" strokeWidth={1.75} />
+                        Select All
+                      </button>
+                      <button
+                        onClick={handleDeselectAll}
+                        disabled={actionLoading || selectedPaymentIds.size === 0}
+                        className="flex items-center px-3 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
+                        style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}
+                      >
+                        <X className="h-3.5 w-3.5 mr-1.5" strokeWidth={1.75} />
+                        Deselect All
+                      </button>
+                      <button
+                        onClick={handleExportQBBills}
+                        disabled={qbExporting}
+                        className="flex items-center px-3 py-2 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
+                        title="Download an Excel of posted invoices as QuickBooks bills (vendor, amount, memo, GL account, GL class) for manual import"
+                        style={{ background: 'color-mix(in srgb, var(--accent-blue) 12%, transparent)', color: 'var(--accent-blue)', border: '1px solid color-mix(in srgb, var(--accent-blue) 20%, transparent)' }}
+                      >
+                        {qbExporting ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Download className="h-3.5 w-3.5 mr-1.5" strokeWidth={1.75} />}
+                        Export QB Bills
+                      </button>
+                    </>
+                  )}
                   {isAssociate && (
                     <label
                       className="flex items-center px-3 py-2 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
@@ -1681,7 +1747,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                       style={{ background: 'color-mix(in srgb, var(--accent-green) 12%, transparent)', color: 'var(--accent-green)', border: '1px solid color-mix(in srgb, var(--accent-green) 20%, transparent)' }}
                     >
                       {qbImporting ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Upload className="h-3.5 w-3.5 mr-1.5" strokeWidth={1.75} />}
-                      Import QB Report
+                      Import QB Bills
                       <input type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={qbImporting} onChange={(event) => { void handleImportQBReport(event.target.files?.[0]); event.currentTarget.value = ''; }} />
                     </label>
                   )}
@@ -1800,7 +1866,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                 </div>
               )}
 
-              {awaitingPostingCount > 0 && (
+              {isAccountingRole && awaitingPostingCount > 0 && (
                 <div className="flex items-center justify-between p-3 rounded-xl mb-4" style={{ background: 'color-mix(in srgb, var(--accent-purple) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-purple) 20%, transparent)' }}>
                   <div className="flex items-center gap-3">
                     <Send className="h-4 w-4" style={{ color: 'var(--accent-purple)' }} strokeWidth={1.75} />
@@ -1818,7 +1884,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                 </div>
               )}
 
-              {overdueCount > 0 && (
+              {isAccountingRole && overdueCount > 0 && (
                 <div className="flex items-center justify-between p-3 rounded-xl mb-4" style={{ background: 'color-mix(in srgb, var(--accent-red) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}>
                   <div className="flex items-center gap-3">
                     <AlertCircle className="h-4 w-4" style={{ color: 'var(--accent-red)' }} strokeWidth={1.75} />
@@ -1871,7 +1937,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                       <input value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} placeholder="Invoice #, vendor, MPO, memo, brand" style={filterInput} />
                     </div>
                     <div className="md:col-span-2">
-                      <label style={filterLabel}>Vendor</label>
+                      <label style={filterLabel}>Filter by vendor</label>
                       <select value={filters.vendorId} onChange={(e) => setFilters({ ...filters, vendorId: e.target.value })} style={filterInput}>
                         <option value="">All vendors</option>
                         {vendorList.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
@@ -1880,8 +1946,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                     <div className="md:col-span-2">
                       <label style={filterLabel}>Currency</label>
                       <select value={filters.currency} onChange={(e) => setFilters({ ...filters, currency: e.target.value })} style={filterInput}>
-                        <option value="">All currencies</option>
-                        {Array.from(new Set([...scheduledPayments.map(p => p.currency), 'USD', 'EUR', 'GBP', 'CNY', 'HKD'])).sort().map(currency => <option key={currency} value={currency}>{currency}</option>)}
+                        <option value="USD">USD</option>
                       </select>
                     </div>
                     <div className="md:col-span-2">
@@ -1905,15 +1970,17 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                       </select>
                     </div>
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
-                    <div className="md:col-span-3">
-                      <label style={filterLabel}>Due Month (Cut-off)</label>
-                      <input type="month" value={filters.dueMonth} onChange={(e) => setFilters({ ...filters, dueMonth: e.target.value })} style={filterInput} />
+                  {!isAssociate && (
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
+                      <div className="md:col-span-3">
+                        <label style={filterLabel}>Due Month (Cut-off)</label>
+                        <input type="month" value={filters.dueMonth} onChange={(e) => setFilters({ ...filters, dueMonth: e.target.value })} style={filterInput} />
+                      </div>
+                      <div className="md:col-span-9 hidden md:block text-xs" style={{ color: 'var(--text-muted)' }}>
+                        Pick a month to see only payments due within that cut-off — the basis for the monthly batch.
+                      </div>
                     </div>
-                    <div className="md:col-span-9 hidden md:block text-xs" style={{ color: 'var(--text-muted)' }}>
-                      Pick a month to see only payments due within that cut-off — the basis for the monthly batch.
-                    </div>
-                  </div>
+                  )}
                   {showMoreFilters && (
                     <div className="grid grid-cols-1 md:grid-cols-12 gap-3 pt-3" style={{ borderTop: '1px solid var(--border-color)' }}>
                       <div className="md:col-span-3">
@@ -1966,7 +2033,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
               )}
 
               {/* Selection summary bar */}
-              {selectedPaymentIds.size > 0 && (
+              {isAccountingRole && selectedPaymentIds.size > 0 && (
                 <div className="flex items-center justify-between p-4 rounded-xl mb-4" style={{ background: 'color-mix(in srgb, var(--accent-purple) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-purple) 20%, transparent)' }}>
                   <div className="flex items-center gap-3">
                     <div className="p-2 rounded-lg" style={{ background: 'var(--accent-purple)' }}>
@@ -2013,9 +2080,9 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
               {selectedPaymentIds.size > 0 && (
                 <div className="grid gap-2 mb-4">
                   <div className="p-3 rounded-lg text-xs" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
-                    <div className="font-semibold">One batch · {selectedPaymentIds.size} invoice{selectedPaymentIds.size === 1 ? '' : 's'} from {previewVendors.length} vendor{previewVendors.length === 1 ? '' : 's'}</div>
+                    <div className="font-semibold">Vendor-safe batch{previewVendors.length === 1 ? '' : 'es'} · {selectedPaymentIds.size} invoice{selectedPaymentIds.size === 1 ? '' : 's'} from {previewVendors.length} vendor{previewVendors.length === 1 ? '' : 's'}</div>
                     <div className="mt-1">Total {selectedPayments[0]?.currency || 'USD'} {selectedTotal.toLocaleString()}</div>
-                    <div style={{ color: 'var(--text-muted)' }} className="mt-0.5">{previewVendors.slice(0, 4).join(', ')}{previewVendors.length > 4 ? ` +${previewVendors.length - 4} more` : ''}</div>
+                    <div style={{ color: 'var(--text-muted)' }} className="mt-0.5">Grouped by vendor, currency, and confirmed bank account: {previewVendors.slice(0, 4).join(', ')}{previewVendors.length > 4 ? ` +${previewVendors.length - 4} more` : ''}</div>
                   </div>
                 </div>
               )}
@@ -2041,16 +2108,16 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                   )}
                 </div>
               ) : (
-                <div className="overflow-hidden">
-                  <table className="w-full table-fixed">
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[1150px] table-fixed">
                     <thead style={{ background: 'var(--bg-elevated)' }}>
                       <tr>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)', width: '40px' }}></th>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)', width: '25%' }}>Invoice / Vendor</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)', width: '23%' }}>Dates</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)', width: '25%' }}>Payment / Memo</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Status</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)', width: '22%' }}>Actions</th>
+                        <th className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)', width: '40px' }}></th>
+                        <th className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Invoice / Vendor</th>
+                        <th className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)', width: '145px' }}>Dates</th>
+                        <th className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)', width: '330px' }}>Payment / Memo</th>
+                        <th className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)', width: '145px' }}>Status</th>
+                        <th className="px-3 py-3 text-right text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)', width: '245px' }}>Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
@@ -2063,30 +2130,42 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                             style={{ borderTop: '1px solid var(--border-subtle)', background: isSelected ? 'color-mix(in srgb, var(--accent-purple) 5%, transparent)' : 'transparent' }}
                             onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
                             onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = 'transparent'; }}
-                            onClick={() => { if (isBatchable(payment)) handleToggleSelect(payment.id); }}
+                            onClick={() => { if (isAccountingRole && isBatchable(payment)) handleToggleSelect(payment.id); }}
                           >
-                            <td className="px-4 py-4">
-                              <div className="flex items-center justify-center w-5 h-5 rounded border-2 transition-all" style={{
-                                borderColor: isBatchable(payment) ? (isSelected ? 'var(--accent-purple)' : 'var(--border-color)') : 'var(--border-subtle)',
-                                background: isSelected ? 'var(--accent-purple)' : 'transparent',
-                                opacity: isBatchable(payment) ? 1 : 0.35,
-                                cursor: isBatchable(payment) ? 'pointer' : 'not-allowed',
-                              }}>
-                                {isSelected && <CheckSquare className="h-3 w-3 text-white" strokeWidth={2.5} />}
-                              </div>
+                            <td className="px-3 py-4">
+                              {isAccountingRole && (
+                                <div className="flex items-center justify-center w-5 h-5 rounded border-2 transition-all" style={{
+                                  borderColor: isBatchable(payment) ? (isSelected ? 'var(--accent-purple)' : 'var(--border-color)') : 'var(--border-subtle)',
+                                  background: isSelected ? 'var(--accent-purple)' : 'transparent',
+                                  opacity: isBatchable(payment) ? 1 : 0.35,
+                                  cursor: isBatchable(payment) ? 'pointer' : 'not-allowed',
+                                }}>
+                                  {isSelected && <CheckSquare className="h-3 w-3 text-white" strokeWidth={2.5} />}
+                                </div>
+                              )}
                             </td>
-                            <td className="px-4 py-4 align-top text-sm" style={{ color: 'var(--text-primary)' }}><div className="font-medium truncate" title={payment.invoice.invoice_number}>{payment.invoice.invoice_number}</div><div className="mt-1 truncate text-xs" style={{ color: 'var(--text-secondary)' }} title={payment.invoice.vendor.name}>{payment.invoice.vendor.name}</div><div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>{payment.category || '—'}</div></td>
-                            <td className="px-4 py-4 align-top text-xs" style={{ color: 'var(--text-secondary)' }}><div>Invoice {dateCell(payment.invoice_date)}</div><div className="mt-1">Approved {dateCell(payment.approval_date)}</div><div className="mt-1">Due {dateCell(payment.due_date)}</div><div className="mt-1">Pay {new Date(payment.payment_date).toLocaleDateString()}</div></td>
-                            <td className="px-4 py-4 align-top text-sm" style={{ color: 'var(--text-secondary)' }}><div className="font-semibold" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{payment.currency} {payment.amount.toLocaleString()}</div><div className="mt-1 text-xs" style={{ fontVariantNumeric: 'tabular-nums' }}>Open {payment.currency} {payment.open_balance.toLocaleString()}</div><div className="mt-1 truncate text-xs" title={[payment.qb_memo, payment.brand].filter(Boolean).join(' · ')}>{[payment.qb_memo, payment.brand].filter(Boolean).join(' · ') || 'No memo / brand'}</div>
+                            <td className="px-3 py-4 align-top text-sm" style={{ color: 'var(--text-primary)' }}>
+                              <button type="button" className="inline-flex items-center gap-1 font-medium truncate text-left hover:underline" title="Open invoice PDF" style={{ color: 'var(--accent-purple)' }} onClick={async (e) => { e.stopPropagation(); try { await openInvoiceDocument(payment.invoice.id, payment.invoice.invoice_number); } catch (error: any) { showToast(error?.response?.data?.error?.message || 'Unable to open the invoice PDF. Please try again.', 'error'); } }}>
+                                <FileText className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
+                                {payment.invoice.invoice_number}
+                              </button>
+                              <div className="mt-1 truncate text-xs" style={{ color: 'var(--text-secondary)' }} title={payment.invoice.vendor.name}>{payment.invoice.vendor.name}</div><div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>{payment.category || '—'}</div>
+                            </td>
+                            <td className="px-3 py-4 align-top text-xs" style={{ color: 'var(--text-secondary)' }}><div>Invoice {dateCell(payment.invoice_date)}</div><div className="mt-1">Approved {dateCell(payment.approval_date)}</div><div className="mt-1">Due {dateCell(payment.due_date)}</div><div className="mt-1">Pay {new Date(payment.payment_date).toLocaleDateString()}</div></td>
+                            <td className="px-3 py-4 align-top text-sm" style={{ color: 'var(--text-secondary)' }}><div className="font-semibold" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{payment.currency} {payment.amount.toLocaleString()}</div><div className="mt-1 text-xs" style={{ fontVariantNumeric: 'tabular-nums' }}>Invoice subtotal {payment.currency} {(payment.invoice.subtotal ?? payment.amount).toLocaleString()}</div><div className="mt-1 text-xs" style={{ fontVariantNumeric: 'tabular-nums' }}>Open {payment.currency} {payment.open_balance.toLocaleString()}</div><div className="mt-1 truncate text-xs" title={[payment.qb_memo, payment.brand].filter(Boolean).join(' · ')}>{[payment.qb_memo, payment.brand].filter(Boolean).join(' · ') || 'No memo / brand'}</div>
                               <div className="mt-1 text-xs" style={{ color: payment.aging_days !== null && payment.aging_days !== undefined && payment.aging_days > 0 ? 'var(--accent-red)' : 'var(--text-muted)' }}>{payment.aging_days !== null && payment.aging_days !== undefined ? (payment.aging_days < 0 ? `${Math.abs(payment.aging_days)}d to due` : `${payment.aging_days}d overdue`) : 'No aging data'}</div>
-                              <div className="mt-1 truncate text-xs" title={payment.remarks || ''}>{payment.remarks || 'No remarks'}</div>
+                              <div className="mt-1 truncate text-xs" title={payment.remarks || ''}>
+                                {payment.remarks?.toLowerCase().includes('below the 100 threshold')
+                                  ? `Legacy hold/threshold note (not an automatic hold rule): ${payment.remarks}`
+                                  : payment.remarks || 'No remarks'}
+                              </div>
                               {payment.supervisor_note && (
                                 <div className="text-[11px] mt-0.5" style={{ color: payment.supervisor_action === 'FOR_PAYMENT_REJECTED' ? 'var(--accent-red)' : 'var(--accent-green)' }}>
                                   {payment.supervisor_action === 'FOR_PAYMENT_REJECTED' ? `Rejected: ${payment.supervisor_note}` : `Supervisor: ${payment.supervisor_note}`}
                                 </div>
                               )}
                             </td>
-                            <td className="px-4 py-4 align-top min-w-[130px]">
+                            <td className="px-3 py-4 align-top min-w-[145px]">
                               <div className="flex items-center gap-2">
                                 <span className="inline-flex items-center whitespace-nowrap px-2.5 py-0.5 rounded-full text-xs font-medium" style={getPaymentStatusStyle(payment.status)}>
                                   {getPaymentStatusLabel(payment.status)}
@@ -2094,8 +2173,8 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                                 {isSelected && <span className="text-[11px] font-medium" style={{ color: 'var(--accent-purple)' }}>Selected</span>}
                               </div>
                             </td>
-                            <td className="px-4 py-4 align-top min-w-[190px]">
-                              <div className="flex flex-wrap items-center gap-2">
+                            <td className="px-3 py-4 align-top min-w-[245px]">
+                              <div className="flex flex-wrap items-center justify-end gap-2">
                                 {isAssociate && (
                                   <>
                                     <button
@@ -2129,22 +2208,6 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                                   >
                                     Release Hold
                                   </button>
-                                )}
-                                {isPurchasing && payment.status === 'HELD_BELOW_100' && (
-                                  <>
-                                    <button
-                                      onClick={(e) => { e.stopPropagation(); handleBelowThresholdDecision(payment, 'PROCEED'); }}
-                                      disabled={actionLoading}
-                                      className="whitespace-nowrap px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors disabled:opacity-50"
-                                      style={{ background: 'var(--accent-green)', color: 'white' }}
-                                    >Proceed &lt;$100</button>
-                                    <button
-                                      onClick={(e) => { e.stopPropagation(); handleBelowThresholdDecision(payment, 'HOLD'); }}
-                                      disabled={actionLoading}
-                                      className="px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors disabled:opacity-50"
-                                      style={{ background: 'color-mix(in srgb, var(--accent-amber) 12%, transparent)', color: 'var(--accent-amber)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}
-                                    >Hold</button>
-                                  </>
                                 )}
                                 {isAssociate && payment.status === 'AWAITING_POSTING' && (
                                   <button
@@ -2373,6 +2436,26 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                 </button>
               </div>
 
+              {selectedBatch.integrity_issues && selectedBatch.integrity_issues.length > 0 && (
+                <div className="mb-5 rounded-xl p-3 text-sm" style={{ background: 'color-mix(in srgb, var(--accent-red) 9%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-red) 25%, transparent)', color: 'var(--accent-red)' }}>
+                  <strong>Batch integrity warning — payment actions are blocked.</strong>
+                  <ul className="mt-1 list-disc pl-5">{selectedBatch.integrity_issues.map((issue) => <li key={issue}>{issue}</li>)}</ul>
+                </div>
+              )}
+              {isAssociate && ['DRAFT', 'RETURNED_FOR_CORRECTION'].includes(selectedBatch.status) && <button type="button" disabled={processing} className="mb-4 rounded-lg border px-3 py-2 text-sm" onClick={async () => {
+                try {
+                  const { data } = await paymentBatchApi.previewAmounts(selectedBatch.id);
+                  if (!data.needsCorrection) { showToast('Payment amounts already match the current invoice/QB principal.', 'info'); return; }
+                  setAmountPreviewToken(data.previewToken);
+                  setAccountingAction({ action: 'reconcile', batchId: selectedBatch.id, subject: `${selectedBatch.batch_number}: ${data.payments.map((line: any) => `${line.invoiceNumber}: ${line.current.toFixed(2)} → ${line.expected == null ? 'unavailable' : line.expected.toFixed(2)} (${line.source})`).join('; ')}. New total including bank charges: ${data.total == null ? 'unavailable' : data.total.toFixed(2)}.` });
+                } catch (error: any) { showToast(error?.response?.data?.error?.message || 'Unable to preview reconciliation', 'error'); }
+              }}>Preview amount reconciliation</button>}
+              {selectedBatch.execution_reference && (
+                <div className="mb-5 rounded-xl px-3 py-2 text-sm" style={{ background: 'color-mix(in srgb, var(--accent-blue) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-blue) 18%, transparent)', color: 'var(--text-secondary)' }}>
+                  External bank execution: <strong>{selectedBatch.execution_reference}</strong>{selectedBatch.execution_bank ? ` · ${selectedBatch.execution_bank}` : ''}. {selectedBatch.status === 'PROCESSED' ? 'Bank confirmation reconciled.' : 'Not Paid until bank confirmation is matched.'}
+                </div>
+              )}
+
               <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
                 <div className="p-4 rounded-xl" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
                   <div className="text-xs" style={{ color: 'var(--text-muted)' }}>Total Amount (incl. bank charge)</div>
@@ -2490,7 +2573,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                     <DollarSign className="h-4 w-4 mr-2" strokeWidth={1.75} />
                     {chargedPayment ? `Bank Charge: ${chargedPayment.currency} ${Number(chargedPayment.bank_charge_amount).toLocaleString()} (Edit)` : 'Apply Bank Charge'}
                   </button>
-                  <button onClick={() => handleBatchAction('submit', selectedBatch.id)} disabled={processing || !payBillsComplete || !billStubFilesComplete}
+                  <button onClick={() => handleBatchAction('submit', selectedBatch.id)} disabled={processing || !payBillsComplete || !billStubFilesComplete || Boolean(selectedBatch.integrity_issues?.length)}
                     title={!payBillsComplete ? 'Complete the Payment Setup (method + date) first' : !billStubFilesComplete ? 'Upload a bill stub file for every payment first' : undefined}
                     className="flex items-center px-4 py-2.5 rounded-xl transition-colors disabled:opacity-50 text-sm font-semibold"
                     style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}
@@ -2519,7 +2602,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
 
               {selectedBatch.status === 'PENDING_SUPERVISOR_REVIEW' && isSupervisor && (
                 <div className="flex items-center gap-3 mb-6">
-                  <button onClick={() => handleBatchAction('review', selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}>Approve Supervisor Review</button>
+                  <button onClick={() => handleBatchAction('review', selectedBatch.id)} disabled={processing || Boolean(selectedBatch.integrity_issues?.length)} className="px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50" style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}>Approve Supervisor Review</button>
                   <button onClick={() => handleBatchAction('return', selectedBatch.id)} disabled={processing} className="px-4 py-2.5 rounded-xl text-sm font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-red) 12%, transparent)', color: 'var(--accent-red)', border: '1px solid color-mix(in srgb, var(--accent-red) 25%, transparent)' }}>Return for Correction</button>
                 </div>
               )}
@@ -2532,7 +2615,15 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
 
               {selectedBatch.status === 'PENDING_CFO' && isAssociate && (
                 <div className="mb-6 p-3 rounded-xl text-sm" style={{ background: 'color-mix(in srgb, var(--accent-purple) 10%, transparent)', color: 'var(--accent-purple)', border: '1px solid color-mix(in srgb, var(--accent-purple) 25%, transparent)' }}>
-                  Pending CFO approval. Export and bank processing are locked until CFO approval is recorded.
+                  Bank execution has been recorded. The batch and its invoices remain unpaid until CFO review and bank-confirmation reconciliation are complete.
+                </div>
+              )}
+
+              {selectedBatch.status === 'PENDING_CFO' && isCfo && (
+                <div className="flex items-center gap-3 mb-6 p-3 rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent-purple) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-purple) 20%, transparent)' }}>
+                  <span className="text-sm flex-1" style={{ color: 'var(--text-secondary)' }}>Review the bank execution reference and attached evidence. Invoices remain unpaid until confirmation is matched.</span>
+                  <button onClick={() => void handleCfoDecision(true)} disabled={processing} className="px-3 py-2 rounded-lg text-sm font-semibold disabled:opacity-50" style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}>Approve</button>
+                  <button onClick={() => void handleCfoDecision(false)} disabled={processing} className="px-3 py-2 rounded-lg text-sm font-semibold disabled:opacity-50" style={{ background: 'color-mix(in srgb, var(--accent-red) 12%, transparent)', color: 'var(--accent-red)' }}>Reject</button>
                 </div>
               )}
 
@@ -2618,9 +2709,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                   </thead>
                   <tbody>
                     {selectedBatch.payments.map((payment, idx) => {
-                      const groupedStub = selectedBatch.vendor_bill_stubs?.find((stub) => stub.lines.some((line) => line.payment_id === payment.id));
-                      const groupedFirstPaymentId = groupedStub?.lines[0]?.payment_id;
-                      const isGroupedStubActionRow = !groupedStub || groupedFirstPaymentId === payment.id;
+                      const isGroupedStubActionRow = true;
                       const isReturnSelected = selectedReturnPaymentIds.has(payment.id);
                       const canReturn = ['DRAFT', 'RETURNED_FOR_CORRECTION', 'PENDING_SUPERVISOR_REVIEW'].includes(selectedBatch.status);
                       return (
@@ -2638,8 +2727,14 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                             </div>
                           </td>
                         )}
-                        <td className="px-4 py-4 align-top text-sm" style={{ color: 'var(--text-primary)' }}><div className="font-medium truncate" title={payment.invoice.invoice_number}>{payment.invoice.invoice_number}</div><div className="mt-1 truncate text-xs" style={{ color: 'var(--text-secondary)' }} title={payment.invoice.vendor.name}>{payment.invoice.vendor.name}</div></td>
-                        <td className="px-4 py-4 align-top text-sm" style={{ color: 'var(--text-secondary)' }}><div className="font-semibold" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{payment.currency} {payment.amount.toLocaleString()}</div><div className="mt-1 flex flex-wrap items-center gap-2 text-xs"><span>Due {new Date(payment.scheduled_date).toLocaleDateString()}</span>
+                        <td className="px-4 py-4 align-top text-sm" style={{ color: 'var(--text-primary)' }}>
+                          <button type="button" className="inline-flex items-center gap-1 font-medium truncate text-left hover:underline" title="Open invoice PDF" style={{ color: 'var(--accent-purple)' }} onClick={async (e) => { e.stopPropagation(); try { await openInvoiceDocument(payment.invoice.id, payment.invoice.invoice_number); } catch (error: any) { showToast(error?.response?.data?.error?.message || 'Unable to open the invoice PDF. Please try again.', 'error'); } }}>
+                            <FileText className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
+                            {payment.invoice.invoice_number}
+                          </button>
+                          <div className="mt-1 truncate text-xs" style={{ color: 'var(--text-secondary)' }} title={payment.invoice.vendor.name}>{payment.invoice.vendor.name}</div>
+                        </td>
+                        <td className="px-4 py-4 align-top text-sm" style={{ color: 'var(--text-secondary)' }}><div className="font-semibold" style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{payment.currency} {payment.amount.toLocaleString()}</div><div className="mt-1 text-xs" style={{ fontVariantNumeric: 'tabular-nums' }}>Invoice subtotal {payment.currency} {(payment.invoice.subtotal ?? payment.amount).toLocaleString()}</div><div className="mt-1 flex flex-wrap items-center gap-2 text-xs"><span>Due {new Date(payment.scheduled_date).toLocaleDateString()}</span>
                           {payment.bank_charge_amount != null && <span title={payment.bank_charge_note || 'Bank charge — one per vendor per batch, on a single invoice'} className="inline-flex items-center rounded-full px-2 py-0.5 font-medium" style={{ background: 'color-mix(in srgb, var(--accent-amber) 12%, transparent)', color: 'var(--accent-amber)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}>+ {payment.currency} {Number(payment.bank_charge_amount).toLocaleString()} fee</span>}
                             {payment.payment_date_source === 'DUE_DATE' && (
                               <span title={`Payment date = invoice due date${payment.invoice.due_date ? ` (${new Date(payment.invoice.due_date).toLocaleDateString()})` : ''} — auto-scheduled on posting`} style={{ display: 'inline-flex', cursor: 'help' }}>
@@ -2873,15 +2968,15 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
         {showExecutionModal && selectedBatch && (
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-backdrop">
             <div className="p-6 max-w-lg w-full mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
-              <h3 className="text-lg font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Execute Payment Batch</h3>
-              <p className="text-sm mb-4" style={{ color: 'var(--text-muted)' }}>{selectedBatch.batch_number} | {selectedBatch.payment_count} payments | ${selectedBatch.total_amount.toLocaleString()}</p>
+              <h3 className="text-lg font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Record External Bank Execution</h3>
+              <p className="text-sm mb-4" style={{ color: 'var(--text-muted)' }}>{selectedBatch.batch_number} | {selectedBatch.payment_count} payments | ${selectedBatch.total_amount.toLocaleString()}. This records the bank handoff only; invoices stay unpaid until confirmation reconciliation succeeds.</p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Paid date</label>
+                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Bank execution date</label>
                   <input type="date" value={executionForm.paidDate} onChange={(e) => setExecutionForm({ ...executionForm, paidDate: e.target.value })} className="w-full px-3 py-2 rounded-xl text-sm" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }} />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Reference / check no.</label>
+                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Required bank reference</label>
                   <input value={executionForm.reference} onChange={(e) => setExecutionForm({ ...executionForm, reference: e.target.value })} placeholder="Bank reference" className="w-full px-3 py-2 rounded-xl text-sm" style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }} />
                 </div>
                 <div className="md:col-span-2">
@@ -2899,8 +2994,8 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
               </div>
               <div className="flex justify-end gap-3 mt-5">
                 <button onClick={() => setShowExecutionModal(false)} className="px-4 py-2 text-sm" style={{ color: 'var(--text-secondary)' }}>Cancel</button>
-                <button onClick={() => handleProcessBatch(selectedBatch.id)} disabled={processing || !executionForm.paidDate} className="px-4 py-2 rounded-xl text-sm font-semibold disabled:opacity-50" style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}>
-                  {processing ? 'Processing...' : 'Confirm Paid'}
+                <button onClick={() => handleProcessBatch(selectedBatch.id)} disabled={processing || !executionForm.paidDate || !executionForm.reference.trim()} className="px-4 py-2 rounded-xl text-sm font-semibold disabled:opacity-50" style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}>
+                  {processing ? 'Recording...' : 'Record Execution'}
                 </button>
               </div>
             </div>
@@ -3125,7 +3220,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
             <div className="p-6 max-w-lg w-full mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
               <h3 className="text-lg font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Match Payment Confirmation</h3>
               <p className="text-sm mb-4" style={{ color: 'var(--text-muted)' }}>
-                The system matches <span style={{ color: 'var(--accent-green)', fontWeight: 600 }}>ENDORSED</span> payments by <strong>reference</strong> (amount as tiebreak — two vendors can share the same processed amount). Enter the confirmation reference below, or select the payments explicitly (e.g. from the exported Excel file).
+                A match is accepted only when the bank reference, execution date, currency, beneficiary, account last four, and amount agree with the bank snapshot. Unmatched rows remain unpaid for reconciliation.
               </p>
               <div className="grid grid-cols-2 gap-3 mb-3">
                 <div>
@@ -3140,6 +3235,11 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
               <div className="mb-2">
                 <label style={filterLabel}>Paid Date</label>
                 <input type="date" value={matchForm.paidDate} onChange={(e) => setMatchForm({ ...matchForm, paidDate: e.target.value })} style={filterInput} />
+              </div>
+              <div className="grid grid-cols-3 gap-3 mb-3">
+                <div><label style={filterLabel}>Currency</label><input value={matchForm.currency} onChange={(e) => setMatchForm({ ...matchForm, currency: e.target.value.toUpperCase() })} style={filterInput} /></div>
+                <div><label style={filterLabel}>Beneficiary</label><input value={matchForm.beneficiary} onChange={(e) => setMatchForm({ ...matchForm, beneficiary: e.target.value })} style={filterInput} /></div>
+                <div><label style={filterLabel}>Account last 4</label><input value={matchForm.accountMask} onChange={(e) => setMatchForm({ ...matchForm, accountMask: e.target.value })} style={filterInput} maxLength={8} /></div>
               </div>
               <div className="mb-4">
                 <label style={filterLabel}>Endorsed payments ({endorsedPayments.length}) — used when no reference is entered</label>
@@ -3243,6 +3343,22 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
             </div>
           </div>
         )}
+      {accountingAction && <AccountingActionModal key={`${accountingAction.action}-${accountingAction.subject}`} action={accountingAction.action} subject={accountingAction.subject} owner={user?.name} busy={actionLoading || processing}
+        onCancel={() => setAccountingAction(null)} onConfirm={async (values) => {
+          if (accountingAction.action === 'hold' && accountingAction.payment) await saveHoldPayment(accountingAction.payment, values);
+          else if (accountingAction.action === 'return' && accountingAction.batchId) await handleBatchAction('return', accountingAction.batchId, values.reason);
+          else if (accountingAction.action === 'reconcile' && accountingAction.batchId) {
+            setProcessing(true);
+            try {
+              await paymentBatchApi.reconcileAmounts(accountingAction.batchId, values.reason, amountPreviewToken);
+              await Promise.all([loadBatches(), refreshSelectedBatch(accountingAction.batchId)]);
+              setAccountingAction(null);
+              showToast('Batch amounts reconciled. Upload corrected bill stubs, then resubmit for Supervisor review.', 'success');
+            } catch (error: any) { showToast(error?.response?.data?.error?.message || 'Unable to reconcile amounts', 'error'); }
+            finally { setProcessing(false); }
+          }
+          else await handleCfoDecision(accountingAction.action === 'cfo-approve', values.reason);
+        }} />}
     </div>
   );
 }

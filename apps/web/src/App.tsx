@@ -106,7 +106,7 @@ function App() {
                   </ProtectedRoute>
                 } />
                 <Route path="/payment-batches" element={
-                  <ProtectedRoute>
+                  <ProtectedRoute roles={['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'CFO']}>
                     <AppLayout title="Payment Batches" icon={<div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, var(--accent-purple), var(--accent-violet))' }}><Package className="h-5 w-5 text-white" strokeWidth={1.75} /></div>}>
                       <PaymentBatchManager />
                     </AppLayout>

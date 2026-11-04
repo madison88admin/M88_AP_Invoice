@@ -100,7 +100,9 @@ export async function listInvoiceDueDateChangeRequestsForInvoice(invoiceId: stri
   return prisma.invoiceDueDateChangeRequest.findMany({ where: { invoice_id: invoiceId }, orderBy: { created_at: 'desc' } });
 }
 
-export async function approveInvoiceDueDateChange(requestId: string, userId: string, userName: string) {
+export async function approveInvoiceDueDateChange(requestId: string, userId: string, userName: string, approvalImpactReview: string) {
+  const impactReview = String(approvalImpactReview || '').trim();
+  if (!impactReview) throw new AppError('Record the approval and payment-schedule impact review before approving this due-date change.', 400);
   const request = await prisma.invoiceDueDateChangeRequest.findUnique({ where: { id: requestId }, include: { invoice: { include: { vendor: true } } } });
   if (!request) throw new AppError('Due-date change request not found', 404);
   if (request.status !== 'PENDING') throw new AppError(`Request already ${request.status}`, 400);
@@ -111,9 +113,9 @@ export async function approveInvoiceDueDateChange(requestId: string, userId: str
 
   await prisma.$transaction([
     prisma.invoice.update({ where: { id: request.invoice_id }, data: { due_date: request.requested_due_date } }),
-    prisma.invoiceDueDateChangeRequest.update({ where: { id: requestId }, data: { status: 'APPROVED', reviewed_by: userName, reviewed_by_id: userId, reviewed_at: new Date() } }),
+    prisma.invoiceDueDateChangeRequest.update({ where: { id: requestId }, data: { status: 'APPROVED', reviewed_by: userName, reviewed_by_id: userId, reviewed_at: new Date(), approval_impact_review: impactReview } }),
   ]);
-  await logAudit({ invoice_id: request.invoice_id, performed_by: userId, actor_role: UserRole.ACCOUNTING_ASSOCIATE, action: 'INVOICE_DUE_DATE_CHANGE_APPROVED', note: `Due date changed by ${userName}: ${request.current_due_date?.toISOString().slice(0, 10) || '—'} → ${request.requested_due_date.toISOString().slice(0, 10)}.`, metadata: { request_id: request.id } });
+  await logAudit({ invoice_id: request.invoice_id, performed_by: userId, actor_role: UserRole.ACCOUNTING_ASSOCIATE, action: 'INVOICE_DUE_DATE_CHANGE_APPROVED', note: `Due date changed by ${userName}: ${request.current_due_date?.toISOString().slice(0, 10) || '—'} → ${request.requested_due_date.toISOString().slice(0, 10)}. Approval/payment impact: ${impactReview}`, metadata: { request_id: request.id, approval_impact_review: impactReview } });
   return { success: true, message: `Due date updated to ${request.requested_due_date.toISOString().slice(0, 10)}.` };
 }
 

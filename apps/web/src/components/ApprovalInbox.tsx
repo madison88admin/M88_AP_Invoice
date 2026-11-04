@@ -99,7 +99,7 @@ const QUICK_VIEW_SECTIONS: Array<{ title: string; fields: QuickViewField[] }> = 
       { label: 'Status', field: 'status' },
       { label: 'Current Stage', field: 'current_stage' },
       { label: 'OCR Confidence', field: 'ocr_confidence_score', format: 'percent' },
-      { label: 'Handwritten', field: 'is_handwritten', format: 'boolean' },
+      { label: 'Handwritten flag', field: 'is_handwritten', format: 'boolean' },
       { label: 'Urgent', field: 'is_urgent', format: 'boolean' },
       { label: 'Priority Flag', field: 'priority_flag', format: 'boolean' },
     ],

@@ -13,6 +13,8 @@ export interface MockInvoice {
   currency: string;
   invoice_date: string;
   invoice_received_date: string;
+  /** Exact intake timestamp, when the source channel provided one. */
+  source_received_at?: string;
   payment_terms: string;
   invoice_type: InvoiceType;
   category: InvoiceCategory;
@@ -91,6 +93,10 @@ export interface MockInvoice {
   date_range_start?: string;
   date_range_end?: string;
   priority_pay_date?: string;
+  priority_reason?: string;
+  priority_evidence_reference?: string;
+  late_submission_reason?: string;
+  late_submission_source?: string;
   is_handwritten?: boolean;
   payments?: {
     id: string;

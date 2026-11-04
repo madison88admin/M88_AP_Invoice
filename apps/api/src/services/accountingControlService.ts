@@ -1,4 +1,20 @@
 import prisma from '../config/database';
+import { AppError } from '../middleware/errorHandler';
+import { validateInvoice } from './validationService';
+
+const COORDINATOR_REVISION_STATUSES = new Set([
+  'RECEIVED', 'OCR_PROCESSING', 'VALIDATION_PENDING', 'EXCEPTION_FLAGGED', 'PENDING_COORDINATOR',
+]);
+const PAYMENT_PROTECTED_STATUSES = new Set([
+  'APPROVED', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID', 'PAYMENT_CONFIRMATION_SENT',
+]);
+const PAYMENT_PROTECTED_WORKFLOW_STATUSES = new Set([
+  'APPROVED', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAID',
+]);
+
+function revisionBlocked(message: string): never {
+  throw new AppError(message, 409);
+}
 
 /**
  * Normalizes supplier references for duplicate/revision review only. The
@@ -162,9 +178,90 @@ export async function resolveDuplicateRevisionReview(input: {
   reason: string;
   evidence?: unknown;
 }): Promise<any> {
-  const review = await prisma.duplicateRevisionReview.findUnique({ where: { id: input.reviewId } });
-  if (!review) throw new Error('Duplicate/revision review not found');
-  const resolved = await prisma.$transaction(async (tx) => {
+  const resolutionTime = new Date();
+  const { resolved, revisedInvoiceId } = await prisma.$transaction(async (tx) => {
+    const review = await tx.duplicateRevisionReview.findUnique({ where: { id: input.reviewId } });
+    if (!review) throw new Error('Duplicate/revision review not found');
+    if (review.status !== 'PENDING') revisionBlocked('This duplicate/revision review has already been resolved.');
+
+    const newInvoice = await tx.invoice.findUnique({
+      where: { id: review.invoice_id },
+      include: { payments: { select: { id: true, status: true, batch_id: true } } },
+    });
+    if (!newInvoice) throw new Error('Revision invoice not found');
+
+    let oldInvoice: any = null;
+    if (input.classification === 'CORRECTED_REVISED') {
+      if (!review.candidate_invoice_id) revisionBlocked('A corrected revision must be linked to the original invoice candidate.');
+      if (!COORDINATOR_REVISION_STATUSES.has(String(newInvoice.status))) {
+        revisionBlocked('The incoming document has moved beyond coordinator review and cannot be activated as a revision.');
+      }
+      if (!['RECEIVED', 'OCR_PROCESSING', 'REVIEW_REQUIRED', 'PURCHASING_REVIEW', 'DUPLICATE_REVIEW', 'REVISION_REVIEW'].includes(String(newInvoice.workflow_status))) {
+        revisionBlocked('The incoming document is protected or outside coordinator review and cannot be activated as a revision.');
+      }
+      oldInvoice = await tx.invoice.findUnique({
+        where: { id: review.candidate_invoice_id },
+        include: { payments: { select: { id: true, status: true, batch_id: true } } },
+      });
+      if (!oldInvoice) revisionBlocked('The original invoice candidate no longer exists.');
+      if (oldInvoice.vendor_id !== newInvoice.vendor_id
+        || normalizeInvoiceReference(oldInvoice.invoice_number) !== normalizeInvoiceReference(newInvoice.invoice_number)) {
+        revisionBlocked('The candidate vendor or invoice reference does not match; the revision cannot replace it.');
+      }
+      if (oldInvoice.legal_hold || (oldInvoice.payments || []).length > 0
+        || PAYMENT_PROTECTED_STATUSES.has(String(oldInvoice.status).toUpperCase())
+        || PAYMENT_PROTECTED_WORKFLOW_STATUSES.has(String(oldInvoice.workflow_status).toUpperCase())) {
+        revisionBlocked('The original invoice is protected by approval, payment, posting, or legal hold and cannot be replaced.');
+      }
+      if ((newInvoice.payments || []).length > 0 || newInvoice.legal_hold) {
+        revisionBlocked('The incoming revision is already linked to a payment or legal hold and cannot be activated.');
+      }
+    }
+
+    // A corrected PDF replaces the whole active duplicate family, not only
+    // the first candidate returned by duplicate detection. This prevents
+    // older sibling rows for the same vendor/reference from remaining visible
+    // as payable invoices after the new revision is activated.
+    let supersededInvoices: any[] = [];
+    let nextRevision = 1;
+    if (input.classification === 'CORRECTED_REVISED' && oldInvoice) {
+      const normalizedReference = normalizeInvoiceReference(newInvoice.invoice_number);
+      if (!normalizedReference) revisionBlocked('The corrected revision must have a valid invoice number before duplicate records can be replaced.');
+      const siblings = await tx.invoice.findMany({
+        where: {
+          vendor_id: newInvoice.vendor_id,
+          id: { not: newInvoice.id },
+          status: { not: 'CANCELLED' },
+          OR: [
+            { normalized_invoice_number: normalizedReference },
+            { invoice_number: { in: [newInvoice.invoice_number, oldInvoice.invoice_number] } },
+          ],
+        },
+        include: { payments: { select: { id: true, status: true, batch_id: true } } },
+      });
+      const family = [oldInvoice, ...(siblings || [])].filter((candidate, index, all) =>
+        candidate
+        && all.findIndex((other) => other?.id === candidate.id) === index
+        && candidate.vendor_id === newInvoice.vendor_id
+        && normalizeInvoiceReference(candidate.invoice_number) === normalizedReference,
+      );
+      for (const candidate of family) {
+        if (candidate.legal_hold || (candidate.payments || []).length > 0
+          || PAYMENT_PROTECTED_STATUSES.has(String(candidate.status).toUpperCase())
+          || PAYMENT_PROTECTED_WORKFLOW_STATUSES.has(String(candidate.workflow_status).toUpperCase())) {
+          revisionBlocked(`Invoice ${candidate.invoice_number} is protected by approval, payment, posting, or legal hold; resolve it before activating this revision.`);
+        }
+      }
+      supersededInvoices = family;
+      nextRevision = Math.max(0, ...family.map((candidate) => Number(candidate.revision || 1))) + 1;
+    }
+
+    const claim = await tx.duplicateRevisionReview.updateMany({
+      where: { id: review.id, status: 'PENDING' },
+      data: { status: 'RESOLVED' },
+    });
+    if (claim.count !== 1) revisionBlocked('This duplicate/revision review was already resolved by another user.');
+
     const updated = await tx.duplicateRevisionReview.update({
       where: { id: review.id },
       data: {
@@ -173,26 +270,102 @@ export async function resolveDuplicateRevisionReview(input: {
         reason: input.reason,
         evidence: input.evidence as any,
         reviewer_id: input.reviewerId,
-        reviewed_at: new Date(),
+        reviewed_at: resolutionTime,
       },
     });
     const isDuplicate = input.classification === 'DUPLICATE_SUBMISSION';
-    await tx.invoice.update({
-      where: { id: review.invoice_id },
+    const invoice = await tx.invoice.update({
+      where: { id: newInvoice.id },
       data: {
-        duplicate_review_status: input.classification,
+        ...(input.classification === 'CORRECTED_REVISED' ? {
+          parent_invoice_id: oldInvoice.id,
+          revision: nextRevision,
+          status: 'RECEIVED',
+          workflow_status: 'RECEIVED',
+          duplicate_review_status: 'RESOLVED',
+        } : {
+          duplicate_review_status: input.classification,
+          workflow_status: isDuplicate
+            ? 'CANCELLED'
+            : input.classification === 'NEW_INVOICE' ? 'RECEIVED' : 'REVIEW_REQUIRED',
+          status: isDuplicate ? 'CANCELLED' : undefined,
+        }),
         duplicate_review_reason: input.reason,
         duplicate_reviewed_by: input.reviewerId,
-        duplicate_reviewed_at: new Date(),
+        duplicate_reviewed_at: resolutionTime,
         is_duplicate: isDuplicate,
-        workflow_status: isDuplicate
-          ? 'CANCELLED'
-          : input.classification === 'NEW_INVOICE' ? 'RECEIVED' : 'REVIEW_REQUIRED',
-        status: isDuplicate ? 'CANCELLED' : undefined,
       } as any,
     });
-    return updated;
+    if (input.classification === 'CORRECTED_REVISED' && oldInvoice) {
+      for (const priorInvoice of supersededInvoices) {
+        await tx.duplicateRevisionReview.updateMany({
+          where: { invoice_id: priorInvoice.id, status: 'PENDING' },
+          data: {
+            status: 'RESOLVED',
+            classification: 'SUPERSEDED_BY_CORRECTED_REVISION',
+            reason: `Superseded by corrected revision ${newInvoice.invoice_number}`,
+            reviewer_id: input.reviewerId,
+            reviewed_at: resolutionTime,
+          },
+        });
+        await tx.invoice.update({
+          where: { id: priorInvoice.id },
+          data: {
+            status: 'CANCELLED',
+            workflow_status: 'SUPERSEDED',
+            duplicate_review_status: 'SUPERSEDED',
+            is_duplicate: true,
+            cancelled_by: input.reviewerId,
+            cancelled_at: resolutionTime,
+            cancellation_reason: `Superseded by corrected revision ${newInvoice.invoice_number} (revision ${nextRevision})`,
+          } as any,
+        });
+        await tx.auditLog.create({
+          data: {
+            invoice_id: priorInvoice.id,
+            performed_by: input.reviewerId,
+            action: 'INVOICE_SUPERSEDED_BY_CORRECTED_REVISION',
+            note: input.reason,
+            metadata: { replacement_invoice_id: newInvoice.id, replacement_revision: nextRevision },
+          },
+        });
+      }
+      await tx.auditLog.create({
+        data: {
+          invoice_id: newInvoice.id,
+          performed_by: input.reviewerId,
+          action: 'CORRECTED_REVISION_ACTIVATED',
+          note: input.reason,
+          metadata: { superseded_invoice_ids: supersededInvoices.map((candidate) => candidate.id), revision: nextRevision },
+        },
+      });
+    }
+    return { resolved: updated, revisedInvoiceId: input.classification === 'CORRECTED_REVISED' ? invoice.id : null };
   });
+
+  // Re-run validation only after the atomic activation/supersede transaction.
+  // A failed rule leaves the new revision visible for coordinator correction;
+  // it never rolls back or deletes either retained source document.
+  if (revisedInvoiceId) {
+    try {
+      await validateInvoice(revisedInvoiceId, { freshRevision: true });
+    } catch (error) {
+      await prisma.invoice.update({
+        where: { id: revisedInvoiceId },
+        data: { status: 'EXCEPTION_FLAGGED', workflow_status: 'REVIEW_REQUIRED' } as any,
+      });
+      await prisma.auditLog.create({
+        data: {
+          invoice_id: revisedInvoiceId,
+          performed_by: input.reviewerId,
+          action: 'CORRECTED_REVISION_REVALIDATION_FAILED',
+          note: error instanceof Error ? error.message : 'Fresh validation failed',
+          metadata: { review_id: input.reviewId },
+        },
+      });
+      throw new AppError('The corrected revision was activated and the prior record retained as superseded, but fresh validation failed. The new invoice is held for coordinator review; retry validation.', 503);
+    }
+  }
   return resolved;
 }
 

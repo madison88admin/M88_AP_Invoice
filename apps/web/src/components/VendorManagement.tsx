@@ -26,7 +26,7 @@ export default function VendorManagement() {
   const [submittingRequest, setSubmittingRequest] = useState(false);
   const [selectedVendorIds, setSelectedVendorIds] = useState<string[]>([]);
 
-  const canAddVendor = user && ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role);
+  const canAddVendor = user && ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE'].includes(user.role);
   const canEditBankInfo = user && ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role);
   const canEditVendor = user && ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role);
   const canDeleteVendor = user && ['ACCOUNTING_SUPERVISOR', 'ACCOUNTING_ASSOCIATE', 'IT_ADMIN'].includes(user.role);

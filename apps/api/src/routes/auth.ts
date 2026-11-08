@@ -1,9 +1,8 @@
 import { Router } from 'express';
 import jwt from 'jsonwebtoken';
-import { UserRole } from '@ap-invoice/shared';
 import { AppError } from '../middleware/errorHandler';
 import { logAudit } from '../services/auditLogService';
-import prisma from '../config/database';
+import prisma, { isDbConnected, isDbEnabled } from '../config/database';
 import { hashPassword, verifyPassword } from '../services/passwordService';
 
 const router = Router() as Router;
@@ -14,13 +13,22 @@ const router = Router() as Router;
  */
 type DemoUser = { email: string; name: string; role: string; password: string; brand_scope?: 'TOP_10' | 'OTHER' };
 
+const DEFAULT_DEMO_USERS: DemoUser[] = [
+  { email: 'maryan.untiveros@madison88.com', name: 'Maryan', role: 'MLO_ACCOUNT_HOLDER', password: 'madison88' },
+  { email: 'edwin.garcia@madison88.com', name: 'Edwin', role: 'PLANNING_MANAGER', password: 'madison88' },
+  { email: 'glecie.yumena@madison88.com', name: 'Glecie', role: 'PLANNING_MANAGER', password: 'madison88' },
+  { email: 'lindsey.castro@madison88.com', name: 'Lindsey', role: 'SR_MANAGER', password: 'madison88' },
+  { email: 'polly.madison@madison88.com', name: 'Polly', role: 'MS_POLLY', password: 'madison88' },
+];
+
 function getDemoUsers(): DemoUser[] {
-  if (!isDemoLoginEnabled() || !process.env.DEMO_USERS_JSON) return [];
+  if (!isDemoLoginEnabled()) return [];
+  if (!process.env.DEMO_USERS_JSON) return DEFAULT_DEMO_USERS;
   try {
     const parsed = JSON.parse(process.env.DEMO_USERS_JSON);
     return Array.isArray(parsed) ? parsed : [];
   } catch {
-    return [];
+    return DEFAULT_DEMO_USERS;
   }
 }
 
@@ -86,6 +94,21 @@ router.post('/login', async (req, res, next) => {
         note: `User ${demoUser.name} (${demoUser.email}) logged in as ${demoUser.role}`,
       });
       return res.json(buildAuthResponse(demoUser, demoUser.name));
+    }
+
+    // A local/dev API can intentionally run without Prisma (for example while
+    // doing frontend QA). Do not let the proxy throw "Database not available"
+    // and turn a bad login into an HTTP 500; it is still just invalid
+    // credentials when no demo user matched.
+    if (!isDbEnabled()) {
+      throw new AppError('Invalid credentials', 401);
+    }
+
+    // The local development DATABASE_URL normally points at an SSH tunnel.
+    // If that tunnel is down, avoid letting Prisma bubble up a P1001 as an
+    // opaque HTTP 500. Demo users above remain available without the DB.
+    if (!(await isDbConnected())) {
+      throw new AppError('Login service is temporarily unavailable. Please start the database tunnel and try again.', 503);
     }
 
     // 2. Check database (users created/updated via User Management)

@@ -99,7 +99,7 @@ describe('fileWatcherService.intakeReviewReason — body classification beats fi
     expect(reason).toMatch(/shipping\/non-invoice/);
   });
 
-  it('allows a commercial invoice whose OCR non-invoice flag is a false positive', () => {
+  it('blocks a commercial invoice when AI marks the header non-payable', () => {
     const reason = intakeReviewReason(
       {
         ...baseValidInvoice,
@@ -114,7 +114,7 @@ describe('fileWatcherService.intakeReviewReason — body classification beats fi
       },
       'HKWSO1237147_CI.pdf',
     );
-    expect(reason).toBeNull();
+    expect(reason).toMatch(/not payable/i);
   });
 
   it('blocks packing lists whose OCR contains an invoice reference', () => {

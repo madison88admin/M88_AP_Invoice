@@ -214,7 +214,15 @@ router.get('/bottleneck', async (req, res) => {
  */
 async function getWaitingOnMeInvoices(userRole?: string) {
   const roleToStatusMap: Record<string, InvoiceStatus[]> = {
-    COORDINATOR: [InvoiceStatus.PENDING_COORDINATOR],
+    // Coordinator owns the hand-off from first capture through validation.
+    // Include RECEIVED so a valid invoice cannot disappear while automatic
+    // validation is still running or recovering from a transient failure.
+    COORDINATOR: [
+      InvoiceStatus.RECEIVED,
+      InvoiceStatus.VALIDATION_PENDING,
+      InvoiceStatus.EXCEPTION_FLAGGED,
+      InvoiceStatus.PENDING_COORDINATOR,
+    ],
     PURCHASING_MANAGER: [InvoiceStatus.PENDING_MANAGER],
     MLO_ACCOUNT_HOLDER: [InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER],
     PLANNING_MANAGER: [InvoiceStatus.PENDING_MLO_PLANNING_MANAGER],

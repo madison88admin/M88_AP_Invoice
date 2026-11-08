@@ -1,9 +1,12 @@
 import { PrismaClient } from '@prisma/client';
 import { validateWorkflowTransition } from '@ap-invoice/shared';
 
-const DB_ENABLED = process.env.DATABASE_URL && process.env.DATABASE_URL.length > 0;
+const DATABASE_URL = process.env.DATABASE_URL?.trim() || '';
+const DATABASE_WRITE_URL = process.env.DATABASE_WRITE_URL?.trim() || '';
+const DB_ENABLED = DATABASE_URL.length > 0;
 
 let realPrisma: PrismaClient | null = null;
+let writePrisma: PrismaClient | null = null;
 
 export function canonicalWorkflowStatus(
   status: unknown,
@@ -45,11 +48,8 @@ export function canonicalWorkflowStatus(
   }
 }
 
-if (DB_ENABLED) {
-  realPrisma = new PrismaClient({
-    log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
-  });
-  realPrisma.$use(async (params, next) => {
+function installPrismaMiddleware(client: PrismaClient) {
+  client.$use(async (params, next) => {
     if (params.model === 'Invoice' && ['create', 'update', 'updateMany', 'upsert'].includes(params.action) && params.args?.data) {
       const data = params.args.data as Record<string, any>;
       if (params.action === 'create' && data.invoice_number && data.normalized_invoice_number === undefined) {
@@ -82,11 +82,11 @@ if (DB_ENABLED) {
         if (params.action === 'update' || params.action === 'upsert') {
           const where = params.args.where;
           if (where?.id || where?.ap_record_id || where?.invoice_number) {
-            const current = await realPrisma!.invoice.findFirst({ where, select: { workflow_status: true, status: true, duplicate_review_status: true } });
+            const current = await client.invoice.findFirst({ where, select: { workflow_status: true, status: true, duplicate_review_status: true } });
             if (current) candidates.push(current);
           }
         } else if (params.action === 'updateMany') {
-          const current = await realPrisma!.invoice.findMany({ where: params.args.where || {}, take: 2000, select: { workflow_status: true, status: true, duplicate_review_status: true } });
+          const current = await client.invoice.findMany({ where: params.args.where || {}, take: 2000, select: { workflow_status: true, status: true, duplicate_review_status: true } });
           candidates.push(...current);
         }
         for (const current of candidates) {
@@ -102,6 +102,24 @@ if (DB_ENABLED) {
     }
     return next(params);
   });
+}
+
+if (DB_ENABLED) {
+  const log = process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] as any : ['error'] as any;
+  realPrisma = new PrismaClient({ log });
+  installPrismaMiddleware(realPrisma);
+
+  // Accounting imports are write operations. In QA/reporting environments the
+  // default connection may intentionally be read-only, so allow only the
+  // importer to use a separately provisioned writer without changing the
+  // read connection used by the rest of the application.
+  if (DATABASE_WRITE_URL && DATABASE_WRITE_URL !== DATABASE_URL) {
+    writePrisma = new PrismaClient({ datasources: { db: { url: DATABASE_WRITE_URL } }, log });
+    installPrismaMiddleware(writePrisma);
+    console.log('[Database] Write-enabled Accounting connection configured');
+  } else {
+    writePrisma = realPrisma;
+  }
   console.log('[Database] DB_ENABLED mode - Prisma initialized');
 } else {
   console.log('[Database] DB_DISABLED mode - Prisma not initialized (vendor system offline)');
@@ -120,6 +138,8 @@ const prisma = new Proxy({} as PrismaClient, {
 export default prisma;
 
 export const getPrisma = () => realPrisma;
+
+export const getWritePrisma = () => writePrisma;
 
 export const isDbEnabled = () => DB_ENABLED;
 
@@ -141,6 +161,7 @@ export const connectDatabase = async () => {
 
   try {
     await prisma.$connect();
+    if (writePrisma && writePrisma !== realPrisma) await writePrisma.$connect();
     console.log('Database connected successfully');
   } catch (error) {
     console.error('Database connection error:', error);
@@ -155,5 +176,8 @@ export const connectDatabase = async () => {
 export const disconnectDatabase = async () => {
   if (realPrisma) {
     await realPrisma.$disconnect();
+  }
+  if (writePrisma && writePrisma !== realPrisma) {
+    await writePrisma.$disconnect();
   }
 };

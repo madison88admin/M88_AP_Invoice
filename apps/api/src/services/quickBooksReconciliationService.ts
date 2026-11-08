@@ -1,4 +1,6 @@
 import prisma from '../config/database';
+import { getWritePrisma } from '../config/database';
+import type { PrismaClient } from '@prisma/client';
 import { InvoiceStatus } from '@ap-invoice/shared';
 
 export const QUICKBOOKS_RECONCILIATION_RESULTS = [
@@ -45,7 +47,7 @@ export async function recordQuickBooksReconciliation(input: {
   report_as_of_date?: Date;
   source_filename?: string;
   import_key?: string;
-}, actorId?: string) {
+}, actorId?: string, db: PrismaClient = prisma) {
   if (!QUICKBOOKS_RECONCILIATION_RESULTS.includes(input.result as any)) {
     throw new Error(`Unsupported QuickBooks reconciliation result: ${input.result}`);
   }
@@ -53,7 +55,7 @@ export async function recordQuickBooksReconciliation(input: {
     throw new Error('invoice_id is required unless the result is QUICKBOOKS_ONLY');
   }
   if (input.invoice_id) {
-    const invoice = await prisma.invoice.findUnique({ where: { id: input.invoice_id }, select: { id: true } });
+    const invoice = await db.invoice.findUnique({ where: { id: input.invoice_id }, select: { id: true } });
     if (!invoice) throw new Error('Invoice not found');
   }
   const data: any = {
@@ -78,9 +80,9 @@ export async function recordQuickBooksReconciliation(input: {
       resolved_by: input.result === 'MATCHED' ? actorId || null : null,
       resolved_at: input.result === 'MATCHED' ? new Date() : null,
     };
-  const existing = input.import_key ? await prisma.quickBooksReconciliation.findFirst({ where: { import_key: input.import_key } }) : null;
-  if (existing) return prisma.quickBooksReconciliation.update({ where: { id: existing.id }, data });
-  return prisma.quickBooksReconciliation.create({
+  const existing = input.import_key ? await db.quickBooksReconciliation.findFirst({ where: { import_key: input.import_key } }) : null;
+  if (existing) return db.quickBooksReconciliation.update({ where: { id: existing.id }, data });
+  return db.quickBooksReconciliation.create({
     data,
   });
 }
@@ -113,6 +115,98 @@ export type QuickBooksImportRow = {
 };
 
 /**
+ * Validate a QuickBooks report without creating or updating any records.
+ * This is intentionally read-only so QA/reporting connections can preview
+ * matches before Accounting provisions a write-enabled import connection.
+ */
+export async function validateQuickBooksRows(rows: QuickBooksImportRow[], options: { asOfDate?: string | Date; cutoffDate?: string | Date } = {}) {
+  if (!Array.isArray(rows) || rows.length === 0) throw new Error('At least one QuickBooks row is required');
+  const invoices = await prisma.invoice.findMany({
+    where: { status: { notIn: ['CANCELLED'] as any } },
+    select: { id: true, ap_record_id: true, invoice_number: true, vendor_name_raw: true, total_amount: true, currency: true, due_date: true, qb_open_balance: true },
+    take: 10000,
+  });
+  const vendors = await prisma.vendor.findMany({ where: { is_active: true }, select: { id: true, name: true } });
+  const normalize = (value: unknown) => String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const dateOnly = (value: unknown) => {
+    if (!value) return undefined;
+    const parsed = new Date(value as any);
+    return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString().slice(0, 10);
+  };
+  const cutoffDate = dateOnly(options.cutoffDate);
+  const existingKeys = new Set((await prisma.quickBooksReconciliation.findMany({
+    select: { invoice_id: true, qb_transaction_id: true },
+    take: 20000,
+  })).map((row) => `${row.invoice_id || ''}|${row.qb_transaction_id || ''}`));
+  const normalizeVendor = (value: unknown) => normalize(value);
+  const results = rows.map((row) => {
+    const reportAsOfCandidate = row.as_of_date ? new Date(row.as_of_date) : (options.asOfDate ? new Date(options.asOfDate) : new Date());
+    const reportAsOf = Number.isNaN(reportAsOfCandidate.getTime()) ? new Date() : reportAsOfCandidate;
+    const reference = row.ap_record_id || row.reference || row.invoice_number;
+    const candidates = invoices.filter((invoice) => {
+      const refMatch = reference && (invoice.ap_record_id === reference || invoice.invoice_number === reference || normalize(invoice.invoice_number) === normalize(row.invoice_number));
+      const vendorMatch = row.vendor_name && normalize(invoice.vendor_name_raw) === normalize(row.vendor_name);
+      return Boolean(refMatch || (vendorMatch && row.invoice_number && normalize(invoice.invoice_number) === normalize(row.invoice_number)));
+    });
+    const invoice = candidates.length === 1 ? candidates[0] : undefined;
+    let result: typeof QUICKBOOKS_RECONCILIATION_RESULTS[number];
+    if (!reference && !row.transaction_id) result = 'MISSING_INVALID_REFERENCE';
+    else if (candidates.length === 0) result = 'QUICKBOOKS_ONLY';
+    else if (candidates.length > 1) result = 'AMBIGUOUS_MATCH';
+    else if (existingKeys.has(`${invoice!.id}|${row.transaction_id || ''}`)) result = 'POSSIBLE_DUPLICATE_POSTING';
+    else if (row.vendor_name && normalize(row.vendor_name) !== normalize(invoice!.vendor_name_raw)) result = 'VENDOR_DIFFERENCE';
+    else if (row.currency && normalize(row.currency) !== normalize(invoice!.currency || 'USD')) result = 'CURRENCY_DIFFERENCE';
+    else if (row.amount != null && Math.abs(Number(row.amount) - Number(invoice!.total_amount)) > 0.01) result = 'AMOUNT_DIFFERENCE';
+    else result = 'MATCHED';
+    const validationReasons: string[] = [];
+    const qbDueDate = dateOnly(row.due_date);
+    const systemDueDate = dateOnly(invoice?.due_date);
+    const reportAsOfDate = dateOnly(reportAsOf);
+    if (invoice && qbDueDate && systemDueDate && qbDueDate !== systemDueDate) validationReasons.push('DUE_DATE_DIFFERENCE');
+    if (invoice && !qbDueDate && systemDueDate) validationReasons.push('MISSING_QB_DUE_DATE');
+    if (invoice && qbDueDate && reportAsOfDate && qbDueDate < reportAsOfDate) validationReasons.push('PAST_DUE');
+    if (invoice && cutoffDate && qbDueDate && qbDueDate > cutoffDate) validationReasons.push('OUTSIDE_WEEKLY_CUTOFF');
+    if (invoice && row.open_balance != null && invoice.qb_open_balance != null && Math.abs(Number(row.open_balance) - Number(invoice.qb_open_balance)) > 0.01) validationReasons.push('OPEN_BALANCE_DIFFERENCE');
+    const thresholdAmount = row.open_balance ?? row.amount;
+    if (String(row.currency || invoice?.currency || 'USD').toUpperCase() === 'USD' && thresholdAmount != null && Number(thresholdAmount) > 0 && Number(thresholdAmount) < 100) validationReasons.push('BELOW_USD_100_THRESHOLD');
+    const vendorMatch = row.vendor_name
+      ? vendors.find((vendor) => normalizeVendor(vendor.name) === normalizeVendor(row.vendor_name))
+      : undefined;
+    return {
+      result,
+      invoice_id: invoice?.id,
+      invoice_number: row.invoice_number,
+      vendor_name: row.vendor_name,
+      matched_vendor_id: vendorMatch?.id,
+      matched_vendor_name: vendorMatch?.name,
+      qb_transaction_id: row.transaction_id,
+      qb_reference: row.reference || row.ap_record_id,
+      qb_amount: row.amount,
+      qb_open_balance: row.open_balance,
+      qb_currency: row.currency || 'USD',
+      validation_status: result === 'MATCHED' && validationReasons.length === 0 ? 'PASS' as const : 'REVIEW_REQUIRED' as const,
+      validation_reasons: validationReasons,
+      report_as_of_date: reportAsOf,
+    };
+  });
+  const byResult = results.reduce<Record<string, number>>((summary, row) => {
+    summary[row.result] = (summary[row.result] || 0) + 1;
+    return summary;
+  }, {});
+  const reasonSummary = results.flatMap((row) => row.validation_reasons).reduce<Record<string, number>>((summary, reason) => {
+    summary[reason] = (summary[reason] || 0) + 1;
+    return summary;
+  }, {});
+  const cleanMatched = results.filter((row) => row.validation_status === 'PASS').length;
+  return {
+    mode: 'VALIDATE_ONLY' as const,
+    validated: results.length,
+    summary: { ...byResult, clean_matched: cleanMatched, review_required: results.length - cleanMatched, reasons: reasonSummary },
+    results,
+  };
+}
+
+/**
  * Reconcile an exported QuickBooks bill/payables report in one request. This
  * keeps the existing manual record endpoint, but gives Accounting a repeatable
  * import path with deterministic result categories and no invoice-number-only
@@ -120,7 +214,8 @@ export type QuickBooksImportRow = {
  */
 export async function importQuickBooksRows(rows: QuickBooksImportRow[], actorId: string, options: { asOfDate?: string | Date; sourceFilename?: string } = {}) {
   if (!Array.isArray(rows) || rows.length === 0) throw new Error('At least one QuickBooks row is required');
-  const invoices = await prisma.invoice.findMany({
+  const db = getWritePrisma() || prisma;
+  const invoices = await db.invoice.findMany({
     where: { status: { notIn: ['CANCELLED'] as any } },
     select: { id: true, ap_record_id: true, invoice_number: true, vendor_name_raw: true, total_amount: true, currency: true },
     take: 10000,
@@ -128,7 +223,7 @@ export async function importQuickBooksRows(rows: QuickBooksImportRow[], actorId:
   const normalize = (value: unknown) => String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
   // Only approved/active vendors are eligible for an automatic match.  A
   // QuickBooks import must never create or activate a Vendor Master record.
-  const vendors = await prisma.vendor.findMany({ where: { is_active: true }, select: { id: true, name: true } });
+  const vendors = await db.vendor.findMany({ where: { is_active: true }, select: { id: true, name: true } });
   const results = [];
   const normalizeVendor = (value: unknown) => normalize(value);
   for (const row of rows) {
@@ -146,7 +241,7 @@ export async function importQuickBooksRows(rows: QuickBooksImportRow[], actorId:
     else if (candidates.length === 0) result = 'QUICKBOOKS_ONLY';
     else if (candidates.length > 1) result = 'AMBIGUOUS_MATCH';
     else {
-      const existingPosting = await prisma.quickBooksReconciliation.findFirst({ where: { invoice_id: invoice!.id, ...(row.transaction_id ? { qb_transaction_id: row.transaction_id } : {}) } });
+      const existingPosting = await db.quickBooksReconciliation.findFirst({ where: { invoice_id: invoice!.id, ...(row.transaction_id ? { qb_transaction_id: row.transaction_id } : {}) } });
       if (existingPosting) result = 'POSSIBLE_DUPLICATE_POSTING';
       else if (row.vendor_name && normalize(row.vendor_name) !== normalize(invoice!.vendor_name_raw)) result = 'VENDOR_DIFFERENCE';
       else if (row.currency && normalize(row.currency) !== normalize(invoice!.currency || 'USD')) result = 'CURRENCY_DIFFERENCE';
@@ -163,14 +258,14 @@ export async function importQuickBooksRows(rows: QuickBooksImportRow[], actorId:
       // supplier.  Do not create a new placeholder (or any other Vendor row)
       // during import; Accounting must add/approve the supplier in Vendor
       // Master before the invoice can be assigned and scheduled.
-      const vendor = matchedVendor || await prisma.vendor.findFirst({
+      const vendor = matchedVendor || await db.vendor.findFirst({
         where: { name: 'UNKNOWN VENDOR', is_active: true },
         select: { id: true, name: true },
       });
       if (vendor) {
-        const existingQbInvoice = await prisma.invoice.findFirst({ where: { invoice_number: row.invoice_number, vendor_id: vendor.id, source_document_type: 'QUICKBOOKS_ONLY' }, select: { id: true, ap_record_id: true, invoice_number: true, vendor_name_raw: true, total_amount: true, currency: true } });
+        const existingQbInvoice = await db.invoice.findFirst({ where: { invoice_number: row.invoice_number, vendor_id: vendor.id, source_document_type: 'QUICKBOOKS_ONLY' }, select: { id: true, ap_record_id: true, invoice_number: true, vendor_name_raw: true, total_amount: true, currency: true } });
         const amount = row.open_balance ?? row.amount ?? 0;
-        invoice = existingQbInvoice || await prisma.invoice.create({
+        invoice = existingQbInvoice || await db.invoice.create({
           data: {
             invoice_number: row.invoice_number,
             vendor_id: vendor.id,
@@ -200,12 +295,12 @@ export async function importQuickBooksRows(rows: QuickBooksImportRow[], actorId:
     if (invoice && (row.open_balance != null || row.amount != null)) {
       const bankChargeMentioned = /bank\s*(?:charge|fee)|wire\s*fee|tt\s*fee/i.test(String(row.comments || ''));
       const importedOpenBalance = Number(row.open_balance ?? row.amount ?? 0);
-      await prisma.$transaction([
-        prisma.invoice.update({ where: { id: invoice.id }, data: { qb_open_balance: importedOpenBalance, qb_balance_as_of: reportAsOf, ...(bankChargeMentioned ? { qb_bank_charge_included: true } : {}) } as any }),
+      await db.$transaction([
+        db.invoice.update({ where: { id: invoice.id }, data: { qb_open_balance: importedOpenBalance, qb_balance_as_of: reportAsOf, ...(bankChargeMentioned ? { qb_bank_charge_included: true } : {}) } as any }),
         // Keep an already scheduled, unbatched payment aligned to the current
         // QuickBooks unpaid balance. Never rewrite a batch snapshot or a
         // payment already in progress.
-        prisma.payment.updateMany({
+        db.payment.updateMany({
           where: { invoice_id: invoice.id, batch_id: null, status: 'SCHEDULED' },
           data: { amount: importedOpenBalance },
         }),
@@ -228,7 +323,7 @@ export async function importQuickBooksRows(rows: QuickBooksImportRow[], actorId:
       report_as_of_date: reportAsOf,
       source_filename: options.sourceFilename,
       import_key: importKey,
-    }, actorId));
+    }, actorId, db));
   }
   return { imported: results.length, results };
 }

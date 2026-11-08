@@ -5,8 +5,7 @@
  * Confidence changes during reasoning based on stability, semantic strength, and consistency
  */
 
-import { Candidate, FieldType } from '../../tournament/Candidate';
-import { RegionType } from '../LayoutGraphBuilder';
+import { Candidate } from '../../tournament/Candidate';
 
 export interface ElasticityFactors {
   baseConfidence: number;

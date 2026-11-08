@@ -1,0 +1,6 @@
+{
+  "_comment": "Lint ratchet baseline for apps/api. Regenerate via: node .lint-gate.cjs --update (only after real cleanup).",
+  "generated_at": "2026-10-13T07:59:09.802Z",
+  "total": 0,
+  "counts": {}
+}

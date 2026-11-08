@@ -5,7 +5,7 @@
  * Fields influence each other softly (line items support amount, PO adjusts invoice confidence, etc.)
  */
 
-import { Candidate, FieldType } from '../../tournament/Candidate';
+import { FieldType } from '../../tournament/Candidate';
 
 export interface FieldInfluence {
   sourceField: FieldType;
@@ -118,7 +118,7 @@ export class CrossFieldReinforcement {
    * Add custom field influence
    */
   addInfluence(influence: FieldInfluence): void {
-    const key = `${influence.sourceField}_${influence.targetField}`;
+    const _key = `${influence.sourceField}_${influence.targetField}`;
     
     if (!this.influences.has(influence.targetField)) {
       this.influences.set(influence.targetField, []);
@@ -258,7 +258,7 @@ export class CrossFieldReinforcement {
    * Remove influence
    */
   removeInfluence(sourceField: FieldType, targetField: FieldType): void {
-    const key = `${sourceField}_${targetField}`;
+    const _key = `${sourceField}_${targetField}`;
     const influences = this.influences.get(targetField);
     
     if (influences) {

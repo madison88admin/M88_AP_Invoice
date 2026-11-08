@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const {
   invoiceFindUnique,
   signatureUpdate,
+  signatureUpdateMany,
   stageTimestampFindFirst,
   stageTimestampUpdate,
   stageTimestampCreate,
@@ -14,6 +15,7 @@ const {
 } = vi.hoisted(() => ({
   invoiceFindUnique: vi.fn(),
   signatureUpdate: vi.fn(),
+  signatureUpdateMany: vi.fn(),
   stageTimestampFindFirst: vi.fn(),
   stageTimestampUpdate: vi.fn(),
   stageTimestampCreate: vi.fn(),
@@ -26,7 +28,7 @@ const {
 vi.mock('../config/database', () => ({
   default: {
     invoice: { findUnique: invoiceFindUnique, update: invoiceUpdate },
-    signature: { update: signatureUpdate },
+    signature: { update: signatureUpdate, updateMany: signatureUpdateMany },
     stageTimestamp: { findFirst: stageTimestampFindFirst, update: stageTimestampUpdate, create: stageTimestampCreate },
     auditLog: { create: auditLogCreate },
   },
@@ -95,6 +97,7 @@ function makeInvoice() {
 beforeEach(() => {
   invoiceFindUnique.mockReset();
   signatureUpdate.mockReset().mockResolvedValue({});
+  signatureUpdateMany.mockReset().mockResolvedValue({ count: 1 });
   stageTimestampFindFirst.mockReset();
   stageTimestampUpdate.mockReset().mockResolvedValue({});
   stageTimestampCreate.mockReset().mockResolvedValue({});
@@ -117,7 +120,7 @@ describe('approveInvoice', () => {
 
     await approveInvoice('inv-1', 'user-1', 'PURCHASING_COORDINATOR', 'Sarah Jane Cariquitan');
 
-    const updateCall = signatureUpdate.mock.calls.find(([args]: any) => args.where.id === 'sig-coord')!;
+    const updateCall = signatureUpdateMany.mock.calls.find(([args]: any) => args.where.id === 'sig-coord')!;
     expect(updateCall).toBeDefined();
     expect(updateCall[0].data.signatory_user_id).toBe('user-1');
     expect(updateCall[0].data.signatory_name).toBe('Sarah Jane Cariquitan');

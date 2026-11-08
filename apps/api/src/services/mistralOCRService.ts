@@ -53,18 +53,20 @@ Fields to extract:
 - total_amount: Final total amount (number only, no currency symbol)
 - currency: Currency code (USD, HKD, EUR, etc.)
 - po_number: Purchase Order number if present (format like PO000002_KEY or extract PO#2924)
-- mpo_number: Material Purchase Order number (format like MPO015713 — extract from Customer PO field which may contain "TNF F26 JAN BUY_MPO15371_MDDC_...")
+- mpo_number: Material Purchase Order number (for example, MPO12345 — extract only from the document's Customer PO field)
 - brand: Brand name (The North Face, Under Armour, Vans, Columbia, etc.)
 - brand_code: Brand code (TNF, UA, VNS, CSC, HH, BUR, etc.)
 - season: Season code (like F26, S26, F25, etc.)
 - ship_to: Ship to / delivery / consignee company and address. If the invoice shows two columns (e.g., "Delivery address" and "Invoice address"), extract ONLY the delivery address column, NOT the invoice address column.
 - sold_to: Sold to / invoice / buyer company and address. If the invoice shows two columns (e.g., "Delivery address" and "Invoice address"), extract ONLY the invoice address column, NOT the delivery address column.
 - qty_shipped: Total quantity shipped (sum of all line item quantities, or the total quantity field if explicitly stated)
-- document_type: Type of document (INVOICE, PROFORMA, COMMERCIAL_INVOICE, CREDIT_NOTE, STATEMENT, DEBIT_NOTE). Default to INVOICE if not clear.
+- document_type: Type of document from the first-page/header (INVOICE, SALES_INVOICE, PROFORMA_INVOICE, COMMERCIAL_INVOICE, TAX_INVOICE, CREDIT_NOTE, DEBIT_NOTE, PACKING_LIST, AIRWAY_BILL, TECH_PACK, TRIM_RECEIPT, FAKTUR_PAJAK, FORWARDER_BILLING_INVOICE, STATEMENT, UNKNOWN). Use UNKNOWN when the header is missing, unreadable, or ambiguous; never default to INVOICE.
+- document_type_evidence: Exact header/title phrase that supports the document_type, or null when no reliable header is visible.
+- payable_candidate: Whether the document appears to be a supplier-payable invoice (true/false). Decide from the header and document purpose, not from the presence of an invoice-number reference alone.
 - beneficiary_name: Beneficiary name / Account holder name (the company or person who owns the bank account)
-- bank_name: Bank name of the vendor's bank (e.g., "Standard Chartered Bank", "HSBC", "The Hongkong and Shanghai Banking Corporation Ltd")
-- swift_code: SWIFT/BIC code of the vendor's bank (e.g., "SCBLHKHHXXX", "HSBCHKHHHKH")
-- account_number: Bank account number of the vendor (e.g., "447-0-092572-7", "484-592449-838")
+- bank_name: Bank name of the vendor's bank, only when printed in the invoice's bank/remittance section; otherwise null
+- swift_code: SWIFT/BIC code printed in the invoice's bank/remittance section; otherwise null
+- account_number: Bank account number printed in the invoice's bank/remittance section; otherwise null
 - subtotal: Sub-total / Net Amount before charges and tax (number only)
 - bank_charges: Bank charge / Bank Charges / BANK CHARGE fee (number only, e.g., 30)
 - tt_charge: Telegraphic Transfer / TT Charge / T/T Charges fee (number only)
@@ -107,7 +109,7 @@ Fields to extract:
 IMPORTANT RULES:
 1. vendor_name is the SENDER of the invoice, NOT Madison 88
 2. For mpo_number: look in "Customer PO" or "CUSTOMER PO" field
-   - Pattern: "TNF F26 JAN BUY_MPO15371_MDDC_..." → extract "MPO15371"
+   - Pattern: a customer-PO string containing an MPO reference → extract the exact MPO reference shown
    - Pattern: "MPO015713" → extract "MPO015713"
    - Regex: /MPO(\\d+)/i
 3. total_amount must be a NUMBER only (e.g. 37.94 not "$37.94")
@@ -122,7 +124,7 @@ IMPORTANT RULES:
    - po_number (PO for this line if present per line — pattern: PO\\d+)
    Do not skip line items. If quantity looks like a unit price, re-check the column.
    CRITICAL: If the invoice has MULTIPLE different MPOs across line items (e.g., one line has MPO015798 and another has MPO015841), you MUST extract the mpo_number for each line separately. Do NOT just use the first MPO for all lines.
-5. For bank details: CRITICAL — look carefully for ANY bank-related information anywhere in the invoice. Check sections labeled "Bank Details", "Payment Information", "Remittance", "Beneficiary Bank", "Bank Account", "SWIFT", "Payment Instructions", or similar. Also check the footer, bottom of page, or any small text sections. Extract beneficiary_name (the account holder name), bank_name, swift_code, and account_number. Even if bank info appears in an image or small text, report what you can find.
+5. For bank details: CRITICAL — look carefully for ANY bank-related information anywhere in the invoice. Check sections labeled "Bank Details", "Payment Information", "Remittance", "Beneficiary Bank", "Bank Account", "SWIFT", "Payment Instructions", or similar. Also check the footer, bottom of page, or any small text sections. Extract beneficiary_name (the account holder name), bank_name, swift_code, and account_number only when each value is visibly printed in the document. Never copy a bank value from this prompt or infer one from the vendor; if it is not visible, return null.
 6. For qty_shipped: if there is a total quantity field, use that. Otherwise, sum the quantities from all line items.
 7. For document_type: check if the document says "INVOICE", "PROFORMA INVOICE", "COMMERCIAL INVOICE", "CREDIT NOTE", "STATEMENT", etc.
 8. For charges: extract ALL charges separately. Look for lines labeled:
@@ -145,63 +147,46 @@ IMPORTANT RULES:
 
 Example output:
 {
-  "vendor_name": "Avery Dennison Hong Kong B.V.",
-  "invoice_number": "100703828",
-  "invoice_date": "2026-05-07",
-  "due_date": "2026-06-06",
-  "payment_terms": "Net 30",
-  "total_amount": 37.94,
-  "currency": "USD",
+  "vendor_name": null,
+  "invoice_number": null,
+  "invoice_date": null,
+  "due_date": null,
+  "payment_terms": null,
+  "total_amount": null,
+  "currency": null,
   "po_number": null,
-  "mpo_number": "MPO15371",
-  "brand": "The North Face",
-  "brand_code": "TNF",
-  "season": "F26",
-  "ship_to": "PT UWU JUMP INDONESIA",
-  "sold_to": "256086 / THE NORTH FACE",
-  "qty_shipped": 120,
-  "document_type": "INVOICE",
-  "beneficiary_name": "Madison 88 Ltd",
-  "bank_name": "Standard Chartered Bank",
-  "swift_code": "SCBLHKHHXXX",
-  "account_number": "447-0-092572-7",
-  "subtotal": 32.94,
-  "bank_charges": 30.00,
+  "mpo_number": null,
+  "brand": null,
+  "brand_code": null,
+  "season": null,
+  "ship_to": null,
+  "sold_to": null,
+  "qty_shipped": null,
+  "document_type": null,
+  "beneficiary_name": null,
+  "bank_name": null,
+  "swift_code": null,
+  "account_number": null,
+  "subtotal": null,
+  "bank_charges": null,
   "tt_charge": null,
   "freight_charges": null,
   "courier_charges": null,
   "handling_fee": null,
   "finance_surcharge": null,
-  "tax_amount": 0.00,
+  "tax_amount": null,
   "discount_amount": null,
   "setup_charge": null,
   "sample_charge": null,
   "min_order_charge": null,
   "additional_charges": null,
-  "line_items": [
-    {
-      "description": "TNF-INDO-HT(MDDC)",
-      "quantity": 120,
-      "unit_price": 0.06656,
-      "total_amount": 7.99,
-      "item_code": "1-292738-000-02",
-      "size": null,
-      "mpo_number": "MPO15371",
-      "po_number": null
-    }
-  ],
-  "signatures": [
-    {
-      "signatory_name": "Jane Doe",
-      "signatory_role": "Coordinator",
-      "signed_date": "2026-05-07"
-    }
-  ],
-  "incoterm": "EXW",
+  "line_items": [],
+  "signatures": [],
+  "incoterm": null,
   "exchange_rate": null,
   "invoice_currency_original": null,
-  "is_handwritten": false,
-  "is_statement": false
+  "is_handwritten": null,
+  "is_statement": null
 }
 
 Invoice text to extract from:

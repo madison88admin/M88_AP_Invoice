@@ -229,6 +229,16 @@ export const paymentBatchApi = {
     }
     return api.post(`/api/payment-batches/${batchId}/payments/${paymentId}/endorse`, data);
   },
+  endorseBillStubForBatch: (batchId: string, data: { stubDate?: string; type?: string; reference?: string; originalAmount?: number; paidAmount?: number; stubFile?: File | null }) => {
+    const form = new FormData();
+    if (data.stubDate) form.append('stubDate', data.stubDate);
+    if (data.type) form.append('type', data.type);
+    if (data.reference) form.append('reference', data.reference);
+    if (data.originalAmount != null) form.append('originalAmount', String(data.originalAmount));
+    if (data.paidAmount != null) form.append('paidAmount', String(data.paidAmount));
+    if (data.stubFile) form.append('stubFile', data.stubFile);
+    return api.post(`/api/payment-batches/${batchId}/endorse-bill-stub`, form, { headers: { 'Content-Type': 'multipart/form-data' } });
+  },
   matchConfirmation: (batchId: string, data: { reference?: string; amount?: number; paidDate?: string; currency?: string; beneficiary?: string; accountMask?: string; paymentIds?: string[] }) => api.post(`/api/payment-batches/${batchId}/match-confirmation`, data),
   bulkConfirmations: (file: File) => { const form = new FormData(); form.append('file', file); return api.post('/api/payment-batches/bulk-confirmations', form, { headers: { 'Content-Type': 'multipart/form-data' } }); },
   markExported: (batchId: string) => api.post(`/api/payment-batches/${batchId}/export`),
@@ -271,6 +281,7 @@ export const qbApi = {
     api.get('/api/qb/reconciliation', { params }),
   recordReconciliation: (data: any) => api.post('/api/qb/reconciliation', data),
   importFile: (file: File, asOfDate?: string) => { const form = new FormData(); form.append('file', file); if (asOfDate) form.append('asOfDate', asOfDate); return api.post('/api/qb/reconciliation/import-file', form, { headers: { 'Content-Type': 'multipart/form-data' } }); },
+  validateFile: (file: File, asOfDate?: string, cutoffDate?: string) => { const form = new FormData(); form.append('file', file); if (asOfDate) form.append('asOfDate', asOfDate); if (cutoffDate) form.append('cutoffDate', cutoffDate); return api.post('/api/qb/reconciliation/validate-file', form, { headers: { 'Content-Type': 'multipart/form-data' } }); },
   resolveReconciliation: (id: string, comments?: string) => api.patch(`/api/qb/reconciliation/${id}/resolve`, { comments }),
 };
 

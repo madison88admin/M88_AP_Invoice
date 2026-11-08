@@ -95,7 +95,7 @@ export class OverrideHierarchy {
   evaluateHierarchy(
     candidate: Candidate,
     overrideResults: OverrideResult[],
-    context?: any
+    _context?: any
   ): HierarchyDecision {
     console.log(`[OverrideHierarchy] Evaluating hierarchy for ${candidate.field}`);
 

@@ -1,6 +1,6 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../middleware/auth';
-import { generateApiKey, hashApiKey } from '../middleware/apiKeyAuth';
+import { generateApiKey } from '../middleware/apiKeyAuth';
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils/logger';

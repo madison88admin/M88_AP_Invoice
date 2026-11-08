@@ -192,7 +192,7 @@ export class FinancialCoherenceEngine {
   /**
    * Generate recommendations based on rule results
    */
-  private generateRecommendations(ruleResults: Map<string, boolean>, structure: FinancialStructure): string[] {
+  private generateRecommendations(ruleResults: Map<string, boolean>, _structure: FinancialStructure): string[] {
     const recommendations: string[] = [];
 
     if (!ruleResults.get('LINE_INTEGRITY')) {

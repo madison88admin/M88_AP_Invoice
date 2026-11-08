@@ -40,6 +40,7 @@ router.post('/:batchId/payment-setup', authorize(UserRole.ACCOUNTING_ASSOCIATE),
 router.post('/:batchId/bank-charge', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.applyBankChargeController);
 router.delete('/:batchId/bank-charge/:paymentId', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.removeBankChargeController);
 router.post('/:batchId/payments/:paymentId/endorse', authorize(UserRole.ACCOUNTING_ASSOCIATE), upload.single('stubFile'), paymentBatchController.endorseBillStubController);
+router.post('/:batchId/endorse-bill-stub', authorize(UserRole.ACCOUNTING_ASSOCIATE), upload.single('stubFile'), paymentBatchController.endorseBillStubForBatchController);
 router.post('/:batchId/match-confirmation', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.matchPaymentConfirmationController);
 router.post('/bulk-confirmations', authorize(UserRole.ACCOUNTING_ASSOCIATE), upload.single('file'), paymentBatchController.bulkMatchPaymentConfirmationsController);
 router.post('/:batchId/submit', authorize(UserRole.ACCOUNTING_ASSOCIATE), paymentBatchController.submitPaymentBatchController);

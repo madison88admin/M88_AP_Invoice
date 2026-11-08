@@ -76,9 +76,8 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
       items: [
         // Payment scheduling is an Accounting-only workspace. Purchasing and
         // admin roles should not see or navigate to this payment queue.
-        { icon: Package, label: 'Payment Schedule', path: '/payment-batches', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'CFO'], badgeKey: 'batches', badgeColor: 'lime' },
+        { icon: Package, label: 'Payment Batches', path: '/payment-batches', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'CFO'], badgeKey: 'batches', badgeColor: 'lime' },
         { icon: DollarSign, label: 'CFO Approval', path: '/cfo-approval', roles: ['CFO', 'IT_ADMIN', 'SUPERADMIN'] },
-        { icon: XCircle, label: 'Cancelled Payment Batches', path: '/cancelled-payment-batches', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'cancelledBatches', badgeColor: 'red' },
         { icon: FileSearch, label: 'Accounting Review', path: '/accounting-review', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'review', badgeColor: 'blue' },
         { icon: CheckCircle, label: 'Approved Invoices', path: '/accounting-approved-invoices', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'accountingApproved', badgeColor: 'lime' },
         { icon: XCircle, label: 'Rejected Invoices', path: '/accounting-rejected-invoices', roles: ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'IT_ADMIN'], badgeKey: 'accountingRejected', badgeColor: 'red' },
@@ -123,7 +122,6 @@ export default function AppLayout({ children, title, icon }: AppLayoutProps) {
     exceptions: invoices.filter(i => i.exceptions.some(e => e.status === 'OPEN' || e.status === 'PENDING')).length,
     onhold: invoices.filter(i => i.status === 'ON_HOLD').length,
     batches: paymentBatches.filter(b => b.status === 'DRAFT').length,
-    cancelledBatches: paymentBatches.filter(b => b.status === 'CANCELLED').length,
     review: invoices.filter(i => ['PENDING_ACCOUNTING', 'APPROVED', 'POSTED_TO_QB', 'PAID', 'PAYMENT_SCHEDULED'].includes(i.status)).length,
     accountingApproved: invoices.filter(i => ['PENDING_ACCOUNTING', 'APPROVED', 'POSTED_TO_QB', 'PAYMENT_SCHEDULED', 'PAYMENT_CONFIRMATION_SENT', 'PAID'].includes(i.status)).length,
     accountingRejected: invoices.filter(i => i.status === 'REJECTED').length,

@@ -207,6 +207,8 @@ model Invoice {
   priority_reason       String?
   priority_evidence_reference String?
   is_urgent             Boolean       @default(false)
+  // Explicit Accounting urgency choice: pay today or include in this week's batch.
+  urgency_type          String?
   late_submission_reason String?
   late_submission_source String?
   hold_reason           String?

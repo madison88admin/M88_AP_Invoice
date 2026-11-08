@@ -6,7 +6,7 @@
  * Soft pruning: reduces edge weights based on confidence and context
  */
 
-import { CandidateGraph, GraphNode, GraphEdge, NodeType, EdgeType } from './CandidateGraphBuilder';
+import { CandidateGraph } from './CandidateGraphBuilder';
 
 export interface PruningConfig {
   maxDistance: number; // Maximum token distance for edge retention

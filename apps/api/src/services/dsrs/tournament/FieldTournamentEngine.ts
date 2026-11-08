@@ -7,7 +7,7 @@
 
 import { Candidate, FieldType, ScoreBreakdown, TournamentResult } from './Candidate';
 import { AnchorHierarchy, AnchorTier } from '../AnchorHierarchy';
-import { CandidateGraph, GraphNode } from '../CandidateGraphBuilder';
+import { CandidateGraph } from '../CandidateGraphBuilder';
 
 export type { TournamentResult } from './Candidate';
 
@@ -235,7 +235,7 @@ export class FieldTournamentEngine {
   /**
    * Rule 4: Consistency Bonus (placeholder for historical data)
    */
-  private applyConsistencyBonus(candidate: Candidate): number {
+  private applyConsistencyBonus(_candidate: Candidate): number {
     // TODO: Implement when historical data is available
     // For now, return 0
     return 0;

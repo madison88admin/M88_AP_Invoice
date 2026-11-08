@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import prisma from '../config/database';
 import { logger } from '../utils/logger';
 import { buildDuplicateIndicators, normalizeInvoiceReference } from './accountingControlService';
+import { findExactFileMatch } from './exactFileIntakeService';
 
 export interface EmailDuplicateResult {
   isDuplicate: boolean;
@@ -37,10 +38,9 @@ export type DuplicateReplacementDecision = {
 };
 
 /**
- * Decide whether an exact duplicate may start a fresh intake cycle.  The old
- * row is never deleted: when replacement is allowed it is marked CANCELLED /
- * SUPERSEDED and linked to the new row.  Approved, paid, batched, or
- * legal-held records remain immutable and therefore keep the duplicate blocked.
+ * Compatibility gate for legacy intake callers. Exact re-delivery never
+ * starts another lifecycle, even if the matching record is cancelled.
+ * Changed documents use the separate coordinator revision-review workflow.
  */
 export async function getDuplicateReplacementDecision(
   existingInvoiceId: string,
@@ -75,9 +75,10 @@ export async function getDuplicateReplacementDecision(
     };
   }
   return {
-    canReplace: true,
+    canReplace: false,
     existingInvoiceId: existing.id,
     existingInvoiceNumber: existing.invoice_number,
+    reason: `Identical content is already recorded as ${existing.invoice_number}. Re-delivery reuses the existing record; only a changed PDF may enter revision review.`,
   };
 }
 
@@ -126,11 +127,13 @@ export async function supersedeInvoiceForReplacement(
 /**
  * Level 1: Check by Internet Message ID (same email forwarded/re-sent)
  */
-async function checkByEmailMessageId(internetMessageId: string): Promise<{ invoiceId: string; invoiceNumber: string } | null> {
+async function checkByEmailMessageId(internetMessageId: string, fileHash: string): Promise<{ invoiceId: string; invoiceNumber: string } | null> {
   try {
     const result = await prisma.$queryRaw`
       SELECT id, invoice_number FROM "AP_Invoice"."APInvoice_Invoice"
       WHERE ocr_raw_data->>'email_internet_message_id' = ${internetMessageId}
+      AND invoice_hash = ${fileHash}
+      ORDER BY CASE WHEN status IN ('CANCELLED', 'REJECTED') THEN 1 ELSE 0 END, created_at ASC, id ASC
       LIMIT 1
     `;
     const row = Array.isArray(result) ? result[0] : null;
@@ -147,15 +150,11 @@ async function checkByEmailMessageId(internetMessageId: string): Promise<{ invoi
 async function checkByFileHash(fileBuffer: Buffer): Promise<{ invoiceId: string; invoiceNumber: string } | null> {
   const fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
   try {
-    const result = await prisma.$queryRaw`
-      SELECT id, invoice_number FROM "AP_Invoice"."APInvoice_Invoice"
-      WHERE invoice_hash = ${fileHash}
-      LIMIT 1
-    `;
-    const row = Array.isArray(result) ? result[0] : null;
+    const row = await findExactFileMatch(fileHash);
     if (row) return { invoiceId: row.id, invoiceNumber: row.invoice_number };
-  } catch {
-    // Non-critical
+  } catch (error) {
+    // Fail closed. A database failure must not silently permit a second AP row.
+    throw error;
   }
   return null;
 }
@@ -312,7 +311,7 @@ export async function checkEmailDuplicate(
 ): Promise<EmailDuplicateResult> {
   // Level 1: Email Message ID
   if (emailMetadata?.internetMessageId) {
-    const emailMatch = await checkByEmailMessageId(emailMetadata.internetMessageId);
+    const emailMatch = await checkByEmailMessageId(emailMetadata.internetMessageId, generateFileHash(fileBuffer));
     if (emailMatch) {
       logger.info(`Duplicate detected (Level 1 - Email Message ID): ${emailMatch.invoiceNumber}`);
       return {

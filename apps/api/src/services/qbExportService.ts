@@ -139,13 +139,20 @@ export async function exportQBBills(filters: QBBillExportFilters = {}, userId?: 
 
   const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 
-  await prisma.auditLog.create({
-    data: {
-      action: 'QB_BILLS_EXPORT',
-      performed_by: userId || 'system',
-      note: `QB Bills export generated: ${billRows.length} bill(s), total ${currencies} ${totalAmount.toFixed(2)}`,
-    },
-  });
+  // Audit logging must not make a valid workbook download fail. This is
+  // especially important for read-only QA/reporting database users, where
+  // the export query is allowed but audit-log writes are intentionally not.
+  try {
+    await prisma.auditLog.create({
+      data: {
+        action: 'QB_BILLS_EXPORT',
+        performed_by: userId || 'system',
+        note: `QB Bills export generated: ${billRows.length} bill(s), total ${currencies} ${totalAmount.toFixed(2)}`,
+      },
+    });
+  } catch (error) {
+    logger.warn('QB Bills export completed but audit logging failed', { error });
+  }
 
   logger.info(`QB Bills export: ${billRows.length} bills, total ${totalAmount.toFixed(2)}`);
 

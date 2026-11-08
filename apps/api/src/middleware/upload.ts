@@ -22,4 +22,12 @@ const upload = multer({
   fileFilter,
 });
 
+// QuickBooks reports can be larger than invoice PDFs. Keep the normal upload
+// limit unchanged while allowing Accounting reports up to 25 MB.
+export const qbUpload = multer({
+  storage,
+  limits: { fileSize: 25 * 1024 * 1024 },
+  fileFilter,
+});
+
 export default upload;

@@ -8,6 +8,7 @@ import { inAppNotificationService } from './inAppNotificationService';
 import { eventBroadcaster } from './eventBroadcaster';
 import { logger } from '../utils/logger';
 import { getApprovalReadiness } from './approvalReadinessService';
+import { getPayableBlockReason } from './payableDocumentGuard';
 
 interface ApprovalRouteStep {
   role: SignatoryRole;
@@ -604,6 +605,37 @@ export async function approveInvoice(
     );
   }
 
+  // Accounting is the final human checkpoint before posting/payment. Re-run
+  // the header/document-purpose decision here so an attachment that was
+  // misclassified upstream cannot be approved just because it has invoice-like
+  // fields. AI classification is the deciding signal for ambiguous headers;
+  // deterministic shipment/supporting-document safeguards still apply.
+  const isAccountingReviewer = ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR'].includes(userRole);
+  if (isAccountingReviewer) {
+    const ocrRaw = invoice.ocr_raw_data && typeof invoice.ocr_raw_data === 'object'
+      ? invoice.ocr_raw_data as Record<string, any>
+      : {};
+    const headerBlockReason = getPayableBlockReason({
+      document_type: ocrRaw.document_type,
+      source_document_type: (invoice as any).source_document_type,
+      invoice_type: (invoice as any).invoice_type,
+      is_non_invoice_document: ocrRaw.is_non_invoice_document,
+      raw_text: typeof ocrRaw.raw_text === 'string' ? ocrRaw.raw_text : '',
+      fileName: String((invoice as any).pdf_path || (invoice as any).raw_file_url || ''),
+      invoice_number: (invoice as any).invoice_number,
+      vendor_name: (invoice as any).vendor?.name || (invoice as any).vendor_name_raw,
+      total_amount: (invoice as any).total_amount,
+      invoice_date: (invoice as any).invoice_date,
+      document_classification: ocrRaw.document_classification,
+    });
+    if (headerBlockReason) {
+      throw new AppError(
+        `Cannot approve — invoice header/document check failed: ${headerBlockReason}`,
+        400,
+      );
+    }
+  }
+
   // Map user role to allowed signatory roles
   const signatoryRoles = mapUserRoleToSignatoryRoles(userRole);
   if (signatoryRoles.length === 0) {
@@ -746,8 +778,16 @@ export async function approveInvoice(
   // Update the signature with full attribution. signatory_user_id is what
   // makes "Returned to Me" match by user ID — it survives return/reject
   // re-open cycles because the re-open only clears signed_at.
-  await prisma.signature.update({
-    where: { id: pendingSignature.id },
+  // Claim the pending signature atomically. Approval requests can be retried
+  // by the browser, a proxy, or a second open tab; only the first request may
+  // transition the signature. Without this compare-and-set guard, concurrent
+  // requests can all write an approval and create duplicate stage timestamps.
+  const signatureClaim = await prisma.signature.updateMany({
+    where: {
+      id: pendingSignature.id,
+      signed_at: null,
+      approval_status: { in: ['PENDING', 'RECONFIRMATION_REQUIRED'] },
+    },
     data: {
       signatory_name: signerName,
       signatory_user_id: userId,
@@ -759,6 +799,19 @@ export async function approveInvoice(
       invalidation_reason: null,
     },
   });
+  if (signatureClaim.count !== 1) {
+    const current = await prisma.invoice.findUnique({
+      where: { id: invoiceId },
+      select: { status: true, current_approver_role: true },
+    });
+    // Another request already claimed this signature. Treat an already
+    // advanced invoice as an idempotent success; otherwise surface a conflict
+    // and leave the workflow unchanged for the user to refresh.
+    if (current && current.current_approver_role !== signedRole) {
+      return { success: true, message: 'Approval was already processed; the invoice advanced to the next approver.' };
+    }
+    throw new AppError('This approval is already being processed. Refresh the invoice before trying again.', 409);
+  }
 
   // Exit current stage timestamp — calculate breach status
   const currentStage = await prisma.stageTimestamp.findFirst({

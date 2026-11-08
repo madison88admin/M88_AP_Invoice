@@ -5,8 +5,7 @@
  * Computes weighted dominance instead of hard rules
  */
 
-import { Candidate, FieldType } from '../../tournament/Candidate';
-import { RegionType } from '../LayoutGraphBuilder';
+import { Candidate } from '../../tournament/Candidate';
 import { HybridScoreResult } from './HybridScoringEngine';
 
 export interface ConflictWeights {
@@ -45,7 +44,7 @@ export class SoftConflictResolver {
   resolveConflicts(
     candidates: Candidate[],
     scoringResults: HybridScoreResult[],
-    context?: any
+    _context?: any
   ): ConflictResolution {
     console.log(`[SoftConflictResolver] Resolving conflicts for ${candidates.length} candidates`);
 

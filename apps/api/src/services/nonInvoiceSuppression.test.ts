@@ -9,8 +9,8 @@ describe('non-invoice filename suppression', () => {
   });
 
   it('does not suppress invoice document types that can be payable invoices', () => {
-    expect(isObviouslyNonInvoiceFilename('Commercial Invoice CI-123.pdf')).toBe(true);
-    expect(isObviouslyNonInvoiceFilename('FAKTUR PAJAK E832798169.pdf')).toBe(true);
+    expect(isObviouslyNonInvoiceFilename('Commercial Invoice CI-123.pdf')).toBe(false);
+    expect(isObviouslyNonInvoiceFilename('FAKTUR PAJAK E832798169.pdf')).toBe(false);
     expect(isObviouslyNonInvoiceFilename('Tech Pack SS27.pdf')).toBe(true);
     expect(isObviouslyNonInvoiceFilename('Trim Receipt PO-123.pdf')).toBe(true);
     expect(isObviouslyNonInvoiceFilename("Forwarder's Billing Invoice Expeditors.pdf")).toBe(true);
@@ -22,10 +22,10 @@ describe('non-invoice filename suppression', () => {
     expect(hasStrongNonInvoiceHeading('ACME TEXTILES\nPACKING LIST\nInvoice No: INV-123\nQty: 10')).toBe(true);
   });
 
-  it('blocks excluded commercial invoices while keeping an invoice that references a packing list eligible', () => {
+  it('leaves commercial/tax invoice headers to AI while keeping shipment headings suppressed', () => {
     expect(hasStrongNonInvoiceHeading('COMMERCIAL INVOICE\nInvoice No: INV-123\nPacking List No: PL-456')).toBe(false);
     expect(hasStrongNonInvoiceHeading('Invoice No: INV-123\nPacking List No: PL-456')).toBe(false);
-    expect(hasStrongNonInvoiceHeading('FAKTUR PAJAK\nKode dan Nomor Seri Faktur Pajak')).toBe(true);
+    expect(hasStrongNonInvoiceHeading('FAKTUR PAJAK\nKode dan Nomor Seri Faktur Pajak')).toBe(false);
     expect(hasStrongNonInvoiceHeading("FORWARDER'S BILLING INVOICE\nInvoice No: FWD-123")).toBe(true);
   });
 });

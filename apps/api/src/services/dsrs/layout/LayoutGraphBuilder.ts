@@ -245,7 +245,7 @@ export class LayoutGraphBuilder {
   /**
    * Extract blocks from regions
    */
-  private extractBlocks(regions: RegionNode[], text: string): BlockNode[] {
+  private extractBlocks(regions: RegionNode[], _text: string): BlockNode[] {
     const blocks: BlockNode[] = [];
     let blockId = 0;
 
@@ -287,7 +287,7 @@ export class LayoutGraphBuilder {
    * Detect text alignment
    */
   private detectAlignment(line: string): 'LEFT' | 'CENTER' | 'RIGHT' {
-    const trimmed = line.trim();
+    const _trimmed = line.trim();
     const leftPadding = line.length - line.trimLeft().length;
     const rightPadding = line.length - line.trimRight().length;
 
@@ -301,7 +301,7 @@ export class LayoutGraphBuilder {
    */
   private buildEdges(regions: RegionNode[], blocks: BlockNode[]): LayoutEdge[] {
     const edges: LayoutEdge[] = [];
-    let edgeId = 0;
+    const _edgeId = 0;
 
     // Create CONTAINS edges (region → block)
     for (const region of regions) {

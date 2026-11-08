@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { Fragment, useState, useEffect, useCallback, useRef } from 'react';
 import { Package, Play, X, XCircle, AlertCircle, CheckCircle, Clock, DollarSign, ArrowLeft, CheckSquare, Calendar, CreditCard, Loader2, Paperclip, Pencil, Download, Upload, ChevronDown, ChevronUp, SlidersHorizontal, Send, FileText } from 'lucide-react';
-import api, { paymentBatchApi, vendorApi, qbApi, invoiceApi } from '../lib/api';
+import api, { paymentBatchApi, qbApi, invoiceApi } from '../lib/api';
 import { splitServerAndLocalSelections, retainLocalSelections, toggleId, toPayableIds, isLocalOnlySelection } from '../lib/queueSelection';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
@@ -125,7 +125,48 @@ interface VendorBillStub {
   total_amount: number;
   payment_reference?: string | null;
   status: string;
+  proof_file_url?: string | null;
+  proof_file_name?: string | null;
   lines: Array<{ payment_id: string; invoice_id: string; amount: number }>;
+}
+
+interface ApprovalTimelineEvent {
+  id: string;
+  type: string;
+  title: string;
+  detail?: string | null;
+  actor?: string | null;
+  status?: string | null;
+  created_at: string;
+}
+
+interface ApprovalTimeline {
+  invoice: {
+    id: string;
+    invoice_number: string;
+    vendor_name: string;
+    status: string;
+    total_amount: number;
+    currency: string;
+  };
+  events: ApprovalTimelineEvent[];
+}
+
+interface QBValidationReport {
+  validated: number;
+  cleanup?: { skipped_rows?: number };
+  summary?: { clean_matched?: number; review_required?: number; reasons?: Record<string, number> };
+  results: Array<{
+    result: string;
+    invoice_id?: string;
+    invoice_number?: string;
+    vendor_name?: string;
+    qb_amount?: number;
+    qb_open_balance?: number;
+    qb_currency?: string;
+    validation_status?: 'PASS' | 'REVIEW_REQUIRED';
+    validation_reasons?: string[];
+  }>;
 }
 
 /** Normalize a batch payload from the API into the component's PaymentBatch shape. */
@@ -157,6 +198,8 @@ function mapBatchPayload(b: any): PaymentBatch {
       total_amount: Number(s.total_amount || 0),
       payment_reference: s.payment_reference || null,
       status: s.status || 'DRAFT',
+      proof_file_url: s.lines?.find((l: any) => l.payment?.bill_stub?.proof_file_url)?.payment?.bill_stub?.proof_file_url || null,
+      proof_file_name: s.lines?.find((l: any) => l.payment?.bill_stub?.proof_file_url)?.payment?.bill_stub?.proof_file_name || null,
       lines: (s.lines || []).map((l: any) => ({ payment_id: l.payment_id, invoice_id: l.invoice_id, amount: Number(l.amount || 0) })),
     })),
     payments: (b.payments || []).map((p: any) => ({
@@ -304,7 +347,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
   const [stuckBatches, setStuckBatches] = useState<(PaymentBatch & { days_stuck?: number; pending_payments?: number })[]>([]);
   const [stuckLoading, setStuckLoading] = useState(false);
   const [scheduledPayments, setScheduledPayments] = useState<ScheduledPayment[]>([]);
-  const [bulkApproving, setBulkApproving] = useState(false);
+  const [, setBulkApproving] = useState(false);
   const [postingInvoiceId, setPostingInvoiceId] = useState<string | null>(null);
   const [selectedBatch, setSelectedBatch] = useState<PaymentBatch | null>(null);
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -331,7 +374,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
   const [amountPreviewToken, setAmountPreviewToken] = useState('');
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [filters, setFilters] = useState({
-    vendorId: '', currency: 'USD', dateFrom: '', dateTo: '', search: '',
+    vendorId: '', dateFrom: '', dateTo: '', search: '',
     dueMonth: '', dueFrom: '', dueTo: '',
     invoiceDateFrom: '', invoiceDateTo: '',
     approvalFrom: '', approvalTo: '',
@@ -344,8 +387,8 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
   const [remarksTarget, setRemarksTarget] = useState<ScheduledPayment | null>(null);
   const [remarksDraft, setRemarksDraft] = useState('');
   const [remarksSaving, setRemarksSaving] = useState(false);
-  const [pendingReviewCount, setPendingReviewCount] = useState(0);
-  const [pendingHeldCount, setPendingHeldCount] = useState(0);
+  const [, setPendingReviewCount] = useState(0);
+  const [, setPendingHeldCount] = useState(0);
   const [showApproveAllModal, setShowApproveAllModal] = useState(false);
   const [approveAllIds, setApproveAllIds] = useState<string[]>([]);
   const [approveAllNote, setApproveAllNote] = useState('');
@@ -357,30 +400,36 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
   const [payBillsForm, setPayBillsForm] = useState({ paymentMethod: '', bankAccount: '', paymentDate: '' });
   const [payBillsSaving, setPayBillsSaving] = useState(false);
   const [quickSubmittingId, setQuickSubmittingId] = useState<string | null>(null);
-  const [bulkEndorsing, setBulkEndorsing] = useState(false);
+  const [, setBulkEndorsing] = useState(false);
   const [qbExporting, setQbExporting] = useState(false);
   const [qbImporting, setQbImporting] = useState(false);
+  const [qbValidationReport, setQbValidationReport] = useState<QBValidationReport | null>(null);
+  const [qbVendorFilter, setQbVendorFilter] = useState('ALL');
   const [qbAsOfDate, setQbAsOfDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [weeklyContext, setWeeklyContext] = useState({
     cutoffDate: nextWednesdayInputValue(),
-    asOfDate: new Date().toISOString().slice(0, 10),
     scheduleRef: '',
     applyCutoff: true,
   });
-  const [bulkReleasing, setBulkReleasing] = useState(false);
+  const [, setBulkReleasing] = useState(false);
   const [bulkPostingAll, setBulkPostingAll] = useState(false);
-  const [bulkMarking, setBulkMarking] = useState(false);
+  const [, setBulkMarking] = useState(false);
   const [bulkActionBusy, setBulkActionBusy] = useState<'post' | 'mark' | null>(null);
   const [reconExporting, setReconExporting] = useState(false);
   const [stubTarget, setStubTarget] = useState<Payment | null>(null);
   const [stubForm, setStubForm] = useState({ stubDate: '', type: 'Bank Transfer', reference: '', originalAmount: '', balance: '', discount: '', paidAmount: '' });
   const [stubFile, setStubFile] = useState<File | null>(null);
   const [stubSaving, setStubSaving] = useState(false);
+  const [stubApplyToBatch, setStubApplyToBatch] = useState(false);
   const [showMatchModal, setShowMatchModal] = useState(false);
   const [matchForm, setMatchForm] = useState({ reference: '', amount: '', paidDate: new Date().toISOString().split('T')[0], currency: 'USD', beneficiary: '', accountMask: '' });
   const [matchSelected, setMatchSelected] = useState<Set<string>>(new Set());
   const [matchSaving, setMatchSaving] = useState(false);
   const [bulkImporting, setBulkImporting] = useState(false);
+  const [hoverApproval, setHoverApproval] = useState<{ invoiceId: string; x: number; y: number } | null>(null);
+  const [approvalTimeline, setApprovalTimeline] = useState<ApprovalTimeline | null>(null);
+  const [approvalTimelineLoading, setApprovalTimelineLoading] = useState(false);
+  const approvalRequestRef = useRef(0);
 
   const isAssociate = user?.role === 'ACCOUNTING_ASSOCIATE';
   const isSupervisor = user?.role === 'ACCOUNTING_SUPERVISOR';
@@ -400,6 +449,44 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
     setSelectedReturnPaymentIds(new Set());
     window.setTimeout(() => document.getElementById('payment-batch-details')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
   }, []);
+
+  const showApprovalTimeline = useCallback(async (invoiceId: string, x: number, y: number) => {
+    const requestId = ++approvalRequestRef.current;
+    setHoverApproval({ invoiceId, x, y });
+    setApprovalTimeline(null);
+    setApprovalTimelineLoading(true);
+    try {
+      const response = await invoiceApi.getTimeline(invoiceId);
+      if (requestId === approvalRequestRef.current) setApprovalTimeline(response.data as ApprovalTimeline);
+    } catch (error) {
+      console.error('Failed to load invoice approval timeline:', error);
+      if (requestId === approvalRequestRef.current) setApprovalTimeline(null);
+    } finally {
+      if (requestId === approvalRequestRef.current) setApprovalTimelineLoading(false);
+    }
+  }, []);
+
+  const hideApprovalTimeline = useCallback(() => {
+    approvalRequestRef.current += 1;
+    setHoverApproval(null);
+    setApprovalTimeline(null);
+    setApprovalTimelineLoading(false);
+  }, []);
+
+  // The hover card is an approval view, not a complete audit log. Keep only
+  // actual named approvers and collapse repeated signature rows for the same
+  // user/role/status so intake, watcher, payment, and system events do not
+  // overwhelm the workflow summary.
+  const compactApprovalEvents = Array.from(
+    (approvalTimeline?.events || [])
+      .filter((event) => event.type === 'approval' && Boolean(event.actor))
+      .reduce((byApprover, event) => {
+        const key = `${event.actor}|${event.title}|${event.status || ''}`;
+        byApprover.set(key, event);
+        return byApprover;
+      }, new Map<string, ApprovalTimelineEvent>())
+      .values(),
+  ).sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
   const handleBulkConfirmationImport = async (file: File) => {
     setBulkImporting(true);
@@ -443,6 +530,30 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
       loadStuckBatches();
     }
   }, [loadStuckBatches]);
+
+  // The supplier picker must represent the current open, unbatched payment
+  // queue—not the full vendor master. This keeps settled suppliers out and
+  // lets newly imported open invoices reappear after the queue refreshes.
+  const loadEligibleVendors = useCallback(async () => {
+    try {
+      const eligibilityFilters = weeklyContext.applyCutoff && weeklyContext.cutoffDate
+        ? { dueTo: weeklyContext.cutoffDate }
+        : {};
+      const response = await paymentBatchApi.getScheduledPayments(eligibilityFilters);
+      const data = response.data?.payments || response.data || [];
+      const unique = new Map<string, { id: string; name: string }>();
+      data.forEach((payment: any) => {
+        const vendor = payment.invoice?.vendor;
+        const id = vendor?.id || payment.invoice?.vendor_id;
+        const name = String(vendor?.name || '').trim();
+        if (id && name && !unique.has(id)) unique.set(id, { id, name });
+      });
+      setVendorList(Array.from(unique.values()).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })));
+    } catch (error) {
+      console.error('Failed to load eligible payment suppliers:', error);
+      setVendorList([]);
+    }
+  }, [weeklyContext.applyCutoff, weeklyContext.cutoffDate]);
 
   const loadScheduledPayments = useCallback(async () => {
     try {
@@ -490,7 +601,13 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
           bill_to_entity: p.invoice?.bill_to_entity || '',
         },
       }));
+      mapped.sort((a: ScheduledPayment, b: ScheduledPayment) => {
+        const vendorOrder = a.invoice.vendor.name.localeCompare(b.invoice.vendor.name, undefined, { sensitivity: 'base' });
+        if (vendorOrder !== 0) return vendorOrder;
+        return a.invoice.invoice_number.localeCompare(b.invoice.invoice_number, undefined, { numeric: true, sensitivity: 'base' });
+      });
       setScheduledPayments(mapped);
+      void loadEligibleVendors();
       const selected = new Set<string>();
       mapped.forEach((p: ScheduledPayment) => {
         if (p.selected_for_batch && p.selected_by === user?.id) selected.add(p.id);
@@ -516,10 +633,10 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
       setScheduledPayments([]);
       setFilteredTotals([]);
     }
-  }, [filters, weeklyContext.applyCutoff, weeklyContext.cutoffDate, user?.id, user?.role]);
+  }, [filters, weeklyContext.applyCutoff, weeklyContext.cutoffDate, user?.id, user?.role, loadEligibleVendors]);
 
   // Bulk approve all pending-review invoices at once (Supervisor)
-  const handleBulkApproveAll = async () => {
+  const _handleBulkApproveAll = async () => {
     const pendingReview = scheduledPayments.filter(p => p.status === 'FOR_PAYMENT');
     if (pendingReview.length === 0) return;
     setBulkApproving(true);
@@ -562,7 +679,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
   };
 
   // Bulk release all held payments at once (Supervisor)
-  const handleReleaseAllHeld = async () => {
+  const _handleReleaseAllHeld = async () => {
     const held = scheduledPayments.filter(p => p.status === 'HELD_BELOW_100');
     if (held.length === 0) return;
     setBulkReleasing(true);
@@ -696,10 +813,6 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
       const [loadedBatches] = await Promise.all([
         isPurchasing ? Promise.resolve([] as PaymentBatch[]) : loadBatches(),
         loadScheduledPayments(),
-        vendorApi.getAll().then((res) => {
-          const vendors = (res.data || []).map((v: any) => ({ id: v.id, name: v.name }));
-          setVendorList(vendors);
-        }).catch(() => setVendorList([])),
       ]);
       // Deep link: /payment-batches?batch=<batchId> opens that batch directly
       // (used by "Post & Create Batch" actions elsewhere in the app).
@@ -807,17 +920,22 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
     }
   };
 
-  const handleImportQBReport = async (file: File | undefined) => {
+  const handleValidateQBReport = async (file: File | undefined) => {
     if (!file) return;
     setQbImporting(true);
     try {
-      const response = await qbApi.importFile(file, qbAsOfDate);
-      const imported = Number(response.data?.imported || 0);
+      const response = await qbApi.validateFile(file, qbAsOfDate, weeklyContext.cutoffDate);
+      setQbValidationReport(response.data as QBValidationReport);
+      setQbVendorFilter('ALL');
+      const validated = Number(response.data?.validated || 0);
       const skipped = Number(response.data?.cleanup?.skipped_rows || 0);
-      showToast(`${imported} QuickBooks row(s) imported and reconciled${skipped ? `; ${skipped} report row(s) skipped during cleanup` : ''}. Re-imports update existing rows.`, 'success');
-      await loadScheduledPayments();
+      const summary = response.data?.summary || {};
+      const matched = Number(summary.clean_matched ?? summary.MATCHED ?? 0);
+      const exceptions = Number(summary.review_required ?? Math.max(0, validated - matched));
+      const reasonCounts = Object.entries(summary.reasons || {}).slice(0, 3).map(([reason, count]) => `${String(reason).replace(/_/g, ' ').toLowerCase()} (${count})`).join(', ');
+      showToast(`${validated} QuickBooks row(s) validated: ${matched} passed, ${exceptions} needing review${reasonCounts ? ` — ${reasonCounts}` : ''}${skipped ? `; ${skipped} report row(s) skipped` : ''}. No records were saved.`, exceptions ? 'error' : 'success');
     } catch (error: any) {
-      showToast(error?.response?.data?.error?.message || 'Failed to import QuickBooks report', 'error');
+      showToast(error?.response?.data?.error?.message || error?.response?.data?.message || 'Failed to validate QuickBooks report', 'error');
     } finally { setQbImporting(false); }
   };
 
@@ -1081,7 +1199,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
         const opened = target || mapBatchPayload(firstBatch);
         setSelectedBatch(opened);
         showToast(
-          `Batch ${opened.batch_number} created — complete the Payment Setup and upload a bill stub file for every payment, then mark it ready.`,
+          `Batch ${opened.batch_number} created — complete the Payment Setup and upload one matching bill stub for the batch, then mark it ready.`,
           'success'
         );
       } else {
@@ -1154,8 +1272,14 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
   // be marked ready. The Associate owns the complete payment-batch flow.
   const payBillsEditable = isAssociate && ['DRAFT', 'RETURNED_FOR_CORRECTION'].includes(selectedBatch?.status || '');
   const payBillsComplete = Boolean(selectedBatch?.payment_method && selectedBatch?.payment_date);
-  const missingBillStubCount = selectedBatch?.payments.filter((payment) => !payment.bill_stub?.proof_file_url).length ?? 0;
-  const billStubFilesComplete = Boolean(selectedBatch && selectedBatch.payments.length > 0 && missingBillStubCount === 0);
+  const hasConsolidatedBatchStub = Boolean(selectedBatch?.vendor_bill_stubs?.some((stub) => Boolean(stub.proof_file_url)));
+  const rawMissingBillStubCount = selectedBatch?.payments.filter((payment) => !payment.bill_stub?.proof_file_url).length ?? 0;
+  const missingBillStubCount = hasConsolidatedBatchStub ? 0 : rawMissingBillStubCount;
+  const billStubFilesComplete = Boolean(selectedBatch && selectedBatch.payments.length > 0 && (hasConsolidatedBatchStub || rawMissingBillStubCount === 0));
+  const batchStubVendorKeys = selectedBatch?.payments.map((payment) => payment.invoice.vendor.name.trim().toUpperCase()).filter(Boolean) || [];
+  const batchStubCurrencyKeys = selectedBatch?.payments.map((payment) => String(payment.currency || selectedBatch.currency || 'USD').toUpperCase()) || [];
+  const canApplyBatchStub = Boolean(selectedBatch && selectedBatch.payments.length > 0 && new Set(batchStubVendorKeys).size === 1 && new Set(batchStubCurrencyKeys).size === 1 && !(selectedBatch.integrity_issues?.length));
+  const batchStubExpectedTotal = selectedBatch?.payments.reduce((sum, payment) => sum + Number(payment.amount || 0) + Number(payment.bank_charge_amount || 0), 0) || 0;
 
   // Seed the Pay Bills form whenever a different batch is opened (default date = next Wednesday).
   useEffect(() => {
@@ -1181,7 +1305,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
         bankAccount: payBillsForm.bankAccount.trim() || null,
         paymentDate: payBillsForm.paymentDate,
       });
-      showToast('Payment setup saved — upload all bill stub files before marking the batch ready', 'success');
+      showToast('Payment setup saved — upload one consolidated bill stub for the batch before marking it ready', 'success');
       await Promise.all([loadBatches(), refreshSelectedBatch(selectedBatch.id)]);
     } catch (error: any) {
       const msg = error?.response?.data?.error?.message || 'Failed to save payment setup';
@@ -1204,18 +1328,19 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
     return true;
   });
 
-  const openStubModal = (payment: Payment) => {
+  const openStubModal = (payment: Payment, applyToBatch = false) => {
     const stub = payment.bill_stub;
     const groupedTotal = Number(payment.amount);
     setStubTarget(payment);
+    setStubApplyToBatch(applyToBatch);
     setStubForm({
       stubDate: stub?.stub_date ? new Date(stub.stub_date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
       type: stub?.type || 'Bank Transfer',
       reference: stub?.reference || '',
-      originalAmount: stub?.original_amount != null ? String(stub.original_amount) : String(groupedTotal),
-      balance: stub?.balance != null ? String(stub.balance) : String(groupedTotal),
+      originalAmount: applyToBatch ? String(batchStubExpectedTotal) : (stub?.original_amount != null ? String(stub.original_amount) : String(groupedTotal)),
+      balance: applyToBatch ? String(batchStubExpectedTotal) : (stub?.balance != null ? String(stub.balance) : String(groupedTotal)),
       discount: stub?.discount != null ? String(stub.discount) : '',
-      paidAmount: stub?.paid_amount != null ? String(stub.paid_amount) : String(groupedTotal),
+      paidAmount: applyToBatch ? String(batchStubExpectedTotal) : (stub?.paid_amount != null ? String(stub.paid_amount) : String(groupedTotal)),
     });
     setStubFile(null);
   };
@@ -1228,18 +1353,31 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
     }
     setStubSaving(true);
     try {
-      await paymentBatchApi.endorseBillStub(selectedBatch.id, stubTarget.id, {
-        stubDate: stubForm.stubDate,
-        type: stubForm.type,
-        reference: stubForm.reference,
-        originalAmount: stubForm.originalAmount ? Number(stubForm.originalAmount) : undefined,
-        balance: stubForm.balance ? Number(stubForm.balance) : undefined,
-        discount: stubForm.discount ? Number(stubForm.discount) : undefined,
-        paidAmount: stubForm.paidAmount ? Number(stubForm.paidAmount) : undefined,
-        stubFile,
-      });
-      showToast('Bill stub file saved — the payment can proceed in the batch', 'success');
+      if (stubApplyToBatch) {
+        const response = await paymentBatchApi.endorseBillStubForBatch(selectedBatch.id, {
+          stubDate: stubForm.stubDate,
+          type: stubForm.type,
+          reference: stubForm.reference,
+          originalAmount: stubForm.originalAmount ? Number(stubForm.originalAmount) : undefined,
+          paidAmount: stubForm.paidAmount ? Number(stubForm.paidAmount) : undefined,
+          stubFile,
+        });
+        showToast(`One bill stub applied and matched to ${response.data?.payment_count || selectedBatch.payments.length} invoices`, 'success');
+      } else {
+        await paymentBatchApi.endorseBillStub(selectedBatch.id, stubTarget.id, {
+          stubDate: stubForm.stubDate,
+          type: stubForm.type,
+          reference: stubForm.reference,
+          originalAmount: stubForm.originalAmount ? Number(stubForm.originalAmount) : undefined,
+          balance: stubForm.balance ? Number(stubForm.balance) : undefined,
+          discount: stubForm.discount ? Number(stubForm.discount) : undefined,
+          paidAmount: stubForm.paidAmount ? Number(stubForm.paidAmount) : undefined,
+          stubFile,
+        });
+        showToast('Bill stub file saved — the payment can proceed in the batch', 'success');
+      }
       setStubTarget(null);
+      setStubApplyToBatch(false);
       await Promise.all([loadBatches(), refreshSelectedBatch(selectedBatch.id)]);
     } catch (error: any) {
       const msg = error?.response?.data?.error?.message || 'Failed to endorse bill stub';
@@ -1583,18 +1721,31 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
     ? statusVisibleBatches.filter((b) => `${b.batch_number} ${b.status}`.toLowerCase().includes(normalizedBatchSearch))
     : statusVisibleBatches;
 
+  const qbVendorOptions = qbValidationReport
+    ? Array.from(
+        qbValidationReport.results.reduce((counts, row) => {
+          const vendor = row.vendor_name?.trim() || 'Missing vendor';
+          counts.set(vendor, (counts.get(vendor) || 0) + 1);
+          return counts;
+        }, new Map<string, number>())
+      ).sort(([left], [right]) => left.localeCompare(right))
+    : [];
+  const qbFilteredResults = qbValidationReport
+    ? qbValidationReport.results.filter((row) => qbVendorFilter === 'ALL' || (row.vendor_name?.trim() || 'Missing vendor') === qbVendorFilter)
+    : [];
+
   const dateCell = (d?: string | null) => (d ? new Date(d).toLocaleDateString() : '—');
   const filterLabel: React.CSSProperties = { display: 'block', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4, color: 'var(--text-muted)' };
   const filterInput: React.CSSProperties = { width: '100%', padding: '8px 12px', borderRadius: 8, fontSize: 13, background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' };
   const filterRangeInput: React.CSSProperties = { flex: 1, minWidth: 0, padding: '8px 10px', borderRadius: 8, fontSize: 13, background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' };
-  const emptyFilters = { vendorId: '', currency: 'USD', dateFrom: '', dateTo: '', search: '', dueMonth: '', dueFrom: '', dueTo: '', invoiceDateFrom: '', invoiceDateTo: '', approvalFrom: '', approvalTo: '', brand: '', memo: '', category: '', aging: '', status: '' };
+  const emptyFilters = { vendorId: '', dateFrom: '', dateTo: '', search: '', dueMonth: '', dueFrom: '', dueTo: '', invoiceDateFrom: '', invoiceDateTo: '', approvalFrom: '', approvalTo: '', brand: '', memo: '', category: '', aging: '', status: '' };
 
   return (
     <div className="space-y-6">
         {/* Tabs */}
         <div className="flex gap-2">
           <button
-            onClick={() => setActiveTab('scheduled')}
+            onClick={() => { setActiveTab('scheduled'); setSelectedBatch(null); }}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all"
             style={
               activeTab === 'scheduled'
@@ -1611,7 +1762,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
             )}
           </button>
           {!isPurchasing && <button
-            onClick={() => { setActiveTab('batches'); setBatchStatusFilter(''); }}
+            onClick={() => { setActiveTab('batches'); setBatchStatusFilter(''); setSelectedBatch(null); }}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all"
             style={
               activeTab === 'batches'
@@ -1633,7 +1784,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
             )}
           </button>}
           {!isPurchasing && <button
-            onClick={() => { setActiveTab('processed'); setBatchStatusFilter(''); }}
+            onClick={() => { setActiveTab('processed'); setBatchStatusFilter(''); setSelectedBatch(null); }}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all"
             style={
               activeTab === 'processed'
@@ -1650,7 +1801,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
             )}
           </button>}
           {!isPurchasing && <button
-            onClick={() => { setActiveTab('cancelled'); setBatchStatusFilter(''); }}
+            onClick={() => { setActiveTab('cancelled'); setBatchStatusFilter(''); setSelectedBatch(null); }}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all"
             style={
               activeTab === 'cancelled'
@@ -1696,7 +1847,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                   <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{isAccountingRole ? 'Only posted, unpaid, unbatched invoices can be selected for payment. Invoices awaiting QuickBooks posting are shown as posting work and cannot enter a batch.' : 'Invoices requiring purchasing review'}</p>
                 </div>
                 <div className="flex items-center gap-3">
-                  {isAssociate && (
+                  {isAccountingRole && (
                     <div className="flex items-center gap-2 rounded-lg px-2 py-1" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
                       <label className="text-[10px] font-semibold uppercase" style={{ color: 'var(--text-muted)' }} title="As-of date printed on the QuickBooks Unpaid Bills report">QB as-of</label>
                       <input
@@ -1740,38 +1891,28 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                       </button>
                     </>
                   )}
-                  {isAssociate && (
+                  {isAccountingRole && (
                     <label
                       className="flex items-center px-3 py-2 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
-                      title="Upload the QuickBooks Unpaid Bills report; matching invoices receive their latest open balance"
+                      title="Validate the QuickBooks Unpaid Bills report against existing invoices; no records are saved"
                       style={{ background: 'color-mix(in srgb, var(--accent-green) 12%, transparent)', color: 'var(--accent-green)', border: '1px solid color-mix(in srgb, var(--accent-green) 20%, transparent)' }}
                     >
                       {qbImporting ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Upload className="h-3.5 w-3.5 mr-1.5" strokeWidth={1.75} />}
-                      Import QB Bills
-                      <input type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={qbImporting} onChange={(event) => { void handleImportQBReport(event.target.files?.[0]); event.currentTarget.value = ''; }} />
+                      Validate QB Bills
+                      <input type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={qbImporting} onChange={(event) => { void handleValidateQBReport(event.target.files?.[0]); event.currentTarget.value = ''; }} />
                     </label>
                   )}
                 </div>
               </div>
 
-              {isAssociate && (
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4 rounded-xl p-3" style={{ background: 'color-mix(in srgb, var(--accent-blue) 5%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-blue) 15%, transparent)' }}>
+              {isAccountingRole && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4 rounded-xl p-3" style={{ background: 'color-mix(in srgb, var(--accent-blue) 5%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-blue) 15%, transparent)' }}>
                   <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
-                    Weekly cut-off date
+                    Due on or before
                     <input
                       type="date"
                       value={weeklyContext.cutoffDate}
                       onChange={(event) => setWeeklyContext((prev) => ({ ...prev, cutoffDate: event.target.value }))}
-                      className="mt-1 w-full rounded-lg px-2 py-1.5 text-xs"
-                      style={{ color: 'var(--text-primary)', background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}
-                    />
-                  </label>
-                  <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
-                    Schedule as-of date
-                    <input
-                      type="date"
-                      value={weeklyContext.asOfDate}
-                      onChange={(event) => setWeeklyContext((prev) => ({ ...prev, asOfDate: event.target.value }))}
                       className="mt-1 w-full rounded-lg px-2 py-1.5 text-xs"
                       style={{ color: 'var(--text-primary)', background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}
                     />
@@ -1848,24 +1989,6 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
               )}
 
               {/* Quick Action Banners — only when items exist */}
-              {canReleaseHeld && heldCount > 0 && (
-                <div className="flex items-center justify-between p-3 rounded-xl mb-4" style={{ background: 'color-mix(in srgb, var(--accent-amber) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}>
-                  <div className="flex items-center gap-3">
-                    <DollarSign className="h-4 w-4" style={{ color: 'var(--accent-amber)' }} strokeWidth={1.75} />
-                    <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{heldCount} payment{heldCount === 1 ? '' : 's'} on manual hold — release to add them to a batch</span>
-                  </div>
-                  <button
-                    onClick={handleReleaseAllHeld}
-                    disabled={bulkReleasing}
-                    className="flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
-                    style={{ background: 'var(--accent-green)', color: 'white' }}
-                  >
-                    {bulkReleasing ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <CheckCircle className="h-3.5 w-3.5 mr-1.5" strokeWidth={2} />}
-                    Release All ({heldCount})
-                  </button>
-                </div>
-              )}
-
               {isAccountingRole && awaitingPostingCount > 0 && (
                 <div className="flex items-center justify-between p-3 rounded-xl mb-4" style={{ background: 'color-mix(in srgb, var(--accent-purple) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-purple) 20%, transparent)' }}>
                   <div className="flex items-center gap-3">
@@ -1941,12 +2064,6 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                       <select value={filters.vendorId} onChange={(e) => setFilters({ ...filters, vendorId: e.target.value })} style={filterInput}>
                         <option value="">All vendors</option>
                         {vendorList.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-                      </select>
-                    </div>
-                    <div className="md:col-span-2">
-                      <label style={filterLabel}>Currency</label>
-                      <select value={filters.currency} onChange={(e) => setFilters({ ...filters, currency: e.target.value })} style={filterInput}>
-                        <option value="USD">USD</option>
                       </select>
                     </div>
                     <div className="md:col-span-2">
@@ -2121,17 +2238,27 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                       </tr>
                     </thead>
                     <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
-                      {scheduledPayments.map((payment) => {
+                      {scheduledPayments.map((payment, index) => {
                         const isSelected = selectedPaymentIds.has(payment.id);
+                        const supplierName = payment.invoice.vendor.name || 'Unknown supplier';
+                        const previousSupplier = index > 0 ? (scheduledPayments[index - 1].invoice.vendor.name || 'Unknown supplier') : null;
+                        const startsSupplierGroup = supplierName !== previousSupplier;
                         return (
-                          <tr
-                            key={payment.id}
-                            className="transition-colors cursor-pointer"
-                            style={{ borderTop: '1px solid var(--border-subtle)', background: isSelected ? 'color-mix(in srgb, var(--accent-purple) 5%, transparent)' : 'transparent' }}
-                            onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
-                            onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = 'transparent'; }}
-                            onClick={() => { if (isAccountingRole && isBatchable(payment)) handleToggleSelect(payment.id); }}
-                          >
+                          <Fragment key={payment.id}>
+                            {startsSupplierGroup && (
+                              <tr style={{ background: 'color-mix(in srgb, var(--accent-purple) 7%, transparent)' }}>
+                                <td colSpan={6} className="px-3 py-2 text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--accent-purple)', borderTop: index === 0 ? 'none' : '2px solid var(--border-subtle)' }}>
+                                  Supplier: {supplierName}
+                                </td>
+                              </tr>
+                            )}
+                            <tr
+                              className="transition-colors cursor-pointer"
+                              style={{ borderTop: '1px solid var(--border-subtle)', background: isSelected ? 'color-mix(in srgb, var(--accent-purple) 5%, transparent)' : 'transparent' }}
+                              onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
+                              onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = 'transparent'; }}
+                              onClick={() => { if (isAccountingRole && isBatchable(payment)) handleToggleSelect(payment.id); }}
+                            >
                             <td className="px-3 py-4">
                               {isAccountingRole && (
                                 <div className="flex items-center justify-center w-5 h-5 rounded border-2 transition-all" style={{
@@ -2222,7 +2349,8 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                                 )}
                               </div>
                             </td>
-                          </tr>
+                            </tr>
+                          </Fragment>
                         );
                       })}
                     </tbody>
@@ -2535,7 +2663,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                     </div>
                   </div>
                   <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
-                    QuickBooks Pay Bills-style setup: choose how this batch will be paid, from which bank account, and on which date. Method, date, and an uploaded bill stub file for every payment are required before this batch can be submitted for independent Supervisor review.
+                    QuickBooks Pay Bills-style setup: choose how this batch will be paid, from which bank account, and on which date. For a single-vendor batch, one bill stub can be uploaded once and matched to all invoices before independent Supervisor review.
                   </p>
                 </div>
               )}
@@ -2574,7 +2702,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                     {chargedPayment ? `Bank Charge: ${chargedPayment.currency} ${Number(chargedPayment.bank_charge_amount).toLocaleString()} (Edit)` : 'Apply Bank Charge'}
                   </button>
                   <button onClick={() => handleBatchAction('submit', selectedBatch.id)} disabled={processing || !payBillsComplete || !billStubFilesComplete || Boolean(selectedBatch.integrity_issues?.length)}
-                    title={!payBillsComplete ? 'Complete the Payment Setup (method + date) first' : !billStubFilesComplete ? 'Upload a bill stub file for every payment first' : undefined}
+                    title={!payBillsComplete ? 'Complete the Payment Setup (method + date) first' : !billStubFilesComplete ? 'Upload one matching bill stub for the batch first' : undefined}
                     className="flex items-center px-4 py-2.5 rounded-xl transition-colors disabled:opacity-50 text-sm font-semibold"
                     style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}
                     onMouseEnter={(e) => { if (!processing) e.currentTarget.style.background = 'var(--accent-lime-hover)'; }}
@@ -2594,7 +2722,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                   </button>
                   {(!payBillsComplete || !billStubFilesComplete) && (
                     <span className="text-xs font-medium" style={{ color: 'var(--accent-amber)' }}>
-                      {!payBillsComplete ? 'Complete the Payment Setup (method + date)' : ''}{!payBillsComplete && !billStubFilesComplete ? ' and ' : ''}{!billStubFilesComplete ? 'upload a bill stub file for every payment' : ''} to enable this action.
+                      {!payBillsComplete ? 'Complete the Payment Setup (method + date)' : ''}{!payBillsComplete && !billStubFilesComplete ? ' and ' : ''}{!billStubFilesComplete ? 'upload one matching bill stub for the batch' : ''} to enable this action.
                     </span>
                   )}
                 </div>
@@ -2633,13 +2761,13 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                     <Paperclip className="h-4 w-4" strokeWidth={1.75} />
                     {processing ? 'Exporting...' : 'Export Batch (Excel)'}
                   </button>
-                  <button onClick={() => handleBatchAction('export', selectedBatch.id)} disabled={processing || !billStubFilesComplete} title={!billStubFilesComplete ? 'Upload a bill stub file for every payment first' : undefined} className="px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50" style={{ background: 'var(--accent-purple)', color: 'white' }}>Mark Exported to Bank</button>
+                  <button onClick={() => handleBatchAction('export', selectedBatch.id)} disabled={processing || !billStubFilesComplete} title={!billStubFilesComplete ? 'Upload one matching bill stub for the batch first' : undefined} className="px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50" style={{ background: 'var(--accent-purple)', color: 'white' }}>Mark Exported to Bank</button>
                 </div>
               )}
 
               {selectedBatch.status === 'EXPORTED_TO_BANK' && (isAssociate || isSupervisor) && (
                 <div className="flex items-center gap-3 mb-6">
-                  <button onClick={() => setShowExecutionModal(true)} disabled={processing || !billStubFilesComplete} title={!billStubFilesComplete ? 'Upload a bill stub file for every payment first' : undefined} className="px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50" style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}>Process Payment Batch</button>
+                  <button onClick={() => setShowExecutionModal(true)} disabled={processing || !billStubFilesComplete} title={!billStubFilesComplete ? 'Upload one matching bill stub for the batch first' : undefined} className="px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50" style={{ background: 'var(--accent-lime)', color: 'var(--bg-base)' }}>Process Payment Batch</button>
                 </div>
               )}
 
@@ -2665,18 +2793,25 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                   <div className="space-y-2">
                     {selectedBatch.vendor_bill_stubs!.map((stub) => (
                       <div key={stub.id} className="flex items-center justify-between p-3 rounded-xl" style={{ background: 'var(--surface-secondary)', border: '1px solid var(--border-subtle)' }}>
-                        <div><div className="font-semibold" style={{ color: 'var(--text-primary)' }}>{stub.vendor?.name || 'Vendor'}</div><div className="text-xs" style={{ color: 'var(--text-muted)' }}>{stub.lines.length} invoice line{stub.lines.length === 1 ? '' : 's'} · {stub.status} · {stub.payment_reference || 'No reference'}</div></div>
+                        <div><div className="font-semibold" style={{ color: 'var(--text-primary)' }}>{stub.vendor?.name || 'Vendor'}</div><div className="text-xs" style={{ color: 'var(--text-muted)' }}>{stub.lines.length} invoice line{stub.lines.length === 1 ? '' : 's'} · {stub.status} · {stub.payment_reference || 'No reference'}</div>{stub.proof_file_url && <button type="button" onClick={async () => { try { await openAuthenticatedPaymentFile(stub.proof_file_url!, stub.proof_file_name || undefined); } catch (error: any) { showToast(error?.response?.data?.error?.message || 'Unable to open the consolidated bill stub.', 'error'); } }} className="inline-flex items-center gap-1 text-xs mt-1" style={{ color: 'var(--accent-purple)' }}><Paperclip className="h-3 w-3" strokeWidth={1.75} />{stub.proof_file_name || 'Consolidated bill stub'}</button>}</div>
                         <div className="font-semibold" style={{ color: 'var(--text-primary)' }}>{stub.currency} {stub.total_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
                       </div>
                     ))}
                   </div>
                 </div>
               )}
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center justify-between gap-3 mb-3">
                 <h3 className="text-md font-semibold" style={{ color: 'var(--text-primary)' }}>Payments in Batch</h3>
-                {missingBillStubCount > 0 && ['DRAFT', 'RETURNED_FOR_CORRECTION', 'REVIEWED', 'EXPORTED_TO_BANK'].includes(selectedBatch.status) && (
-                  <span className="text-xs font-semibold" style={{ color: 'var(--accent-amber)' }}>{missingBillStubCount} bill stub file{missingBillStubCount === 1 ? '' : 's'} required before the batch can proceed</span>
-                )}
+                <div className="flex items-center gap-3">
+                  {canApplyBatchStub && missingBillStubCount > 0 && ['DRAFT', 'RETURNED_FOR_CORRECTION', 'REVIEWED', 'EXPORTED_TO_BANK'].includes(selectedBatch.status) && (
+                    <button onClick={() => openStubModal(selectedBatch.payments[0], true)} disabled={stubSaving} className="px-3 py-2 rounded-xl text-xs font-semibold" style={{ background: 'var(--accent-amber)', color: 'var(--bg-base)' }}>
+                      Upload One Batch Bill Stub
+                    </button>
+                  )}
+                  {missingBillStubCount > 0 && ['DRAFT', 'RETURNED_FOR_CORRECTION', 'REVIEWED', 'EXPORTED_TO_BANK'].includes(selectedBatch.status) && (
+                    <span className="text-xs font-semibold" style={{ color: 'var(--accent-amber)' }}>{canApplyBatchStub ? 'One consolidated bill stub required before the batch can proceed' : selectedBatch.integrity_issues?.length ? 'Resolve batch integrity issues before uploading one consolidated bill stub' : 'One bill stub file required before the batch can proceed'}</span>
+                  )}
+                </div>
               </div>
               <div className="overflow-hidden">
                 <table className="w-full table-fixed">
@@ -2702,14 +2837,10 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                       <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)', width: '22%' }}>Payment Summary</th>
                       <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Status</th>
                       <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)', width: '34%' }}>Execution / Proof</th>
-                      {isAssociate && ['DRAFT', 'RETURNED_FOR_CORRECTION', 'REVIEWED', 'EXPORTED_TO_BANK'].includes(selectedBatch.status) && (
-                        <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Actions</th>
-                      )}
                     </tr>
                   </thead>
                   <tbody>
                     {selectedBatch.payments.map((payment, idx) => {
-                      const isGroupedStubActionRow = true;
                       const isReturnSelected = selectedReturnPaymentIds.has(payment.id);
                       const canReturn = ['DRAFT', 'RETURNED_FOR_CORRECTION', 'PENDING_SUPERVISOR_REVIEW'].includes(selectedBatch.status);
                       return (
@@ -2727,7 +2858,13 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                             </div>
                           </td>
                         )}
-                        <td className="px-4 py-4 align-top text-sm" style={{ color: 'var(--text-primary)' }}>
+                        <td
+                          className="px-4 py-4 align-top text-sm"
+                          style={{ color: 'var(--text-primary)' }}
+                          onMouseEnter={(e) => { void showApprovalTimeline(payment.invoice.id, e.clientX, e.clientY); }}
+                          onMouseMove={(e) => { setHoverApproval((current) => current ? { ...current, x: e.clientX, y: e.clientY } : current); }}
+                          onMouseLeave={hideApprovalTimeline}
+                        >
                           <button type="button" className="inline-flex items-center gap-1 font-medium truncate text-left hover:underline" title="Open invoice PDF" style={{ color: 'var(--accent-purple)' }} onClick={async (e) => { e.stopPropagation(); try { await openInvoiceDocument(payment.invoice.id, payment.invoice.invoice_number); } catch (error: any) { showToast(error?.response?.data?.error?.message || 'Unable to open the invoice PDF. Please try again.', 'error'); } }}>
                             <FileText className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
                             {payment.invoice.invoice_number}
@@ -2757,7 +2894,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                         </td>
                         <td className="px-4 py-4 align-top text-sm" style={{ color: 'var(--text-secondary)' }}>
                           <div className="space-y-1">
-                            {payment.bill_stub && (
+                            {!hasConsolidatedBatchStub && payment.bill_stub && (
                               <div className="space-y-0.5 p-2 rounded-lg mb-1" style={{ background: 'color-mix(in srgb, var(--accent-amber) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 18%, transparent)' }}>
                                 <div className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: 'var(--accent-amber)' }}>
                                   {payment.bill_stub.type === 'SYSTEM_GENERATED' ? 'System-generated Bill' : 'Bill Stub'} {payment.status === 'ENDORSED' ? '· ENDORSED' : ''}
@@ -2798,33 +2935,10 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                                 {payment.proof_file_name || 'Proof'}
                               </button>
                             )}
-                            {!payment.bill_stub && !payment.reference && !payment.paid_at && !payment.proof_file_url && <span>Pending</span>}
+                            {hasConsolidatedBatchStub && <span style={{ color: 'var(--accent-green)' }}>Covered by consolidated batch bill stub</span>}
+                            {!hasConsolidatedBatchStub && !payment.bill_stub && !payment.reference && !payment.paid_at && !payment.proof_file_url && <span>Pending</span>}
                           </div>
                         </td>
-                        {isAssociate && ['DRAFT', 'RETURNED_FOR_CORRECTION', 'REVIEWED', 'EXPORTED_TO_BANK'].includes(selectedBatch.status) && (
-                          <td className="px-4 py-4 align-top">
-                            {isGroupedStubActionRow && ['SCHEDULED', 'APPROVED_FOR_PAYMENT'].includes(payment.status) && (
-                              <button
-                                onClick={() => openStubModal(payment)}
-                                disabled={processing}
-                                className="px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors disabled:opacity-50"
-                                style={{ background: 'var(--accent-amber)', color: 'var(--bg-base)' }}
-                              >
-                                Endorse Bill Stub
-                              </button>
-                            )}
-                            {isGroupedStubActionRow && payment.status === 'ENDORSED' && (
-                              <button
-                                onClick={() => openStubModal(payment)}
-                                disabled={processing}
-                                className="px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors disabled:opacity-50"
-                                style={{ background: 'color-mix(in srgb, var(--accent-amber) 12%, transparent)', color: 'var(--accent-amber)', border: '1px solid color-mix(in srgb, var(--accent-amber) 20%, transparent)' }}
-                              >
-                                Edit Stub
-                              </button>
-                            )}
-                          </td>
-                        )}
                       </tr>
                       );
                     })}
@@ -3077,12 +3191,9 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                 {/* Header with close */}
                 <div className="flex items-start justify-between gap-3 mb-4">
                   <div className="min-w-0">
-                    <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Endorse Bill Stub</h3>
+                    <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Upload One Consolidated Batch Bill Stub</h3>
                     <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--text-muted)' }}>
-                      {stubTarget.invoice.vendor.name}
-                      {selectedBatch?.vendor_bill_stubs?.find((stub) => stub.lines.some((line) => line.payment_id === stubTarget.id))
-                        ? ` · ${selectedBatch.vendor_bill_stubs.find((stub) => stub.lines.some((line) => line.payment_id === stubTarget.id))!.lines.length} invoices · combined vendor stub`
-                        : ` · ${stubTarget.invoice.invoice_number}`}
+                      {stubTarget.invoice.vendor.name} · {selectedBatch?.payments.length || 0} invoices · consolidated batch stub
                     </p>
                   </div>
                   <button onClick={() => setStubTarget(null)} className="p-1 rounded-lg transition-colors shrink-0" style={{ color: 'var(--text-secondary)' }}
@@ -3095,7 +3206,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
 
                 {/* Endorsement note */}
                 <p className="text-xs mb-5 p-3 rounded-xl leading-relaxed" style={{ background: 'color-mix(in srgb, var(--accent-amber) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 18%, transparent)', color: 'var(--text-secondary)' }}>
-                  Endorsing tags the payment <span style={{ color: 'var(--accent-amber)', fontWeight: 600 }}>ENDORSED</span> (in payment process, <strong>NOT paid</strong>). PAID comes only when the payment confirmation matches by reference.
+                  <>This single bill stub will be linked to every invoice in the batch. The entered total must match the combined invoice/payment total exactly.</>
                 </p>
 
                 {/* Stub date + type */}
@@ -3124,7 +3235,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                 {/* Amounts — 2x2 grid, currency as its own segment (never overlaps the amount) */}
                 <div className="grid grid-cols-2 gap-4 mb-1.5">
                   <div>
-                    <label style={filterLabel}>Original Amount</label>
+                    <label style={filterLabel}>{stubApplyToBatch ? 'Batch Original Amount' : 'Original Amount'}</label>
                     <div
                       className="flex items-stretch overflow-hidden rounded-lg transition-colors"
                       style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)' }}
@@ -3136,7 +3247,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                     </div>
                   </div>
                   <div>
-                    <label style={filterLabel}>Payment</label>
+                    <label style={filterLabel}>{stubApplyToBatch ? 'Batch Payment' : 'Payment'}</label>
                     <div
                       className="flex items-stretch overflow-hidden rounded-lg transition-colors"
                       style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)' }}
@@ -3176,7 +3287,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
 
                 {/* File — styled dropzone with chosen file name */}
                 <div className="mb-5">
-                  <label style={filterLabel}>Bill stub file *</label>
+                  <label style={filterLabel}>{stubApplyToBatch ? 'Batch bill stub file * (one upload for all invoices)' : 'Bill stub file *'}</label>
                   <label
                     className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl cursor-pointer transition-colors"
                     style={{ background: 'var(--input-bg)', border: '1px dashed var(--border-color)' }}
@@ -3207,7 +3318,7 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
                     onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
                   >
                     {stubSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                    {stubSaving ? 'Endorsing...' : 'Endorse Bill Stub'}
+                    {stubSaving ? 'Saving...' : 'Save Consolidated Bill Stub'}
                   </button>
                 </div>
               </div>
@@ -3343,6 +3454,105 @@ export default function PaymentBatchManager({ initialTab = 'scheduled' }: { init
             </div>
           </div>
         )}
+        {qbValidationReport && (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[110] animate-backdrop">
+            <div className="p-6 max-w-5xl w-full mx-4 rounded-2xl animate-modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
+              <div className="flex items-start justify-between gap-4 mb-4">
+                <div>
+                  <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>QuickBooks Validation Results</h3>
+                  <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Read-only check. No invoices, balances, or reconciliation records were saved.</p>
+                </div>
+                <button onClick={() => setQbValidationReport(null)} className="px-2 py-1 rounded-lg text-sm" style={{ color: 'var(--text-muted)' }} aria-label="Close QB validation results">✕</button>
+              </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                <div className="rounded-xl p-3" style={{ background: 'var(--bg-elevated)' }}><div className="text-[11px] uppercase" style={{ color: 'var(--text-muted)' }}>Validated</div><div className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{qbValidationReport.validated}</div></div>
+                <div className="rounded-xl p-3" style={{ background: 'color-mix(in srgb, var(--accent-green) 10%, transparent)' }}><div className="text-[11px] uppercase" style={{ color: 'var(--text-muted)' }}>Passed</div><div className="text-xl font-bold" style={{ color: 'var(--accent-green)' }}>{qbValidationReport.summary?.clean_matched ?? 0}</div></div>
+                <div className="rounded-xl p-3" style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)' }}><div className="text-[11px] uppercase" style={{ color: 'var(--text-muted)' }}>Needs review</div><div className="text-xl font-bold" style={{ color: 'var(--accent-amber)' }}>{qbValidationReport.summary?.review_required ?? 0}</div></div>
+                <div className="rounded-xl p-3" style={{ background: 'var(--bg-elevated)' }}><div className="text-[11px] uppercase" style={{ color: 'var(--text-muted)' }}>Skipped</div><div className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{qbValidationReport.cleanup?.skipped_rows ?? 0}</div></div>
+              </div>
+              <div className="flex flex-wrap items-end gap-3 mb-4">
+                <div className="min-w-[280px]">
+                  <label className="block text-[11px] uppercase font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>Filter by vendor</label>
+                  <select
+                    value={qbVendorFilter}
+                    onChange={(event) => setQbVendorFilter(event.target.value)}
+                    className="w-full px-3 py-2 rounded-xl text-sm focus:outline-none"
+                    style={{ background: 'var(--input-bg)', border: '1px solid var(--input-border)', color: 'var(--text-primary)' }}
+                  >
+                    <option value="ALL">All vendors ({qbValidationReport.results.length})</option>
+                    {qbVendorOptions.map(([vendor, count]) => <option key={vendor} value={vendor}>{vendor} ({count})</option>)}
+                  </select>
+                </div>
+                <div className="text-xs pb-2" style={{ color: 'var(--text-muted)' }}>
+                  Showing {qbFilteredResults.length} of {qbValidationReport.results.length} validation result{qbValidationReport.results.length === 1 ? '' : 's'}
+                </div>
+              </div>
+              <div className="max-h-[52vh] overflow-auto rounded-xl" style={{ border: '1px solid var(--border-color)' }}>
+                <table className="w-full text-xs">
+                  <thead style={{ background: 'var(--bg-elevated)', color: 'var(--text-muted)' }}><tr><th className="text-left px-3 py-2">Invoice</th><th className="text-left px-3 py-2">Vendor</th><th className="text-left px-3 py-2">QB amount</th><th className="text-left px-3 py-2">Result</th><th className="text-left px-3 py-2">Validation error / reason</th></tr></thead>
+                  <tbody>
+                    {qbFilteredResults.map((row, index) => {
+                      const reasons = row.validation_reasons?.length ? row.validation_reasons.map((reason) => reason.replace(/_/g, ' ')).join(', ') : row.result === 'MATCHED' ? 'Passed' : row.result.replace(/_/g, ' ');
+                      return <tr key={`${row.invoice_id || row.invoice_number || 'row'}-${index}`} style={{ borderTop: '1px solid var(--border-color)' }}>
+                        <td className="px-3 py-2 font-semibold" style={{ color: 'var(--text-primary)' }}>{row.invoice_number || 'Missing invoice number'}</td>
+                        <td className="px-3 py-2" style={{ color: 'var(--text-secondary)' }}>{row.vendor_name || 'Missing vendor'}</td>
+                        <td className="px-3 py-2" style={{ color: 'var(--text-secondary)' }}>{row.qb_currency || 'USD'} {row.qb_open_balance ?? row.qb_amount ?? '—'}</td>
+                        <td className="px-3 py-2"><span className="rounded-full px-2 py-1 text-[10px] font-semibold" style={{ background: row.validation_status === 'PASS' ? 'color-mix(in srgb, var(--accent-green) 14%, transparent)' : 'color-mix(in srgb, var(--accent-amber) 14%, transparent)', color: row.validation_status === 'PASS' ? 'var(--accent-green)' : 'var(--accent-amber)' }}>{row.validation_status || row.result}</span></td>
+                        <td className="px-3 py-2" style={{ color: row.validation_status === 'PASS' ? 'var(--text-muted)' : 'var(--accent-amber)' }}>{reasons}</td>
+                      </tr>;
+                    })}
+                    {!qbFilteredResults.length && <tr><td colSpan={5} className="px-3 py-8 text-center" style={{ color: 'var(--text-muted)' }}>No validation results for this vendor.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex justify-end mt-4"><button onClick={() => { setQbValidationReport(null); setQbVendorFilter('ALL'); }} className="px-4 py-2 rounded-xl text-sm font-semibold" style={{ background: 'var(--accent-purple)', color: 'white' }}>Close</button></div>
+            </div>
+          </div>
+        )}
+      {hoverApproval && (
+        <div
+          className="fixed z-[120] w-[360px] max-h-[380px] overflow-y-auto rounded-xl p-4 shadow-2xl pointer-events-none"
+          style={{
+            left: Math.max(12, Math.min(hoverApproval.x + 14, (typeof window !== 'undefined' ? window.innerWidth : 1280) - 380)),
+            top: Math.max(12, Math.min(hoverApproval.y + 14, (typeof window !== 'undefined' ? window.innerHeight : 800) - 400)),
+            background: 'var(--bg-card)',
+            border: '1px solid var(--border-color)',
+          }}
+        >
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div>
+              <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Approval Flow</div>
+              <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{approvalTimeline?.invoice.invoice_number || 'Loading invoice…'}</div>
+            </div>
+            {approvalTimeline?.invoice.status && (
+              <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold" style={{ background: 'color-mix(in srgb, var(--accent-purple) 12%, transparent)', color: 'var(--accent-purple)' }}>
+                {approvalTimeline.invoice.status}
+              </span>
+            )}
+          </div>
+          {approvalTimelineLoading ? (
+            <div className="flex items-center gap-2 py-4 text-xs" style={{ color: 'var(--text-muted)' }}>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading approval history…
+            </div>
+          ) : compactApprovalEvents.length ? (
+            <div className="space-y-3">
+              {compactApprovalEvents.map((event) => (
+                <div key={event.id} className="relative pl-4">
+                  <span className="absolute left-0 top-1.5 h-2 w-2 rounded-full" style={{ background: event.type === 'approval' ? 'var(--accent-green)' : 'var(--accent-purple)' }} />
+                  <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>{event.actor}</div>
+                  <div className="mt-0.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    {event.title} · {event.created_at ? new Date(event.created_at).toLocaleString() : 'Date not recorded'}
+                  </div>
+                  {event.status && <span className="mt-1 inline-flex rounded-full px-1.5 py-0.5 text-[10px]" style={{ background: 'var(--bg-elevated)', color: 'var(--text-muted)' }}>{event.status}</span>}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="py-4 text-xs" style={{ color: 'var(--text-muted)' }}>No named approvers recorded yet.</div>
+          )}
+        </div>
+      )}
+
       {accountingAction && <AccountingActionModal key={`${accountingAction.action}-${accountingAction.subject}`} action={accountingAction.action} subject={accountingAction.subject} owner={user?.name} busy={actionLoading || processing}
         onCancel={() => setAccountingAction(null)} onConfirm={async (values) => {
           if (accountingAction.action === 'hold' && accountingAction.payment) await saveHoldPayment(accountingAction.payment, values);

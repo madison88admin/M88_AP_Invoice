@@ -5,7 +5,7 @@
  * Tests on 10-50 invoices with ground truth comparison
  */
 
-import { AmountResolver, AmountResolution } from './AmountResolver';
+import { AmountResolver } from './AmountResolver';
 import { GraphDebugger } from './GraphDebugger';
 import * as fs from 'fs';
 import * as path from 'path';

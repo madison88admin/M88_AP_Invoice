@@ -5,8 +5,7 @@
  * Brain override system with trigger-based rules
  */
 
-import { Candidate, FieldType } from '../../tournament/Candidate';
-import { RegionType } from '../LayoutGraphBuilder';
+import { Candidate } from '../../tournament/Candidate';
 
 export interface OverrideRule {
   id: string;

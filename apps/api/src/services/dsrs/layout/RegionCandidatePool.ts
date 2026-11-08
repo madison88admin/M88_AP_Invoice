@@ -151,10 +151,10 @@ export class RegionCandidatePool {
    * Propagate region confidence to candidates
    */
   propagateRegionConfidence(): void {
-    for (const [region, bucket] of this.regionBuckets.entries()) {
+    for (const [_region, bucket] of this.regionBuckets.entries()) {
       const regionConfidence = bucket.regionConfidence;
 
-      for (const [field, candidates] of bucket.fields.entries()) {
+      for (const [_field, candidates] of bucket.fields.entries()) {
         for (const candidate of candidates) {
           // Adjust candidate confidence based on region confidence
           candidate.confidence = candidate.confidence * (0.5 + regionConfidence * 0.5);

@@ -5,7 +5,7 @@
  * This is the final brain that produces the document interpretation
  */
 
-import { EntityNode, EntityType } from './EntityIdentityGraph';
+import { EntityNode } from './EntityIdentityGraph';
 import { IdentityResolution } from './IdentityResolver';
 import { CoherenceResult } from './FinancialCoherenceEngine';
 import { IntentClassification, InvoiceIntent } from './InvoiceIntentClassifier';

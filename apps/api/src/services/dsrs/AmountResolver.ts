@@ -5,7 +5,7 @@
  * Implements deterministic decision-making with explainable graph paths
  */
 
-import { CandidateGraphBuilder, CandidateGraph, GraphNode, GraphEdge, NodeType, EdgeType } from './CandidateGraphBuilder';
+import { CandidateGraphBuilder, CandidateGraph, GraphNode, GraphEdge, EdgeType } from './CandidateGraphBuilder';
 import { GraphPruner, DEFAULT_PRUNING_CONFIG } from './GraphPruner';
 import { AnchorHierarchy, AnchorTier } from './AnchorHierarchy';
 

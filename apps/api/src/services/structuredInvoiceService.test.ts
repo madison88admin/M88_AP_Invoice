@@ -18,9 +18,9 @@ describe('structuredInvoiceService', () => {
     expect(['AIRWAY_BILL', 'DELIVERY_RECEIPT']).toContain(result.document_type);
   });
 
-  it('keeps a commercial invoice eligible for payable review', () => {
+  it('classifies commercial invoices explicitly for AI/header review', () => {
     const result = classifyInvoiceDocument({ fileName: 'commercial-invoice.pdf', text: 'COMMERCIAL INVOICE INV-42 TOTAL USD 100.00' });
-    expect(result.document_type).toBe('INVOICE');
+    expect(result.document_type).toBe('COMMERCIAL_INVOICE');
     expect(result.payable_candidate).toBe(true);
   });
 

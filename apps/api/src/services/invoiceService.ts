@@ -147,6 +147,7 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
     priority_reason,
     priority_evidence_reference,
     is_urgent,
+    urgency_type,
     late_submission_reason,
     late_submission_source,
     qb_memo,
@@ -316,7 +317,8 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
       priority_pay_date: safeDate(priority_pay_date),
       priority_reason: priority_reason || null,
       priority_evidence_reference: priority_evidence_reference || null,
-      is_urgent: is_urgent || false,
+      is_urgent: Boolean(is_urgent || urgency_type),
+      urgency_type: urgency_type || null,
       late_submission_reason: late_submission_reason || null,
       late_submission_source: late_submission_source || null,
       qb_memo,
@@ -769,7 +771,7 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
   // If accounting role, they can ONLY edit bank details — block all other fields
   if (isAccounting && !canFullEdit) {
     const attemptedFields = Object.keys(invoiceData).filter(k => invoiceData[k] !== undefined);
-    const accountingAllowedFields = [...bankDetailFields, 'vendor_id', 'vendor_name_raw', 'new_vendor_name', 'edit_reason'];
+    const accountingAllowedFields = [...bankDetailFields, 'vendor_id', 'vendor_name_raw', 'new_vendor_name', 'edit_reason', 'urgency_type', 'is_urgent', 'priority_flag', 'priority_pay_date', 'priority_reason', 'priority_evidence_reference'];
     const nonBankFields = attemptedFields.filter(f => !accountingAllowedFields.includes(f));
     if (nonBankFields.length > 0) {
       throw new AppError(
@@ -839,7 +841,7 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
   // All other fields are locked to preserve the approved invoice state
   const approvedStatuses = ['PENDING_ACCOUNTING', 'APPROVED'];
   if (approvedStatuses.includes(existing.status)) {
-    const allowedFields = ['beneficiary_name', 'bank_name', 'swift_code', 'account_number', 'vendor_id', 'vendor_name_raw', 'new_vendor_name'];
+    const allowedFields = ['beneficiary_name', 'bank_name', 'swift_code', 'account_number', 'vendor_id', 'vendor_name_raw', 'new_vendor_name', 'urgency_type', 'is_urgent', 'priority_flag', 'priority_pay_date', 'priority_reason', 'priority_evidence_reference'];
     const attemptedFields = Object.keys(invoiceData).filter(k => invoiceData[k] !== undefined && !protectedFields.includes(k));
     const disallowedFields = attemptedFields.filter(f => !allowedFields.includes(f));
     if (disallowedFields.length > 0) {
@@ -973,6 +975,17 @@ export const updateInvoice = async (id: string, invoiceData: any, userId: string
       }
       data.payment_terms = normalizedPaymentTerms;
     }
+  }
+
+  if (data.urgency_type !== undefined && data.urgency_type !== null && data.urgency_type !== '') {
+    const validUrgencyTypes = ['URGENT_PAY_TODAY', 'URGENT_THIS_WEEK'];
+    if (!validUrgencyTypes.includes(String(data.urgency_type))) {
+      throw new AppError('Urgency must be Urgent Pay Today or Urgent Include in This Week’s Payment Schedule', 400);
+    }
+    data.is_urgent = true;
+  } else if (data.urgency_type === '') {
+    data.urgency_type = null;
+    data.is_urgent = false;
   }
 
   const dateFields = ['invoice_date', 'due_date', 'invoice_received_date', 'date_range_start', 'date_range_end', 'priority_pay_date'];

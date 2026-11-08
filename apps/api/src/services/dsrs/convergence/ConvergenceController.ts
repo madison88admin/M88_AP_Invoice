@@ -6,7 +6,7 @@
  */
 
 import { FieldType } from '../tournament/Candidate';
-import { ReweightingIteration, ReweightingResult } from '../coherence/GraphReweightingLoop';
+import { ReweightingIteration } from '../coherence/GraphReweightingLoop';
 
 export interface ConvergenceConfig {
   epsilon: number; // Minimum improvement threshold
@@ -121,7 +121,7 @@ export class ConvergenceController {
     let totalFlips = 0;
     let totalFields = 0;
 
-    for (const [field, history] of this.fieldHistory.entries()) {
+    for (const [_field, history] of this.fieldHistory.entries()) {
       if (history.length < 2) continue;
 
       let flips = 0;

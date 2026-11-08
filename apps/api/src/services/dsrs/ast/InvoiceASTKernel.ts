@@ -243,7 +243,7 @@ export function buildInvoiceAST(
   const normalizer = new InvoiceASTNormalizer();
 
   // Add structural blocks (minimal layout segmentation)
-  const headerBlock = builder.addStructuralBlock('HEADER_BLOCK', 'header_region');
+  const _headerBlock = builder.addStructuralBlock('HEADER_BLOCK', 'header_region');
   const tableBlock = builder.addStructuralBlock('TABLE_ROW', 'table_region');
   const footerBlock = builder.addStructuralBlock('FOOTER_BLOCK', 'footer_region');
 
@@ -933,7 +933,7 @@ function extractAmountInWords(text: string): number | null {
   if (beforeMatch && beforeMatch[1]) {
     const chunk = beforeMatch[1].trim();
     // Match the trailing word amount and numeric fraction, e.g., "five hundred forty-one and 47 / 100"
-    const wordsAndFraction = chunk.match(/([a-z\s\-]+?)\s+and\s+(\d+)\s*\/\s*(\d+)\s*$/i);
+    const wordsAndFraction = chunk.match(/([a-z\s-]+?)\s+and\s+(\d+)\s*\/\s*(\d+)\s*$/i);
     if (wordsAndFraction) {
       const words = wordsAndFraction[1].trim();
       const fraction = parseInt(wordsAndFraction[2], 10) / parseInt(wordsAndFraction[3], 10);

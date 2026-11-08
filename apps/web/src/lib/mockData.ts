@@ -17,6 +17,15 @@ export interface MockInvoice {
   source_received_at?: string;
   payment_terms: string;
   invoice_type: InvoiceType;
+  source_document_type?: string;
+  document_classification?: {
+    document_type?: string;
+    confidence?: number;
+    payable_candidate?: boolean;
+    reasons?: string[];
+  };
+  document_type_evidence?: string;
+  payable_candidate?: boolean;
   category: InvoiceCategory;
   brand?: string;
   brand_code?: string;
@@ -68,8 +77,13 @@ export interface MockInvoice {
   bill_to_entity?: string;
   priority_flag?: boolean;
   is_urgent?: boolean;
+  urgency_type?: 'URGENT_PAY_TODAY' | 'URGENT_THIS_WEEK' | null;
   ocr_confidence_score?: number;
   ocr_raw_data?: {
+    document_type?: string;
+    document_type_evidence?: string;
+    payable_candidate?: boolean;
+    document_classification?: MockInvoice['document_classification'];
     extraction?: any;
     bank_info?: {
       bank_name?: string;

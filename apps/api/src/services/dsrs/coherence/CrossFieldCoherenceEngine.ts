@@ -5,7 +5,7 @@
  * Answers: "Do these winners make sense together as a document?"
  */
 
-import { Candidate, FieldType } from '../tournament/Candidate';
+import { FieldType } from '../tournament/Candidate';
 
 export interface FieldState {
   value: any;

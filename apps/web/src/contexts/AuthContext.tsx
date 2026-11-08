@@ -12,11 +12,16 @@ export interface AuthUser {
 
 interface AuthContextType {
   user: AuthUser | null;
-  login: (email: string, password: string) => Promise<boolean>;
-  demoLogin: (email: string, password: string) => Promise<boolean>;
+  login: (email: string, password: string) => Promise<AuthResult>;
+  demoLogin: (email: string, password: string) => Promise<AuthResult>;
   logout: () => void;
   isAuthenticated: boolean;
   isLoading: boolean;
+}
+
+export interface AuthResult {
+  success: boolean;
+  error?: string;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -60,32 +65,44 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     setIsLoading(false);
   }, []);
 
-  const handleAuthResponse = (response: any): boolean => {
+  const handleAuthResponse = (response: any): AuthResult => {
     const { token, user } = response.data;
     localStorage.setItem('auth_token', token);
     localStorage.setItem(SESSION_KEY, JSON.stringify(user));
     setUser(user as AuthUser);
     setIsAuthenticated(true);
-    return true;
+    return { success: true };
   };
 
-  const login = async (email: string, password: string): Promise<boolean> => {
+  const login = async (email: string, password: string): Promise<AuthResult> => {
     try {
       const response = await api.post('/api/auth/login', { email, password });
       return handleAuthResponse(response);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Login failed:', error);
-      return false;
+      return {
+        success: false,
+        error:
+        error?.response?.status === 503
+          ? (error?.response?.data?.error?.message || 'Login service is temporarily unavailable. Please try again later.')
+          : error?.response?.status === 401
+            ? 'Invalid email or password'
+            : 'Unable to connect to the login service. Please check that the API is running.'
+      };
     }
   };
 
-  const demoLogin = async (email: string, password: string): Promise<boolean> => {
+  const demoLogin = async (email: string, password: string): Promise<AuthResult> => {
     try {
       const response = await api.post('/api/auth/demo-login', { email, password });
       return handleAuthResponse(response);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Demo login failed:', error);
-      return false;
+      return {
+        success: false,
+        error: error?.response?.data?.error?.message ||
+          'Unable to connect to the login service. Please check that the API is running.',
+      };
     }
   };
 

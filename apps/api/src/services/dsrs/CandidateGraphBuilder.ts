@@ -156,7 +156,7 @@ export class CandidateGraphBuilder {
       { pattern: /EACH/i, isKeyword: true },
     ];
     
-    for (const { pattern, isTotal, isBank, isShipping, isKeyword } of keywords) {
+    for (const { pattern, isTotal, isBank, isShipping, isKeyword: _isKeyword } of keywords) {
       let match;
       while ((match = pattern.exec(text)) !== null) {
         const start = Math.max(0, match.index - 30);
@@ -245,7 +245,7 @@ export class CandidateGraphBuilder {
   /**
    * Build spatial edges (nodes near each other in text)
    */
-  private buildSpatialEdges(text: string): void {
+  private buildSpatialEdges(_text: string): void {
     const nodes = Array.from(this.graph.nodes.values());
     const proximityThreshold = 100; // characters
     

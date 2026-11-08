@@ -33,11 +33,11 @@ export default function Login() {
     setLoading(true);
 
     // Login checks DEMO_USERS (live emails) first, then falls back to NextGen
-    const success = await login(email, password);
-    if (success) {
+    const result = await login(email, password);
+    if (result.success) {
       navigate('/dashboard');
     } else {
-      setError('Invalid email or password');
+      setError(result.error || 'Invalid email or password');
     }
 
     setLoading(false);
@@ -48,11 +48,11 @@ export default function Login() {
     setPassword(quickPassword);
     setError('');
     setLoading(true);
-    const success = await login(quickEmail, quickPassword);
-    if (success) {
+    const result = await login(quickEmail, quickPassword);
+    if (result.success) {
       navigate('/dashboard');
     } else {
-      setError('Login failed');
+      setError(result.error || 'Login failed');
     }
     setLoading(false);
   };

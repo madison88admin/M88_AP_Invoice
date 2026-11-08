@@ -20,6 +20,7 @@ import { hasStrongNonInvoiceHeading } from './nonInvoiceSuppression';
 import { PDFDocument } from 'pdf-lib';
 import { buildIntakeIdempotencyKey, evaluateIntakeControls } from './intakeControlService';
 import { checkEmailDuplicate, generateFileHash, getDuplicateReplacementDecision, isHardDuplicate, supersedeInvoiceForReplacement } from './emailDuplicateService';
+import { findExactFileMatch } from './exactFileIntakeService';
 import { getPayableBlockReason, isValidCommercialInvoice } from './payableDocumentGuard';
 import { normalizeInvoiceReference, createDuplicateRevisionReviewFromCandidate } from './accountingControlService';
 
@@ -83,10 +84,20 @@ function normalizeFakturPajakExtraction(ocrResult: any): void {
   ocrResult.vendor_name = vendorName.trim();
   ocrResult.total_amount = amount;
   ocrResult.currency = 'IDR';
-  ocrResult.invoice_type = 'INVOICE';
+  ocrResult.invoice_type = ocrResult.invoice_type || 'INVOICE';
   ocrResult.document_type = 'FAKTUR_PAJAK';
   ocrResult.source_document_type = 'FAKTUR_PAJAK';
-  ocrResult.document_classification = { document_type: 'FAKTUR_PAJAK', payable_candidate: true, confidence: 0.95, reasons: ['Tax invoice heading and supplier invoice fields detected'] };
+  const existingPayableCandidate = typeof ocrResult?.payable_candidate === 'boolean'
+    ? ocrResult.payable_candidate
+    : typeof ocrResult?.document_classification?.payable_candidate === 'boolean'
+      ? ocrResult.document_classification.payable_candidate
+      : undefined;
+  ocrResult.document_classification = {
+    document_type: 'FAKTUR_PAJAK',
+    payable_candidate: existingPayableCandidate,
+    confidence: 0.95,
+    reasons: ['Tax invoice header and supplier invoice fields detected'],
+  };
   ocrResult.is_non_invoice_document = false;
   ocrResult.tax_invoice_detected = true;
   if (!ocrResult.invoice_date) ocrResult.invoice_date = null;
@@ -274,13 +285,11 @@ async function createInvoiceAndIntakeEvent(invoiceData: any, event: AtomicIntake
     // workers cannot both pass the pre-OCR check and create duplicate AP
     // records. Revisions with a changed PDF hash are still allowed through
     // the normal duplicate/revision review workflow.
-    const invoiceHash = String(invoiceData?.invoice_hash || '').trim();
+    const invoiceHash = String(invoiceData?.invoice_hash || '').trim().toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(invoiceHash)) throw new Error('A PDF content hash is required for email intake');
     if (invoiceHash) {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${invoiceHash}))`;
-      const existing = await tx.invoice.findFirst({
-        where: { invoice_hash: invoiceHash },
-        select: { id: true, invoice_number: true },
-      });
+      const existing = await findExactFileMatch(invoiceHash, tx);
       if (existing) {
         const replacement = await getDuplicateReplacementDecision(existing.id, tx);
         if (!replacement?.canReplace) {

@@ -4,7 +4,7 @@ import path from 'path';
 import crypto from 'crypto';
 import XLSX from 'xlsx';
 import { AuthRequest } from '../middleware/auth';
-import { createGroupedPaymentBatches, getPaymentBatches, getPaymentBatchById, getScheduledPaymentsForBatch, processPaymentBatch, cancelPaymentBatch, selectPaymentsForBatch, deselectPaymentsForBatch, submitPaymentBatchForReview, updatePaymentBillsSetup, reviewPaymentBatch, returnPaymentBatch, returnInvoicesFromBatch, markPaymentBatchExported, setPaymentRemarks, markPaymentForPayment, approvePaymentForPayment, rejectPaymentForPayment, bulkApprovePaymentsForPayment, applyBankCharge, removeBankCharge, endorseBillStub, matchPaymentConfirmation, findPaymentBatchByConfirmationReference, approveHeldPayment, holdScheduledPayment, setBelowThresholdDecision, getStuckBatches, approveCfoPaymentBatch, rejectCfoPaymentBatch } from '../services/paymentBatchService';
+import { createGroupedPaymentBatches, getPaymentBatches, getPaymentBatchById, getScheduledPaymentsForBatch, processPaymentBatch, cancelPaymentBatch, selectPaymentsForBatch, deselectPaymentsForBatch, submitPaymentBatchForReview, updatePaymentBillsSetup, reviewPaymentBatch, returnPaymentBatch, returnInvoicesFromBatch, markPaymentBatchExported, setPaymentRemarks, markPaymentForPayment, approvePaymentForPayment, rejectPaymentForPayment, bulkApprovePaymentsForPayment, applyBankCharge, removeBankCharge, endorseBillStub, endorseBillStubForBatch, matchPaymentConfirmation, findPaymentBatchByConfirmationReference, approveHeldPayment, holdScheduledPayment, setBelowThresholdDecision, getStuckBatches, approveCfoPaymentBatch, rejectCfoPaymentBatch } from '../services/paymentBatchService';
 import { exportPaymentReconciliation } from '../services/reconciliationExportService';
 import { exportBatchPerVendor } from '../services/perVendorExportService';
 import { isDbEnabled } from '../config/database';
@@ -407,6 +407,45 @@ export const endorseBillStubController = async (
         proofFileName,
       },
       req.user!.id
+    );
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const endorseBillStubForBatchController = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const { batchId } = req.params;
+    let proofFileUrl: string | undefined;
+    let proofFileName: string | undefined;
+    const uploadedFile = (req as any).file;
+
+    if (uploadedFile?.buffer) {
+      const uploadRoot = process.env.PAYMENT_PROOF_DIR || path.join(process.cwd(), 'data', 'payment-proofs');
+      await fs.mkdir(uploadRoot, { recursive: true });
+      const extension = path.extname(uploadedFile.originalname || '').toLowerCase() || '.bin';
+      const storedName = `stub-${batchId}-${Date.now()}-${crypto.randomBytes(6).toString('hex')}${extension}`;
+      const targetPath = path.join(uploadRoot, storedName);
+      await fs.writeFile(targetPath, uploadedFile.buffer);
+      proofFileUrl = `/api/payment-batches/proofs/${storedName}`;
+      proofFileName = uploadedFile.originalname;
+    }
+
+    const result = await endorseBillStubForBatch(
+      batchId,
+      {
+        stubDate: req.body.stubDate,
+        type: req.body.type,
+        reference: req.body.reference,
+        proofFileUrl,
+        proofFileName,
+      },
+      req.user!.id,
     );
     res.json(result);
   } catch (error) {

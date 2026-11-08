@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+import { Router, Response } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { eventBroadcaster } from '../services/eventBroadcaster';
 

@@ -7,6 +7,7 @@ import { getUnknownVendorPlaceholder, matchOrCreateVendor } from './vendorMatchi
 import { getVendorPaymentTermDefault, preferExtractedPaymentTerms } from './vendorDefaultsService';
 import { validateInvoice } from './validationService';
 import { checkEmailDuplicate, generateFileHash, getDuplicateReplacementDecision, isHardDuplicate, supersedeInvoiceForReplacement } from './emailDuplicateService';
+import { createInvoiceOnceByFileHash } from './exactFileIntakeService';
 import { checkDuplicateInvoice } from './duplicateDetectionService';
 import { uploadToStorage } from './supabaseStorageService';
 import { InvoiceStatus, InvoiceSource, SignatureType, ExceptionReason, determineApprovalTier, BrandTier, isTop10Brand, TOP_10_BRANDS, UserRole } from '@ap-invoice/shared';
@@ -1206,10 +1207,18 @@ async function processSingleInvoiceBuffer(
       logger.info(`[File Watcher] Invoice ${baseData.invoice_number} has multiple MPOs in one invoice: ${lineMpos.join(', ')}`);
     }
 
-    const invoice = await prisma.invoice.create({
-      data: baseData,
-      include: { vendor: true, invoice_lines: true },
-    });
+    const saved = await createInvoiceOnceByFileHash(baseData, { vendor: true, invoice_lines: true });
+    const invoice = saved.invoice;
+    if (!saved.created) {
+      const reason = 'Identical PDF was already captured by another intake worker; existing record reused.';
+      safeMove(currentProcessingPath, DUPLICATES_DIR);
+      await recordWatcherIntakeEvent(runIntakeId, {
+        source: 'POWER_AUTOMATE', stage: 'DUPLICATE', status: 'BLOCKED', fileName,
+        invoiceId: invoice.id, error: reason,
+        metadata: { duplicate_level: 'FILE_HASH', existing_invoice_id: invoice.id, file_hash: fileHash },
+      });
+      return { fileName, terminalStage: 'DUPLICATE', invoiceId: invoice.id, invoiceNumber: invoice.invoice_number };
+    }
     // Set this immediately after the invoice row is committed. If a later
     // non-critical step fails, the catch block can still reconcile the PDF
     // path instead of moving the file away and leaving a stale processing path

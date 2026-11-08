@@ -2,6 +2,10 @@ import { UserRole, InvoiceType, InvoiceStatus } from '@ap-invoice/shared';
 import prisma from '../config/database';
 import { logger } from '../utils/logger';
 import { inAppNotificationService } from './inAppNotificationService';
+import fs from 'fs';
+import crypto from 'crypto';
+import { createInvoiceOnceByFileHash } from './exactFileIntakeService';
+import { getPayableBlockReason } from './payableDocumentGuard';
 
 export type EmailIntakeStage =
   | 'POLL_SUCCESS'
@@ -58,8 +62,39 @@ export type IntakeRecoveryCaseInput = {
   metadata?: Record<string, unknown>;
 };
 
+/** Only positively identified invoice candidates belong in Invoice Repository.
+ * A review outcome is not evidence that an attachment is an invoice. Keep
+ * non-invoices and unclassified files in IntakeReviewRecord, including backfills.
+ */
+export function isInvoiceReviewCandidate(metadata: Record<string, unknown> = {}): boolean {
+  const classification = metadata.document_classification && typeof metadata.document_classification === 'object'
+    ? metadata.document_classification as Record<string, unknown> : {};
+  if (metadata.suppressed_before_ocr === true || metadata.payable_candidate === false
+    || classification.payable_candidate === false) return false;
+  const blocked = getPayableBlockReason({
+    document_type: typeof metadata.document_type === 'string' ? metadata.document_type : undefined,
+    source_document_type: typeof metadata.source_document_type === 'string' ? metadata.source_document_type : undefined,
+    invoice_type: typeof metadata.invoice_type === 'string' ? metadata.invoice_type : undefined,
+    document_classification: Object.keys(classification).length > 0 ? classification as any : undefined,
+    raw_text: typeof metadata.raw_text === 'string' ? metadata.raw_text : undefined,
+    fileName: typeof metadata.file_name === 'string' ? metadata.file_name : undefined,
+    invoice_number: typeof metadata.invoice_number === 'string' ? metadata.invoice_number : undefined,
+    vendor_name: typeof metadata.vendor_name === 'string' ? metadata.vendor_name : undefined,
+    total_amount: metadata.total_amount ?? metadata.amount,
+    invoice_date: typeof metadata.invoice_date === 'string' ? metadata.invoice_date : undefined,
+  });
+  if (blocked) return false;
+  const type = String(classification.document_type || metadata.source_document_type
+    || metadata.document_type || metadata.invoice_type || '').trim().toUpperCase().replace(/[ -]+/g, '_');
+  return new Set([
+    'INVOICE', 'PROFORMA', 'PRO_FORMA', 'PROFORMA_INVOICE', 'COMMERCIAL',
+    'COMMERCIAL_INVOICE', 'SALES', 'SALES_INVOICE', 'TAX_INVOICE', 'FAKTUR_PAJAK',
+    'PREPAID', 'PREPAID_INVOICE', 'PROTO_SAMPLE', 'PROTO_SAMPLE_INVOICE',
+  ]).has(type);
+}
+
 /**
- * Materialize a stored REVIEW_REQUIRED attachment as a repository record.
+ * Materialize a positively identified invoice needing review as a repository record.
  * Review records deliberately use EXCEPTION_FLAGGED and a review workflow
  * status, so they are searchable in Invoice Repository but cannot be posted
  * or selected for payment until a reviewer resolves them.
@@ -74,6 +109,7 @@ async function createReviewInvoiceRecord(input: {
   reason: string;
   metadata?: Record<string, unknown>;
 }): Promise<{ id: string } | null> {
+  if (!isInvoiceReviewCandidate(input.metadata)) return null;
   try {
     const unknownVendor = await prisma.vendor.findFirst({
       where: { name: 'UNKNOWN VENDOR' },
@@ -96,6 +132,20 @@ async function createReviewInvoiceRecord(input: {
       select: { id: true },
     });
     if (existing) return existing;
+
+    let fileHash = String(metadata.attachment_file_hash || metadata.file_hash || '').trim();
+    if (!/^[a-f0-9]{64}$/i.test(fileHash)) {
+      fileHash = '';
+      if (fs.existsSync(input.storagePath) && fs.statSync(input.storagePath).isFile()) {
+        const hash = crypto.createHash('sha256');
+        for await (const chunk of fs.createReadStream(input.storagePath)) hash.update(chunk);
+        fileHash = hash.digest('hex');
+      }
+    }
+    if (!fileHash) {
+      logger.warn('[EmailIntakeMonitor] Content hash unavailable; attachment retained in Intake Review only');
+      return null;
+    }
 
     const rawType = String(metadata.invoice_type || metadata.document_type || '').toUpperCase();
     const invoiceType = (Object.values(InvoiceType) as string[]).includes(rawType)
@@ -125,8 +175,7 @@ async function createReviewInvoiceRecord(input: {
     const extractedDate = metadata.invoice_date ? new Date(String(metadata.invoice_date)) : null;
     const invoiceDate = extractedDate && !Number.isNaN(extractedDate.getTime()) ? extractedDate : null;
 
-    const invoice = await prisma.invoice.create({
-      data: {
+    const saved = await createInvoiceOnceByFileHash({
         invoice_number: invoiceNumber,
         vendor_id: unknownVendor.id,
         vendor_name_raw: vendorName,
@@ -137,6 +186,7 @@ async function createReviewInvoiceRecord(input: {
         workflow_status: workflowStatus,
         source: invoiceSource as any,
         source_document_type: rawType || null,
+        invoice_hash: fileHash,
         source_message_id: input.messageId || input.intakeId,
         source_attachment_id: input.attachmentId || null,
         source_received_at: new Date(),
@@ -149,14 +199,14 @@ async function createReviewInvoiceRecord(input: {
         ocr_confidence_score: Number.isFinite(Number(metadata.confidence)) ? Number(metadata.confidence) : null,
         ocr_raw_data: {
           review_required: true,
+          attachment_file_hash: fileHash,
           intake_id: input.intakeId,
           reason: input.reason,
           ...(metadata as any),
         },
         retention_until: retentionUntil,
-      } as any,
-    });
-    return { id: invoice.id };
+      } as any);
+    return { id: saved.invoice.id };
   } catch (error) {
     logger.error('[EmailIntakeMonitor] Failed to materialize review invoice:', error);
     return null;
@@ -183,7 +233,7 @@ export async function backfillReviewInvoiceRecords(limit = 500): Promise<{ scann
       fileName: event.file_name || undefined,
       storagePath,
       reason: event.error || 'Manual review required',
-      metadata,
+      metadata: { ...metadata, file_name: event.file_name || '' },
     });
     if (reviewInvoice?.id) {
       await prisma.emailIntakeEvent.update({
@@ -228,6 +278,8 @@ export async function recordIntakeReviewRecord(input: IntakeReviewRecordInput): 
     if (!reviewModel?.upsert) return;
     const intakeId = input.intakeId || input.messageId || input.attachmentId || `manual-${Date.now()}`;
     const fileName = input.fileName || '';
+    const documentType = input.metadata?.suppressed_before_ocr === true
+      ? 'NON_INVOICE' : input.documentType || null;
     await reviewModel.upsert({
       where: { intake_id_file_name: { intake_id: intakeId, file_name: fileName } },
       create: {
@@ -237,7 +289,7 @@ export async function recordIntakeReviewRecord(input: IntakeReviewRecordInput): 
         attachment_id: input.attachmentId || null,
         file_name: fileName,
         storage_path: input.storagePath || null,
-        document_type: input.documentType || null,
+        document_type: documentType,
         invoice_number: input.invoiceNumber || null,
         reason: input.reason.slice(0, 2000),
         status: 'OPEN',
@@ -248,7 +300,7 @@ export async function recordIntakeReviewRecord(input: IntakeReviewRecordInput): 
         message_id: input.messageId || null,
         attachment_id: input.attachmentId || null,
         storage_path: input.storagePath || null,
-        document_type: input.documentType || null,
+        document_type: documentType,
         invoice_number: input.invoiceNumber || null,
         reason: input.reason.slice(0, 2000),
         metadata: input.metadata as any,
@@ -301,12 +353,12 @@ export async function recordEmailIntakeEvent(input: IntakeEventInput): Promise<v
           : typeof input.metadata?.document_type === 'string' ? input.metadata.document_type : undefined,
         invoiceNumber: typeof input.metadata?.invoice_number === 'string' ? input.metadata.invoice_number : undefined,
         reason: input.error || 'Manual review required',
-        metadata: input.metadata,
+        metadata: { ...(input.metadata || {}), file_name: input.fileName || '' },
       });
 
-      // A stored PDF must never be visible only in Finance Controls. Create a
-      // repository review row as well, but do not create a second row when a
-      // normal invoice/duplicate path supplied invoiceId explicitly.
+      // Only invoice candidates get a repository review row. Suppressed,
+      // non-payable, and unclassified attachments remain in Intake Review;
+      // having a stored PDF must never turn them into synthetic invoices.
       const storagePath = typeof input.metadata?.storage_path === 'string'
         ? input.metadata.storage_path
         : undefined;
@@ -319,7 +371,7 @@ export async function recordEmailIntakeEvent(input: IntakeEventInput): Promise<v
           fileName: input.fileName,
           storagePath,
           reason: input.error || 'Manual review required',
-          metadata: input.metadata,
+          metadata: { ...(input.metadata || {}), file_name: input.fileName || '' },
         });
         if (reviewInvoice?.id) {
           await prisma.emailIntakeEvent.update({

@@ -125,6 +125,8 @@ const apiVendorToMock = (vendor: any): MockVendor => ({
 
 const apiInvoiceToMock = (invoice: any): MockInvoice => {
   const vendor = invoice.vendor || {};
+  const ocrRaw = invoice.ocr_raw_data && typeof invoice.ocr_raw_data === 'object' ? invoice.ocr_raw_data : {};
+  const documentClassification = invoice.document_classification || ocrRaw.document_classification;
   return {
     id: invoice.id || '',
     invoice_number: invoice.invoice_number || '',
@@ -137,6 +139,12 @@ const apiInvoiceToMock = (invoice: any): MockInvoice => {
     source_received_at: invoice.source_received_at ? dateToString(invoice.source_received_at) : undefined,
     payment_terms: invoice.payment_terms || '',
     invoice_type: invoice.invoice_type || 'INVOICE',
+    source_document_type: invoice.source_document_type || ocrRaw.document_type || undefined,
+    document_classification: documentClassification || undefined,
+    document_type_evidence: invoice.document_type_evidence || ocrRaw.document_type_evidence || undefined,
+    payable_candidate: typeof invoice.payable_candidate === 'boolean'
+      ? invoice.payable_candidate
+      : typeof ocrRaw.payable_candidate === 'boolean' ? ocrRaw.payable_candidate : documentClassification?.payable_candidate,
     category: invoice.category || 'TRIMS',
     brand: invoice.brand || undefined,
     brand_code: invoice.brand_code || undefined,
@@ -210,6 +218,7 @@ const apiInvoiceToMock = (invoice: any): MockInvoice => {
     bill_to_entity: invoice.bill_to_entity || undefined,
     priority_flag: invoice.priority_flag || false,
     is_urgent: invoice.is_urgent || false,
+    urgency_type: invoice.urgency_type || null,
     is_handwritten: invoice.is_handwritten || false,
     ocr_confidence_score: invoice.ocr_confidence_score || undefined,
     ocr_raw_data: invoice.ocr_raw_data || undefined,

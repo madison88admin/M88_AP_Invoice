@@ -5,7 +5,7 @@
  * Scoring model: nameSimilarity + addressMatch + bankMatch + historicalLink
  */
 
-import { EntityNode, EntityEdge } from './EntityIdentityGraph';
+import { EntityNode } from './EntityIdentityGraph';
 
 export interface IdentityResolution {
   isSameEntity: boolean;
@@ -169,7 +169,7 @@ export class IdentityResolver {
     const normalize = (str: string) => {
       return str
         .replace(/\b(LTD|LIMITED|LLC|INC|CORP|CO|COMPANY|GMBH|AG|SA|SAS|PTY)\b/g, '')
-        .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, '')
+        .replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, '')
         .replace(/\s+/g, ' ')
         .trim();
     };
@@ -240,7 +240,7 @@ export class IdentityResolver {
   /**
    * Determine relationship type
    */
-  private determineRelationship(score: number, entity1: EntityNode, entity2: EntityNode): string {
+  private determineRelationship(score: number, _entity1: EntityNode, _entity2: EntityNode): string {
     if (score > 0.8) return "SAME_LEGAL_ENTITY";
     if (score > 0.6) return "LIKELY_SAME_ENTITY";
     if (score > 0.4) return "RELATED_ENTITY";
@@ -251,7 +251,7 @@ export class IdentityResolver {
   /**
    * Generate explanation
    */
-  private generateExplanation(breakdown: any, score: number, relationship: string): string[] {
+  private generateExplanation(breakdown: any, _score: number, _relationship: string): string[] {
     const explanations: string[] = [];
 
     if (breakdown.nameSimilarity > 0.8) {

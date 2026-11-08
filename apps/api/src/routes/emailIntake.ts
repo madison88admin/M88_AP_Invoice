@@ -27,6 +27,8 @@ router.post('/recovery-cases/:intakeId/retry', authenticate, authorize(UserRole.
       contentType: req.file.mimetype,
       emailSubject: req.body?.emailSubject,
       fromAddress: req.body?.fromAddress,
+      toMailbox: req.body?.toMailbox,
+      receivedBy: req.body?.receivedBy,
       receivedDateTime: req.body?.receivedDateTime,
     });
     res.status(202).json(result);
@@ -62,7 +64,7 @@ router.post('/start-poller', authenticate, authorize(UserRole.IT_ADMIN, UserRole
 /**
  * Power Automate Webhook Endpoint (API key auth, not JWT)
  * Called by Power Automate flow when new invoice email arrives
- * Expects: { attachmentBase64, fileName, contentType, emailSubject, fromAddress, receivedDateTime }
+ * Expects: { attachmentBase64, fileName, contentType, emailSubject, fromAddress, toMailbox, receivedBy, receivedDateTime }
  * Headers: x-api-key: <WEBHOOK_API_KEY>
  * Returns: { jobId } — process runs async, poll /api/invoices/jobs/:jobId for status
  */
@@ -74,6 +76,8 @@ router.post('/powerautomate-webhook', webhookApiKey, async (req, res, next) => {
       contentType, 
       emailSubject, 
       fromAddress, 
+      toMailbox,
+      receivedBy,
       receivedDateTime 
     } = req.body;
 
@@ -94,6 +98,8 @@ router.post('/powerautomate-webhook', webhookApiKey, async (req, res, next) => {
           contentType: contentType || 'application/pdf',
           emailSubject: emailSubject || '',
           fromAddress: fromAddress || '',
+          toMailbox: toMailbox || '',
+          receivedBy: receivedBy || '',
           receivedDateTime: receivedDateTime || new Date().toISOString(),
         });
         completeJob(jobId, result);
@@ -117,7 +123,7 @@ router.post('/powerautomate-webhook', webhookApiKey, async (req, res, next) => {
 /**
  * SharePoint/OneDrive Webhook Endpoint (API key auth)
  * Called by Power Automate when file is saved to SharePoint/OneDrive
- * Expects: { fileName, emailSubject, fromAddress, receivedDateTime, fileContentBase64?, sharepointUrl? }
+ * Expects: { fileName, emailSubject, fromAddress, toMailbox, receivedBy, receivedDateTime, fileContentBase64?, sharepointUrl? }
  * Headers: x-api-key: <WEBHOOK_API_KEY>
  * If fileContentBase64 is provided, API processes directly (no download needed).
  * If only sharepointUrl is provided, API downloads from SharePoint.
@@ -130,6 +136,8 @@ router.post('/sharepoint-webhook', webhookApiKey, async (req, res, next) => {
       fileName, 
       emailSubject, 
       fromAddress, 
+      toMailbox,
+      receivedBy,
       receivedDateTime,
       fileContentBase64,
       contentType,
@@ -162,6 +170,8 @@ router.post('/sharepoint-webhook', webhookApiKey, async (req, res, next) => {
             contentType: contentType || 'application/pdf',
             emailSubject: emailSubject || '',
             fromAddress: fromAddress || '',
+            toMailbox: toMailbox || '',
+            receivedBy: receivedBy || '',
             receivedDateTime: receivedDateTime || new Date().toISOString(),
           });
         } else {
@@ -171,6 +181,8 @@ router.post('/sharepoint-webhook', webhookApiKey, async (req, res, next) => {
             fileName,
             emailSubject: emailSubject || '',
             fromAddress: fromAddress || '',
+            toMailbox: toMailbox || '',
+            receivedBy: receivedBy || '',
             receivedDateTime: receivedDateTime || new Date().toISOString(),
           });
         }

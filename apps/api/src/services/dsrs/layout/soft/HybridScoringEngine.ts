@@ -7,7 +7,7 @@
 
 import { Candidate, FieldType } from '../../tournament/Candidate';
 import { RegionType } from '../LayoutGraphBuilder';
-import { RegionBelief, FieldRegionBeliefs } from './RegionBelief';
+import { FieldRegionBeliefs } from './RegionBelief';
 
 export interface ScoringWeights {
   regionLikelihood: number;

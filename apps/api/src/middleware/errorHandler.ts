@@ -65,6 +65,18 @@ export const errorHandler = (
     });
   }
 
+  // Local QA/reporting users may be intentionally read-only. Surface that
+  // configuration issue instead of making imports and other accounting writes
+  // look like an unexplained server failure.
+  if (/permission denied for table/i.test(err.message || '')) {
+    return res.status(503).json({
+      error: {
+        message: 'The connected database account is read-only. Use the Accounting write-enabled database connection to import QuickBooks bills.',
+        status: 503,
+      },
+    });
+  }
+
   res.status(500).json({
     error: {
       message: 'Internal server error',

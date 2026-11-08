@@ -229,7 +229,7 @@ export class GraphDebugger {
     
     // Calculate average degree (number of edges per node)
     let totalDegree = 0;
-    for (const [nodeId, neighbors] of graph.adjacencyList.entries()) {
+    for (const [_nodeId, neighbors] of graph.adjacencyList.entries()) {
       totalDegree += neighbors.size;
     }
     const avgDegree = graph.nodes.size > 0 ? totalDegree / graph.nodes.size : 0;

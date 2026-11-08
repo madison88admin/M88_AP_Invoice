@@ -19,18 +19,6 @@ function getNextWednesday(date: Date = new Date()): Date {
   return d;
 }
 
-/** Thursday 09:00 local time is the purchasing response deadline for the
- * weekly payment run. Expired unanswered holds are marked NO_RESPONSE. */
-function getNextPurchasingDeadline(date: Date = new Date()): Date {
-  const d = new Date(date);
-  const result = new Date(d);
-  const daysUntilThursday = (4 - d.getDay() + 7) % 7;
-  result.setDate(result.getDate() + daysUntilThursday);
-  result.setHours(9, 0, 0, 0);
-  if (result <= d) result.setDate(result.getDate() + 7);
-  return result;
-}
-
 /**
  * Check if today is Wednesday
  */
@@ -919,7 +907,19 @@ function missingBillStubFilePayments(payments: any[]): any[] {
   return payments.filter((payment) => !String(payment?.bill_stub?.proof_file_url || '').trim());
 }
 
-function requireBillStubFiles(payments: any[], action: string): void {
+function hasConsolidatedBillStubEvidence(vendorBillStubs: any[] = []): boolean {
+  return vendorBillStubs.some((stub: any) =>
+    stub?.status !== 'RETURNED' &&
+    Array.isArray(stub?.lines) &&
+    stub.lines.some((line: any) => String(line?.payment?.bill_stub?.proof_file_url || '').trim()),
+  );
+}
+
+function requireBillStubFiles(payments: any[], action: string, vendorBillStubs: any[] = []): void {
+  // A consolidated vendor bill stub is the single source of evidence for a
+  // batch. The proof file is stored once on its first payment line; do not
+  // require a duplicate BillStub row/file for every invoice.
+  if (hasConsolidatedBillStubEvidence(vendorBillStubs)) return;
   const missing = missingBillStubFilePayments(payments);
   if (missing.length === 0) return;
   const labels = missing.slice(0, 5).map((payment) => payment.invoice?.invoice_number || payment.id);
@@ -1033,6 +1033,128 @@ export async function endorseBillStub(
   return { ...stub, payment_status: paymentStatus };
 }
 
+/**
+ * Upload one consolidated bill-stub file for a single-vendor batch. The
+ * evidence is stored once on the first payment as the aggregate anchor and
+ * the VendorBillStub lines link that one document to every invoice.
+ */
+export async function endorseBillStubForBatch(
+  batchId: string,
+  input: BillStubInput,
+  userId: string,
+) {
+  const batch = await prisma.paymentBatch.findUnique({
+    where: { id: batchId },
+    include: { payments: { include: { bill_stub: true, invoice: true } } },
+  });
+  if (!batch) throw new AppError('Payment batch not found', 404);
+  if (![PaymentBatchStatus.DRAFT, PaymentBatchStatus.RETURNED_FOR_CORRECTION, PaymentBatchStatus.REVIEWED, PaymentBatchStatus.EXPORTED_TO_BANK].includes(batch.status as any)) {
+    throw new AppError('A bill stub can only be uploaded while the batch is being prepared or after it is ready for payment', 400);
+  }
+  if (!batch.payments.length) throw new AppError('This payment batch has no invoices', 400);
+  if (!String(input.proofFileUrl || '').trim()) throw new AppError('Bill stub file is required before the batch can proceed', 400);
+
+  const vendorIds = new Set(batch.payments.map((payment: any) => payment.vendor_id || payment.invoice?.vendor_id).filter(Boolean));
+  const currencies = new Set(batch.payments.map((payment: any) => String(payment.currency || payment.invoice?.currency || 'USD').toUpperCase()));
+  if (vendorIds.size !== 1 || currencies.size !== 1) {
+    throw new AppError('One bill stub can only be applied to a batch containing one vendor and one currency. Split mixed-vendor batches first.', 409);
+  }
+  const integrityIssues = batchIntegrityIssues(batch);
+  if (integrityIssues.length) {
+    throw new AppError(`Cannot apply a consolidated bill stub until the batch matches its invoices and bank snapshots: ${integrityIssues.join('; ')}`, 409);
+  }
+
+  const invalidPayments = batch.payments.filter((payment: any) => !['SCHEDULED', 'APPROVED_FOR_PAYMENT', 'ENDORSED'].includes(payment.status));
+  if (invalidPayments.length) {
+    throw new AppError(`Only scheduled or supervisor-approved payments can receive a batch bill stub. Invalid: ${invalidPayments.map((payment: any) => payment.invoice?.invoice_number || payment.id).join(', ')}`, 400);
+  }
+
+  const paymentStatus = [PaymentBatchStatus.DRAFT, PaymentBatchStatus.RETURNED_FOR_CORRECTION].includes(batch.status as any)
+    ? undefined
+    : 'ENDORSED';
+  const expectedTotal = batch.payments.reduce((sum: number, payment: any) => sum + Number(payment.amount || 0) + Number(payment.bank_charge_amount || 0), 0);
+  for (const [label, value] of [['original amount', input.originalAmount], ['payment amount', input.paidAmount]] as const) {
+    if (value != null && (!Number.isFinite(Number(value)) || Math.abs(Number(value) - expectedTotal) >= 0.005)) {
+      throw new AppError(`Bill stub ${label} ${Number(value).toFixed(2)} does not match the batch invoice total ${expectedTotal.toFixed(2)}`, 409);
+    }
+  }
+
+  await prisma.$transaction(async (tx: any) => {
+    const anchor = batch.payments[0] as any;
+    const duplicatePaymentIds = batch.payments.slice(1).map((payment: any) => payment.id);
+    // Remove any older per-invoice copies created by the previous UI flow so
+    // the batch has exactly one bill-stub evidence record.
+    if (duplicatePaymentIds.length && tx.billStub?.deleteMany) {
+      await tx.billStub.deleteMany({ where: { payment_id: { in: duplicatePaymentIds } } });
+    }
+    await tx.billStub.upsert({
+      where: { payment_id: anchor.id },
+      create: {
+        payment_id: anchor.id,
+        batch_id: batchId,
+        stub_date: input.stubDate ? new Date(input.stubDate) : null,
+        type: input.type?.trim() || null,
+        reference: input.reference?.trim() || null,
+        original_amount: expectedTotal,
+        balance: expectedTotal,
+        discount: 0,
+        paid_amount: expectedTotal,
+        proof_file_url: input.proofFileUrl,
+        proof_file_name: input.proofFileName || null,
+        created_by: userId,
+      },
+      update: {
+        batch_id: batchId,
+        stub_date: input.stubDate ? new Date(input.stubDate) : null,
+        type: input.type?.trim() || null,
+        reference: input.reference?.trim() || null,
+        original_amount: expectedTotal,
+        balance: expectedTotal,
+        discount: 0,
+        paid_amount: expectedTotal,
+        proof_file_url: input.proofFileUrl,
+        proof_file_name: input.proofFileName || null,
+        created_by: userId,
+      },
+    });
+    for (const payment of batch.payments as any[]) {
+      if (paymentStatus && payment.status !== paymentStatus) {
+        await tx.payment.update({ where: { id: payment.id }, data: { status: paymentStatus } });
+      }
+    }
+    const vendorBillStubModel = tx.vendorBillStub;
+    const vendorBillStubLineModel = tx.vendorBillStubLine;
+    if (vendorBillStubModel && vendorBillStubLineModel) {
+      const firstPayment: any = batch.payments[0];
+      const vendorId = firstPayment.vendor_id || firstPayment.invoice?.vendor_id;
+      const currency = String(firstPayment.currency || firstPayment.invoice?.currency || 'USD').toUpperCase();
+      const existingVendorStub = await vendorBillStubModel.findFirst({ where: { batch_id: batchId, vendor_id: vendorId } });
+      const vendorStub = existingVendorStub
+        ? await vendorBillStubModel.update({ where: { id: existingVendorStub.id }, data: { currency, total_amount: expectedTotal.toFixed(2), status: 'ENDORSED', payment_reference: input.reference?.trim() || existingVendorStub.payment_reference || null } })
+        : await vendorBillStubModel.create({ data: { batch_id: batchId, vendor_id: vendorId, currency, total_amount: expectedTotal.toFixed(2), status: 'ENDORSED', payment_reference: input.reference?.trim() || null, created_by: userId } });
+      for (const payment of batch.payments as any[]) {
+        await vendorBillStubLineModel.upsert({
+          where: { payment_id: payment.id },
+          create: { bill_stub_id: vendorStub.id, payment_id: payment.id, invoice_id: payment.invoice_id, amount: payment.amount },
+          update: { bill_stub_id: vendorStub.id, invoice_id: payment.invoice_id, amount: payment.amount },
+        });
+      }
+    }
+    await tx.auditLog.create({
+      data: {
+        invoice_id: batch.payments[0].invoice_id,
+        action: 'BATCH_BILL_STUB_APPLIED',
+        performed_by: userId,
+        note: `One bill stub file applied to ${batch.payments.length} invoices in batch ${batch.batch_number}${input.reference ? ` — ref ${input.reference.trim()}` : ''}.`,
+        metadata: { batch_id: batchId, payment_count: batch.payments.length, proof_file_name: input.proofFileName || null },
+      },
+    });
+  });
+
+  logger.info(`[PaymentBatch] One bill stub applied to ${batch.payments.length} payments in batch ${batch.batch_number}`);
+  return { batch_id: batchId, payment_count: batch.payments.length, total_amount: expectedTotal, payment_status: paymentStatus || 'SCHEDULED', proof_file_url: input.proofFileUrl, proof_file_name: input.proofFileName || null };
+}
+
 function normalizePaymentReference(value: unknown): string {
   return String(value ?? '').trim().toUpperCase().replace(/\s+/g, '');
 }
@@ -1071,7 +1193,7 @@ export async function matchPaymentConfirmation(
 ) {
   const batch = await prisma.paymentBatch.findUnique({
     where: { id: batchId },
-    include: { payments: { include: { bill_stub: true, invoice: { include: { vendor: true } } } } },
+    include: { payments: { include: { bill_stub: true, vendor_bill_stub_line: { include: { bill_stub: true } }, invoice: { include: { vendor: true } } } } },
   });
   if (!batch) throw new AppError('Payment batch not found', 404);
   if (!['PROCESSING', 'EXPORTED_TO_BANK'].includes(String(batch.status))) {
@@ -1098,7 +1220,7 @@ export async function matchPaymentConfirmation(
     const ref = input.reference?.trim();
     if (!ref) throw new AppError('Payment confirmation reference is required to match', 400);
     const normalizedRef = normalizePaymentReference(ref);
-    matched = endorsed.filter((p) => normalizePaymentReference(p.bill_stub?.reference) === normalizedRef || normalizePaymentReference(p.reference) === normalizedRef);
+    matched = endorsed.filter((p) => normalizePaymentReference(p.bill_stub?.reference) === normalizedRef || normalizePaymentReference(p.vendor_bill_stub_line?.bill_stub?.payment_reference) === normalizedRef || normalizePaymentReference(p.reference) === normalizedRef);
     if (matched.length === 0) {
       throw new AppError(`No endorsed payment matches reference "${ref}"`, 400);
     }
@@ -1279,10 +1401,11 @@ export async function findPaymentBatchByConfirmationReference(reference: string,
 
   const payments = await prisma.payment.findMany({
     where: { status: { in: ['ENDORSED', 'PARTIALLY_PAID'] } },
-    include: { bill_stub: true, batch: true },
+    include: { bill_stub: true, vendor_bill_stub_line: { include: { bill_stub: true } }, batch: true },
   });
   let matches = (payments as any[]).filter((payment) =>
     normalizePaymentReference(payment.bill_stub?.reference) === normalizedRef ||
+    normalizePaymentReference(payment.vendor_bill_stub_line?.bill_stub?.payment_reference) === normalizedRef ||
     normalizePaymentReference(payment.reference) === normalizedRef
   );
 
@@ -1738,7 +1861,7 @@ async function notifyAccountingBatchReady(
 export async function getPaymentBatches() {
   const batches = await prisma.paymentBatch.findMany({
     include: {
-      vendor_bill_stubs: { include: { vendor: true, lines: true } },
+      vendor_bill_stubs: { include: { vendor: true, lines: { include: { payment: { include: { bill_stub: true } } } } } },
       payments: {
         include: {
           invoice: {
@@ -1762,7 +1885,7 @@ export async function getPaymentBatchById(batchId: string) {
   const batch = await prisma.paymentBatch.findUnique({
     where: { id: batchId },
     include: {
-      vendor_bill_stubs: { include: { vendor: true, lines: true } },
+      vendor_bill_stubs: { include: { vendor: true, lines: { include: { payment: { include: { bill_stub: true } } } } } },
       payments: {
         include: {
           invoice: {
@@ -1793,6 +1916,7 @@ export async function processPaymentBatch(
   const batch = await prisma.paymentBatch.findUnique({
     where: { id: batchId },
     include: {
+      vendor_bill_stubs: { include: { lines: { include: { payment: { include: { bill_stub: true } } } } } },
       payments: { include: { bill_stub: true, invoice: true } },
     },
   });
@@ -1807,7 +1931,7 @@ export async function processPaymentBatch(
   requireBatchIntegrity(batch);
   const reference = String(execution.reference || '').trim();
   if (!reference) throw new AppError('Bank execution reference is required. The batch will remain unpaid until confirmation is reconciled.', 400);
-  requireBillStubFiles(batch.payments as any[], 'process');
+  requireBillStubFiles(batch.payments as any[], 'process', (batch as any).vendor_bill_stubs);
   const payments = batch.payments as any[];
   const requiresCfo = Number(batch.total_amount || 0) >= 100000 || payments.some((payment) => Boolean(payment.invoice?.bank_match_details?.requires_cfo_approval));
   const updatedBatch = await prisma.paymentBatch.update({
@@ -1900,7 +2024,7 @@ export async function updatePaymentBillsSetup(
 }
 
 export async function submitPaymentBatchForReview(batchId: string, userId: string) {
-  const batch = await prisma.paymentBatch.findUnique({ where: { id: batchId }, include: { payments: { include: { bill_stub: true, invoice: true } } } });
+  const batch = await prisma.paymentBatch.findUnique({ where: { id: batchId }, include: { vendor_bill_stubs: { include: { lines: { include: { payment: { include: { bill_stub: true } } } } } }, payments: { include: { bill_stub: true, invoice: true } } } });
   if (!batch) throw new AppError('Payment batch not found', 404);
   if (![PaymentBatchStatus.DRAFT, PaymentBatchStatus.RETURNED_FOR_CORRECTION].includes(batch.status as any)) {
     throw new AppError('Only draft or returned batches can be submitted', 400);
@@ -1911,7 +2035,7 @@ export async function submitPaymentBatchForReview(batchId: string, userId: strin
   if (!batch.payment_method || !batch.payment_date) {
     throw new AppError('Complete the Pay Bills payment setup first — payment method and payment date are required before marking the batch ready.', 400);
   }
-  requireBillStubFiles(batch.payments as any[], 'mark ready');
+  requireBillStubFiles(batch.payments as any[], 'mark ready', (batch as any).vendor_bill_stubs);
   return prisma.paymentBatch.update({
     where: { id: batchId },
     data: {
@@ -1990,15 +2114,14 @@ export async function returnPaymentBatch(batchId: string, userId: string, reason
 }
 
 export async function markPaymentBatchExported(batchId: string, userId: string) {
-  const batch = await prisma.paymentBatch.findUnique({ where: { id: batchId }, include: { payments: { include: { invoice: true, bill_stub: true } } } });
+  const batch = await prisma.paymentBatch.findUnique({ where: { id: batchId }, include: { vendor_bill_stubs: { include: { lines: { include: { payment: { include: { bill_stub: true } } } } } }, payments: { include: { invoice: true, bill_stub: true } } } });
   if (!batch) throw new AppError('Payment batch not found', 404);
   requireBatchIntegrity(batch);
   if (batch.status !== PaymentBatchStatus.REVIEWED) throw new AppError('Only a batch marked ready for payment can be exported', 400);
-  requireBillStubFiles(batch.payments as any[], 'export');
-  // Payment-level bill-stub files were validated above. Export only records
-  // the bank handoff; it never fabricates a metadata-only stub.
-  // Create one vendor-level stub per vendor on export. Existing payment-level
-  // stubs remain untouched for backward compatibility and reconciliation.
+  requireBillStubFiles(batch.payments as any[], 'export', (batch as any).vendor_bill_stubs);
+  // Consolidated batch evidence (or legacy payment-level evidence) was
+  // validated above. Export only records the bank handoff; it never fabricates
+  // a metadata-only stub. Create one vendor-level stub per vendor on export.
   const groups = new Map<string, any[]>();
   for (const payment of batch.payments as any[]) {
     const vendorId = payment.vendor_id || payment.invoice?.vendor_id;

@@ -6,6 +6,12 @@ const mocks = vi.hoisted(() => ({
   eventFindMany: vi.fn(),
   eventCount: vi.fn(),
   reviewFindMany: vi.fn(),
+  reviewUpsert: vi.fn(),
+  vendorFindFirst: vi.fn(),
+  invoiceFindFirst: vi.fn(),
+  invoiceCreate: vi.fn(),
+  createOnce: vi.fn(),
+  eventUpdate: vi.fn(),
   notificationFindFirst: vi.fn(),
   notificationCreate: vi.fn(),
 }));
@@ -17,8 +23,11 @@ vi.mock('../config/database', () => ({
       findFirst: mocks.eventFindFirst,
       findMany: mocks.eventFindMany,
       count: mocks.eventCount,
+      update: mocks.eventUpdate,
     },
-    intakeReviewRecord: { findMany: mocks.reviewFindMany },
+    intakeReviewRecord: { findMany: mocks.reviewFindMany, upsert: mocks.reviewUpsert },
+    vendor: { findFirst: mocks.vendorFindFirst },
+    invoice: { findFirst: mocks.invoiceFindFirst, create: mocks.invoiceCreate },
     notification: { findFirst: mocks.notificationFindFirst },
   },
 }));
@@ -26,12 +35,15 @@ vi.mock('../config/database', () => ({
 vi.mock('./inAppNotificationService', () => ({
   inAppNotificationService: { create: mocks.notificationCreate },
 }));
+vi.mock('./exactFileIntakeService', () => ({ createInvoiceOnceByFileHash: mocks.createOnce }));
 
 import {
   alertEmailIntakeFailure,
   checkEmailPollHealth,
   getEmailIntakeMonitor,
   recordEmailIntakeEvent,
+  isInvoiceReviewCandidate,
+  backfillReviewInvoiceRecords,
 } from './emailIntakeMonitoringService';
 
 describe('email intake monitoring', () => {
@@ -40,6 +52,11 @@ describe('email intake monitoring', () => {
     mocks.eventCreate.mockResolvedValue({});
     mocks.notificationFindFirst.mockResolvedValue(null);
     mocks.notificationCreate.mockResolvedValue({});
+    mocks.reviewUpsert.mockResolvedValue({});
+    mocks.vendorFindFirst.mockResolvedValue({ id: 'unknown-vendor' });
+    mocks.invoiceFindFirst.mockResolvedValue(null);
+    mocks.invoiceCreate.mockResolvedValue({ id: 'review-invoice' });
+    mocks.createOnce.mockImplementation(async data => ({ invoice: await mocks.invoiceCreate({ data }), created: true }));
   });
 
   it('persists the stage and failure status', async () => {
@@ -47,6 +64,59 @@ describe('email intake monitoring', () => {
     expect(mocks.eventCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ stage: 'FAILED', status: 'FAILED', file_name: 'invoice.pdf' }),
     }));
+  });
+
+  it.each([
+    {}, { invoice_type: 'STATEMENT' }, { document_type: 'PACKING_LIST' },
+    { invoice_type: 'UNKNOWN' }, { invoice_type: 'INVOICE', suppressed_before_ocr: true },
+    { invoice_type: 'INVOICE', payable_candidate: false },
+    { invoice_type: 'INVOICE', document_classification: { document_type: 'STATEMENT', payable_candidate: false } },
+  ])('retains non-invoice/unclassified attachments outside the invoice repository: %j', async metadata => {
+    await recordEmailIntakeEvent({ source: 'GRAPH', stage: 'REVIEW_REQUIRED', fileName: 'document.pdf',
+      metadata: { ...metadata, storage_path: '/incoming/document.pdf' } });
+    expect(mocks.reviewUpsert).toHaveBeenCalled();
+    expect(mocks.invoiceCreate).not.toHaveBeenCalled();
+    expect(mocks.vendorFindFirst).not.toHaveBeenCalled();
+  });
+
+  it.each(['INVOICE', 'PROFORMA', 'SALES_INVOICE'])(
+    'preserves positively identified %s review candidates', type => {
+      expect(isInvoiceReviewCandidate({ document_type: type })).toBe(true);
+    });
+
+  it.each(['COMMERCIAL_INVOICE', 'FAKTUR_PAJAK'])(
+    'preserves %s for AI/header validation', type => {
+      expect(isInvoiceReviewCandidate({ document_type: type })).toBe(true);
+    });
+
+  it('still materializes an actual invoice with incomplete extraction', async () => {
+    await recordEmailIntakeEvent({ source: 'GRAPH', stage: 'REVIEW_REQUIRED',
+      metadata: { invoice_type: 'INVOICE', storage_path: '/incoming/invoice.pdf', attachment_file_hash: 'a'.repeat(64) } });
+    expect(mocks.invoiceCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'EXCEPTION_FLAGGED', source_document_type: 'INVOICE' }),
+    }));
+  });
+
+  it('does not manufacture an invoice when a review PDF cannot be fingerprinted', async () => {
+    await recordEmailIntakeEvent({ source: 'GRAPH', stage: 'REVIEW_REQUIRED',
+      metadata: { invoice_type: 'INVOICE', storage_path: '/nonexistent/review-file.pdf' } });
+    expect(mocks.reviewUpsert).toHaveBeenCalled();
+    expect(mocks.createOnce).not.toHaveBeenCalled();
+  });
+
+  it('reuses an existing invoice across different review intake IDs for the same PDF', async () => {
+    mocks.createOnce.mockResolvedValue({ invoice: { id: 'existing-invoice' }, created: false });
+    await recordEmailIntakeEvent({ source: 'GRAPH', stage: 'REVIEW_REQUIRED', messageId: 'another-message',
+      metadata: { invoice_type: 'INVOICE', storage_path: '/another-copy.pdf', attachment_file_hash: 'a'.repeat(64) } });
+    expect(mocks.invoiceCreate).not.toHaveBeenCalled();
+    expect(mocks.eventUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ invoice_id: 'existing-invoice' }) }));
+  });
+
+  it('does not recreate suppressed non-invoices through historical backfill', async () => {
+    mocks.eventFindMany.mockResolvedValueOnce([{ id: 'event-1', source: 'GRAPH', intake_id: 'intake-1',
+      metadata: { storage_path: '/incoming/customs.pdf', suppressed_before_ocr: true } }]);
+    await expect(backfillReviewInvoiceRecords()).resolves.toEqual({ scanned: 1, materialized: 0 });
+    expect(mocks.invoiceCreate).not.toHaveBeenCalled();
   });
 
   it('alerts IT and Purchasing when an attachment fails', async () => {

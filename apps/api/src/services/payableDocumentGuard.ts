@@ -52,9 +52,9 @@ export const NON_PAYABLE_DOCUMENT_TYPES = new Set<string>([
   'CREDIT_MEMO',
   'OTHER',
   'UNKNOWN',
+  'EXPORT_INVOICE',
   'TECH_PACK',
   'TRIM_RECEIPT',
-  'FAKTUR_PAJAK',
   'FORWARDER_BILLING_INVOICE',
   'FORWARDERS_BILLING_INVOICE',
   'EXPEDITOR_BILLING_INVOICE',
@@ -62,7 +62,6 @@ export const NON_PAYABLE_DOCUMENT_TYPES = new Set<string>([
   'FORWARDER_INVOICE',
   'EXPEDITOR_INVOICE',
   'EXPEDITORS_INVOICE',
-  'EXPORT_INVOICE',
 ]);
 
 /**
@@ -76,16 +75,16 @@ export const NON_PAYABLE_DOCUMENT_TYPES = new Set<string>([
  * names below are blocked before they can create an AP invoice record.
  */
 export const NON_INVOICE_FILENAME_HINTS =
-  /(?:^|[^a-z0-9]|packinglist)(statement(?:\s*of\s*account)?|account\s*statement|packing\s*(?:list|slip)|packinglist|p_?list|delivery\s*(?:note|receipt)|goods\s*received?|purchase\s*order|sales\s*order|order\s*confirmation|remittance|payment\s*advice|shipping\s*document|shipment\s*document|air\s*way\s*bill|airway\s*bill|awb|waybill|bill\s*of\s*lading|cargo\s*manifest|do\s*madison|transport\s*label|bill\s*stub|account\s*information|shipment\s*receipt|commercial\s*invoice|faktur\s*pajak|tech\s*pack|trim\s*(?:received|receipt|sample)|forwarder(?:['’]s|s)?\s+billing\s+invoice|expeditors?\s+billing\s+invoice|forwarder(?:['’]s|s)?\s+invoice|expeditors?\s+invoice)/i;
+  /(?:^|[^a-z0-9]|packinglist)(statement(?:\s*of\s*account)?|account\s*statement|packing\s*(?:list|slip)|packinglist|p_?list|delivery\s*(?:note|receipt)|goods\s*received?|purchase\s*order|sales\s*order|order\s*confirmation|remittance|payment\s*advice|shipping\s*document|shipment\s*document|air\s*way\s*bill|airway\s*bill|awb|waybill|bill\s*of\s*lading|cargo\s*manifest|do\s*madison|transport\s*label|bill\s*stub|account\s*information|shipment\s*receipt|tech\s*pack|trim\s*(?:received|receipt|sample)|forwarder(?:['’]s|s)?\s+billing\s+invoice|expeditors?\s+billing\s+invoice|forwarder(?:['’]s|s)?\s+invoice|expeditors?\s+invoice)/i;
 
 /**
- * The customer-specified exclusions are hard blocks even when an OCR engine
- * incorrectly labels the attachment as a normal INVOICE. This separate check
- * is intentionally narrower than NON_INVOICE_FILENAME_HINTS so generic
- * filename hints can retain their existing payable-document safeguards.
+ * Explicit shipment/supporting-document names are hard blocks even when an
+ * OCR engine incorrectly labels the attachment as a normal INVOICE. Commercial
+ * and tax-invoice filenames are intentionally excluded here so the AI/header
+ * classifier can decide whether they are payable supplier invoices.
  */
 const HARD_EXCLUDED_FILENAME_HINTS =
-  /(?:air\s*way\s*bill|airway\s*bill|\bawb\b|waybill|packing\s*(?:list|slip)|packinglist|shipment\s+receipt|shipmentreceipt|bill\s+payment|billpayment|payment\s+bill|paymentbill|payment\s+receipt|paymentreceipt|commercial\s*invoice|faktur\s+pajak|tech\s*pack|techpack|trim\s*(?:received|receipt|sample)|trimreceived|trimreceipt|forwarder(?:['’]s|s)?\s+billing\s+invoice|forwarders?billinginvoice|expeditors?\s+billing\s+invoice|expeditors?billinginvoice|forwarder(?:['’]s|s)?\s+invoice|forwarders?invoice|expeditors?\s+invoice|expeditors?invoice)/i;
+  /(?:air\s*way\s*bill|airway\s*bill|\bawb\b|waybill|packing\s*(?:list|slip)|packinglist|shipment\s+receipt|shipmentreceipt|bill\s+payment|billpayment|payment\s+bill|paymentbill|payment\s+receipt|paymentreceipt|tech\s*pack|techpack|trim\s*(?:received|receipt|sample)|trimreceived|trimreceipt|forwarder(?:['’]s|s)?\s+billing\s+invoice|forwarders?billinginvoice|expeditors?\s+billing\s+invoice|expeditors?billinginvoice|forwarder(?:['’]s|s)?\s+invoice|forwarders?invoice|expeditors?\s+invoice|expeditors?invoice)/i;
 
 /** Strong headings for payment/shipment paperwork, even when OCR labels it INVOICE. */
 const NON_PAYABLE_TEXT_HINTS =
@@ -106,6 +105,17 @@ const CUSTOMS_ONLY_HINTS = /\b(?:for\s+customs\s+(?:purpose|clearance)\s+only|cu
 // supplier payable invoice. This must win even when OCR also returns complete
 // invoice-like fields or labels it as COMMERCIAL_INVOICE.
 const EXPORT_INVOICE_HEADING = /(?:^|\n)\s*export\s+invoice\b/i;
+
+// Business rule: these headers identify supporting/customs paperwork, not the
+// supplier payable invoice. They must remain blocked even if an OCR engine
+// also extracts a complete invoice number/date/amount or incorrectly labels
+// the document as INVOICE.
+const STRICT_NON_PAYABLE_HEADER = /\b(?:export\s+invoice|tech\s+pack|trim\s+(?:receipt|received|sample)|(?:forwarder|expeditor)(?:['’]s|s)?\s+(?:billing\s+)?invoice)\b/i;
+
+function hasStrictNonPayableHeader(doc: PayableCheckInput, docType: string): boolean {
+  if (['EXPORT_INVOICE', 'TECH_PACK', 'TRIM_RECEIPT', 'FORWARDER_BILLING_INVOICE', 'EXPEDITOR_BILLING_INVOICE', 'FORWARDER_INVOICE', 'EXPEDITOR_INVOICE'].includes(docType)) return true;
+  return STRICT_NON_PAYABLE_HEADER.test(String(doc.raw_text || '').slice(0, 1600));
+}
 
 /**
  * Commercial Invoice is a payable subtype, but only with core invoice data.
@@ -145,7 +155,7 @@ export function getShipmentBillBlockReason(doc: PayableCheckInput): string | nul
   const classification = doc.document_classification || undefined;
   const docType = String(classification?.document_type || doc.document_type || doc.source_document_type || doc.invoice_type || '').toUpperCase();
   const isProforma = docType === 'PROFORMA' || docType === 'PROFORMA_INVOICE';
-  const validCommercialInvoice = isValidCommercialInvoice(doc, docType);
+  const validCommercialInvoice = !hasStrictNonPayableHeader(doc, docType) && isValidCommercialInvoice(doc, docType);
   if (classification && classification.payable_candidate === false && !validCommercialInvoice && !isProforma) {
     return `Document classification ${String(classification.document_type || docType || 'UNKNOWN').toUpperCase()} is not eligible for invoice creation`;
   }
@@ -243,6 +253,9 @@ export function getPayableBlockReason(
   ).toUpperCase();
   const isProforma = docType === 'PROFORMA' || docType === 'PROFORMA_INVOICE';
   const rawText = String(doc.raw_text || '');
+  if (hasStrictNonPayableHeader(doc, docType)) {
+    return `Document header identifies ${docType || 'a non-invoice document'} and is not eligible for payable invoice creation`;
+  }
   if (docType === 'EXPORT_INVOICE' || EXPORT_INVOICE_HEADING.test(rawText.slice(0, 1600))) {
     return 'Export Invoice documents are customs/shipping purposes only and are not eligible for payable invoice creation';
   }
@@ -252,7 +265,6 @@ export function getPayableBlockReason(
   const validCommercialInvoice = isValidCommercialInvoice(doc, docType);
 
   if (classification && classification.payable_candidate === false && !isProforma) {
-    if (validCommercialInvoice) return null;
     const label = String(classification.document_type || docType || 'UNKNOWN').toUpperCase();
     return `Document classification ${label} is not payable — debit notes and supporting documents cannot enter the AP workflow`;
   }

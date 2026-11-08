@@ -41,6 +41,98 @@ function sanitizeSingleValue(val: string | undefined | null): string | undefined
   return trimmed || undefined;
 }
 
+export interface BankEvidenceValidation {
+  evidence_present: boolean;
+  evidence_excerpt: string;
+  accepted_fields: string[];
+  rejected_fields: string[];
+  review_required: boolean;
+  rejected_candidates: Record<string, string>;
+}
+
+function normalizeBankEvidence(value: unknown): string {
+  return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+/**
+ * Keep only bank values supported by the invoice's own bank/remittance text.
+ * This prevents an OCR model from copying a prompt example or inventing bank
+ * data from the vendor name. Bank evidence is intentionally limited to lines
+ * that contain bank/payment identifiers, not the whole invoice (so a BILL TO
+ * line cannot be used as evidence for a beneficiary name).
+ */
+export function collectBankEvidenceText(rawText: string | undefined): string {
+  const lines = String(rawText || '').replace(/\r\n?/g, '\n').split('\n');
+  const evidence: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!/(?:bank|swift|bic|beneficiar|remittance|wire\s+transfer|payment\s+(?:instruction|information)|account|a\/c|iban|routing)/i.test(lines[i])) continue;
+    evidence.push(...lines.slice(Math.max(0, i - 1), Math.min(lines.length, i + 2)));
+  }
+  return Array.from(new Set(evidence.map(line => line.trim()).filter(Boolean))).join('\n').slice(0, 8000);
+}
+
+function hasBankValueEvidence(value: unknown, evidenceText: string): boolean {
+  const normalizedValue = normalizeBankEvidence(value);
+  const normalizedEvidence = normalizeBankEvidence(evidenceText);
+  return normalizedValue.length >= 4 && normalizedEvidence.includes(normalizedValue);
+}
+
+/**
+ * Validate and sanitize extracted bank fields in-place. Values without local
+ * invoice evidence are retained only as rejected candidates for Accounting
+ * review; they are removed from the payable bank_info fields.
+ */
+export function sanitizeExtractedBankDetails(extracted: any, rawText: string | undefined): BankEvidenceValidation {
+  const candidateValues: Record<string, string> = {
+    beneficiary_name: String(extracted?.beneficiary_name || extracted?.bank_info?.beneficiary_name || '').trim(),
+    bank_name: String(extracted?.bank_name || '').trim(),
+    swift_code: String(extracted?.bank_swift || extracted?.bank_info?.swift_code || '').trim(),
+    account_number: String(extracted?.bank_account || extracted?.bank_info?.account_number || extracted?.bank_info?.account_usd || '').trim(),
+  };
+  const evidenceText = collectBankEvidenceText(rawText);
+  const accepted_fields: string[] = [];
+  const rejected_fields: string[] = [];
+  const rejected_candidates: Record<string, string> = {};
+
+  for (const [field, value] of Object.entries(candidateValues)) {
+    if (!value) continue;
+    if (hasBankValueEvidence(value, evidenceText)) {
+      accepted_fields.push(field);
+      continue;
+    }
+    rejected_fields.push(field);
+    rejected_candidates[field] = value;
+    if (field === 'beneficiary_name') {
+      extracted.beneficiary_name = '';
+      if (extracted.bank_info) extracted.bank_info.beneficiary_name = undefined;
+    }
+    if (field === 'bank_name') {
+      extracted.bank_name = '';
+      if (extracted.bank_info) extracted.bank_info.bank_name = undefined;
+    }
+    if (field === 'swift_code') {
+      extracted.bank_swift = '';
+      if (extracted.bank_info) extracted.bank_info.swift_code = undefined;
+    }
+    if (field === 'account_number') {
+      extracted.bank_account = '';
+      if (extracted.bank_info) {
+        extracted.bank_info.account_number = undefined;
+        extracted.bank_info.account_usd = undefined;
+      }
+    }
+  }
+
+  return {
+    evidence_present: Boolean(evidenceText),
+    evidence_excerpt: evidenceText.slice(0, 1000),
+    accepted_fields,
+    rejected_fields,
+    review_required: rejected_fields.length > 0,
+    rejected_candidates,
+  };
+}
+
 /** Deterministic supplier recovery for invoice layouts where the buyer is at
  * the top and the legal issuer appears only in the signature/footer block. */
 export function extractExplicitIssuerVendorName(text: string | undefined): string {
@@ -52,15 +144,24 @@ export function extractExplicitIssuerVendorName(text: string | undefined): strin
 // Map AI-returned document_type strings to valid InvoiceType enum values
 const DOCUMENT_TYPE_MAP: Record<string, string> = {
   INVOICE: 'INVOICE',
+  SALES_INVOICE: 'SALES',
+  TAX_INVOICE: 'INVOICE',
   COMMERCIAL_INVOICE: 'COMMERCIAL',
   COMMERCIAL: 'COMMERCIAL',
   PROFORMA: 'PROFORMA',
   PRO_FORMA: 'PROFORMA',
   SALES: 'SALES',
-  SALES_INVOICE: 'SALES',
   STATEMENT: 'STATEMENT',
   DEBIT_NOTE: 'DEBIT_NOTE',
   CREDIT_NOTE: 'INVOICE',
+  FAKTUR_PAJAK: 'FAKTUR_PAJAK',
+  PACKING_LIST: 'PACKING_LIST',
+  AIRWAY_BILL: 'AIRWAY_BILL',
+  TECH_PACK: 'TECH_PACK',
+  TRIM_RECEIPT: 'TRIM_RECEIPT',
+  FORWARDER_BILLING_INVOICE: 'FORWARDER_BILLING_INVOICE',
+  EXPEDITOR_BILLING_INVOICE: 'EXPEDITOR_BILLING_INVOICE',
+  EXPORT_INVOICE: 'EXPORT_INVOICE',
   PREPAID: 'PREPAID',
   PROTO_SAMPLE: 'PROTO_SAMPLE',
 };
@@ -96,16 +197,30 @@ function extractHeaderVendorName(text: string): string {
 }
 
 function mapDocumentType(docType: string | undefined): string {
-  if (!docType) return 'INVOICE';
+  if (!docType) return 'UNKNOWN';
   const normalized = docType.toUpperCase().trim();
-  return DOCUMENT_TYPE_MAP[normalized] || 'INVOICE';
+  return DOCUMENT_TYPE_MAP[normalized] || 'UNKNOWN';
 }
 
 /** Deterministic safety net for document headers when an AI engine omits document_type. */
 function detectDocumentTypeFromText(text: string | undefined): string | undefined {
   if (!text) return undefined;
+  const header = text.slice(0, 1800);
+  if (/\bEXPORT\s+INVOICE\b/i.test(header)) return 'EXPORT_INVOICE';
+  if (/\bCOMMERCIAL\s+INVOICE\b/i.test(header)) return 'COMMERCIAL_INVOICE';
+  if (/\bFAKTUR\s+PAJAK\b/i.test(header)) return 'FAKTUR_PAJAK';
+  if (/\bTECH\s+PACK\b/i.test(header)) return 'TECH_PACK';
+  if (/\bTRIM\s+(?:RECEIPT|RECEIVED|SAMPLE)\b/i.test(header)) return 'TRIM_RECEIPT';
+  if (/(?:FORWARDER|EXPEDITOR)(?:'S|S)?\s+(?:BILLING\s+)?INVOICE\b/i.test(header)) return 'FORWARDER_BILLING_INVOICE';
+  if (/\bSALES\s+INVOICE\b/i.test(header)) return 'SALES_INVOICE';
+  if (/\bPRO[ -]?FORMA\s+INVOICE\b/i.test(header)) return 'PROFORMA_INVOICE';
+  if (/\bTAX\s+INVOICE\b/i.test(header)) return 'TAX_INVOICE';
+  if (/\bPACKING\s+(?:LIST|SLIP)\b/i.test(header)) return 'PACKING_LIST';
+  if (/\b(?:AIR\s*WAY\s*BILL|AIRWAYBILL|AWB)\b/i.test(header)) return 'AIRWAY_BILL';
+  if (/\bSHIPMENT\s+RECEIPT\b/i.test(header)) return 'SHIPMENT_RECEIPT';
   if (/\bDEBIT\s+NOTE(?:\s+NO\.?|\b)/i.test(text)) return 'DEBIT_NOTE';
   if (/\bCREDIT\s+NOTE(?:\s+NO\.?|\b)/i.test(text)) return 'INVOICE';
+  if (/^\s*INVOICE\b/im.test(header)) return 'INVOICE';
   return undefined;
 }
 
@@ -140,6 +255,8 @@ export interface OCRResult {
   freight_charges: number;
   additional_charges: number;
   invoice_type: InvoiceType;
+  document_type_evidence?: string;
+  payable_candidate?: boolean;
   invoice_template_type?: string;
   category: InvoiceCategory;
   order_type?: OrderType;
@@ -821,7 +938,9 @@ async function extractInvoiceFieldsFromText(text: string, _fileBuffer?: Buffer) 
   const explicitInvoicePayable = /\binvoice\s*(?:no\.?|number|date)\b/i.test(text)
     && /\btotal\s+(?:amount\s*)?(?:usd|hkd|idr|eur|gbp|sgd)\b/i.test(text);
 
-  let invoiceType = 'INVOICE';
+  // Regex extraction is only a fallback. Do not manufacture an invoice type
+  // when the document has no invoice header or recognized document label.
+  let invoiceType = /(?:^|\n)\s*INVOICE\b/i.test(text) ? 'INVOICE' : 'UNKNOWN';
   if (/proforma|pro-forma|pro\s*forma/i.test(text)) invoiceType = 'PROFORMA';
   else if (/commercial\s*invoice/i.test(text)) invoiceType = 'COMMERCIAL';
   else if (/sales\s*invoice/i.test(text)) invoiceType = 'SALES';
@@ -987,7 +1106,7 @@ async function tryAIFallbacks(
   fileBuffer: Buffer,
   rawText: string,
   vendorName?: string
-): Promise<{ engine: string; vendor_name?: string; invoice_number?: string; invoice_date?: string; due_date?: string; total_amount?: number; subtotal?: number; currency?: string; po_number?: string; mpo_number?: string; brand?: string; brand_code?: string; season?: string; payment_terms?: string; ship_to?: string; sold_to?: string; qty_shipped?: number; document_type?: string; bank_name?: string; swift_code?: string; account_number?: string; bank_info?: { swift_code?: string; account_number?: string }; line_items?: any[]; signatures?: { signatory_name: string; signatory_role?: string; signed_date?: string }[]; bank_charges?: number; tt_charge?: number; freight_charges?: number; courier_charges?: number; handling_fee?: number; finance_surcharge?: number; tax_amount?: number; discount_amount?: number; setup_charge?: number; sample_charge?: number; min_order_charge?: number; additional_charges?: number } | null> {
+): Promise<{ engine: string; vendor_name?: string; invoice_number?: string; invoice_date?: string; due_date?: string; total_amount?: number; subtotal?: number; currency?: string; po_number?: string; mpo_number?: string; brand?: string; brand_code?: string; season?: string; payment_terms?: string; ship_to?: string; sold_to?: string; qty_shipped?: number; document_type?: string; document_type_evidence?: string; payable_candidate?: boolean; bank_name?: string; swift_code?: string; account_number?: string; bank_info?: { swift_code?: string; account_number?: string }; line_items?: any[]; signatures?: { signatory_name: string; signatory_role?: string; signed_date?: string }[]; bank_charges?: number; tt_charge?: number; freight_charges?: number; courier_charges?: number; handling_fee?: number; finance_surcharge?: number; tax_amount?: number; discount_amount?: number; setup_charge?: number; sample_charge?: number; min_order_charge?: number; additional_charges?: number } | null> {
   // ─── CONSENSUS PATH: strongest engines in parallel + per-field majority vote ───
   const consensusResults: EngineResult[] = [];
   let regexFallback: Record<string, any> | null = null;
@@ -1421,6 +1540,8 @@ function mapExtractedToEngineShape(extracted: any): Record<string, any> {
     season: extracted.season,
     payment_terms: extracted.payment_terms,
     document_type: extracted.invoice_type,
+    document_type_evidence: extracted.document_type_evidence,
+    payable_candidate: extracted.payable_candidate,
     swift_code: extracted.bank_swift,
     account_number: extracted.bank_account,
     beneficiary_name: extracted.beneficiary_name,
@@ -1468,7 +1589,9 @@ function mapEngineShapeToExtracted(mergedData: any, primary: any): any {
     bank_swift: d.swift_code || primary.bank_swift || '',
     bank_account: d.account_number || primary.bank_account || '',
     beneficiary_name: d.beneficiary_name || primary.beneficiary_name || '',
-    invoice_type: d.document_type ? mapDocumentType(d.document_type) : (primary.invoice_type || 'INVOICE'),
+    invoice_type: d.document_type ? mapDocumentType(d.document_type) : (primary.invoice_type || 'UNKNOWN'),
+    document_type_evidence: d.document_type_evidence || primary.document_type_evidence,
+    payable_candidate: typeof d.payable_candidate === 'boolean' ? d.payable_candidate : primary.payable_candidate,
     tax_id: '',
     company_reg: '',
     incoterm: d.incoterm || primary.incoterm,
@@ -1646,6 +1769,10 @@ export async function analyzeInvoice(fileBuffer: Buffer, _mimeType: string) {
         bank_account: aiResult.account_number || (aiResult.bank_info as any)?.account_usd || aiResult.bank_info?.account_number || '',
         beneficiary_name: (aiResult as any).beneficiary_name || (aiResult as any).bank_info?.beneficiary_name || '',
         invoice_type: mapDocumentType(sanitizeSingleValue((aiResult as any).document_type) || detectDocumentTypeFromText(rawText)) as any,
+        document_type_evidence: sanitizeSingleValue((aiResult as any).document_type_evidence) || detectDocumentTypeFromText(rawText) || undefined,
+        payable_candidate: typeof (aiResult as any).payable_candidate === 'boolean'
+          ? (aiResult as any).payable_candidate
+          : undefined,
         tax_id: '',
         company_reg: '',
         incoterm: (aiResult as any).incoterm || undefined,
@@ -1761,6 +1888,19 @@ export async function analyzeInvoice(fileBuffer: Buffer, _mimeType: string) {
     }
   }
 
+  // AI/vision bank fields are accepted only when the invoice itself provides
+  // matching bank/remittance evidence. Otherwise keep the rejected candidates
+  // in raw_data for Accounting review, but do not expose them as payable bank
+  // fields or allow them to flow into vendor/payment records.
+  const bankDetailsValidation = sanitizeExtractedBankDetails(
+    extracted,
+    classificationText || (extracted as any)?.raw_text || '',
+  );
+  (extracted as any).bank_details_validation = bankDetailsValidation;
+  if (bankDetailsValidation.rejected_fields.length > 0) {
+    logger.warn(`[OCR] Rejected bank fields without invoice evidence: ${bankDetailsValidation.rejected_fields.join(', ')}`);
+  }
+
   // AI providers sometimes select MADISON 88 from the prominent "To" block
   // on J-Long invoices. The issuer name printed in the legal footer is the
   // authoritative vendor and must override that buyer-side extraction.
@@ -1796,6 +1936,21 @@ export async function analyzeInvoice(fileBuffer: Buffer, _mimeType: string) {
 
   // Calculate real confidence based on field quality, not hardcoded values
   const calculatedConfidence = calculateRealConfidence(extracted, usedAIFallback, ocrEngine);
+  const aiPayableCandidate = typeof (extracted as any).payable_candidate === 'boolean'
+    ? (extracted as any).payable_candidate
+    : undefined;
+  const fallbackPayableCandidate = !isNonInvoiceDocument
+    && !['UNKNOWN', 'STATEMENT', 'DEBIT_NOTE', 'CREDIT_NOTE'].includes(String(extracted.invoice_type || '').toUpperCase());
+  const documentClassification = {
+    document_type: String(extracted.invoice_type || 'UNKNOWN'),
+    confidence: aiPayableCandidate === undefined ? 0.60 : calculatedConfidence,
+    payable_candidate: aiPayableCandidate ?? fallbackPayableCandidate,
+    reasons: [
+      (extracted as any).document_type_evidence
+        ? `AI/header evidence: ${(extracted as any).document_type_evidence}`
+        : 'Header classification evidence not returned by OCR engine',
+    ],
+  };
 
   return {
     invoice_number: extracted.invoice_number || '',
@@ -1823,7 +1978,10 @@ export async function analyzeInvoice(fileBuffer: Buffer, _mimeType: string) {
     additional_charges: (extracted as any).additional_charges || 0,
     invoice_type: ((extracted as any).is_statement && extracted.invoice_type !== 'STATEMENT')
       ? InvoiceType.STATEMENT as any
-      : (extracted.invoice_type as InvoiceType || InvoiceType.INVOICE),
+      : (extracted.invoice_type as InvoiceType || 'UNKNOWN' as any),
+    document_type_evidence: (extracted as any).document_type_evidence || undefined,
+    document_classification: documentClassification,
+    payable_candidate: documentClassification.payable_candidate,
     category: inferServiceInvoiceCategory(extracted),
     order_type: poParsed.order_type as OrderType | undefined,
     brand: poParsed.brand_code ? (TOP_10_BRANDS[poParsed.brand_code] || poParsed.brand_code) : (extracted as any).brand || undefined,

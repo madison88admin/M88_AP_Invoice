@@ -54,6 +54,14 @@ type IntakeMonitor = {
   failures_24h: number;
   events: IntakeEvent[];
   recovery_queue?: IntakeEvent[];
+  review_records?: Array<{
+    id: string;
+    file_name: string;
+    document_type?: string | null;
+    reason: string;
+    status: string;
+    created_at: string;
+  }>;
 };
 
 type RetentionRow = {
@@ -380,6 +388,28 @@ export default function FinanceControlsDashboard() {
             ))}
           </div>
         )}
+      </div>
+
+      <div className="rounded-xl border overflow-hidden" style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}>
+        <div className="p-4 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
+          <div className="font-semibold">Document / Intake Review</div>
+          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>Non-invoice and unclassified attachments are retained here, outside the Invoice Repository. Classification is an intake assessment, not approval for payment.</div>
+        </div>
+        <div className="max-h-80 overflow-y-auto divide-y">
+          {(intakeMonitor?.review_records || []).filter(record => !normalizedSearch ||
+            [record.file_name, record.document_type, record.reason].some(value => String(value || '').toLowerCase().includes(normalizedSearch))
+          ).map(record => (
+            <div key={record.id} className="p-4 text-sm">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium break-all">{record.file_name || 'Unnamed attachment'}</span>
+                <span className="text-xs px-2 py-1 rounded-full" style={{ background: 'var(--bg-elevated)', color: 'var(--accent-amber)' }}>Detected type: {(record.document_type || 'UNCLASSIFIED').replace(/_/g, ' ')}</span>
+              </div>
+              <p className="mt-1 text-xs" style={{ color: 'var(--text-secondary)' }}>{record.reason}</p>
+              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{fmtDate(record.created_at)}</span>
+            </div>
+          ))}
+          {!intakeMonitor?.review_records?.length && <div className="p-4 text-sm" style={{ color: 'var(--text-muted)' }}>No open intake-review documents.</div>}
+        </div>
       </div>
 
       {canManageRetention && (

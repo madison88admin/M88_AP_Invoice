@@ -296,7 +296,7 @@ export class EntityIdentityGraph {
       lastUpdated: this.graph.lastUpdated
     };
 
-    for (const [id, node] of this.graph.nodes.entries()) {
+    for (const [_id, node] of this.graph.nodes.entries()) {
       exportData.nodes.push({
         id: node.id,
         name: node.name,

@@ -66,7 +66,7 @@ export class BlockClassifier {
    */
   private detectSemanticType(block: BlockNode): BlockType {
     const text = block.text;
-    const upperText = text.toUpperCase();
+    const _upperText = text.toUpperCase();
 
     // Check for TOTAL_LINE
     if (this.config.totalPattern.test(text)) {
@@ -108,7 +108,7 @@ export class BlockClassifier {
     let confidence = 0.5; // base confidence
 
     const text = block.text;
-    const upperText = text.toUpperCase();
+    const _upperText = text.toUpperCase();
 
     switch (semanticType) {
       case 'TOTAL_LINE':

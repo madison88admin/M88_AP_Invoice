@@ -383,7 +383,7 @@ export class InvoiceASTRepairEngine {
     const actions: RepairAction[] = [];
     let nodesRemoved = 0;
     let nodesRelinked = 0;
-    let nodesReconciled = 0;
+    const nodesReconciled = 0;
     let confidenceRecalibrated = 0;
 
     // Priority 1: Structural fixes (missing nodes)
@@ -469,7 +469,7 @@ export class InvoiceASTRepairEngine {
   }
 
   // Repair Strategy A: Re-link missing children
-  private relinkMissingChildren(node: ASTNode, ast: InvoiceAST): boolean {
+  private relinkMissingChildren(node: ASTNode, _ast: InvoiceAST): boolean {
     if (!node.children) node.children = [];
 
     const requiredTypes: TransactionNodeType[] = ['QUANTITY', 'UNIT_PRICE', 'EXTENDED_PRICE'];

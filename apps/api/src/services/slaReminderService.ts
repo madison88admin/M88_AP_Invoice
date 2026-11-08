@@ -260,7 +260,7 @@ function getApproverEmail(stage: InvoiceStatus): string {
 /**
  * Get manager email for CC on 1-day reminders
  */
-function getManagerEmail(stage: InvoiceStatus): string {
+function getManagerEmail(_stage: InvoiceStatus): string {
   // Return the manager of the current approver
   return process.env.ACCOUNTING_SUPERVISOR_EMAIL || 'accounting-supervisor@madison88.com';
 }

@@ -6,8 +6,8 @@
  */
 
 import { Candidate, FieldType } from '../tournament/Candidate';
-import { InvoiceState, ConflictFlag } from './CrossFieldCoherenceEngine';
-import { CandidateGraph, GraphNode } from '../CandidateGraphBuilder';
+import { ConflictFlag } from './CrossFieldCoherenceEngine';
+import { CandidateGraph } from '../CandidateGraphBuilder';
 
 export interface ReweightingConfig {
   maxIterations: number;
@@ -180,7 +180,7 @@ export class GraphReweightingLoop {
 
       for (const candidate of fieldCandidates) {
         let adjustment = 0;
-        const originalScore = candidate.globalScore;
+        const _originalScore = candidate.globalScore;
 
         // Apply feedback signal adjustments
         for (const [signal, value] of feedbackSignals.entries()) {
@@ -305,7 +305,7 @@ export class GraphReweightingLoop {
   /**
    * Check if candidate matches PO structure
    */
-  private matchesPOStructure(candidate: Candidate, graph: CandidateGraph): boolean {
+  private matchesPOStructure(_candidate: Candidate, _graph: CandidateGraph): boolean {
     // Placeholder: check if candidate aligns with PO amount structure
     return false;
   }
@@ -313,7 +313,7 @@ export class GraphReweightingLoop {
   /**
    * Check if candidate is in bill-to region
    */
-  private isInBillToRegion(candidate: Candidate, graph: CandidateGraph): boolean {
+  private isInBillToRegion(candidate: Candidate, _graph: CandidateGraph): boolean {
     if (!candidate.metadata.contextWindow) return false;
     const context = candidate.metadata.contextWindow.toUpperCase();
     return context.includes('BILL TO') || context.includes('SHIP TO');
@@ -322,7 +322,7 @@ export class GraphReweightingLoop {
   /**
    * Check if candidate is in header region
    */
-  private isInHeaderRegion(candidate: Candidate, graph: CandidateGraph): boolean {
+  private isInHeaderRegion(candidate: Candidate, _graph: CandidateGraph): boolean {
     if (!candidate.metadata.position) return false;
     // Assume header is in first 20% of document
     // This is a placeholder - would need document length
@@ -332,7 +332,7 @@ export class GraphReweightingLoop {
   /**
    * Check if candidate matches PO currency
    */
-  private matchesPOCurrency(candidate: Candidate, graph: CandidateGraph): boolean {
+  private matchesPOCurrency(_candidate: Candidate, _graph: CandidateGraph): boolean {
     // Placeholder: check against PO currency
     return false;
   }
@@ -340,7 +340,7 @@ export class GraphReweightingLoop {
   /**
    * Check if candidate is in summary row
    */
-  private isSummaryRow(candidate: Candidate, graph: CandidateGraph): boolean {
+  private isSummaryRow(candidate: Candidate, _graph: CandidateGraph): boolean {
     if (!candidate.metadata.contextWindow) return false;
     const context = candidate.metadata.contextWindow.toUpperCase();
     return context.includes('TOTAL') || context.includes('SUMMARY');
@@ -349,14 +349,14 @@ export class GraphReweightingLoop {
   /**
    * Check if candidate is in structured region
    */
-  private isInStructuredRegion(candidate: Candidate, graph: CandidateGraph): boolean {
+  private isInStructuredRegion(candidate: Candidate, _graph: CandidateGraph): boolean {
     return !!(candidate.metadata.isFromTable || candidate.metadata.isFromLineItem);
   }
 
   /**
    * Check if candidate has FX context
    */
-  private hasFxContext(candidate: Candidate, graph: CandidateGraph): boolean {
+  private hasFxContext(candidate: Candidate, _graph: CandidateGraph): boolean {
     if (!candidate.metadata.contextWindow) return false;
     const context = candidate.metadata.contextWindow.toUpperCase();
     return !!(context.includes('FX') || context.includes('EXCHANGE') || context.includes('RATE'));

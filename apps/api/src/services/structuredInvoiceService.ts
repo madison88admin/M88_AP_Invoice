@@ -2,6 +2,9 @@ import crypto from 'crypto';
 
 export type SourceDocumentType =
   | 'INVOICE'
+  | 'SALES_INVOICE'
+  | 'TAX_INVOICE'
+  | 'COMMERCIAL_INVOICE'
   | 'PROFORMA_INVOICE'
   | 'CREDIT_NOTE'
   | 'DEBIT_NOTE'
@@ -13,6 +16,12 @@ export type SourceDocumentType =
   | 'BILL_PAYMENT'
   | 'STATEMENT'
   | 'PAYMENT_ADVICE'
+  | 'TECH_PACK'
+  | 'TRIM_RECEIPT'
+  | 'FAKTUR_PAJAK'
+  | 'FORWARDER_BILLING_INVOICE'
+  | 'EXPEDITOR_BILLING_INVOICE'
+  | 'EXPORT_INVOICE'
   | 'UNKNOWN';
 
 export interface DocumentClassification {
@@ -56,9 +65,17 @@ export function classifyInvoiceDocument(input: { fileName?: string; mimeType?: s
   const matches: Array<{ type: SourceDocumentType; patterns: RegExp[]; payable: boolean }> = [
     { type: 'CREDIT_NOTE', patterns: [/CREDIT\s+(?:NOTE|MEMO)/, /<CREDITNOTE\b/], payable: true },
     { type: 'DEBIT_NOTE', patterns: [/DEBIT\s+(?:NOTE|MEMO)/, /\bDN(?:[-_ ]|\d|\.|$)/, /<DEBITNOTE\b/], payable: false },
+    { type: 'EXPORT_INVOICE', patterns: [/(?:^|\n)\s*EXPORT\s+INVOICE\b/], payable: false },
+    { type: 'COMMERCIAL_INVOICE', patterns: [/\bCOMMERCIAL\s+INVOICE\b/], payable: true },
+    { type: 'FAKTUR_PAJAK', patterns: [/\bFAKTUR\s+PAJAK\b/], payable: true },
+    { type: 'TECH_PACK', patterns: [/(?:^|\n)\s*TECH\s+PACK\b/], payable: false },
+    { type: 'TRIM_RECEIPT', patterns: [/(?:^|\n)\s*TRIM\s+(?:RECEIPT|RECEIVED|SAMPLE)\b/], payable: false },
+    { type: 'FORWARDER_BILLING_INVOICE', patterns: [/(?:FORWARDER|EXPEDITOR)(?:'S|S)?\s+BILLING\s+INVOICE\b/], payable: false },
     // Proforma invoices are valid AP records for review/tracking. They are
     // still prevented from direct QuickBooks posting by validationService.
     { type: 'PROFORMA_INVOICE', patterns: [/PRO[ -]?FORMA\s+INVOICE/], payable: true },
+    { type: 'SALES_INVOICE', patterns: [/\bSALES\s+INVOICE\b/], payable: true },
+    { type: 'TAX_INVOICE', patterns: [/\bTAX\s+INVOICE\b/], payable: true },
     { type: 'PACKING_LIST', patterns: [/PACKING\s+LIST/, /PACKING\s+SLIP/], payable: false },
     { type: 'AIRWAY_BILL', patterns: [/AIR\s*WAY\s*BILL/, /SHIPMENT\s+AIRWAYBILL/], payable: false },
     { type: 'DELIVERY_RECEIPT', patterns: [/DELIVERY\s+(?:RECEIPT|NOTE)/, /GOODS\s+RECEIPT/], payable: false },

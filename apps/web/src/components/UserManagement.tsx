@@ -1,12 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { userApi } from '../lib/api';
 import {
-  ArrowLeft, Users, Search, Plus, Edit, Trash2, Save, X,
+  Users, Search, Plus, Edit, Trash2, Save, X,
   Shield, Mail, Lock, User as UserIcon, Loader2, AlertCircle,
-  CheckCircle, Eye, EyeOff, Power,
+  Eye, EyeOff, Power,
 } from 'lucide-react';
 
 interface UserAccount {

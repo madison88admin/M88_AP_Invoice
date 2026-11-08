@@ -12,17 +12,15 @@ import PipelineTracker from './PipelineTracker';
 import MyTasksWidget from './MyTasksWidget';
 import StatusGuide from './StatusGuide';
 import StatCard from './ui/StatCard';
-import { ThemeToggle } from './ThemeToggle';
 import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { MockInvoice } from '../lib/mockData';
 import { hasPermission, filterInvoicesByRole, canUserApproveStatus, isWithinRoleThreshold } from '../lib/roleAccess';
-import { cn } from '../lib/utils';
 import { getAuditActorDisplay } from '../lib/auditActor';
 import { getPendingApprovalsForUser, getReturnedInvoicesForUser, isReturnedSignatureForUser } from '../lib/approvalQueue';
 import { displayInvoiceStatus, isCoordinatorQueueStatus } from '../lib/coordinatorQueue';
-import { FileText, Clock, CalendarDays, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, BarChart3, FileSearch, TrendingUp, RotateCcw, Search, Bell, Settings, LayoutDashboard, Building2, ChevronLeft, ChevronRight, LogOut, Edit, Unlock, Pause, Users, Loader2, Menu, X, Trash2, Landmark, Paperclip, Upload, Download, Eye, Info, PenTool, Zap, Copy } from 'lucide-react';
+import { FileText, Clock, CalendarDays, AlertTriangle, CheckCircle, Shield, CheckSquare, XCircle, Send, AlertCircle, Package, FileSearch, TrendingUp, RotateCcw, Search, Settings, LayoutDashboard, Building2, ChevronLeft, ChevronRight, Edit, Unlock, Pause, Users, Loader2, Menu, X, Trash2, Landmark, Paperclip, Upload, Download, Eye, Info, PenTool, Zap, Copy } from 'lucide-react';
 import { Skeleton, SkeletonBar } from './ui/Skeleton';
 
 const CANCELLATION_APPROVER_BY_USER_ROLE: Record<string, string> = {
@@ -264,7 +262,7 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
   const { showToast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   // Accounting roles manage invoices from the dedicated /repository page;
   // the dashboard's duplicate invoice list stays hidden from them.
   const isAccountingRole = user?.role === 'ACCOUNTING_SUPERVISOR' || user?.role === 'ACCOUNTING_ASSOCIATE';
@@ -315,7 +313,6 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
     agingBucket: undefined as 'current' | '1-30' | '31-60' | '60+' | undefined,
     urgentDue: undefined as boolean | undefined,
   });
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [countUpStarted, setCountUpStarted] = useState(false);
@@ -1121,6 +1118,7 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
       priority_pay_date: invoice.priority_pay_date ? new Date(invoice.priority_pay_date).toISOString().split('T')[0] : '',
       priority_reason: (invoice as any).priority_reason || '',
       priority_evidence_reference: (invoice as any).priority_evidence_reference || '',
+      urgency_type: (invoice as any).urgency_type || '',
       late_submission_reason: (invoice as any).late_submission_reason || '',
       late_submission_source: (invoice as any).late_submission_source || '',
       date_range_start: invoice.date_range_start ? new Date(invoice.date_range_start).toISOString().split('T')[0] : '',
@@ -1192,6 +1190,7 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
 
       // Remove bank fields from payload if user can't edit them — backend will reject anyway
       const canEditBank = user ? hasPermission(user.role, 'canEditBankDetails') : false;
+      const canEditUrgency = user ? ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role) : false;
 
       const payload = {
         // Non-bank fields: only send if user can edit invoice
@@ -1237,12 +1236,12 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
         incoterm: canEditAll ? parseString(editFormData.incoterm) : undefined,
         category: canEditAll ? parseString(editFormData.category) : undefined,
         bill_to_entity: canEditAll ? parseString(editFormData.bill_to_entity) : undefined,
-        is_handwritten: canEditAll ? (editFormData.is_handwritten === true ? true : editFormData.is_handwritten === false ? false : undefined) : undefined,
-        is_urgent: canEditAll ? (editFormData.is_urgent === true ? true : editFormData.is_urgent === false ? false : undefined) : undefined,
-        priority_flag: canEditAll ? (editFormData.priority_flag === true ? true : editFormData.priority_flag === false ? false : undefined) : undefined,
-        priority_pay_date: canEditAll ? parseString(editFormData.priority_pay_date) : undefined,
-        priority_reason: canEditAll ? parseString(editFormData.priority_reason) : undefined,
-        priority_evidence_reference: canEditAll ? parseString(editFormData.priority_evidence_reference) : undefined,
+        is_urgent: canEditUrgency ? (editFormData.is_urgent === true ? true : editFormData.is_urgent === false ? false : undefined) : undefined,
+        priority_flag: canEditUrgency ? (editFormData.priority_flag === true ? true : editFormData.priority_flag === false ? false : undefined) : undefined,
+        urgency_type: canEditUrgency ? parseString(editFormData.urgency_type) : undefined,
+        priority_pay_date: canEditUrgency ? parseString(editFormData.priority_pay_date) : undefined,
+        priority_reason: canEditUrgency ? parseString(editFormData.priority_reason) : undefined,
+        priority_evidence_reference: canEditUrgency ? parseString(editFormData.priority_evidence_reference) : undefined,
         late_submission_reason: canEditAll ? parseString(editFormData.late_submission_reason) : undefined,
         late_submission_source: canEditAll ? parseString(editFormData.late_submission_source) : undefined,
         date_range_start: canEditAll ? parseString(editFormData.date_range_start) : undefined,
@@ -5081,10 +5080,24 @@ ${dataRows}
               {/* Flags */}
               <div className="mt-3 p-4 rounded-xl" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
                 <p className="text-sm font-medium mb-3" style={{ color: 'var(--text-primary)' }}>Flags</p>
-                <div className="flex flex-wrap gap-4">
+                <div className="flex flex-wrap gap-4 items-end">
+                  {(() => { const canEditUrgency = user ? ['ACCOUNTING_ASSOCIATE', 'ACCOUNTING_SUPERVISOR', 'PURCHASING_COORDINATOR', 'PURCHASING_MANAGER', 'IT_ADMIN', 'SUPERADMIN'].includes(user.role) : false; return <>
+                  <label className="flex flex-col gap-1 text-sm" style={{ color: 'var(--text-secondary)' }}>
+                    <span>Urgency</span>
+                    <select
+                      value={editFormData.urgency_type || ''}
+                      onChange={(e) => handleEditChange('urgency_type', e.target.value)}
+                      disabled={!canEditUrgency}
+                      className="rounded-lg px-2 py-1.5 text-sm"
+                      style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}
+                    >
+                      <option value="">No urgency</option>
+                      <option value="URGENT_PAY_TODAY">Urgent Pay Today</option>
+                      <option value="URGENT_THIS_WEEK">Urgent Include in This Week’s Payment Schedule</option>
+                    </select>
+                  </label>
                   {[
-                    { label: 'Prioritization (handwritten)', field: 'is_handwritten' },
-                    { label: 'Urgent', field: 'is_urgent' },
+                    { label: 'Urgent flag', field: 'is_urgent' },
                     { label: 'Priority Flag', field: 'priority_flag' },
                   ].map(({ label, field }) => (
                     <label key={field} className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
@@ -5092,11 +5105,12 @@ ${dataRows}
                         type="checkbox"
                         checked={editFormData[field] || false}
                         onChange={(e) => handleEditChange(field, e.target.checked)}
+                        disabled={!canEditUrgency}
                         className="rounded"
                       />
                       {label}
                     </label>
-                  ))}
+                  ))}</> })()}
                 </div>
               </div>
 

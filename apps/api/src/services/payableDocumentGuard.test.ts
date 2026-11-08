@@ -54,7 +54,7 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
     })).toBeNull();
     expect(getPayableBlockReason({ document_type: 'TECH_PACK' })).toMatch(/TECH_PACK/);
     expect(getPayableBlockReason({ document_type: 'TRIM_RECEIPT' })).toMatch(/TRIM_RECEIPT/);
-    expect(getPayableBlockReason({ document_type: 'FAKTUR_PAJAK' })).toMatch(/FAKTUR_PAJAK/);
+    expect(getPayableBlockReason({ document_type: 'FAKTUR_PAJAK' })).toBeNull();
     expect(getPayableBlockReason({
       document_type: 'FAKTUR_PAJAK',
       invoice_number: 'SIC261000032',
@@ -86,7 +86,7 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
       invoice_date: '2026-09-04',
       total_amount: 4.68,
       raw_text: 'INVOICE\nInvoice ID: 3109D246096\nTHIS IS FOR CUSTOMS PURPOSE ONLY.\nTotal amount: HKD 4.68',
-    })).toMatch(/customs\/shipping purposes only/);
+    })).toMatch(/customs\/shipping purposes only|not eligible/);
 
     expect(getPayableBlockReason({
       document_type: 'COMMERCIAL_INVOICE',
@@ -95,10 +95,10 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
       invoice_date: '2026-09-16',
       total_amount: 107.43,
       raw_text: 'EXPORT INVOICE\nCOMMERCIAL INVOICE WILL BE ISSUED FOR BILLING PURPOSE\nTotal USD 107.43',
-    })).toMatch(/customs\/shipping purposes only/);
+    })).toMatch(/not eligible/);
   });
 
-  it('allows an OCR-misclassified statement when the header has invoice evidence', () => {
+  it('allows an OCR-misclassified statement when the header is a complete commercial invoice', () => {
     expect(getPayableBlockReason({
       document_type: 'STATEMENT',
       fileName: 'menryACI26003712-ACI26003712.pdf',
@@ -118,7 +118,7 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
       vendor_name: 'Supplier Limited',
       invoice_date: '2026-10-14',
       total_amount: 1200,
-    })).toMatch(/Export Invoice.*not eligible/i);
+    })).toMatch(/not eligible/i);
   });
 
   it('blocks an explicit EXPORT_INVOICE document classification', () => {
@@ -136,7 +136,7 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
     expect(reason).toMatch(/shipping\/non-invoice/);
   });
 
-  it('allows a commercial invoice when OCR incorrectly flags it as non-invoice', () => {
+  it('blocks a commercial invoice when AI explicitly marks the header non-payable', () => {
     expect(getPayableBlockReason({
       document_type: 'INVOICE',
       is_non_invoice_document: true,
@@ -147,7 +147,7 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
       total_amount: 133.56,
       raw_text: 'Nilorn East Asia Limited\nCommercial Invoice\nCustoms Invoice No. PL00000263849\nDocument Date 28/09/2026\nTotal Declared Value USD 133.56',
       fileName: 'HKWSO1237147_CI.pdf',
-    })).toBeNull();
+    })).toMatch(/not payable/i);
   });
 
   it('trusts the OCR document classification over a relabeled INVOICE type', () => {
@@ -206,8 +206,8 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
     expect(getPayableBlockReason({ fileName: 'ATXFreightPackingList_THK-164107.pdf' })).toMatch(/non-invoice/);
     expect(getPayableBlockReason({ fileName: 'statement_of_account_sep.pdf' })).toMatch(/non-invoice/);
     expect(getPayableBlockReason({ fileName: 'WAYBILL_18_8168_2423.pdf' })).toMatch(/non-invoice/);
-    expect(getPayableBlockReason({ fileName: 'Commercial_Invoice_2026-01.pdf' })).toMatch(/non-invoice/);
-    expect(getPayableBlockReason({ fileName: 'Faktur_Pajak_E832798169.pdf' })).toMatch(/non-invoice/);
+    expect(getPayableBlockReason({ fileName: 'Commercial_Invoice_2026-01.pdf' })).toBeNull();
+    expect(getPayableBlockReason({ fileName: 'Faktur_Pajak_E832798169.pdf' })).toBeNull();
     expect(getPayableBlockReason({ fileName: 'TechPack_SS27.pdf' })).toMatch(/non-invoice/);
     expect(getPayableBlockReason({ fileName: 'Trim_Receipt_PO-123.pdf' })).toMatch(/non-invoice/);
   });
@@ -216,10 +216,8 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
     const fileNames = [
       'Air_Way_Bill_123.pdf',
       'Packing_List_123.pdf',
-      'Commercial_Invoice_2026-01.pdf',
       'TechPack_SS27.pdf',
       'Trim_Receipt_PO-123.pdf',
-      'FAKTUR_PAJAK_E832798169.pdf',
       "Forwarder's_Billing_Invoice_Expeditors_123.pdf",
       'EXPEDITORS_BILLING_INVOICE_123.pdf',
     ];
@@ -246,7 +244,7 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
       document_type: 'INVOICE',
       raw_text: "FORWARDER'S BILLING INVOICE\nInvoice No: FWD-123\nTOTAL USD 100.00",
     });
-    expect(reason).toMatch(/excluded non-invoice/);
+    expect(reason).toMatch(/not eligible/);
   });
 
   it('blocks shipment receipt and bill payment headings even when OCR labels them as invoices', () => {
@@ -278,7 +276,7 @@ describe('payableDocumentGuard — validatePayableDocument (RULE 20 input shape)
     expect(result.passed).toBe(true);
   });
 
-  it('passes a valid commercial invoice record', () => {
+  it('passes a complete commercial invoice record for AI/header review', () => {
     const result = validatePayableDocument({
       invoice_number: 'CI-123',
       vendor_name_raw: 'Avery Dennison RIS Vietnam Co. Limited',
@@ -321,11 +319,14 @@ describe('payableDocumentGuard — validatePayableDocument (RULE 20 input shape)
     expect(result.detail).toMatch(/STATEMENT/);
   });
 
-  it('blocks excluded headings even when OCR calls the document an invoice', () => {
+  it('honors an AI non-payable decision even when OCR calls the document an invoice', () => {
     const result = validatePayableDocument({
       invoice_type: 'INVOICE',
       raw_file_url: 'invoices/2026/09/commercial-invoice.pdf',
-      ocr_raw_data: { raw_text: 'COMMERCIAL INVOICE\nInvoice No: CI-123\nTOTAL 10.00' },
+      ocr_raw_data: {
+        raw_text: 'COMMERCIAL INVOICE\nInvoice No: CI-123\nTOTAL 10.00',
+        document_classification: { document_type: 'COMMERCIAL_INVOICE', payable_candidate: false },
+      },
     });
     expect(result.passed).toBe(false);
   });

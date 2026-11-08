@@ -154,7 +154,7 @@ export class InvoiceIntentClassifier {
   private generateExplanation(
     intent: InvoiceIntent,
     features: IntentFeatures,
-    scores: Map<InvoiceIntent, number>
+    _scores: Map<InvoiceIntent, number>
   ): string[] {
     const explanations: string[] = [];
 

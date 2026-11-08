@@ -83,7 +83,7 @@ router.post('/mock-validate', devBypassAdmin, async (req: Request, res: Response
  * POST /api/test/gemini-ocr
  * Test Gemini extraction without full upload.
  */
-router.post('/gemini-ocr', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/gemini-ocr', async (req: Request, res: Response, _next: NextFunction) => {
   try {
     const { text } = req.body;
     if (!text) {
@@ -111,7 +111,7 @@ router.post('/gemini-ocr', async (req: Request, res: Response, next: NextFunctio
  * POST /api/test/consensus
  * Test dual-engine consensus extraction without full upload.
  */
-router.post('/consensus', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/consensus', async (req: Request, res: Response, _next: NextFunction) => {
   try {
     const { text } = req.body;
     if (!text) {
@@ -177,7 +177,7 @@ router.post('/consensus', async (req: Request, res: Response, next: NextFunction
  * POST /api/test/madison-extract
  * Test Madison invoice field extraction from raw text.
  */
-router.post('/madison-extract', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/madison-extract', async (req: Request, res: Response, _next: NextFunction) => {
   try {
     const { text } = req.body;
     if (!text) {
@@ -212,7 +212,7 @@ router.get('/po-audit/all', async (req: Request, res: Response, next: NextFuncti
  * POST /api/test/nextgen-mpo
  * Live cross-check of an MPO against NextGen. Returns raw PO data and comparison.
  */
-router.post('/nextgen-mpo', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/nextgen-mpo', async (req: Request, res: Response, _next: NextFunction) => {
   try {
     const { mpo_number, amount, vendor_name } = req.body;
     if (!mpo_number) {
@@ -253,7 +253,7 @@ router.post('/nextgen-mpo', async (req: Request, res: Response, next: NextFuncti
  * POST /api/test/material-search
  * Search NextGen MPOs by material name (e.g., "M4NP 32mm", "ZVCT0014")
  */
-router.post('/material-search', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/material-search', async (req: Request, res: Response, _next: NextFunction) => {
   try {
     const { material_name, vendor_name, amount } = req.body;
     if (!material_name) {

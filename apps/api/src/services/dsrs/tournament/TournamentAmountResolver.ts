@@ -5,7 +5,7 @@
  * Keeps old system as fallback if tournament fails
  */
 
-import { Candidate, CandidateFactory, FieldType } from './Candidate';
+import { Candidate } from './Candidate';
 import { FieldTournamentEngine, TournamentResult, DEFAULT_TOURNAMENT_CONFIG } from './FieldTournamentEngine';
 import { GlobalCandidatePool, ExtractorOutput } from './GlobalCandidatePool';
 import { CandidateGraphBuilder, CandidateGraph } from '../CandidateGraphBuilder';
@@ -92,7 +92,7 @@ export class TournamentAmountResolver {
    * Register amount extractor (adapter from old system)
    */
   private registerAmountExtractor(graph: CandidateGraph): void {
-    this.candidatePool.registerExtractor('amountExtractor', (text: string) => {
+    this.candidatePool.registerExtractor('amountExtractor', (_text: string) => {
       const outputs: ExtractorOutput[] = [];
 
       // Extract amounts from graph
@@ -102,9 +102,9 @@ export class TournamentAmountResolver {
         const value = node.value as number;
         
         // Calculate initial scores
-        const roleScore = this.calculateRoleScore(node, graph);
-        const graphScore = this.calculateGraphScore(node, graph);
-        const contextScore = this.calculateContextScore(node, graph);
+        const _roleScore = this.calculateRoleScore(node, graph);
+        const _graphScore = this.calculateGraphScore(node, graph);
+        const _contextScore = this.calculateContextScore(node, graph);
         
         outputs.push({
           field: 'amount',
@@ -128,7 +128,7 @@ export class TournamentAmountResolver {
   /**
    * Calculate role score for a node
    */
-  private calculateRoleScore(node: any, graph: CandidateGraph): number {
+  private calculateRoleScore(node: any, _graph: CandidateGraph): number {
     const context = node.context.toUpperCase();
     
     if (/(total|grand total|amount due|say total)/i.test(context)) {
@@ -161,7 +161,7 @@ export class TournamentAmountResolver {
   /**
    * Calculate context score for a node
    */
-  private calculateContextScore(node: any, graph: CandidateGraph): number {
+  private calculateContextScore(node: any, _graph: CandidateGraph): number {
     const context = node.context.toUpperCase();
     let score = 0.5;
     
@@ -214,7 +214,7 @@ export class TournamentAmountResolver {
    */
   private convertToAmountResolution(
     result: TournamentResult,
-    allCandidates: Candidate[]
+    _allCandidates: Candidate[]
   ): AmountResolution {
     const winner = result.winner;
     

@@ -31,6 +31,9 @@ const QUICK_VIEW_SECTIONS: Array<{ title: string; fields: QuickViewField[] }> = 
       { label: 'Amount', field: 'total_amount', format: 'amount' },
       { label: 'Currency', field: 'currency' },
       { label: 'Document Type', field: 'invoice_type' },
+      { label: 'AI Header Label', field: '__document_classification_type' },
+      { label: 'AI Header Evidence', field: '__document_type_evidence' },
+      { label: 'AI Payable Candidate', field: '__payable_candidate' },
       { label: 'Payment Terms', field: 'payment_terms' },
       { label: 'Incoterm', field: 'incoterm' },
     ],
@@ -107,6 +110,18 @@ const QUICK_VIEW_SECTIONS: Array<{ title: string; fields: QuickViewField[] }> = 
 ];
 
 function formatQuickViewValue(invoice: MockInvoice, field: QuickViewField): string {
+  if (field.field === '__document_classification_type') {
+    return String(invoice.document_classification?.document_type || invoice.source_document_type || invoice.invoice_type || 'UNKNOWN').replace(/_/g, ' ');
+  }
+  if (field.field === '__document_type_evidence') {
+    return invoice.document_type_evidence || invoice.document_classification?.reasons?.[0] || 'No header evidence returned';
+  }
+  if (field.field === '__payable_candidate') {
+    const value = typeof invoice.payable_candidate === 'boolean'
+      ? invoice.payable_candidate
+      : invoice.document_classification?.payable_candidate;
+    return value === undefined ? 'Needs review' : value ? 'Yes — eligible for AP review' : 'No — retained outside AP';
+  }
   const value = (invoice as any)[field.field];
   if (value === undefined || value === null || value === '') return 'N/A';
   if (field.format === 'boolean') return value ? 'Yes' : 'No';

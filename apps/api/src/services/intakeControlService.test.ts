@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildIntakeIdempotencyKey,
+  blockingIntakeReasons,
   compareEngineFields,
   evaluateIntakeControls,
   normalizeAmount,
@@ -50,6 +51,24 @@ describe('intake controls', () => {
     });
     expect(result.state).toBe('REVIEW');
     expect(result.difference).toBe(0.02);
+  });
+
+  it('does not hard-stop a readable total when OCR missed line-item basis', () => {
+    const result = reconcileInvoice({
+      currency: 'USD',
+      total_amount: 248,
+      grand_total: 0,
+      raw_text: 'Invoice Payment Terms',
+    });
+    expect(result.state).toBe('NOT_APPLICABLE');
+    expect(result.extractedTotal).toBe(248);
+  });
+
+  it('keeps reconciliation variances out of the pre-save hard-stop list', () => {
+    expect(blockingIntakeReasons([
+      'Invoice total reconciliation requires review.',
+      'Invoice date could not be extracted',
+    ])).toEqual(['Invoice date could not be extracted']);
   });
 
   it('distinguishes null/unread terms from explicit zero', () => {

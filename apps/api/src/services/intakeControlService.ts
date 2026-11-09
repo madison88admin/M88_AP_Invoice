@@ -26,6 +26,15 @@ export interface IntakeControlResult {
   dateOrder: { valid: boolean; invoiceDate: string | null; dueDate: string | null };
 }
 
+/**
+ * Reconciliation is a validation warning, not an intake hard-stop.  The
+ * invoice must be persisted first so Accounting can see the PDF, extracted
+ * values, and the exact variance in the normal exception workflow.
+ */
+export function blockingIntakeReasons(reasons: string[]): string[] {
+  return reasons.filter((reason) => !reason.startsWith('Invoice total reconciliation requires review'));
+}
+
 /** Stable comparisons for OCR outputs. These do not perform fuzzy matching. */
 export function normalizeInvoiceNumber(value: unknown): string {
   return String(value || '').normalize('NFKC').trim().toUpperCase().replace(/\s+/g, ' ');
@@ -149,6 +158,24 @@ export function reconcileInvoice(result: any): ReconciliationResult {
     : null;
   const subtotal = normalizeAmount(result?.subtotal, currency);
   const expectedBase = subtotal ?? lineSum;
+  // A readable invoice total with no usable subtotal/line-item basis cannot
+  // be reconciled yet, but it is still a valid capture candidate.  Treat the
+  // reconciliation as not applicable and let post-save validation surface a
+  // review exception instead of dropping the intake before an AP record is
+  // created.  This prevents valid invoices (for example Nilorn's USD 248.00
+  // invoice) from appearing to disappear when OCR misses line totals.
+  if (expectedBase === null && extractedTotal !== null) {
+    return {
+      state: 'NOT_APPLICABLE',
+      expectedTotal: expectedBase,
+      extractedTotal,
+      difference: null,
+      tolerance: configuredTolerance(currency),
+      missingTerms,
+      evidence: { currency, line_sum: lineSum, subtotal, terms: values },
+    };
+  }
+
   if (extractedTotal === null || expectedBase === null) {
     return {
       state: missingTerms.length > 0 ? 'REVIEW' : 'NOT_APPLICABLE',

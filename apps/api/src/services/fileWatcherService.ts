@@ -21,7 +21,7 @@ import { evaluateCurrencyPolicy, normalizeToUsd } from './currencyPolicyService'
 import { analyzeWithRetry, describeIntakeError } from './intakeRetryService';
 import { hasStrongNonInvoiceHeading, isObviouslyNonInvoiceFilename, nonInvoiceSuppressionReason } from './nonInvoiceSuppression';
 import { PDFDocument } from 'pdf-lib';
-import { evaluateIntakeControls } from './intakeControlService';
+import { blockingIntakeReasons, evaluateIntakeControls } from './intakeControlService';
 import { getPayableBlockReason } from './payableDocumentGuard';
 import { createDuplicateRevisionReviewFromCandidate, normalizeInvoiceReference } from './accountingControlService';
 import { ensureInvoiceBankSnapshot } from './invoiceBankSnapshotService';
@@ -844,8 +844,15 @@ async function processSingleInvoiceBuffer(
   }
 
   const intakeControls = evaluateIntakeControls(ocrResult);
-  if (intakeControls.reasons.length > 0) {
-    const reason = intakeControls.reasons.join(' ');
+  const blockingReasons = blockingIntakeReasons(intakeControls.reasons);
+  if (intakeControls.reasons.length > blockingReasons.length) {
+    logger.info(
+      `[File Watcher] ${fileName}${partLabel} → Reconciliation warning retained for post-save validation: ` +
+      intakeControls.reasons.filter((reason) => !blockingReasons.includes(reason)).join(' '),
+    );
+  }
+  if (blockingReasons.length > 0) {
+    const reason = blockingReasons.join(' ');
     logger.info(`[File Watcher] ${fileName}${partLabel} → ManualReview: ${reason}`);
     await recordWatcherReviewRequired(runIntakeId, currentProcessingPath, fileName, reason, {
       invoice_number: ocrResult.invoice_number,

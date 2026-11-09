@@ -49,15 +49,22 @@ function normalizedBankFingerprint(vendor: any): string | null {
 function selectSafeCandidate(candidates: any[], sourceName: string): any | null {
   if (candidates.length === 0) return null;
 
+  // Inactive vendor rows are retained for audit/history and may contain old
+  // bank details. They must not make an otherwise unambiguous active vendor
+  // look ambiguous. Only compare bank fingerprints among active candidates;
+  // fall back to historical rows only when no active master row exists.
+  const activeCandidates = candidates.filter((candidate) => candidate.is_active !== false);
+  const comparableCandidates = activeCandidates.length > 0 ? activeCandidates : candidates;
+
   const populatedFingerprints = new Set(
-    candidates.map(normalizedBankFingerprint).filter((value): value is string => Boolean(value))
+    comparableCandidates.map(normalizedBankFingerprint).filter((value): value is string => Boolean(value))
   );
   if (populatedFingerprints.size > 1) {
     console.warn(`[VendorMatch] Ambiguous vendor "${sourceName}" has conflicting bank records; Accounting/Finance canonical mapping is required.`);
     return null;
   }
 
-  return candidates[0];
+  return comparableCandidates[0];
 }
 
 async function matchVendorByName(vendorName: string): Promise<VendorMatchResult | null> {

@@ -20,7 +20,7 @@ import { hasStrongNonInvoiceHeading } from './nonInvoiceSuppression';
 import { PDFDocument } from 'pdf-lib';
 import { buildIntakeIdempotencyKey, evaluateIntakeControls } from './intakeControlService';
 import { checkEmailDuplicate, generateFileHash, getDuplicateReplacementDecision, isHardDuplicate, supersedeInvoiceForReplacement } from './emailDuplicateService';
-import { findExactFileMatch } from './exactFileIntakeService';
+import { findActiveBusinessMatch, findExactFileMatch } from './exactFileIntakeService';
 import { getPayableBlockReason, isValidCommercialInvoice } from './payableDocumentGuard';
 import { normalizeInvoiceReference, createDuplicateRevisionReviewFromCandidate } from './accountingControlService';
 
@@ -326,6 +326,42 @@ async function createInvoiceAndIntakeEvent(invoiceData: any, event: AtomicIntake
         // new row below so the repository shows only the new intake.
         replacementParentId = existing.id;
         invoiceData = { ...invoiceData, parent_invoice_id: existing.id };
+      }
+    }
+    // A changed filename or OCR amount must not bypass duplicate protection.
+    // Serialize the normalized business identity as well as the file hash,
+    // then reuse the existing active row instead of creating another payable
+    // invoice. Different MPO/PO values are filtered by findActiveBusinessMatch
+    // and remain eligible as separate invoices.
+    if (!replacementParentId && invoiceData.invoice_number && invoiceData.vendor_id) {
+      const businessLockKey = `${String(invoiceData.vendor_id).trim()}:${String(invoiceData.normalized_invoice_number || invoiceData.invoice_number).trim().toUpperCase().replace(/[^A-Z0-9]/g, '')}`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${businessLockKey}))`;
+      const businessMatch = await findActiveBusinessMatch(invoiceData, tx);
+      if (businessMatch) {
+        const reason = `Duplicate blocked: invoice ${businessMatch.invoice_number} for this vendor is already captured. Existing AP record was reused.`;
+        await tx.emailIntakeEvent.create({
+          data: {
+            source: event.source,
+            intake_id: event.intakeId,
+            mailbox: event.mailbox,
+            message_id: event.messageId || event.intakeId,
+            attachment_id: event.attachmentId,
+            file_name: event.fileName,
+            stage: 'DUPLICATE',
+            status: 'BLOCKED',
+            invoice_id: businessMatch.id,
+            error: reason,
+            metadata: {
+              ...(event.metadata || {}),
+              duplicate_level: 'BUSINESS_KEY',
+              existing_invoice_id: businessMatch.id,
+              existing_invoice_number: businessMatch.invoice_number,
+              invoice_number: invoiceData.invoice_number,
+              vendor_id: invoiceData.vendor_id,
+            },
+          },
+        } as any);
+        return { ...businessMatch, __duplicateBlocked: true, duplicateBlockedReason: reason };
       }
     }
     const invoice = await tx.invoice.create({ data: invoiceData, include: { vendor: true } });

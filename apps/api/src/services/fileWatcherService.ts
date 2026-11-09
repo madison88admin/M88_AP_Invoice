@@ -1217,12 +1217,14 @@ async function processSingleInvoiceBuffer(
     const saved = await createInvoiceOnceByFileHash(baseData, { vendor: true, invoice_lines: true });
     const invoice = saved.invoice;
     if (!saved.created) {
-      const reason = 'Identical PDF was already captured by another intake worker; existing record reused.';
+      const reason = saved.duplicateType === 'BUSINESS_KEY'
+        ? `Duplicate invoice ${invoice.invoice_number} for the same vendor was already captured; existing record reused.`
+        : 'Identical PDF was already captured by another intake worker; existing record reused.';
       safeMove(currentProcessingPath, DUPLICATES_DIR);
       await recordWatcherIntakeEvent(runIntakeId, {
         source: 'POWER_AUTOMATE', stage: 'DUPLICATE', status: 'BLOCKED', fileName,
         invoiceId: invoice.id, error: reason,
-        metadata: { duplicate_level: 'FILE_HASH', existing_invoice_id: invoice.id, file_hash: fileHash },
+        metadata: { duplicate_level: saved.duplicateType || 'FILE_HASH', existing_invoice_id: invoice.id, file_hash: fileHash },
       });
       return { fileName, terminalStage: 'DUPLICATE', invoiceId: invoice.id, invoiceNumber: invoice.invoice_number };
     }

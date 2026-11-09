@@ -55,6 +55,20 @@ describe('vendor matching financial controls', () => {
     await expect(matchVendor('CHECKPOINT SYSTEMS LIMITED')).resolves.toBeNull();
   });
 
+  it('ignores inactive historical bank rows when an active canonical vendor exists', async () => {
+    vendorFindMany.mockResolvedValue([
+      vendor({ id: 'brand-active', name: 'BRAND ID LLC', beneficiary_name: 'Brand ID LLC', account_number: '111111', is_active: true }),
+      vendor({ id: 'brand-old', name: 'BRAND ID LLC', beneficiary_name: 'Brand ID LLC', account_number: '999999', is_active: false }),
+    ]);
+
+    await expect(matchVendor('Brand ID LLC')).resolves.toMatchObject({
+      vendor_id: 'brand-active',
+      vendor_name: 'BRAND ID LLC',
+      match_type: 'exact',
+      confidence: 1,
+    });
+  });
+
   it('matches an invoice vendor using the beneficiary name without changing bank data', async () => {
     vendorFindMany.mockResolvedValue([
       vendor({

@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mock the prisma client before importing the service.
 const {
   invoiceFindUnique,
+  signatureCreate,
   signatureUpdate,
   signatureUpdateMany,
   stageTimestampFindFirst,
@@ -14,6 +15,7 @@ const {
   sendApprovalRequestNotification,
 } = vi.hoisted(() => ({
   invoiceFindUnique: vi.fn(),
+  signatureCreate: vi.fn(),
   signatureUpdate: vi.fn(),
   signatureUpdateMany: vi.fn(),
   stageTimestampFindFirst: vi.fn(),
@@ -28,7 +30,7 @@ const {
 vi.mock('../config/database', () => ({
   default: {
     invoice: { findUnique: invoiceFindUnique, update: invoiceUpdate },
-    signature: { update: signatureUpdate, updateMany: signatureUpdateMany },
+    signature: { create: signatureCreate, update: signatureUpdate, updateMany: signatureUpdateMany },
     stageTimestamp: { findFirst: stageTimestampFindFirst, update: stageTimestampUpdate, create: stageTimestampCreate },
     auditLog: { create: auditLogCreate },
   },
@@ -96,6 +98,11 @@ function makeInvoice() {
 
 beforeEach(() => {
   invoiceFindUnique.mockReset();
+  signatureCreate.mockReset().mockImplementation(async ({ data }: any) => ({
+    id: `created-${data.signatory_role}`,
+    ...data,
+    created_at: new Date('2026-08-11T00:00:00Z'),
+  }));
   signatureUpdate.mockReset().mockResolvedValue({});
   signatureUpdateMany.mockReset().mockResolvedValue({ count: 1 });
   stageTimestampFindFirst.mockReset();
@@ -115,6 +122,39 @@ beforeEach(() => {
 });
 
 describe('approveInvoice', () => {
+  it('rebuilds a missing current-revision chain instead of returning a false no-pending error', async () => {
+    const stale = makeInvoice();
+    stale.revision = 2;
+    stale.status = InvoiceStatus.PENDING_MANAGER;
+    stale.signatures = stale.signatures.map((signature: any) => ({
+      ...signature,
+      invoice_revision: 1,
+      signed_at: signature.signatory_role === SignatoryRole.COORDINATOR ? new Date('2026-08-10T09:00:00Z') : null,
+      approval_status: signature.signatory_role === SignatoryRole.COORDINATOR ? 'APPROVED' : 'RECONFIRMATION_REQUIRED',
+    }));
+    const recovered = {
+      ...stale,
+      status: InvoiceStatus.PENDING_COORDINATOR,
+      signatures: [
+        { ...stale.signatures[0], invoice_revision: 2, signed_at: null, approval_status: 'PENDING' },
+        { ...stale.signatures[1], invoice_revision: 2, signed_at: null, approval_status: 'PENDING' },
+      ],
+    };
+    invoiceFindUnique
+      .mockResolvedValueOnce(stale)
+      .mockResolvedValueOnce(stale)
+      .mockResolvedValueOnce(recovered);
+
+    await approveInvoice('inv-1', 'user-1', 'PURCHASING_COORDINATOR', 'Sarah Jane Cariquitan');
+
+    expect(auditLogCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ action: 'APPROVAL_REQUEST_RECOVERED' }),
+    }));
+    expect(signatureCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ invoice_revision: 2 }),
+    }));
+  });
+
   it('records the signing user id on the signature (Returned to Me matching)', async () => {
     invoiceFindUnique.mockResolvedValue(makeInvoice());
 

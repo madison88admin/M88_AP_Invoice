@@ -127,6 +127,15 @@ async function isAutoApprovalEligible(_invoice: any): Promise<{ eligible: boolea
  */
 const approvalRequestInFlight = new Map<string, Promise<any>>();
 
+const ACTIVE_APPROVAL_STATUSES = new Set([
+  InvoiceStatus.PENDING_COORDINATOR,
+  InvoiceStatus.PENDING_MANAGER,
+  InvoiceStatus.PENDING_MLO_ACCOUNT_HOLDER,
+  InvoiceStatus.PENDING_MLO_PLANNING_MANAGER,
+  InvoiceStatus.PENDING_SR_MANAGER,
+  InvoiceStatus.PENDING_POLLY,
+]);
+
 export async function createApprovalRequest(
   invoiceId: string,
   userId: string,
@@ -162,6 +171,33 @@ async function createApprovalRequestInternal(
       `Cannot request approval — missing required fields: ${readiness.missing.map(f => f.lineNumber ? `Line ${f.lineNumber} ${f.label}` : f.label).join(', ')}. Please fill these in before requesting approval.`,
       400
     );
+  }
+
+  // A material correction can advance the invoice revision before the async
+  // validation callback recreates the approval chain. If an older deployment
+  // or a failed callback left only old-revision signatures behind, recover the
+  // workflow here instead of leaving the invoice in a misleading pending
+  // stage. The normal route builder below will create signatures for the
+  // current revision and set the correct first approver.
+  const hasCurrentWorkflowSignature = (invoice.signatures || []).some((signature: any) =>
+    !signature.ocr_detected &&
+    signature.invoice_revision === invoice.revision &&
+    signature.approval_status !== 'SUPERSEDED'
+  );
+  if (ACTIVE_APPROVAL_STATUSES.has(invoice.status as any) && !hasCurrentWorkflowSignature) {
+    await prisma.invoice.update({
+      where: { id: invoiceId },
+      data: { status: InvoiceStatus.VALIDATION_PENDING as any, current_approver_role: null },
+    });
+    await prisma.auditLog.create({
+      data: {
+        invoice_id: invoiceId,
+        performed_by: userId,
+        action: 'APPROVAL_REQUEST_RECOVERED',
+        note: `Rebuilt approval chain for invoice revision ${invoice.revision} after stale approval signatures were detected.`,
+      },
+    });
+    invoice.status = InvoiceStatus.VALIDATION_PENDING as any;
   }
 
   if (invoice.status !== 'VALIDATION_PENDING') {
@@ -695,9 +731,33 @@ export async function approveInvoice(
   }
 
   // Find the first unsigned signature matching any allowed role
-  const pendingSignature = workflowSignatures.find(
+  let pendingSignature = workflowSignatures.find(
     (sig: any) => signatoryRoles.includes(sig.signatory_role) && !sig.signed_at
   );
+
+  // Self-heal a stale queue row when a user opens it before the validation
+  // callback has rebuilt the current-revision chain. The recovery is
+  // idempotent and leaves an audit trail; the request then continues against
+  // the freshly created signature instead of returning a false "no pending"
+  // error.
+  if (!pendingSignature && workflowSignatures.length === 0 && ACTIVE_APPROVAL_STATUSES.has(invoice!.status as any)) {
+    await createApprovalRequest(invoiceId, 'system', { fromExceptionResolution: true });
+    const recovered = await prisma.invoice.findUnique({
+      where: { id: invoiceId },
+      include: { signatures: true, vendor: true, invoice_lines: true },
+    });
+    if (recovered) {
+      invoice = recovered;
+      workflowSignatures = invoice.signatures.filter((sig: any) =>
+        !sig.ocr_detected &&
+        sig.invoice_revision === invoice!.revision &&
+        sig.approval_status !== 'SUPERSEDED'
+      );
+      pendingSignature = workflowSignatures.find(
+        (sig: any) => signatoryRoles.includes(sig.signatory_role) && !sig.signed_at
+      );
+    }
+  }
 
   // PENDING_ACCOUNTING with all workflow signatures signed but no
   // ACCOUNTING_REVIEWER signature — this happens when the normal approval

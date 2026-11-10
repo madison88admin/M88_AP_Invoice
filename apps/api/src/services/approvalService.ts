@@ -1527,10 +1527,12 @@ export async function getPendingApprovals(userRole: string) {
 
   const threshold = ROLE_TIER_THRESHOLD[userRole] || 0;
 
-  // Fetch a wider candidate set before applying the revision-aware filter
-  // below.  The old relation filter considered stale signatures from an
-  // earlier revision, so one of those rows could consume the first 10 slots
-  // and make the UI show an invoice that approveInvoice could not action.
+  // Fetch all candidates before applying the revision-aware filter below.
+  // The old relation filter considered stale signatures from an earlier
+  // revision, so one of those rows could consume the first 10 slots and make
+  // the UI show an invoice that approveInvoice could not action. Limiting
+  // after filtering preserves the existing 10-item response contract without
+  // dropping valid older invoices from the queue.
   const pendingApprovals = await prisma.invoice.findMany({
     where: {
       status: { in: pendingStatuses as any[] },
@@ -1551,7 +1553,6 @@ export async function getPendingApprovals(userRole: string) {
       { created_at: 'asc' },
       { id: 'asc' },
     ],
-    take: 100,
   });
 
   return pendingApprovals

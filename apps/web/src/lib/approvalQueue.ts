@@ -62,6 +62,8 @@ const hasReturnHistory = (invoice: MockInvoice): boolean =>
 
 export const orderedSignatures = (invoice: MockInvoice) => (invoice.signatures || [])
   .filter(signature => !signature.ocr_detected &&
+    Number((signature as any).invoice_revision ?? (invoice as any).revision ?? 1) === Number((invoice as any).revision ?? 1) &&
+    String((signature as any).approval_status || '').toUpperCase() !== 'SUPERSEDED' &&
     (!signature.invalidated_at || signature.approval_status === 'RECONFIRMATION_REQUIRED'))
   .sort((a, b) => APPROVAL_ROLE_ORDER.indexOf(a.signatory_role) - APPROVAL_ROLE_ORDER.indexOf(b.signatory_role));
 

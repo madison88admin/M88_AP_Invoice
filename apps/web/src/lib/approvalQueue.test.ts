@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getReturnedInvoicesForUser } from './approvalQueue';
+import { getPendingApprovalsForUser, getReturnedInvoicesForUser } from './approvalQueue';
 
 const returnedInvoice = (stage: string, coordinatorApproved: boolean) => ({
   id: 'invoice-1',
@@ -79,5 +79,81 @@ describe('returned invoice routing visibility', () => {
     (invoice.signatures as any[])[1].approval_status = undefined;
 
     expect(getReturnedInvoicesForUser([invoice], { id: 'manager-1', name: 'Maricar', role: 'PURCHASING_MANAGER' })).toHaveLength(0);
+  });
+});
+
+describe('approval queue revision alignment', () => {
+  it('does not show an invoice whose only pending signature belongs to an old revision', () => {
+    const invoice = {
+      id: 'invoice-revised',
+      invoice_number: 'HK29785699',
+      vendor_id: 'vendor-1',
+      vendor_name: 'PAXAR (CHINA) LTD',
+      total_amount: 148.85,
+      currency: 'USD',
+      invoice_date: '2026-08-28',
+      invoice_received_date: '2026-08-28',
+      payment_terms: 'NET_30',
+      invoice_type: 'INVOICE',
+      category: 'TRIMS',
+      revision: 3,
+      status: 'PENDING_MANAGER',
+      signatures: [{
+        id: 'stale-manager-signature',
+        signatory_role: 'PURCHASING_MANAGER',
+        signatory_name: 'Maricar',
+        signatory_user_id: 'manager-1',
+        signed_at: undefined,
+        approval_status: 'RECONFIRMATION_REQUIRED',
+        invoice_revision: 2,
+        ocr_detected: false,
+      }],
+      exceptions: [],
+      stage_timestamps: [],
+      audit_logs: [],
+    } as any;
+
+    expect(getPendingApprovalsForUser([invoice], {
+      id: 'manager-1',
+      name: 'Maricar',
+      role: 'PURCHASING_MANAGER',
+    })).toHaveLength(0);
+  });
+
+  it('keeps a pending signature from the current revision in the manager queue', () => {
+    const invoice = {
+      id: 'invoice-current',
+      invoice_number: 'HK29785699',
+      vendor_id: 'vendor-1',
+      vendor_name: 'PAXAR (CHINA) LTD',
+      total_amount: 148.85,
+      currency: 'USD',
+      invoice_date: '2026-08-28',
+      invoice_received_date: '2026-08-28',
+      payment_terms: 'NET_30',
+      invoice_type: 'INVOICE',
+      category: 'TRIMS',
+      revision: 3,
+      status: 'PENDING_MANAGER',
+      signatures: [{
+        id: 'current-manager-signature',
+        signatory_role: 'PURCHASING_MANAGER',
+        signatory_name: 'Maricar',
+        signatory_user_id: 'manager-1',
+        signed_at: undefined,
+        approval_status: 'PENDING',
+        invoice_revision: 3,
+        ocr_detected: false,
+      }],
+      exceptions: [],
+      stage_timestamps: [],
+      audit_logs: [],
+    } as any;
+
+    expect(getPendingApprovalsForUser([invoice], {
+      id: 'manager-1',
+      name: 'Maricar',
+      role: 'PURCHASING_MANAGER',
+    })).toHaveLength(1);
   });
 });

@@ -1477,6 +1477,24 @@ const ROLE_TIER_THRESHOLD: Record<string, number> = {
 };
 
 /**
+ * Returns true only when the user's role has an unsigned workflow signature
+ * for the invoice's current revision.  Approval signatures from a previous
+ * revision must not keep an invoice visible in the inbox: those signatures
+ * are intentionally ignored by approveInvoice and would otherwise produce a
+ * misleading "no pending approval" error when the user opens the invoice.
+ */
+export function hasCurrentRevisionPendingSignature(invoice: any, signatoryRoles: string[]): boolean {
+  const currentRevision = Number(invoice?.revision ?? 1);
+  return (invoice?.signatures || []).some((signature: any) =>
+    !signature.ocr_detected &&
+    Number(signature.invoice_revision ?? 0) === currentRevision &&
+    signature.approval_status !== 'SUPERSEDED' &&
+    signatoryRoles.includes(signature.signatory_role) &&
+    !signature.signed_at
+  );
+}
+
+/**
  * Get pending approvals for a specific user role
  * Only returns invoices where it's actually this role's turn to approve
  * Also filters by tier threshold so roles only see invoices in their tier
@@ -1509,6 +1527,10 @@ export async function getPendingApprovals(userRole: string) {
 
   const threshold = ROLE_TIER_THRESHOLD[userRole] || 0;
 
+  // Fetch a wider candidate set before applying the revision-aware filter
+  // below.  The old relation filter considered stale signatures from an
+  // earlier revision, so one of those rows could consume the first 10 slots
+  // and make the UI show an invoice that approveInvoice could not action.
   const pendingApprovals = await prisma.invoice.findMany({
     where: {
       status: { in: pendingStatuses as any[] },
@@ -1529,10 +1551,12 @@ export async function getPendingApprovals(userRole: string) {
       { created_at: 'asc' },
       { id: 'asc' },
     ],
-    take: 10,
+    take: 100,
   });
 
-  return pendingApprovals;
+  return pendingApprovals
+    .filter(invoice => hasCurrentRevisionPendingSignature(invoice, signatoryRoles))
+    .slice(0, 10);
 }
 
 /**

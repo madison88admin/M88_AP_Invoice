@@ -173,6 +173,7 @@ export interface MockSignature {
   ocr_detected?: boolean;
   invalidated_at?: string;
   invalidation_reason?: string;
+  invoice_revision?: number;
 }
 
 export interface MockException {

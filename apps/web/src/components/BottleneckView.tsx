@@ -4,6 +4,7 @@ import { calcWorkingHoursElapsed } from '@ap-invoice/shared';
 import { useMockData } from '../contexts/MockDataContext';
 import { useAuth } from '../contexts/AuthContext';
 import EmptyState from './ui/EmptyState';
+import { formatCurrency as formatCurrencyValue } from '../lib/utils';
 
 interface BottleneckItem {
   id: string;
@@ -100,10 +101,7 @@ export default function BottleneckView() {
   }, [invoices, getInvoicesByStage, user]);
 
   const formatCurrency = (amount: number, currency: string) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: currency || 'USD',
-    }).format(amount);
+    return formatCurrencyValue(amount, currency);
   };
 
   const formatTimeAgo = (dateString?: string) => {

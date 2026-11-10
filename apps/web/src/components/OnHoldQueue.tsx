@@ -5,6 +5,7 @@ import { onHoldQueueApi, invoiceApi } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 import { hasPermission } from '../lib/roleAccess';
 import { useToast } from '../contexts/ToastContext';
+import { formatCurrency as formatCurrencyValue } from '../lib/utils';
 
 interface HoldQueueItem {
   id: string;
@@ -97,7 +98,7 @@ export default function OnHoldQueue() {
   };
 
   const formatCurrency = (amount: number, currency: string) => {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency || 'USD' }).format(amount);
+    return formatCurrencyValue(amount, currency);
   };
 
   const getHoldSeverity = (hours: number) => {

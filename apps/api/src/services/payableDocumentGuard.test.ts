@@ -3,6 +3,7 @@ import {
   filenameIsHardExcluded,
   getFilenameOnlyBlockReason,
   getPayableBlockReason,
+  hasStrongInvoiceEvidence,
   validatePayableDocument,
 } from './payableDocumentGuard';
 
@@ -252,6 +253,32 @@ describe('payableDocumentGuard — getPayableBlockReason', () => {
     expect(getPayableBlockReason({ document_type: 'INVOICE', raw_text: 'BILL PAYMENT\nPayment Reference: BP-123' })).toMatch(/bill payment/i);
     expect(getPayableBlockReason({ document_type: 'INVOICE', fileName: 'Shipment_Receipt_123.pdf' }, { skipFilenameHints: true })).toMatch(/shipment receipt/i);
     expect(getPayableBlockReason({ document_type: 'INVOICE', fileName: 'Bill_Payment_123.pdf' }, { skipFilenameHints: true })).toMatch(/bill payment/i);
+  });
+});
+
+describe('payableDocumentGuard — strong invoice evidence fallback', () => {
+  it('recognizes an UNKNOWN OCR type when all core fields and an invoice filename are present', () => {
+    expect(hasStrongInvoiceEvidence({
+      document_type: 'UNKNOWN',
+      invoice_number: 'IA00512138',
+      vendor_name: 'CHECKPOINT SYSTEMS LIMITED',
+      invoice_date: '2026-11-09',
+      currency: 'USD',
+      total_amount: 5006.65,
+      fileName: 'Invoice - IA00512138.pdf',
+    })).toBe(true);
+  });
+
+  it('rejects explicit non-invoice filenames even when the fields look complete', () => {
+    expect(hasStrongInvoiceEvidence({
+      document_type: 'UNKNOWN',
+      invoice_number: 'IA00512139',
+      vendor_name: 'CHECKPOINT SYSTEMS LIMITED',
+      invoice_date: '2026-11-09',
+      currency: 'USD',
+      total_amount: 5006.65,
+      fileName: 'Packing_List_IA00512139.pdf',
+    })).toBe(false);
   });
 });
 

@@ -89,12 +89,60 @@ describe('email intake monitoring', () => {
       expect(isInvoiceReviewCandidate({ document_type: type })).toBe(true);
     });
 
+  it('materializes an UNKNOWN classification when the extracted fields and filename prove it is invoice-like', () => {
+    expect(isInvoiceReviewCandidate({
+      file_name: 'Invoice - IA00512138.pdf',
+      invoice_type: 'UNKNOWN',
+      document_classification: { document_type: 'UNKNOWN', payable_candidate: false },
+      payable_candidate: false,
+      invoice_number: 'IA00512138',
+      vendor_name: 'CHECKPOINT SYSTEMS LIMITED',
+      invoice_date: '2026-11-09',
+      currency: 'USD',
+      total_amount: 5006.65,
+    })).toBe(true);
+  });
+
+  it('keeps an unknown packing list out even when OCR extracted invoice-like fields', () => {
+    expect(isInvoiceReviewCandidate({
+      file_name: 'Packing_List_IA00512139.pdf',
+      invoice_type: 'UNKNOWN',
+      document_classification: { document_type: 'UNKNOWN', payable_candidate: false },
+      invoice_number: 'IA00512139',
+      vendor_name: 'CHECKPOINT SYSTEMS LIMITED',
+      invoice_date: '2026-11-09',
+      currency: 'USD',
+      total_amount: 5006.65,
+    })).toBe(false);
+  });
+
   it('still materializes an actual invoice with incomplete extraction', async () => {
     await recordEmailIntakeEvent({ source: 'GRAPH', stage: 'REVIEW_REQUIRED',
       metadata: { invoice_type: 'INVOICE', storage_path: '/incoming/invoice.pdf', attachment_file_hash: 'a'.repeat(64) } });
     expect(mocks.invoiceCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ status: 'EXCEPTION_FLAGGED', source_document_type: 'INVOICE' }),
     }));
+  });
+
+  it('materializes a strong-evidence UNKNOWN invoice as an INVOICE exception row', async () => {
+    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', fileName: 'Invoice - IA00512138.pdf',
+      metadata: {
+        invoice_type: 'UNKNOWN',
+        document_classification: { document_type: 'UNKNOWN', payable_candidate: false },
+        invoice_number: 'IA00512138',
+        vendor_name: 'CHECKPOINT SYSTEMS LIMITED',
+        invoice_date: '2026-11-09',
+        currency: 'USD',
+        total_amount: 5006.65,
+        storage_path: '/incoming/Invoice - IA00512138.pdf',
+        attachment_file_hash: 'b'.repeat(64),
+      } });
+    expect(mocks.invoiceCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'EXCEPTION_FLAGGED', source_document_type: 'INVOICE', invoice_type: 'INVOICE' }),
+    }));
+    const data = mocks.invoiceCreate.mock.calls.at(-1)?.[0]?.data;
+    expect(data?.ocr_raw_data?.classification_fallback).toBe('STRONG_INVOICE_EVIDENCE');
+    expect(data?.ocr_raw_data?.document_classification?.payable_candidate).toBe(true);
   });
 
   it('does not manufacture an invoice when a review PDF cannot be fingerprinted', async () => {

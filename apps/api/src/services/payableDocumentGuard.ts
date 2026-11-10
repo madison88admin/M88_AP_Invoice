@@ -228,6 +228,7 @@ export interface PayableCheckInput {
   invoice_number?: string | null;
   vendor_name?: string | null;
   total_amount?: unknown;
+  currency?: string | null;
   invoice_date?: string | Date | null;
   document_classification?: {
     document_type?: string | null;
@@ -235,6 +236,47 @@ export interface PayableCheckInput {
     confidence?: number | null;
     reasons?: string[] | null;
   } | null;
+}
+
+/**
+ * Evidence-based fallback for OCR classifications that are UNKNOWN/OTHER.
+ *
+ * OCR providers can extract every payable field correctly while missing the
+ * first-page heading (this is what happened for IA00512138 and IA00512129).
+ * Those files must become reviewable exception invoices instead of being
+ * silently left only in Intake Review.  This helper is deliberately narrow:
+ * it only applies to unknown-like classifications, requires all core AP
+ * fields, and rejects explicit non-invoice headers/filenames.
+ */
+export function hasStrongInvoiceEvidence(doc: PayableCheckInput): boolean {
+  const classificationType = String(
+    doc.document_classification?.document_type || doc.document_type || doc.source_document_type || doc.invoice_type || '',
+  ).trim().toUpperCase().replace(/[ -]+/g, '_');
+  if (classificationType && !['UNKNOWN', 'OTHER'].includes(classificationType)) return false;
+
+  const fileName = String(doc.fileName || '');
+  const rawText = String(doc.raw_text || '');
+  const firstPage = rawText.replace(/\r\n?/g, '\n').slice(0, 2000);
+  if (filenameIsHardExcluded(fileName) || filenameLooksNonInvoice(fileName)) return false;
+  if (hasStrictNonPayableHeader(doc, classificationType)
+    || CUSTOMS_ONLY_HINTS.test(firstPage)
+    || EXPORT_INVOICE_HEADING.test(firstPage)
+    || hasStrongNonInvoiceHeading(firstPage)
+    || STATEMENT_TEXT_HINTS.test(firstPage)
+    || DEBIT_NOTE_HINTS.test(firstPage)
+    || CREDIT_NOTE_HINTS.test(firstPage)) return false;
+
+  const invoiceNumber = String(doc.invoice_number || '').trim();
+  const vendorName = String(doc.vendor_name || '').trim();
+  const invoiceDate = String(doc.invoice_date || '').trim();
+  const amount = Number(String(doc.total_amount ?? '').replace(/[^0-9.-]/g, ''));
+  const currency = String(doc.currency || '').trim().toUpperCase();
+  if (!invoiceNumber || !vendorName || !invoiceDate || !currency || !Number.isFinite(amount) || amount <= 0) return false;
+
+  const invoiceFileName = _INVOICE_FILENAME_HINTS.test(fileName);
+  const invoiceHeader = /\b(?:invoice|tax\s+invoice|sales\s+invoice|commercial\s+invoice)\b/i.test(firstPage);
+  const invoiceFieldLabels = /\b(?:invoice\s*(?:no|number)|invoice\s*date|total(?:\s+amount)?|amount\s+due)\b/i.test(firstPage);
+  return invoiceFileName || (invoiceHeader && invoiceFieldLabels);
 }
 
 /**

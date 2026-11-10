@@ -5,7 +5,7 @@ import { inAppNotificationService } from './inAppNotificationService';
 import fs from 'fs';
 import crypto from 'crypto';
 import { createInvoiceOnceByFileHash } from './exactFileIntakeService';
-import { getPayableBlockReason } from './payableDocumentGuard';
+import { getPayableBlockReason, hasStrongInvoiceEvidence } from './payableDocumentGuard';
 
 export type EmailIntakeStage =
   | 'POLL_SUCCESS'
@@ -62,16 +62,19 @@ export type IntakeRecoveryCaseInput = {
   metadata?: Record<string, unknown>;
 };
 
-/** Only positively identified invoice candidates belong in Invoice Repository.
- * A review outcome is not evidence that an attachment is an invoice. Keep
- * non-invoices and unclassified files in IntakeReviewRecord, including backfills.
+/**
+ * Decide whether a REVIEW_REQUIRED attachment should also be searchable in the
+ * Invoice Repository.  Explicit non-invoices stay in Intake Review.  For an
+ * UNKNOWN/OTHER classification, a narrow evidence fallback is allowed when
+ * OCR extracted all core invoice fields and the filename/header is invoice-like.
+ * The resulting row is still EXCEPTION_FLAGGED and cannot be paid or posted
+ * until a reviewer resolves it.
  */
 export function isInvoiceReviewCandidate(metadata: Record<string, unknown> = {}): boolean {
   const classification = metadata.document_classification && typeof metadata.document_classification === 'object'
     ? metadata.document_classification as Record<string, unknown> : {};
-  if (metadata.suppressed_before_ocr === true || metadata.payable_candidate === false
-    || classification.payable_candidate === false) return false;
-  const blocked = getPayableBlockReason({
+  if (metadata.suppressed_before_ocr === true) return false;
+  const guardInput = {
     document_type: typeof metadata.document_type === 'string' ? metadata.document_type : undefined,
     source_document_type: typeof metadata.source_document_type === 'string' ? metadata.source_document_type : undefined,
     invoice_type: typeof metadata.invoice_type === 'string' ? metadata.invoice_type : undefined,
@@ -81,16 +84,29 @@ export function isInvoiceReviewCandidate(metadata: Record<string, unknown> = {})
     invoice_number: typeof metadata.invoice_number === 'string' ? metadata.invoice_number : undefined,
     vendor_name: typeof metadata.vendor_name === 'string' ? metadata.vendor_name : undefined,
     total_amount: metadata.total_amount ?? metadata.amount,
+    currency: typeof metadata.currency === 'string' ? metadata.currency : undefined,
     invoice_date: typeof metadata.invoice_date === 'string' ? metadata.invoice_date : undefined,
-  });
-  if (blocked) return false;
+  };
+  const blocked = getPayableBlockReason(guardInput);
   const type = String(classification.document_type || metadata.source_document_type
     || metadata.document_type || metadata.invoice_type || '').trim().toUpperCase().replace(/[ -]+/g, '_');
-  return new Set([
+  const positiveType = new Set([
     'INVOICE', 'PROFORMA', 'PRO_FORMA', 'PROFORMA_INVOICE', 'COMMERCIAL',
     'COMMERCIAL_INVOICE', 'SALES', 'SALES_INVOICE', 'TAX_INVOICE', 'FAKTUR_PAJAK',
     'PREPAID', 'PREPAID_INVOICE', 'PROTO_SAMPLE', 'PROTO_SAMPLE_INVOICE',
   ]).has(type);
+  const unknownLike = !type || type === 'UNKNOWN' || type === 'OTHER';
+  const evidenceFallback = unknownLike && hasStrongInvoiceEvidence({
+    ...guardInput,
+    fileName: typeof metadata.file_name === 'string' ? metadata.file_name : undefined,
+  });
+  // A false payable_candidate is authoritative for an explicitly classified
+  // document. For UNKNOWN/OTHER, it means the classifier did not find a
+  // heading; strong invoice evidence can safely route it to exception review.
+  if (metadata.payable_candidate === false && !evidenceFallback) return false;
+  if (classification.payable_candidate === false && !evidenceFallback) return false;
+  if (blocked && !evidenceFallback) return false;
+  return positiveType || evidenceFallback;
 }
 
 /**
@@ -148,6 +164,20 @@ async function createReviewInvoiceRecord(input: {
     }
 
     const rawType = String(metadata.invoice_type || metadata.document_type || '').toUpperCase();
+    const evidenceFallback = hasStrongInvoiceEvidence({
+      document_type: typeof metadata.document_type === 'string' ? metadata.document_type : undefined,
+      source_document_type: typeof metadata.source_document_type === 'string' ? metadata.source_document_type : undefined,
+      invoice_type: typeof metadata.invoice_type === 'string' ? metadata.invoice_type : undefined,
+      document_classification: typeof metadata.document_classification === 'object' && metadata.document_classification
+        ? metadata.document_classification as any : undefined,
+      raw_text: typeof metadata.raw_text === 'string' ? metadata.raw_text : undefined,
+      fileName: input.fileName,
+      invoice_number: typeof metadata.invoice_number === 'string' ? metadata.invoice_number : undefined,
+      vendor_name: typeof metadata.vendor_name === 'string' ? metadata.vendor_name : undefined,
+      total_amount: metadata.total_amount ?? metadata.amount,
+      currency: typeof metadata.currency === 'string' ? metadata.currency : undefined,
+      invoice_date: typeof metadata.invoice_date === 'string' ? metadata.invoice_date : undefined,
+    });
     const invoiceType = (Object.values(InvoiceType) as string[]).includes(rawType)
       ? rawType as InvoiceType
       : InvoiceType.INVOICE;
@@ -175,6 +205,19 @@ async function createReviewInvoiceRecord(input: {
     const extractedDate = metadata.invoice_date ? new Date(String(metadata.invoice_date)) : null;
     const invoiceDate = extractedDate && !Number.isNaN(extractedDate.getTime()) ? extractedDate : null;
 
+    const originalClassification = metadata.document_classification;
+    const normalizedClassification = evidenceFallback
+      ? {
+          ...(typeof originalClassification === 'object' && originalClassification ? originalClassification as any : {}),
+          document_type: 'INVOICE',
+          payable_candidate: true,
+          confidence: Math.max(Number((originalClassification as any)?.confidence || metadata.confidence || 0), 0.60),
+          reasons: [
+            ...((originalClassification as any)?.reasons || []),
+            'Strong invoice evidence fallback: core AP fields plus invoice-like filename/header',
+          ],
+        }
+      : originalClassification;
     const saved = await createInvoiceOnceByFileHash({
         invoice_number: invoiceNumber,
         vendor_id: unknownVendor.id,
@@ -185,7 +228,7 @@ async function createReviewInvoiceRecord(input: {
         status: InvoiceStatus.EXCEPTION_FLAGGED,
         workflow_status: workflowStatus,
         source: invoiceSource as any,
-        source_document_type: rawType || null,
+        source_document_type: evidenceFallback ? 'INVOICE' : (rawType || null),
         invoice_hash: fileHash,
         source_message_id: input.messageId || input.intakeId,
         source_attachment_id: input.attachmentId || null,
@@ -203,6 +246,12 @@ async function createReviewInvoiceRecord(input: {
           intake_id: input.intakeId,
           reason: input.reason,
           ...(metadata as any),
+          ...(evidenceFallback ? {
+            original_invoice_type: rawType || 'UNKNOWN',
+            original_document_classification: originalClassification || null,
+            document_classification: normalizedClassification,
+            classification_fallback: 'STRONG_INVOICE_EVIDENCE',
+          } : {}),
         },
         retention_until: retentionUntil,
       } as any);

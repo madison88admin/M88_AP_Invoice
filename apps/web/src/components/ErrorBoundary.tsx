@@ -1,6 +1,5 @@
 import { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertTriangle, RefreshCw, Home } from 'lucide-react';
-import { Link } from 'react-router-dom';
 
 interface Props {
   children: ReactNode;
@@ -50,14 +49,16 @@ export class ErrorBoundary extends Component<Props, State> {
                 <RefreshCw className="h-4 w-4" strokeWidth={1.75} />
                 Try Again
               </button>
-              <Link
-                to="/"
+              {/* ErrorBoundary is mounted above the Router, so the fallback
+                  must not consume router context when the tree has crashed. */}
+              <a
+                href="/"
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all"
                 style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}
               >
                 <Home className="h-4 w-4" strokeWidth={1.75} />
                 Go Home
-              </Link>
+              </a>
             </div>
           </div>
         </div>

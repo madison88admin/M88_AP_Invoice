@@ -1105,7 +1105,8 @@ async function tryFreeLocalFallbacks(
 async function tryAIFallbacks(
   fileBuffer: Buffer,
   rawText: string,
-  vendorName?: string
+  vendorName?: string,
+  mimeType = 'application/pdf'
 ): Promise<{ engine: string; vendor_name?: string; invoice_number?: string; invoice_date?: string; due_date?: string; total_amount?: number; subtotal?: number; currency?: string; po_number?: string; mpo_number?: string; brand?: string; brand_code?: string; season?: string; payment_terms?: string; ship_to?: string; sold_to?: string; qty_shipped?: number; document_type?: string; document_type_evidence?: string; payable_candidate?: boolean; bank_name?: string; swift_code?: string; account_number?: string; bank_info?: { swift_code?: string; account_number?: string }; line_items?: any[]; signatures?: { signatory_name: string; signatory_role?: string; signed_date?: string }[]; bank_charges?: number; tt_charge?: number; freight_charges?: number; courier_charges?: number; handling_fee?: number; finance_surcharge?: number; tax_amount?: number; discount_amount?: number; setup_charge?: number; sample_charge?: number; min_order_charge?: number; additional_charges?: number } | null> {
   // ─── CONSENSUS PATH: strongest engines in parallel + per-field majority vote ───
   const consensusResults: EngineResult[] = [];
@@ -1122,6 +1123,27 @@ async function tryAIFallbacks(
       logger.warn(`[OCR] Consensus engine ${label} skipped:`, e instanceof Error ? e.message : String(e));
     }
   };
+
+  // OpenAI is the primary extraction engine when configured. It receives the
+  // original PDF/PNG so the model can inspect both embedded text and page
+  // pixels, then returns a strict schema with header classification evidence.
+  // Existing engines remain fallbacks when the API is unavailable or fails.
+  try {
+    const openaiOCR = (await import('./openaiOCRService')).openaiOCRService;
+    if (openaiOCR.isAvailable()) {
+      logger.info('[OCR] Primary engine: OpenAI Responses API');
+      const openaiResult = await Promise.race([
+        openaiOCR.extractFromFile(fileBuffer, mimeType, { vendorName }),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), consensusWaitMs)),
+      ]);
+      if (openaiResult && (openaiResult.vendor_name || openaiResult.invoice_number || openaiResult.total_amount)) {
+        return { engine: 'openai', ...openaiResult } as any;
+      }
+      logger.warn('[OCR] OpenAI primary returned no usable invoice fields; continuing with fallback engines');
+    }
+  } catch (error) {
+    logger.warn('[OCR] OpenAI primary failed; continuing with fallback engines:', error instanceof Error ? error.message : String(error));
+  }
 
   const tasks: Promise<void>[] = [];
 
@@ -1744,7 +1766,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, _mimeType: string) {
     }
 
     // AI fallback: Groq (fast, accurate, truncated for token limits) → Ollama (slow, unlimited) → Gemini
-    const aiResult = await tryAIFallbacks(fileBuffer, rawText, undefined);
+    const aiResult = await tryAIFallbacks(fileBuffer, rawText, undefined, _mimeType);
 
     if (aiResult && (aiResult.vendor_name || aiResult.invoice_number)) {
       usedAIFallback = true;

@@ -53,6 +53,7 @@ import { ollamaOCRService } from './services/ollamaOCRService';
 import { openrouterOCRService } from './services/openrouterOCRService';
 import { mistralOCRService } from './services/mistralOCRService';
 import { qwenOCRService } from './services/qwenOCRService';
+import { openaiOCRService } from './services/openaiOCRService';
 import { checkAndSendSLAReminders } from './services/slaReminderService';
 import { startSharePointWatcher, stopSharePointWatcher } from './services/sharePointWatcherService';
 import { startFileWatcher, stopFileWatcher } from './services/fileWatcherService';
@@ -186,6 +187,12 @@ app.get('/health/engines', async (req, res) => {
     timestamp: new Date().toISOString(),
     engines: {
       pdf2json_madison: true,
+      openai: {
+        available: openaiOCRService.isAvailable(),
+        configured: !!process.env.OPENAI_API_KEY,
+        model: process.env.OPENAI_OCR_MODEL || 'gpt-6-astra',
+        primary: openaiOCRService.isAvailable(),
+      },
       gemini: {
         available: geminiOCRService.isAvailable(),
         model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
@@ -238,8 +245,18 @@ const startServer = async () => {
     const openrouterAvailable = openrouterOCRService.isAvailable();
     const mistralAvailable = mistralOCRService.isAvailable();
     const qwenAvailable = qwenOCRService.isAvailable();
+    const openaiAvailable = openaiOCRService.isAvailable();
+    const openaiConfigured = !!process.env.OPENAI_API_KEY;
     const qwenConfigured = !!(process.env.DASHSCOPE_API_KEY || process.env.QWEN_API_KEY);
     const nextgenConfigured = !!(process.env.NEXTGEN_USERNAME && process.env.NEXTGEN_PASSWORD);
+
+    if (!openaiConfigured) {
+      logger.warn('⚠️  OPENAI_API_KEY is not set — OpenAI primary OCR disabled.');
+    } else if (!openaiAvailable) {
+      logger.warn('⚠️  OPENAI_API_KEY is set but OpenAI OCR is disabled by configuration.');
+    } else {
+      logger.info(`✅ OpenAI primary OCR enabled (model: ${process.env.OPENAI_OCR_MODEL || 'gpt-6-astra'}, PDF detail: ${process.env.OPENAI_OCR_PDF_DETAIL || 'auto'})`);
+    }
 
     if (!geminiConfigured) {
       logger.warn('⚠️  GEMINI_API_KEY is not set — dual-engine consensus will run with pdf2json+madison only. Add GEMINI_API_KEY to apps/api/.env to enable Gemini.');

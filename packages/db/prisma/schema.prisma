@@ -1134,6 +1134,11 @@ model CorrectionLog {
   raw_text          String?
   original_fields   Json?
   corrected_fields  Json?
+  ground_truth_status String @default("legacy_unknown")
+  dataset_split     String   @default("fewshot")
+  model_name        String?
+  prompt_version    String?
+  extraction_path   String?
   note              String?
   vendor_scope_key  String?
   layout_fingerprint String?
@@ -1153,6 +1158,7 @@ model CorrectionLog {
   @@index([invoice_template_type])
   @@index([use_count])
   @@index([created_at])
+  @@index([dataset_split, ground_truth_status, approved_for_learning])
   @@map("APInvoice_CorrectionLog")
 }
 

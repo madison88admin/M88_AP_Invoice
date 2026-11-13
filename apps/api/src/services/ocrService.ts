@@ -9,6 +9,7 @@ import { extractTextWithOpenDataLoader } from './openDataLoaderService';
 import { rapidOCRService } from './rapidOCRService';
 import { upstageOCRService } from './upstageOCRService';
 import { hasStrongNonInvoiceHeading } from './nonInvoiceSuppression';
+import { verifyCriticalFieldEvidence } from './fieldEvidenceVerifier';
 import { normalizeInvoiceDatePair } from './extractors/dates';
 
 export interface BankInfo {
@@ -323,6 +324,22 @@ async function extractTextFromPDF(fileBuffer: Buffer): Promise<string> {
     });
 
     pdfParser.parseBuffer(fileBuffer);
+  });
+}
+
+async function extractPdfPageTextsForEvidence(fileBuffer: Buffer): Promise<string[]> {
+  return new Promise((resolve, reject) => {
+    const parser = new (PDFParser as any)(null, 1);
+    parser.on('pdfParser_dataReady', (data: any) => {
+      try {
+        const pages = (data.Pages || []).map((page: any) => (page.Texts || []).map((item: any) => {
+          try { return decodeURIComponent(item.R?.[0]?.T || ''); } catch { return item.R?.[0]?.T || ''; }
+        }).join(' '));
+        resolve(pages);
+      } catch (error) { reject(error); }
+    });
+    parser.on('pdfParser_dataError', (error: any) => reject(error));
+    parser.parseBuffer(fileBuffer);
   });
 }
 
@@ -1705,6 +1722,9 @@ async function tryDoclingFallback(fileBuffer: Buffer, extracted: any): Promise<{
 }
 
 export async function analyzeInvoice(fileBuffer: Buffer, _mimeType: string) {
+  let pageTextsForEvidence: string[] = [];
+  try { pageTextsForEvidence = await extractPdfPageTextsForEvidence(fileBuffer); }
+  catch (error) { logger.warn('[OCR] Page evidence text unavailable; evidence checks will be unverifiable', error); }
   let extracted: any;
   let usedGeminiVision = false;
   let usedAIFallback = false;
@@ -1793,6 +1813,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, _mimeType: string) {
         beneficiary_name: (aiResult as any).beneficiary_name || (aiResult as any).bank_info?.beneficiary_name || '',
         invoice_type: mapDocumentType(sanitizeSingleValue((aiResult as any).document_type) || detectDocumentTypeFromText(rawText)) as any,
         document_type_evidence: sanitizeSingleValue((aiResult as any).document_type_evidence) || detectDocumentTypeFromText(rawText) || undefined,
+        field_evidence: (aiResult as any).field_evidence || null,
         payable_candidate: typeof (aiResult as any).payable_candidate === 'boolean'
           ? (aiResult as any).payable_candidate
           : undefined,
@@ -1974,6 +1995,15 @@ export async function analyzeInvoice(fileBuffer: Buffer, _mimeType: string) {
         : 'Header classification evidence not returned by OCR engine',
     ],
   };
+  const fieldEvidenceVerification = verifyCriticalFieldEvidence({
+    values: { invoice_number: extracted.invoice_number, total_amount: extracted.amount, invoice_date: extracted.invoice_date },
+    evidence: (extracted as any).field_evidence,
+    pageTexts: pageTextsForEvidence,
+  });
+  const fieldEvidenceSourceType = _mimeType.toLowerCase().startsWith('image/')
+    ? 'image'
+    : pageTextsForEvidence.some((page) => page.trim().length > 20) ? 'pdf_text_layer' : 'scanned_pdf';
+  logger.info(`[OCR] Shadow field evidence: ${Object.entries(fieldEvidenceVerification).map(([field, result]) => `${field}=${result.status}`).join(', ')}`);
 
   return {
     invoice_number: extracted.invoice_number || '',
@@ -2003,6 +2033,9 @@ export async function analyzeInvoice(fileBuffer: Buffer, _mimeType: string) {
       ? InvoiceType.STATEMENT as any
       : (extracted.invoice_type as InvoiceType || 'UNKNOWN' as any),
     document_type_evidence: (extracted as any).document_type_evidence || undefined,
+    field_evidence: (extracted as any).field_evidence || undefined,
+    field_evidence_verification: fieldEvidenceVerification,
+    field_evidence_source_type: fieldEvidenceSourceType,
     document_classification: documentClassification,
     payable_candidate: documentClassification.payable_candidate,
     category: inferServiceInvoiceCategory(extracted),
@@ -2059,7 +2092,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, _mimeType: string) {
     // having to rerun OCR. This is especially important for Faktur Pajak
     // forms whose layout is often mistaken for an airwaybill.
     raw_text: classificationText || (extracted as any).raw_text || '',
-    raw_data: { ...extracted, raw_text: classificationText || (extracted as any).raw_text || '', ocr_engine: ocrEngine, used_gemini_vision: usedGeminiVision, material_code: poParsed.material_code, mpo_revision: poParsed.mpo_revision },
+    raw_data: { ...extracted, raw_text: classificationText || (extracted as any).raw_text || '', ocr_engine: ocrEngine, used_gemini_vision: usedGeminiVision, material_code: poParsed.material_code, mpo_revision: poParsed.mpo_revision, field_evidence_verification: fieldEvidenceVerification, field_evidence_source_type: fieldEvidenceSourceType, field_evidence_verification_method: 'embedded_pdf_text_shadow' },
     qty_shipped: (extracted as any).qty_shipped || undefined,
     ship_to: (extracted as any).ship_to || undefined,
     sold_to: (extracted as any).sold_to || undefined,

@@ -30,6 +30,10 @@ export interface SaveCorrectionInput {
   corrected_fields?: CorrectionFields;
   note?: string;
   layout_fingerprint?: string;
+  model_name?: string;
+  prompt_version?: string;
+  extraction_path?: string;
+  ground_truth_status?: 'confirmed';
 }
 
 export function correctionVendorScopeKey(vendorName?: string): string | null {
@@ -50,6 +54,18 @@ export class CorrectionLogService {
 
   async saveCorrection(input: SaveCorrectionInput) {
     try {
+      let extractionMeta: Record<string, any> = {};
+      if (input.invoice_id && (!input.model_name || !input.extraction_path)) {
+        const invoice = await prisma.invoice.findUnique({ where: { id: input.invoice_id }, select: { ocr_raw_data: true } });
+        const raw = invoice?.ocr_raw_data;
+        extractionMeta = raw && typeof raw === 'object' ? raw as Record<string, any> : {};
+      }
+      const correctedFields = input.corrected_fields || {};
+      const originalFields = input.original_fields || {};
+      const changed = Object.keys(correctedFields).some((field) =>
+        Object.prototype.hasOwnProperty.call(originalFields, field)
+        && String((originalFields as any)[field] ?? '') !== String((correctedFields as any)[field] ?? '')
+      );
       const log = await prisma.correctionLog.create({
         data: {
           invoice_id: input.invoice_id,
@@ -61,6 +77,11 @@ export class CorrectionLogService {
           note: input.note,
           vendor_scope_key: correctionVendorScopeKey(input.vendor_name),
           layout_fingerprint: input.layout_fingerprint,
+          ground_truth_status: changed ? 'corrected' : (input.ground_truth_status === 'confirmed' ? 'confirmed' : 'approved_unverified'),
+          dataset_split: 'fewshot',
+          model_name: input.model_name || extractionMeta.model_name || extractionMeta.engine_name || null,
+          prompt_version: input.prompt_version || extractionMeta.prompt_version || process.env.OPENAI_OCR_PROMPT_VERSION || 'unversioned',
+          extraction_path: input.extraction_path || extractionMeta.extraction_method || extractionMeta.engine_name || null,
           approved_for_learning: true,
           approved_at: new Date(),
           approved_by: 'system-auto',
@@ -111,6 +132,8 @@ export class CorrectionLogService {
             vendor_scope_key: vendorScopeKey,
             approved_for_learning: true,
             disabled_at: null,
+            dataset_split: 'fewshot',
+            ground_truth_status: { in: ['corrected', 'confirmed'] },
           },
           orderBy: [{ use_count: 'desc' }, { created_at: 'desc' }],
           take: limit,
@@ -124,6 +147,8 @@ export class CorrectionLogService {
             invoice_template_type: invoiceTemplateType,
             approved_for_learning: true,
             disabled_at: null,
+            dataset_split: 'fewshot',
+            ground_truth_status: { in: ['corrected', 'confirmed'] },
           },
           orderBy: [{ use_count: 'desc' }, { created_at: 'desc' }],
           take: limit,
@@ -133,7 +158,7 @@ export class CorrectionLogService {
       // Cross-vendor examples must be explicitly requested; normal extraction never enables this.
       if (corrections.length === 0 && allowCrossVendor && !vendorScopeKey && !invoiceTemplateType) {
         corrections = await prisma.correctionLog.findMany({
-          where: { approved_for_learning: true, disabled_at: null },
+          where: { approved_for_learning: true, disabled_at: null, dataset_split: 'fewshot', ground_truth_status: { in: ['corrected', 'confirmed'] } },
           orderBy: [{ use_count: 'desc' }, { created_at: 'desc' }],
           take: limit,
         });

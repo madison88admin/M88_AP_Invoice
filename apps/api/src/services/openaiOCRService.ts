@@ -1,5 +1,6 @@
 import { logger } from '../utils/logger';
 import { correctionLogService } from './correctionLogService';
+import { formatClassificationFeedbackPrompt, getClassificationFeedbackExamples } from './classificationFeedbackService';
 import { EXTRACTION_PROMPT } from './geminiOCRService';
 import type { ExtractionContext } from './consensusExtractor';
 
@@ -12,6 +13,12 @@ export interface OpenAIExtractedLineItem {
   size?: string | null;
   mpo_number?: string | null;
   po_number?: string | null;
+}
+
+export interface FieldEvidence {
+  page?: number | null;
+  snippet?: string | null;
+  label_seen?: string | null;
 }
 
 export interface OpenAIExtractedInvoiceData {
@@ -33,7 +40,10 @@ export interface OpenAIExtractedInvoiceData {
   qty_shipped?: number | null;
   document_type?: string | null;
   document_type_evidence?: string | null;
+  field_evidence?: { invoice_number?: FieldEvidence | null; total_amount?: FieldEvidence | null; invoice_date?: FieldEvidence | null } | null;
   payable_candidate?: boolean | null;
+  model_name?: string;
+  prompt_version?: string;
   beneficiary_name?: string | null;
   bank_name?: string | null;
   swift_code?: string | null;
@@ -76,6 +86,16 @@ const NUMBER_FIELDS = [
   'min_order_charge', 'additional_charges', 'exchange_rate',
 ] as const;
 
+const FIELD_EVIDENCE_SCHEMA = {
+  type: ['object', 'null'], additionalProperties: false,
+  properties: {
+    page: { type: ['integer', 'null'] },
+    snippet: { type: ['string', 'null'] },
+    label_seen: { type: ['string', 'null'] },
+  },
+  required: ['page', 'snippet', 'label_seen'],
+} as const;
+
 const EXTRACTION_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -90,6 +110,11 @@ const EXTRACTION_SCHEMA = {
     sold_to: { type: ['string', 'null'] }, qty_shipped: { type: ['number', 'null'] },
     document_type: { type: 'string', enum: [...DOCUMENT_TYPES] },
     document_type_evidence: { type: ['string', 'null'] }, payable_candidate: { type: ['boolean', 'null'] },
+    field_evidence: { type: ['object', 'null'], additionalProperties: false, properties: {
+      invoice_number: FIELD_EVIDENCE_SCHEMA,
+      total_amount: FIELD_EVIDENCE_SCHEMA,
+      invoice_date: FIELD_EVIDENCE_SCHEMA,
+    }, required: ['invoice_number', 'total_amount', 'invoice_date'] },
     beneficiary_name: { type: ['string', 'null'] }, bank_name: { type: ['string', 'null'] },
     swift_code: { type: ['string', 'null'] }, account_number: { type: ['string', 'null'] },
     bank_charges: { type: ['number', 'null'] }, tt_charge: { type: ['number', 'null'] },
@@ -118,7 +143,7 @@ const EXTRACTION_SCHEMA = {
   required: [
     'vendor_name', 'invoice_number', 'invoice_date', 'due_date', 'payment_terms', 'subtotal', 'total_amount', 'currency',
     'po_number', 'mpo_number', 'brand', 'brand_code', 'season', 'ship_to', 'sold_to', 'qty_shipped', 'document_type',
-    'document_type_evidence', 'payable_candidate', 'beneficiary_name', 'bank_name', 'swift_code', 'account_number',
+    'document_type_evidence', 'payable_candidate', 'field_evidence', 'beneficiary_name', 'bank_name', 'swift_code', 'account_number',
     'bank_charges', 'tt_charge', 'freight_charges', 'courier_charges', 'handling_fee', 'finance_surcharge', 'tax_amount',
     'discount_amount', 'setup_charge', 'sample_charge', 'min_order_charge', 'additional_charges', 'line_items', 'signatures',
     'incoterm', 'exchange_rate', 'invoice_currency_original', 'is_handwritten', 'is_statement',
@@ -203,6 +228,8 @@ export class OpenAIOCRService {
     }
     parsed.extraction_method = 'openai-responses';
     parsed.engine_name = 'openai';
+    parsed.model_name = this.model;
+    parsed.prompt_version = process.env.OPENAI_OCR_PROMPT_VERSION || 'invoice-extraction-v1';
     parsed.confidence = this.calculateConfidence(parsed);
     return parsed;
   }
@@ -224,8 +251,14 @@ export class OpenAIOCRService {
     const normalizedMime = mimeType.toLowerCase();
     const isImage = normalizedMime.startsWith('image/');
     const base64 = fileBuffer.toString('base64');
-    const fewShot = context ? await correctionLogService.getFewShotPrompt('', context.vendorName, context.invoiceTemplateType) : '';
-    const prompt = `${fewShot ? `${fewShot}\n\n` : ''}${EXTRACTION_PROMPT}\n\nHEADER CLASSIFICATION IS MANDATORY: use the visible first-page title and return UNKNOWN when unreadable. Never default to INVOICE. The rule engine will decide final routing.`;
+    const [fewShot, classificationExamples] = context
+      ? await Promise.all([
+        correctionLogService.getFewShotPrompt('', context.vendorName, context.invoiceTemplateType),
+        getClassificationFeedbackExamples(context.vendorName),
+      ])
+      : ['', []];
+    const classificationFeedback = formatClassificationFeedbackPrompt(classificationExamples);
+    const prompt = `${fewShot ? `${fewShot}\n\n` : ''}${classificationFeedback ? `${classificationFeedback}\n\n` : ''}${EXTRACTION_PROMPT}\n\nFor invoice_number, total_amount, and invoice_date, also return field_evidence: page number (1-based), a short exact snippet from that page, and the nearby printed label. Return null for evidence components you cannot read; never invent a page, snippet, or label. Keep the normal flattened field values unchanged. HEADER CLASSIFICATION IS MANDATORY: use the visible first-page title and document purpose; return UNKNOWN when unreadable. Never default to INVOICE. Reviewer examples are supporting evidence only and must not override this file's visible content. The rule engine will decide final routing.`;
     const content: any[] = [{ type: 'input_text', text: prompt }];
     if (isImage) {
       content.push({ type: 'input_image', image_url: `data:${normalizedMime};base64,${base64}`, detail: 'high' });

@@ -41,6 +41,21 @@ async function countPdfPages(buffer: Buffer): Promise<number | undefined> {
   }
 }
 
+/** Keep OCR provenance/evidence when an extraction is parked for review. */
+function buildOCRReviewMetadata(ocrResult: any): Record<string, unknown> {
+  const raw = ocrResult?.raw_data && typeof ocrResult.raw_data === 'object' ? ocrResult.raw_data : {};
+  return {
+    field_evidence: ocrResult?.field_evidence ?? raw.field_evidence ?? null,
+    field_evidence_verification: ocrResult?.field_evidence_verification ?? raw.field_evidence_verification ?? null,
+    field_evidence_source_type: ocrResult?.field_evidence_source_type ?? raw.field_evidence_source_type ?? null,
+    field_evidence_verification_method: raw.field_evidence_verification_method ?? null,
+    ocr_engine: raw.ocr_engine ?? ocrResult?.ocr_engine ?? null,
+    model_name: raw.model_name ?? ocrResult?.model_name ?? null,
+    prompt_version: raw.prompt_version ?? ocrResult?.prompt_version ?? null,
+    ocr_score_method: 'heuristic_field_presence_v1',
+  };
+}
+
 async function applyIntakeControls(
   ocrResult: any,
   buffer: Buffer,
@@ -687,7 +702,7 @@ async function processSingleInvoiceAttachment(
     const graphControls = await applyIntakeControls(ocrResult, buffer);
     await recordEmailIntakeEvent({
       source: 'GRAPH', stage: 'EXTRACTED', mailbox: mailboxAddress, messageId: message.id,
-      attachmentId, fileName, metadata: { invoice_number: ocrResult.invoice_number, confidence: ocrResult.ocr_confidence_score, idempotency_key: graphIdempotencyKey, ...graphControls.metadata },
+      attachmentId, fileName, metadata: { invoice_number: ocrResult.invoice_number, confidence: ocrResult.ocr_confidence_score, ...buildOCRReviewMetadata(ocrResult), idempotency_key: graphIdempotencyKey, ...graphControls.metadata },
     });
 
     // Do not create invoice rows for non-invoice attachments or incomplete
@@ -698,7 +713,7 @@ async function processSingleInvoiceAttachment(
         source: 'GRAPH', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', mailbox: mailboxAddress,
         messageId: message.id, attachmentId, fileName,
         error: reviewReason,
-        metadata: { invoice_type: ocrResult.invoice_type, document_type: ocrResult.document_type, source_document_type: ocrResult.source_document_type, document_classification: ocrResult.document_classification, is_non_invoice_document: ocrResult.is_non_invoice_document, raw_text: String(ocrResult.raw_text || '').slice(0, 12000), amount: ocrResult.total_amount, total_amount: ocrResult.total_amount, currency: ocrResult.currency, invoice_number: ocrResult.invoice_number, vendor_name: ocrResult.vendor_name, invoice_date: ocrResult.invoice_date, payment_terms: ocrResult.payment_terms, mpo_number: ocrResult.mpo_number, customer_po_number: ocrResult.customer_po_number, confidence: ocrResult.ocr_confidence_score, storage_path: storagePath, intake_id: graphIdempotencyKey },
+        metadata: { invoice_type: ocrResult.invoice_type, document_type: ocrResult.document_type, source_document_type: ocrResult.source_document_type, document_classification: ocrResult.document_classification, is_non_invoice_document: ocrResult.is_non_invoice_document, raw_text: String(ocrResult.raw_text || '').slice(0, 12000), amount: ocrResult.total_amount, total_amount: ocrResult.total_amount, currency: ocrResult.currency, invoice_number: ocrResult.invoice_number, vendor_name: ocrResult.vendor_name, invoice_date: ocrResult.invoice_date, payment_terms: ocrResult.payment_terms, mpo_number: ocrResult.mpo_number, customer_po_number: ocrResult.customer_po_number, confidence: ocrResult.ocr_confidence_score, ...buildOCRReviewMetadata(ocrResult), storage_path: storagePath, intake_id: graphIdempotencyKey },
       });
       await alertEmailIntakeFailure({ source: 'Invoice intake review required', fileName, error: reviewReason });
       logger.warn(`[Email Intake] ${fileName} routed to review: ${reviewReason}`);
@@ -706,7 +721,7 @@ async function processSingleInvoiceAttachment(
     }
     if (graphControls.reasons.length > 0) {
       const controlReason = graphControls.reasons.join(' ');
-      await recordEmailIntakeEvent({ source: 'GRAPH', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', mailbox: mailboxAddress, messageId: message.id, attachmentId, fileName, error: controlReason, metadata: { ...graphControls.metadata, invoice_type: ocrResult.invoice_type, document_type: ocrResult.document_type, source_document_type: ocrResult.source_document_type, document_classification: ocrResult.document_classification, is_non_invoice_document: ocrResult.is_non_invoice_document, raw_text: String(ocrResult.raw_text || '').slice(0, 12000), invoice_number: ocrResult.invoice_number, vendor_name: ocrResult.vendor_name, total_amount: ocrResult.total_amount, currency: ocrResult.currency, invoice_date: ocrResult.invoice_date, confidence: ocrResult.ocr_confidence_score, storage_path: storagePath, intake_id: graphIdempotencyKey } });
+      await recordEmailIntakeEvent({ source: 'GRAPH', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', mailbox: mailboxAddress, messageId: message.id, attachmentId, fileName, error: controlReason, metadata: { ...graphControls.metadata, invoice_type: ocrResult.invoice_type, document_type: ocrResult.document_type, source_document_type: ocrResult.source_document_type, document_classification: ocrResult.document_classification, is_non_invoice_document: ocrResult.is_non_invoice_document, raw_text: String(ocrResult.raw_text || '').slice(0, 12000), invoice_number: ocrResult.invoice_number, vendor_name: ocrResult.vendor_name, total_amount: ocrResult.total_amount, currency: ocrResult.currency, invoice_date: ocrResult.invoice_date, confidence: ocrResult.ocr_confidence_score, ...buildOCRReviewMetadata(ocrResult), storage_path: storagePath, intake_id: graphIdempotencyKey } });
       await alertEmailIntakeFailure({ source: 'Invoice intake control', fileName, error: controlReason });
       logger.warn(`[Email Intake] ${fileName} routed to review: ${controlReason}`);
       return;
@@ -1070,18 +1085,18 @@ export async function processSharePointFile(data: SharePointFileData): Promise<{
     const sharePointFileHash = generateFileHash(buffer);
     const sharePointIdempotencyKey = buildIntakeIdempotencyKey(intakeKey, sharePointFileHash);
     const sharePointControls = await applyIntakeControls(ocrResult, buffer);
-    await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'EXTRACTED', messageId: intakeKey, fileName: data.fileName, metadata: { invoice_number: ocrResult.invoice_number, confidence: ocrResult.ocr_confidence_score, idempotency_key: sharePointIdempotencyKey, ...sharePointControls.metadata } });
+    await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'EXTRACTED', messageId: intakeKey, fileName: data.fileName, metadata: { invoice_number: ocrResult.invoice_number, confidence: ocrResult.ocr_confidence_score, ...buildOCRReviewMetadata(ocrResult), idempotency_key: sharePointIdempotencyKey, ...sharePointControls.metadata } });
 
     const reviewReason = intakeReviewReason(ocrResult, data.fileName, data.emailSubject || '');
     if (reviewReason) {
-      await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', messageId: intakeKey, fileName: data.fileName, error: reviewReason, metadata: { invoice_number: ocrResult.invoice_number, invoice_type: ocrResult.invoice_type, document_type: ocrResult.document_type, source_document_type: ocrResult.source_document_type, document_classification: ocrResult.document_classification, is_non_invoice_document: ocrResult.is_non_invoice_document, raw_text: String(ocrResult.raw_text || '').slice(0, 12000), vendor_name: ocrResult.vendor_name, total_amount: ocrResult.total_amount, currency: ocrResult.currency, invoice_date: ocrResult.invoice_date, payment_terms: ocrResult.payment_terms, confidence: ocrResult.ocr_confidence_score, storage_path: storagePath, intake_id: intakeKey } });
+      await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', messageId: intakeKey, fileName: data.fileName, error: reviewReason, metadata: { invoice_number: ocrResult.invoice_number, invoice_type: ocrResult.invoice_type, document_type: ocrResult.document_type, source_document_type: ocrResult.source_document_type, document_classification: ocrResult.document_classification, is_non_invoice_document: ocrResult.is_non_invoice_document, raw_text: String(ocrResult.raw_text || '').slice(0, 12000), vendor_name: ocrResult.vendor_name, total_amount: ocrResult.total_amount, currency: ocrResult.currency, invoice_date: ocrResult.invoice_date, payment_terms: ocrResult.payment_terms, confidence: ocrResult.ocr_confidence_score, ...buildOCRReviewMetadata(ocrResult), storage_path: storagePath, intake_id: intakeKey } });
       await alertEmailIntakeFailure({ source: 'SharePoint invoice intake review required', fileName: data.fileName, error: reviewReason });
       logger.warn(`[SharePoint Intake] ${data.fileName} routed to review: ${reviewReason}`);
       return { success: false, status: 'REVIEW_REQUIRED', error: reviewReason };
     }
     if (sharePointControls.reasons.length > 0) {
       const controlReason = sharePointControls.reasons.join(' ');
-      await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', messageId: intakeKey, fileName: data.fileName, error: controlReason, metadata: { ...sharePointControls.metadata, invoice_type: ocrResult.invoice_type, document_type: ocrResult.document_type, source_document_type: ocrResult.source_document_type, document_classification: ocrResult.document_classification, is_non_invoice_document: ocrResult.is_non_invoice_document, raw_text: String(ocrResult.raw_text || '').slice(0, 12000), invoice_number: ocrResult.invoice_number, vendor_name: ocrResult.vendor_name, total_amount: ocrResult.total_amount, currency: ocrResult.currency, invoice_date: ocrResult.invoice_date, confidence: ocrResult.ocr_confidence_score, storage_path: storagePath, intake_id: intakeKey } });
+      await recordEmailIntakeEvent({ source: 'SHAREPOINT', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', messageId: intakeKey, fileName: data.fileName, error: controlReason, metadata: { ...sharePointControls.metadata, invoice_type: ocrResult.invoice_type, document_type: ocrResult.document_type, source_document_type: ocrResult.source_document_type, document_classification: ocrResult.document_classification, is_non_invoice_document: ocrResult.is_non_invoice_document, raw_text: String(ocrResult.raw_text || '').slice(0, 12000), invoice_number: ocrResult.invoice_number, vendor_name: ocrResult.vendor_name, total_amount: ocrResult.total_amount, currency: ocrResult.currency, invoice_date: ocrResult.invoice_date, confidence: ocrResult.ocr_confidence_score, ...buildOCRReviewMetadata(ocrResult), storage_path: storagePath, intake_id: intakeKey } });
       await alertEmailIntakeFailure({ source: 'SharePoint invoice intake control', fileName: data.fileName, error: controlReason });
       logger.warn(`[SharePoint Intake] ${data.fileName} routed to review: ${controlReason}`);
       return { success: false, status: 'REVIEW_REQUIRED', error: controlReason };
@@ -1424,18 +1439,18 @@ export async function processPowerAutomateAttachment(data: PowerAutomateAttachme
     const powerAutomateFileHash = generateFileHash(buffer);
     const powerAutomateIdempotencyKey = buildIntakeIdempotencyKey(intakeKey, powerAutomateFileHash);
     const powerAutomateControls = await applyIntakeControls(ocrResult, buffer);
-    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'EXTRACTED', messageId: intakeKey, fileName: data.fileName, metadata: { ...provenance, invoice_number: ocrResult.invoice_number, confidence: ocrResult.ocr_confidence_score, idempotency_key: powerAutomateIdempotencyKey, ...powerAutomateControls.metadata } });
+    await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'EXTRACTED', messageId: intakeKey, fileName: data.fileName, metadata: { ...provenance, invoice_number: ocrResult.invoice_number, confidence: ocrResult.ocr_confidence_score, ...buildOCRReviewMetadata(ocrResult), idempotency_key: powerAutomateIdempotencyKey, ...powerAutomateControls.metadata } });
 
     const reviewReason = intakeReviewReason(ocrResult, data.fileName, data.emailSubject || '');
     if (reviewReason) {
-      await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', messageId: intakeKey, fileName: data.fileName, error: reviewReason, metadata: { ...provenance, invoice_number: ocrResult.invoice_number, invoice_type: ocrResult.invoice_type, document_type: ocrResult.document_type, source_document_type: ocrResult.source_document_type, document_classification: ocrResult.document_classification, is_non_invoice_document: ocrResult.is_non_invoice_document, raw_text: String(ocrResult.raw_text || '').slice(0, 12000), vendor_name: ocrResult.vendor_name, total_amount: ocrResult.total_amount, currency: ocrResult.currency, invoice_date: ocrResult.invoice_date, payment_terms: ocrResult.payment_terms, confidence: ocrResult.ocr_confidence_score, storage_path: storagePath, intake_id: intakeKey } });
+      await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', messageId: intakeKey, fileName: data.fileName, error: reviewReason, metadata: { ...provenance, invoice_number: ocrResult.invoice_number, invoice_type: ocrResult.invoice_type, document_type: ocrResult.document_type, source_document_type: ocrResult.source_document_type, document_classification: ocrResult.document_classification, is_non_invoice_document: ocrResult.is_non_invoice_document, raw_text: String(ocrResult.raw_text || '').slice(0, 12000), vendor_name: ocrResult.vendor_name, total_amount: ocrResult.total_amount, currency: ocrResult.currency, invoice_date: ocrResult.invoice_date, payment_terms: ocrResult.payment_terms, confidence: ocrResult.ocr_confidence_score, ...buildOCRReviewMetadata(ocrResult), storage_path: storagePath, intake_id: intakeKey } });
       await alertEmailIntakeFailure({ source: 'Power Automate invoice intake review required', fileName: data.fileName, error: reviewReason });
       logger.warn(`[Power Automate] ${data.fileName} routed to review: ${reviewReason}`);
       return { success: false, status: 'REVIEW_REQUIRED', error: reviewReason };
     }
     if (powerAutomateControls.reasons.length > 0) {
       const controlReason = powerAutomateControls.reasons.join(' ');
-      await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', messageId: intakeKey, fileName: data.fileName, error: controlReason, metadata: { ...provenance, ...powerAutomateControls.metadata, invoice_type: ocrResult.invoice_type, document_type: ocrResult.document_type, source_document_type: ocrResult.source_document_type, document_classification: ocrResult.document_classification, is_non_invoice_document: ocrResult.is_non_invoice_document, raw_text: String(ocrResult.raw_text || '').slice(0, 12000), invoice_number: ocrResult.invoice_number, vendor_name: ocrResult.vendor_name, total_amount: ocrResult.total_amount, currency: ocrResult.currency, invoice_date: ocrResult.invoice_date, confidence: ocrResult.ocr_confidence_score, storage_path: storagePath, intake_id: intakeKey } });
+      await recordEmailIntakeEvent({ source: 'POWER_AUTOMATE', stage: 'REVIEW_REQUIRED', status: 'REVIEW_REQUIRED', messageId: intakeKey, fileName: data.fileName, error: controlReason, metadata: { ...provenance, ...powerAutomateControls.metadata, invoice_type: ocrResult.invoice_type, document_type: ocrResult.document_type, source_document_type: ocrResult.source_document_type, document_classification: ocrResult.document_classification, is_non_invoice_document: ocrResult.is_non_invoice_document, raw_text: String(ocrResult.raw_text || '').slice(0, 12000), invoice_number: ocrResult.invoice_number, vendor_name: ocrResult.vendor_name, total_amount: ocrResult.total_amount, currency: ocrResult.currency, invoice_date: ocrResult.invoice_date, confidence: ocrResult.ocr_confidence_score, ...buildOCRReviewMetadata(ocrResult), storage_path: storagePath, intake_id: intakeKey } });
       await alertEmailIntakeFailure({ source: 'Power Automate invoice intake control', fileName: data.fileName, error: controlReason });
       logger.warn(`[Power Automate] ${data.fileName} routed to review: ${controlReason}`);
       return { success: false, status: 'REVIEW_REQUIRED', error: controlReason };

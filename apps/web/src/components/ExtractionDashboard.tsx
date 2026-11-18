@@ -360,19 +360,19 @@ export default function ExtractionDashboard() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <MetricPill label="Confidence coverage" value={`${data.confidence.coverage_rate}%`} detail={`${data.confidence.scored_count}/${data.confidence.total_actual_invoices} scored`} />
+        <MetricPill label="OCR score coverage" value={`${data.confidence.coverage_rate}%`} detail={`${data.confidence.scored_count}/${data.confidence.total_actual_invoices} have a heuristic score`} />
         <MetricPill label="Duplicate detection" value={displayPercent(data.performance.duplicate_detection_rate)} detail={`${data.performance.duplicate_count} records`} />
         <MetricPill label="Fraud flags" value={`${data.performance.fraud_detection_rate}%`} detail="of actual invoices" />
         <MetricPill label="Non-invoice false positive" value={data.performance.false_positive_non_invoice_rate === null ? 'N/A' : displayPercent(data.performance.false_positive_non_invoice_rate)} detail="needs labelled outcomes" />
       </div>
 
-      {/* Confidence Section */}
+      {/* OCR heuristic-score section */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Confidence Trend */}
+        {/* Heuristic-score trend */}
         <div className="lg:col-span-2 rounded-xl p-6" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
             <TrendingUp className="w-5 h-5" style={{ color: 'var(--accent-blue)' }} />
-            Confidence Trend
+            OCR Score Trend (Heuristic)
           </h2>
           {data.confidence.trend.length > 0 ? (
             <ResponsiveContainer width="100%" height={250}>
@@ -382,19 +382,19 @@ export default function ExtractionDashboard() {
                 <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} />
                 <Tooltip />
                 <Legend />
-                <Line type="monotone" dataKey="avg_confidence" stroke="#3b82f6" name="Avg Confidence %" strokeWidth={2} />
+                <Line type="monotone" dataKey="avg_confidence" stroke="#3b82f6" name="Avg OCR score (heuristic)" strokeWidth={2} />
                 <Line type="monotone" dataKey="count" stroke="#22c55e" name="Invoice Count" strokeWidth={1} strokeDasharray="5 5" />
               </LineChart>
             </ResponsiveContainer>
           ) : (
-            <EmptyState message="No confidence data yet" />
+            <EmptyState message="No OCR score data yet" />
           )}
         </div>
 
-        {/* Confidence Distribution */}
+        {/* Heuristic-score distribution */}
         <div className="rounded-xl p-6" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
-          <h2 className="text-lg font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Confidence Distribution</h2>
-          <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>{data.confidence.scored_count}/{data.confidence.total_actual_invoices} scored ({data.confidence.coverage_rate}% coverage)</p>
+          <h2 className="text-lg font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>OCR Score Distribution</h2>
+          <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>{data.confidence.scored_count}/{data.confidence.total_actual_invoices} have a heuristic score ({data.confidence.coverage_rate}% coverage)</p>
           {data.confidence.distribution.high + data.confidence.distribution.medium + data.confidence.distribution.low + data.confidence.distribution.missing > 0 ? (
             <ResponsiveContainer width="100%" height={250}>
               <PieChart>
@@ -411,12 +411,13 @@ export default function ExtractionDashboard() {
         </div>
       </div>
 
-      {/* Per-Field Confidence */}
+      {/* Per-field heuristic score */}
       <div className="rounded-xl p-6" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
         <h2 className="text-lg font-semibold mb-4 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
           <Gauge className="w-5 h-5" style={{ color: 'var(--accent-purple)' }} />
-          Per-Field Confidence
+          Per-Field OCR Score (Heuristic)
         </h2>
+        <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>These scores reflect extracted-field presence, not verified accuracy. Evidence status is shown on each invoice when available.</p>
         {data.confidence.per_field.length > 0 ? (
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={data.confidence.per_field} layout="vertical">
@@ -425,8 +426,8 @@ export default function ExtractionDashboard() {
               <YAxis type="category" dataKey="field" tick={{ fontSize: 11 }} width={120} />
               <Tooltip />
               <Legend />
-              <Bar dataKey="avg_confidence" name="Avg Confidence %" fill="#3b82f6" radius={[0, 4, 4, 0]} />
-              <Bar dataKey="low_confidence_count" name="Low Confidence Count" fill="#f97316" radius={[0, 4, 4, 0]} />
+              <Bar dataKey="avg_confidence" name="Avg OCR score (heuristic)" fill="#3b82f6" radius={[0, 4, 4, 0]} />
+              <Bar dataKey="low_confidence_count" name="Low OCR score count" fill="#f97316" radius={[0, 4, 4, 0]} />
             </BarChart>
           </ResponsiveContainer>
         ) : (
@@ -455,7 +456,7 @@ export default function ExtractionDashboard() {
                 <tr className="text-left" style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
                   <th className="pb-2 pr-4">Vendor</th>
                   <th className="pb-2 pr-4 text-right">Invoices</th>
-                  <th className="pb-2 pr-4 text-right">Avg Conf</th>
+                  <th className="pb-2 pr-4 text-right">Avg OCR Score</th>
                   <th className="pb-2 pr-4 text-right">Corrections</th>
                   <th className="pb-2 pr-4 text-right">Fraud Flags</th>
                   <th className="pb-2">Top Error Fields</th>
@@ -658,7 +659,7 @@ export default function ExtractionDashboard() {
                 <Tooltip />
                 <Legend />
                 <Bar dataKey="count" name="Usage Count" fill="#3b82f6" radius={[0, 4, 4, 0]} />
-                <Bar dataKey="avg_confidence" name="Avg Confidence %" fill="#22c55e" radius={[0, 4, 4, 0]} />
+                <Bar dataKey="avg_confidence" name="Avg OCR score (heuristic)" fill="#22c55e" radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
           ) : (

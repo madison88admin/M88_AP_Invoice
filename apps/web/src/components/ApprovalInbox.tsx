@@ -15,7 +15,7 @@ import {
 type QuickViewField = {
   label: string;
   field: keyof MockInvoice | string;
-  format?: 'date' | 'amount' | 'boolean' | 'percent';
+  format?: 'date' | 'amount' | 'boolean' | 'percent' | 'heuristic_score';
 };
 
 const QUICK_VIEW_SECTIONS: Array<{ title: string; fields: QuickViewField[] }> = [
@@ -101,7 +101,7 @@ const QUICK_VIEW_SECTIONS: Array<{ title: string; fields: QuickViewField[] }> = 
     fields: [
       { label: 'Status', field: 'status' },
       { label: 'Current Stage', field: 'current_stage' },
-      { label: 'OCR Confidence', field: 'ocr_confidence_score', format: 'percent' },
+      { label: 'Initial OCR score (heuristic)', field: 'ocr_confidence_score', format: 'heuristic_score' },
       { label: 'Handwritten flag', field: 'is_handwritten', format: 'boolean' },
       { label: 'Urgent', field: 'is_urgent', format: 'boolean' },
       { label: 'Priority Flag', field: 'priority_flag', format: 'boolean' },
@@ -133,6 +133,10 @@ function formatQuickViewValue(invoice: MockInvoice, field: QuickViewField): stri
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) return String(value);
     return `${numeric <= 1 ? numeric * 100 : numeric}%`;
+  }
+  if (field.format === 'heuristic_score') {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? `${Math.round(numeric <= 1 ? numeric * 100 : numeric)} / 100` : String(value);
   }
   if (field.format === 'amount') {
     const numeric = Number(value);

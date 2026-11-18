@@ -131,6 +131,13 @@ Fields to extract:
 
 IMPORTANT RULES:
 1. vendor_name is the SENDER of the invoice, NOT Madison 88
+1a. Read the visible document; do not infer a value from the filename, vendor history, purchase-order data, or another invoice.
+1b. Keep identifiers distinct: invoice_number is only the supplier's invoice/bill number. PO, Customer PO, and MPO belong in their own fields. AWB/airwaybill, shipment, tracking, customs, statement, and delivery references are never invoice numbers.
+1c. For invoice_number, prefer a value adjacent to an explicit Invoice No./Invoice Number/Bill No. label. If the only identifier is under PO, MPO, AWB, Shipment, Reference, or Order, return invoice_number=null.
+1d. vendor_name is the supplier/seller issuing the bill, not Madison 88, ship-to, sold-to, consignee, or a carrier mentioned in shipment details. Use null if the issuing supplier cannot be distinguished.
+1e. total_amount is the payable invoice grand total/amount due, not subtotal, unit price, tax-only amount, declared customs value, or order value. If multiple totals conflict or no payable total is clearly labeled, return null and leave it for review.
+1f. invoice_date is the date explicitly labeled as invoice date/issued date. Do not substitute due date, shipment date, PO date, or email date.
+1g. Evidence must quote a short exact passage visible in the source page and include its 1-based page and nearby printed label. Never create evidence from OCR guesses or context. If a field is not clearly evidenced, set the evidence item to null and set that field value to null.
 2. For mpo_number: look in "Customer PO", "CUSTOMER PO", "PO Number", "Customer PO No", or "Order No" field
    - Pattern: a customer-PO string containing an MPO reference → extract the exact MPO reference shown
    - Pattern: "MPO015713" → extract "MPO015713"
@@ -149,7 +156,7 @@ IMPORTANT RULES:
    Do not skip line items. If quantity looks like a unit price, re-check the column.
 5. For bank details: look for sections labeled "Bank Details", "Payment Information", "Remittance", "Beneficiary Bank", or similar. Extract beneficiary_name (account holder name), bank_name, swift_code, and account_number only when visibly printed in that document. Never copy a bank value from this prompt or infer one from the vendor; if it is not visible, return null.
 6. For qty_shipped: if there is a total quantity field (e.g., "Total Qty", "Total Quantity", "Total PCS"), use that. Otherwise, sum the quantities from all line items. Always return as a number, never null if any quantity info exists.
-7. For document_type: check if the document says "INVOICE", "PROFORMA INVOICE", "COMMERCIAL INVOICE", "CREDIT NOTE", "STATEMENT", etc.
+7. For document_type: classify from the visible first-page title/header AND document purpose. Keep COMMERCIAL_INVOICE distinct from an ordinary supplier-payable invoice; do not decide payability from an invoice-like number, total, or layout alone. Check whether the document is a customs/trade declaration or a bill requesting payment from Madison 88.
 8. For charges: extract ALL charges separately. Look for lines labeled:
    - "Bank Charge", "Bank Charges", "BANK CHARGE" → bank_charges
    - "TT Charge", "T/T Charges", "Telegraphic Transfer Fee" → tt_charge

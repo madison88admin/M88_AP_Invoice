@@ -242,6 +242,7 @@ async function createReviewInvoiceRecord(input: {
         ocr_confidence_score: Number.isFinite(Number(metadata.confidence)) ? Number(metadata.confidence) : null,
         ocr_raw_data: {
           review_required: true,
+          ocr_score_method: metadata.ocr_score_method || 'legacy_or_unspecified',
           attachment_file_hash: fileHash,
           intake_id: input.intakeId,
           reason: input.reason,

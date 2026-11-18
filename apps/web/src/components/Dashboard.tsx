@@ -3422,18 +3422,37 @@ ${dataRows}
 
               {(selectedInvoice as any).ocr_confidence_score !== undefined && (selectedInvoice as any).ocr_confidence_score !== null && (
                 <div className="rounded-xl p-4" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
-                  <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>OCR Confidence</p>
+                  <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>Initial OCR extraction score (heuristic)</p>
                   <div className="flex items-center gap-2">
                     <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'var(--border-subtle)' }}>
                       <div
                         className="h-full rounded-full"
-                        style={{ width: `${Math.round(Number((selectedInvoice as any).ocr_confidence_score) * 100)}%`, backgroundColor: Number((selectedInvoice as any).ocr_confidence_score) >= 0.9 ? 'var(--accent-lime)' : 'var(--accent-amber)' }}
+                        style={{ width: `${Math.round(Number((selectedInvoice as any).ocr_confidence_score) * 100)}%`, backgroundColor: 'var(--accent-blue)' }}
                       />
                     </div>
                     <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>
-                      {Math.round(Number((selectedInvoice as any).ocr_confidence_score) * 100)}%
+                      {Math.round(Number((selectedInvoice as any).ocr_confidence_score) * 100)} / 100
                     </span>
                   </div>
+                  <p className="text-[11px] mt-2" style={{ color: 'var(--text-muted)' }}>
+                    Field-presence score only; it is not a verified accuracy percentage and does not change after coordinator edits.
+                  </p>
+                  {(() => {
+                    const raw = (selectedInvoice as any).ocr_raw_data || {};
+                    const verification = raw.field_evidence_verification
+                      || raw.extraction?.field_evidence_verification
+                      || raw.raw_data?.field_evidence_verification;
+                    if (!verification || typeof verification !== 'object') {
+                      return <p className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>Evidence check: Not recorded for this extraction.</p>;
+                    }
+                    const states = ['invoice_number', 'total_amount', 'invoice_date'].map((field) => verification[field]?.status);
+                    const verified = states.filter((status) => status === 'verified').length;
+                    const mismatch = states.filter((status) => status === 'mismatch').length;
+                    const unverifiable = states.filter((status) => status === 'unverifiable').length;
+                    return <p className="text-[11px] mt-1" style={{ color: mismatch ? 'var(--accent-amber)' : 'var(--text-muted)' }}>
+                      Evidence check: {verified}/3 verified · {mismatch} mismatch · {unverifiable} unverifiable (shadow check)
+                    </p>;
+                  })()}
                 </div>
               )}
 

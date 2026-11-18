@@ -158,6 +158,20 @@ async function recordWatcherReviewRequired(
   return finalPath;
 }
 
+function watcherOCRReviewMetadata(ocrResult: any): Record<string, unknown> {
+  const raw = ocrResult?.raw_data && typeof ocrResult.raw_data === 'object' ? ocrResult.raw_data : {};
+  return {
+    field_evidence: ocrResult?.field_evidence ?? raw.field_evidence ?? null,
+    field_evidence_verification: ocrResult?.field_evidence_verification ?? raw.field_evidence_verification ?? null,
+    field_evidence_source_type: ocrResult?.field_evidence_source_type ?? raw.field_evidence_source_type ?? null,
+    field_evidence_verification_method: raw.field_evidence_verification_method ?? null,
+    ocr_engine: raw.ocr_engine ?? ocrResult?.ocr_engine ?? null,
+    model_name: raw.model_name ?? ocrResult?.model_name ?? null,
+    prompt_version: raw.prompt_version ?? ocrResult?.prompt_version ?? null,
+    ocr_score_method: 'heuristic_field_presence_v1',
+  };
+}
+
 function eventIntakeId(event: IntakeEventSummary): string | undefined {
   if (typeof event.intake_id === 'string' && event.intake_id.trim()) return event.intake_id;
   const metadata = event.metadata;
@@ -837,7 +851,7 @@ async function processSingleInvoiceBuffer(
       currency: ocrResult.currency,
       invoice_date: ocrResult.invoice_date,
       payment_terms: ocrResult.payment_terms,
-      confidence: ocrResult.ocr_confidence_score,
+      confidence: ocrResult.ocr_confidence_score, ...watcherOCRReviewMetadata(ocrResult),
     });
     await createAuditLog(null, 'WATCHER_REVIEW_REQUIRED', `${fileName}${partLabel}: ${reviewReason}`);
     return { fileName, terminalStage: 'REVIEW_REQUIRED', error: reviewReason };
@@ -862,7 +876,7 @@ async function processSingleInvoiceBuffer(
       total_amount: ocrResult.total_amount,
       currency: ocrResult.currency,
       invoice_date: ocrResult.invoice_date,
-      confidence: ocrResult.ocr_confidence_score,
+      confidence: ocrResult.ocr_confidence_score, ...watcherOCRReviewMetadata(ocrResult),
       intake_controls: intakeControls,
     });
     await createAuditLog(null, 'WATCHER_INTAKE_CONTROL_REVIEW', `${fileName}${partLabel}: ${reason}`);
@@ -886,7 +900,7 @@ async function processSingleInvoiceBuffer(
       total_amount: ocrResult.total_amount,
       currency: ocrResult.currency,
       invoice_date: ocrResult.invoice_date,
-      confidence: ocrResult.ocr_confidence_score,
+      confidence: ocrResult.ocr_confidence_score, ...watcherOCRReviewMetadata(ocrResult),
       reason: 'LOW_OCR_CONFIDENCE',
       split_index: splitIndex ?? null,
     });
@@ -927,7 +941,7 @@ async function processSingleInvoiceBuffer(
       total_amount: ocrResult.total_amount,
       currency: ocrResult.currency,
       invoice_date: ocrResult.invoice_date,
-      confidence: ocrResult.ocr_confidence_score,
+      confidence: ocrResult.ocr_confidence_score, ...watcherOCRReviewMetadata(ocrResult),
     });
     await createAuditLog(null, 'WATCHER_REVIEW_REQUIRED', reason);
     return { fileName, terminalStage: 'REVIEW_REQUIRED', error: reason };

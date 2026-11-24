@@ -1,5 +1,3 @@
-import { getFinancePolicy } from './financePolicyService';
-
 export type ApprovalMissingField = { field: string; label: string; lineNumber?: number };
 
 export interface ApprovalReadinessResult {
@@ -43,13 +41,10 @@ export function getApprovalReadiness(invoice: any): ApprovalReadinessResult {
   const lines = Array.isArray(invoice.invoice_lines) ? invoice.invoice_lines : [];
   const advisory: ApprovalMissingField[] = [];
   const poBacked = !blank(invoice.mpo_number) || !blank(invoice.mpo_base_number) || lines.length > 0;
-  // In Finance advisory mode (default), PO-backed invoices without line items are
-  // legacy records that must not be hard-blocked — the missing lines are reported
-  // as an advisory so Finance can backfill them without stalling the workflow.
+  // Accounting requires a financial breakdown before endorsement. Do not let
+  // legacy/advisory policy mode route a PO-backed invoice with no lines onward.
   if (poBacked && lines.length === 0) {
-    const field = { field: 'invoice_lines', label: 'Invoice Lines' };
-    if (getFinancePolicy().enforcementMode === 'advisory') advisory.push(field);
-    else missing.push(field);
+    missing.push({ field: 'invoice_lines', label: 'Financial Details breakdown' });
   }
   for (const [index, line] of lines.entries()) {
     const lineNumber = Number(line.line_number || index + 1);

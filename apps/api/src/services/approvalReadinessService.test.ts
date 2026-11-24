@@ -12,12 +12,11 @@ describe('getApprovalReadiness', () => {
     expect(result.missing.map(m => m.field)).toEqual(expect.arrayContaining(['original_pdf', 'invoice_lines.1.material_code']));
   });
 
-  it('reports PO-backed invoices without line items as advisory (non-blocking) by default', () => {
+  it('blocks PO-backed invoices without a financial breakdown', () => {
     const invoice = complete();
     delete (invoice as any).invoice_lines;
     const result = getApprovalReadiness(invoice);
-    expect(result.ready).toBe(true);
-    expect(result.missing).toEqual([]);
-    expect(result.advisory.map(m => m.field)).toContain('invoice_lines');
+    expect(result.ready).toBe(false);
+    expect(result.missing.map(m => m.field)).toContain('invoice_lines');
   });
 });

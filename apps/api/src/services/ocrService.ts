@@ -237,7 +237,7 @@ export interface SignatureInfo {
 
 export interface OCRResult {
   invoice_number: string;
-  invoice_date: Date;
+  invoice_date: Date | null;
   /** True only when a labeled/validated invoice date was extracted. */
   invoice_date_extracted?: boolean;
   due_date?: Date;
@@ -1988,7 +1988,9 @@ export async function analyzeInvoice(fileBuffer: Buffer, _mimeType: string) {
 
   return {
     invoice_number: extracted.invoice_number || '',
-    invoice_date: extracted.invoice_date ? new Date(extracted.invoice_date) : new Date(),
+    // Never fabricate today's date when OCR cannot identify the invoice date.
+    // A null value is surfaced by approval readiness and sent for coordinator review.
+    invoice_date: extracted.invoice_date ? new Date(extracted.invoice_date) : null,
     invoice_date_extracted: Boolean(extracted.invoice_date),
     due_date: extracted.due_date ? new Date(extracted.due_date) : undefined,
     date_format_correction: datePair.corrected ? datePair : undefined,

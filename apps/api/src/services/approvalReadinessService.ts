@@ -11,6 +11,15 @@ export interface ApprovalReadinessResult {
 
 const blank = (value: unknown) => value === null || value === undefined || String(value).trim() === '';
 
+/** Charge rows carry an amount but no product quantity or unit price. */
+export function isInvoiceChargeLine(line: any): boolean {
+  const explicitType = String(line?.line_type || line?.charge_type || '').trim().toUpperCase();
+  if (explicitType === 'CHARGE' || explicitType === 'FEE' || explicitType === 'TAX') return true;
+  const description = String(line?.description || line?.material_name || '').trim();
+  if (!description) return false;
+  return /^(?:bank|wire|remittance|transfer|delivery|shipping|freight|courier|handling|setup|sample|finance|service|customs)\s+(?:charge|fee|cost|surcharge)|^(?:tax|vat|gst|ppn)(?:\s|$)|\b(?:bank|wire|remittance|transfer|delivery|shipping|freight|courier|handling|setup|sample|finance)\s+(?:charge|fee|cost|surcharge)\b/i.test(description);
+}
+
 /** Canonical server-side gate. This must be called by every approval entry point. */
 export function getApprovalReadiness(invoice: any): ApprovalReadinessResult {
   const missing: ApprovalMissingField[] = [];
@@ -44,9 +53,10 @@ export function getApprovalReadiness(invoice: any): ApprovalReadinessResult {
   }
   for (const [index, line] of lines.entries()) {
     const lineNumber = Number(line.line_number || index + 1);
+    const chargeLine = isInvoiceChargeLine(line);
     const lineRequired: Array<[string, string]> = [
-      ['quantity', 'Quantity'],
-      ['unit_price', 'Unit Price'], ['line_amount', 'Line Amount'],
+      ...(chargeLine ? [] : [['quantity', 'Quantity'], ['unit_price', 'Unit Price']] as Array<[string, string]>),
+      ['line_amount', 'Line Amount'],
     ];
     for (const [field, label] of lineRequired) {
       const value = line[field];
@@ -54,6 +64,7 @@ export function getApprovalReadiness(invoice: any): ApprovalReadinessResult {
         && (!Number.isFinite(Number(value)) || Number(value) < 0 || (field === 'quantity' && Number(value) === 0));
       if (blank(value) || invalidNumber) missing.push({ field: `invoice_lines.${lineNumber}.${field}`, label, lineNumber });
     }
+    if (chargeLine) continue;
     // MPO base: if missing per line but invoice-level mpo_number exists, make it advisory
     if (blank(line.mpo_base_number)) {
       if (!blank(invoice.mpo_number) || !blank(invoice.mpo_base_number)) {

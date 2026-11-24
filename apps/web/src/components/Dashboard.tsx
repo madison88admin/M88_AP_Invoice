@@ -3422,7 +3422,7 @@ ${dataRows}
 
               {(selectedInvoice as any).ocr_confidence_score !== undefined && (selectedInvoice as any).ocr_confidence_score !== null && (
                 <div className="rounded-xl p-4" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)' }}>
-                  <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>Initial OCR extraction score (heuristic)</p>
+                  <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>Initial extraction completeness (heuristic, not accuracy)</p>
                   <div className="flex items-center gap-2">
                     <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'var(--border-subtle)' }}>
                       <div
@@ -3435,8 +3435,25 @@ ${dataRows}
                     </span>
                   </div>
                   <p className="text-[11px] mt-2" style={{ color: 'var(--text-muted)' }}>
-                    Field-presence score only; it is not a verified accuracy percentage and does not change after coordinator edits.
+                    This score measures whether expected fields were present at intake. It does not measure whether their values were correct.
                   </p>
+                  {(() => {
+                    const editLogs = ((selectedInvoice as any).audit_logs || []).filter((log: any) =>
+                      log.action === 'INVOICE_UPDATED'
+                      && (!selectedInvoice.created_at || new Date(log.created_at).getTime() >= new Date(selectedInvoice.created_at).getTime())
+                    );
+                    if (!editLogs.length) return null;
+                    return (
+                      <div className="mt-2 rounded-lg px-3 py-2" style={{ background: 'color-mix(in srgb, var(--accent-amber) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-amber) 25%, transparent)' }}>
+                        <p className="text-[11px] font-medium" style={{ color: 'var(--accent-amber)' }}>
+                          Audit trail shows {editLogs.length} invoice edit{editLogs.length === 1 ? '' : 's'} after intake. The original score remains unchanged and must not be read as confirmation that the extracted fields were correct.
+                        </p>
+                        <button type="button" onClick={() => setDetailTab('audit')} className="mt-1 text-[11px] underline" style={{ color: 'var(--accent-blue)' }}>
+                          Review field changes in Audit
+                        </button>
+                      </div>
+                    );
+                  })()}
                   {(() => {
                     const raw = (selectedInvoice as any).ocr_raw_data || {};
                     const verification = raw.field_evidence_verification

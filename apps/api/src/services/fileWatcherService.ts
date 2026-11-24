@@ -33,6 +33,39 @@ const DUPLICATES_DIR = process.env.WATCHER_DUPLICATES_DIR || '/incoming-invoices
 const MANUAL_REVIEW_DIR = process.env.WATCHER_MANUAL_REVIEW_DIR || '/incoming-invoices/manual-review';
 const FAILED_DIR = process.env.WATCHER_FAILED_DIR || '/incoming-invoices/failed';
 const NON_INVOICE_HINTS = /\b(statement|packing\s*(?:list|slip)|delivery\s*(?:note|receipt)|purchase\s*order|sales\s*order|order\s*confirmation|quotation|quote|remittance|receipt|shipping\s*document|shipment\s*document|air\s*way\s*bill|airway\s*bill|awb|bill\s*of\s*lading|cargo\s*manifest|waybill|layout|tech\s*pack|bill\s*stub|account\s*information|forwarder(?:['’]s|s)?\s+billing\s+invoice|expeditors?\s+billing\s+invoice|forwarder(?:['’]s|s)?\s+invoice|expeditors?\s+invoice)\b/i;
+const WATCHER_FILE_TYPES: Record<string, string> = {
+  '.pdf': 'application/pdf',
+  '.png': 'image/png',
+  '.gif': 'image/gif',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.jfif': 'image/jpeg',
+  '.tif': 'image/tiff',
+  '.tiff': 'image/tiff',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+};
+
+function watcherContentType(fileName: string): string | null {
+  return WATCHER_FILE_TYPES[path.extname(fileName).toLowerCase()] || null;
+}
+
+function isSupportedWatcherFile(fileName: string): boolean {
+  return watcherContentType(fileName) !== null;
+}
+
+function hasSupportedFileSignature(buffer: Buffer, contentType: string): boolean {
+  if (contentType === 'application/pdf') return buffer.subarray(0, 5).toString('ascii') === '%PDF-';
+  if (contentType === 'image/png') return buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  if (contentType === 'image/jpeg') return buffer.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]));
+  if (contentType === 'image/gif') return buffer.subarray(0, 4).toString('ascii') === 'GIF8';
+  if (contentType === 'image/tiff') return buffer.subarray(0, 4).equals(Buffer.from([0x49, 0x49, 0x2a, 0x00])) || buffer.subarray(0, 4).equals(Buffer.from([0x4d, 0x4d, 0x00, 0x2a]));
+  // WebP and BMP are handled by the image-capable OCR path; validate their
+  // container headers so arbitrary text/HTML files are never sent to OCR.
+  if (contentType === 'image/webp') return buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP';
+  if (contentType === 'image/bmp') return buffer.subarray(0, 2).toString('ascii') === 'BM';
+  return false;
+}
 
 type IntakeProvenance = {
   fromAddress?: string;
@@ -360,7 +393,7 @@ function ensureDirectories(): void {
 function recoverStuckFiles(): void {
   if (!fs.existsSync(PROCESSING_DIR)) return;
 
-  const files = fs.readdirSync(PROCESSING_DIR).filter(f => f.toLowerCase().endsWith('.pdf'));
+  const files = fs.readdirSync(PROCESSING_DIR).filter(isSupportedWatcherFile);
   if (files.length === 0) return;
 
   logger.info(`[File Watcher] Found ${files.length} stuck file(s) in processing/ — recovering...`);
@@ -404,7 +437,7 @@ function recoverStuckFilesPeriodic(): void {
 
   let files: string[];
   try {
-    files = fs.readdirSync(PROCESSING_DIR).filter(f => f.toLowerCase().endsWith('.pdf'));
+    files = fs.readdirSync(PROCESSING_DIR).filter(isSupportedWatcherFile);
   } catch {
     return;
   }
@@ -625,14 +658,15 @@ async function processFileInternal(filePath: string, fileName: string, intakeId:
     }
   }
 
+  const contentType = watcherContentType(fileName) || 'application/octet-stream';
   // Power Automate can expose attachment metadata without actual ContentBytes.
-  // Never send an empty/non-PDF payload into OCR; retain it in failed and alert.
-  if (fileBuffer.length < 100 || fileBuffer.subarray(0, 5).toString('ascii') !== '%PDF-') {
-    const error = `Invalid or empty PDF payload (${fileBuffer.length} bytes). Use Outlook Get attachment content before SFTP Create file.`;
+  // Validate PDFs and supported image containers before sending them to OCR.
+  if (fileBuffer.length < 100 || !hasSupportedFileSignature(fileBuffer, contentType)) {
+    const error = `Invalid or empty ${contentType} payload (${fileBuffer.length} bytes). Use Outlook Get attachment content before SFTP Create file.`;
     logger.error(`[File Watcher] ${fileName}: ${error}`);
     safeMove(processingPath, FAILED_DIR);
-    await createAuditLog(null, 'WATCHER_INVALID_PDF', `${fileName}: ${error}`);
-    await recordWatcherIntakeEvent(intakeId, { source: 'POWER_AUTOMATE', stage: 'FAILED', fileName, error, metadata: { bytes: fileBuffer.length } });
+    await createAuditLog(null, 'WATCHER_INVALID_FILE', `${fileName}: ${error}`);
+    await recordWatcherIntakeEvent(intakeId, { source: 'POWER_AUTOMATE', stage: 'FAILED', fileName, error, metadata: { bytes: fileBuffer.length, content_type: contentType } });
     await alertEmailIntakeFailure({ source: 'Power Automate SFTP intake', fileName, error });
     return;
   }
@@ -651,8 +685,9 @@ async function processFileInternal(filePath: string, fileName: string, intakeId:
     return;
   }
 
-  // Step 2b: Multi-invoice detection
-  try {
+  // Step 2b: Multi-invoice detection applies to PDFs only. Images are single
+  // document inputs and go directly to the image-capable OCR path.
+  if (contentType === 'application/pdf') try {
     const detection = await detectMultiInvoice(fileBuffer);
     if (detection.isMultiInvoice && detection.invoiceCount > 1) {
       logger.info(`[File Watcher] Multi-invoice PDF detected: ${detection.invoiceCount} invoices in ${fileName}. Splitting...`);
@@ -776,7 +811,7 @@ async function processSingleInvoiceBuffer(
   let ocrResult: any;
   try {
     const retryOutcome = await analyzeWithRetry(
-      () => analyzeInvoice(fileBuffer, 'application/pdf'),
+      () => analyzeInvoice(fileBuffer, watcherContentType(fileName) || 'application/octet-stream'),
       {
         label: `OCR ${fileName}`,
         onRetry: (attempt, reason) => recordWatcherIntakeEvent(runIntakeId, {
@@ -812,7 +847,7 @@ async function processSingleInvoiceBuffer(
         logger.info(`[File Watcher] Recovered invoice date "${ocrResult.invoice_date}" from filename "${fileName}"`);
       }
     }
-    const inputPages = await countPdfPages(fileBuffer);
+    const inputPages = watcherContentType(fileName) === 'application/pdf' ? await countPdfPages(fileBuffer) : 1;
     const rawProcessedPages = Number(ocrResult?.processed_pages ?? ocrResult?.pages_processed ?? ocrResult?.raw_data?.processed_pages);
     const processedPages = Number.isFinite(rawProcessedPages) ? rawProcessedPages : inputPages;
     ocrResult.input_pages = inputPages;
@@ -1511,7 +1546,7 @@ const MAX_AUTO_REVIEW_RETRIES = Math.max(0, Math.min(3, Number(process.env.INTAK
 function isRetryableQueueReason(reason: string): boolean {
   if (!reason) return false;
   if (/shipping|non[- ]invoice|packing|airway|air\s*way\s*bill|delivery|document type .*not eligible|currency .*requires manual review|currency blank requires/i.test(reason)) return false;
-  return /ocr|confidence|could not be extracted|valid .* amount|provider|timeout|rate limit|429|5\d\d|network|connection|temporary|quota/i.test(reason);
+  return /ocr|confidence|could not be extracted|valid .* amount|provider|timeout|rate limit|429|5\d\d|network|connection|temporary|quota|not a function|undefined is not a function/i.test(reason);
 }
 
 function isLikelyInvoiceFilename(fileName: string): boolean {
@@ -1666,7 +1701,7 @@ async function queueRetryableFiles(): Promise<void> {
   for (const queue of queues) {
     if (queued >= 10 || !fs.existsSync(queue.directory)) continue;
     let files: string[];
-    try { files = fs.readdirSync(queue.directory).filter(f => f.toLowerCase().endsWith('.pdf')); } catch { continue; }
+    try { files = fs.readdirSync(queue.directory).filter(isSupportedWatcherFile); } catch { continue; }
 
     for (const fileName of files) {
       if (queued >= 10) break;
@@ -1728,15 +1763,18 @@ async function pollIncomingDirectory(): Promise<void> {
     }
 
     const files = fs.readdirSync(INCOMING_DIR);
-    const pdfs = files.filter(
-      (f) => f.toLowerCase().endsWith('.pdf') && !processedFiles.has(f)
+    const supportedFiles = files.filter(
+      (f) => isSupportedWatcherFile(f) && !processedFiles.has(f)
     );
+    // Clear invoice-like filenames first so a large queue of supplier files is
+    // not held behind unrelated offers, packing lists, or other support docs.
+    supportedFiles.sort((left, right) => Number(isLikelyInvoiceFilename(right)) - Number(isLikelyInvoiceFilename(left)));
 
-    if (pdfs.length === 0) return;
+    if (supportedFiles.length === 0) return;
 
-    logger.info(`[File Watcher] Found ${pdfs.length} new PDF(s) in ${INCOMING_DIR}`);
+    logger.info(`[File Watcher] Found ${supportedFiles.length} new supported document(s) in ${INCOMING_DIR}`);
 
-    for (const fileName of pdfs) {
+    for (const fileName of supportedFiles) {
       const filePath = path.join(INCOMING_DIR, fileName);
 
       // Skip directories
@@ -1817,7 +1855,7 @@ async function safeMoveAndUpdatePdfPath(
     try {
       const fileBuffer = fs.readFileSync(finalPath);
       const baseName = fileName || path.basename(finalPath);
-      const storagePath = await uploadToStorage(fileBuffer, baseName, 'application/pdf');
+      const storagePath = await uploadToStorage(fileBuffer, baseName, watcherContentType(baseName) || 'application/octet-stream');
       if (storagePath) {
         // Save both Supabase storage path and raw_file_url
         await prisma.invoice.update({

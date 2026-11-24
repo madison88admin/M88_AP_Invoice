@@ -30,7 +30,8 @@ export function validateFinanceArithmetic(invoice: any): FinanceControlIssue[] {
   const isStatement = invoice.invoice_type === 'STATEMENT';
 
   if (!isStatement && lines.length > 0) {
-    for (const issue of validateMultiMpoAllocations(invoice).issues) {
+    const productLines = lines.filter((line: any) => !isInvoiceChargeLine(line));
+    for (const issue of validateMultiMpoAllocations({ ...invoice, invoice_lines: productLines }).issues) {
       issues.push({ code: 'MPO_CONTROL', lineNumber: issue.lineNumber, detail: issue.detail });
     }
   }
@@ -43,6 +44,7 @@ export function validateFinanceArithmetic(invoice: any): FinanceControlIssue[] {
   let lineSum = 0;
   for (const [index, line] of lines.entries()) {
     const lineNumber = Number(line.line_number || index + 1);
+    if (isInvoiceChargeLine(line)) continue;
     const quantity = Number(line.quantity);
     const unitPrice = Number(line.unit_price);
     const lineAmount = Number(line.line_amount);
@@ -93,3 +95,4 @@ export function validateFinanceArithmetic(invoice: any): FinanceControlIssue[] {
 }
 import { getFinancePolicy } from './financePolicyService';
 import { validateMultiMpoAllocations } from './multiMpoControlService';
+import { isInvoiceChargeLine } from './approvalReadinessService';

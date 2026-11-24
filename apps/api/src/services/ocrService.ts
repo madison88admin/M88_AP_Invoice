@@ -1069,7 +1069,9 @@ async function tryFreeLocalFallbacks(
   fileBuffer: Buffer,
   rawText: string,
   vendorName?: string,
+  mimeType = 'application/pdf',
 ): Promise<any | null> {
+  const isPdf = mimeType.toLowerCase() === 'application/pdf';
   // Local Ollama (text or Qwen2.5-VL image fallback)
   try {
     const ollamaOCR = (await import('./ollamaOCRService')).ollamaOCRService;
@@ -1078,7 +1080,7 @@ async function tryFreeLocalFallbacks(
         logger.info('[OCR] Free tier: trying local Ollama text extraction...');
         const result = await ollamaOCR.extractFromText(rawText, { vendorName });
         if (result && (result.vendor_name || result.invoice_number)) return { engine: 'ollama', ...result };
-      } else {
+      } else if (isPdf) {
         const images = convertPDFToImages(fileBuffer);
         for (const [index, image] of images.entries()) {
           logger.info(`[OCR] Free tier: trying local Ollama vision page ${index + 1}/${images.length}...`);
@@ -1094,7 +1096,7 @@ async function tryFreeLocalFallbacks(
   // Gemini AI Studio free tier (vision-capable PDF extraction)
   try {
     const geminiOCR = (await import('./geminiOCRService')).geminiOCRService;
-    if (geminiOCR.isAvailable()) {
+    if (isPdf && geminiOCR.isAvailable()) {
       logger.info('[OCR] Free tier: trying Gemini Vision fallback...');
       const result = await geminiOCR.extractFromPDF(fileBuffer, vendorName);
       if (result && (result.vendor_name || result.invoice_number)) return { engine: 'gemini', ...result };
@@ -1124,10 +1126,11 @@ async function tryAIFallbacks(
   fileBuffer: Buffer,
   rawText: string,
   vendorName?: string,
-  mimeType = 'application/pdf'
+  mimeType = 'application/pdf',
 ): Promise<{ engine: string; vendor_name?: string; invoice_number?: string; invoice_date?: string; due_date?: string; total_amount?: number; subtotal?: number; currency?: string; po_number?: string; mpo_number?: string; brand?: string; brand_code?: string; season?: string; payment_terms?: string; ship_to?: string; sold_to?: string; qty_shipped?: number; document_type?: string; document_type_evidence?: string; payable_candidate?: boolean; bank_name?: string; swift_code?: string; account_number?: string; bank_info?: { swift_code?: string; account_number?: string }; line_items?: any[]; signatures?: { signatory_name: string; signatory_role?: string; signed_date?: string }[]; bank_charges?: number; tt_charge?: number; freight_charges?: number; courier_charges?: number; handling_fee?: number; finance_surcharge?: number; tax_amount?: number; discount_amount?: number; setup_charge?: number; sample_charge?: number; min_order_charge?: number; additional_charges?: number } | null> {
   // ─── CONSENSUS PATH: strongest engines in parallel + per-field majority vote ───
   const consensusResults: EngineResult[] = [];
+  const isPdf = mimeType.toLowerCase() === 'application/pdf';
   let regexFallback: Record<string, any> | null = null;
   const consensusWaitMs = Number(process.env.OPENROUTER_CONSENSUS_WAIT_MS) || 45000;
 
@@ -1180,7 +1183,7 @@ async function tryAIFallbacks(
   }
 
   // Engine 2: OpenRouter free vision (reads page images — works on scans too)
-  const openrouterConfigured = (await import('./openrouterOCRService')).openrouterOCRService.isAvailable();
+  const openrouterConfigured = isPdf && (await import('./openrouterOCRService')).openrouterOCRService.isAvailable();
   if (openrouterConfigured) {
     const imagePages = convertPDFToImages(fileBuffer);
     tasks.push(withTimeout('openrouter', async () => {
@@ -1259,14 +1262,14 @@ async function tryAIFallbacks(
 
   const freeFirst = process.env.OCR_FREE_FIRST !== 'false';
   if (freeFirst) {
-    const freeResult = await tryFreeLocalFallbacks(fileBuffer, rawText, vendorName);
+    const freeResult = await tryFreeLocalFallbacks(fileBuffer, rawText, vendorName, mimeType);
     if (freeResult) return freeResult;
   }
 
   // 2nd priority: Upstage Info Extraction (single-step PDF → fields, 300 PPM, ~10-12s)
   // Directly extracts structured fields from PDF — no separate OCR step needed
   try {
-    if (upstageOCRService.isAvailable()) {
+    if (isPdf && upstageOCRService.isAvailable()) {
       logger.info('[OCR] Trying Upstage Info Extraction — 2nd priority (single-step PDF extraction)...');
       const upstageResult = await upstageOCRService.extractFromPDF(fileBuffer);
       if (upstageResult && (upstageResult.vendor_name || upstageResult.invoice_number)) {
@@ -1307,7 +1310,7 @@ async function tryAIFallbacks(
 
   // 3rd priority: Ollama (Qwen2.5 — local, no rate limits, ~73-88s on CPU)
   // Used when Groq/Upstage rate limits are hit
-  if (!freeFirst && rawText && rawText.length > 50) {
+  if (isPdf && !freeFirst && rawText && rawText.length > 50) {
     try {
       const ollamaOCR = (await import('./ollamaOCRService')).ollamaOCRService;
       if (ollamaOCR.isAvailable()) {
@@ -1321,7 +1324,7 @@ async function tryAIFallbacks(
     } catch (e) {
       logger.error('[OCR] Ollama (Qwen2.5) extraction failed:', e);
     }
-  } else if (!freeFirst) {
+  } else if (isPdf && !freeFirst) {
     logger.warn('[OCR] No raw text — trying PDF-to-image conversion for Ollama vision...');
     const imagesBase64 = convertPDFToImages(fileBuffer);
     if (imagesBase64.length > 0) {
@@ -1346,7 +1349,7 @@ async function tryAIFallbacks(
   // 4th fallback: Gemini Vision (sends PDF as file directly — best for scanned PDFs)
   try {
     const geminiOCR = (await import('./geminiOCRService')).geminiOCRService;
-    if (!freeFirst && geminiOCR.isAvailable()) {
+    if (isPdf && !freeFirst && geminiOCR.isAvailable()) {
       logger.info('[OCR] Trying Gemini Vision fallback (4th priority)...');
       const geminiResult = await geminiOCR.extractFromPDF(fileBuffer, vendorName);
       if (geminiResult && (geminiResult.vendor_name || geminiResult.invoice_number)) {
@@ -1722,9 +1725,16 @@ async function tryDoclingFallback(fileBuffer: Buffer, extracted: any): Promise<{
 }
 
 export async function analyzeInvoice(fileBuffer: Buffer, _mimeType: string) {
+  const mimeType = String(_mimeType || 'application/pdf').toLowerCase();
+  const isPdf = mimeType === 'application/pdf';
   let pageTextsForEvidence: string[] = [];
-  try { pageTextsForEvidence = await extractPdfPageTextsForEvidence(fileBuffer); }
-  catch (error) { logger.warn('[OCR] Page evidence text unavailable; evidence checks will be unverifiable', error); }
+  // PDFParser only accepts PDFs. Calling it for a PNG/JPEG is the source of
+  // the Invalid XRef stream errors seen in watcher logs; image evidence is
+  // intentionally left unverifiable until a text layer is available.
+  if (isPdf) {
+    try { pageTextsForEvidence = await extractPdfPageTextsForEvidence(fileBuffer); }
+    catch (error) { logger.warn('[OCR] Page evidence text unavailable; evidence checks will be unverifiable', error); }
+  }
   let extracted: any;
   let usedGeminiVision = false;
   let usedAIFallback = false;
@@ -1736,7 +1746,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, _mimeType: string) {
   let rapidOcrText = '';
   let classificationText = '';
   try {
-    const rapidOcrResult = await rapidOCRService.extractText(fileBuffer);
+    const rapidOcrResult = await rapidOCRService.extractText(fileBuffer, mimeType, 'invoice' + (isPdf ? '.pdf' : '.bin'));
     if (rapidOcrResult && rapidOcrResult.text && rapidOcrResult.text.length > 20) {
       rapidOcrText = rapidOcrResult.text;
       classificationText = rapidOcrText;
@@ -1770,7 +1780,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, _mimeType: string) {
     // Low confidence or RapidOCR unavailable — try AI fallback
     // Use RapidOCR text if available, otherwise fall back to OpenDataLoader
     let rawText = rapidOcrText;
-    if (!rawText) {
+    if (!rawText && isPdf) {
       logger.info('[OCR] RapidOCR unavailable — falling back to OpenDataLoader for text extraction');
       try {
         rawText = await extractTextFromPDF(fileBuffer);
@@ -1782,7 +1792,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, _mimeType: string) {
 
     if (rapidOcrText && rapidOcrConfidence < CONFIDENCE_THRESHOLD) {
       logger.info(`[OCR] RapidOCR confidence ${(rapidOcrConfidence * 100).toFixed(1)}% < ${CONFIDENCE_THRESHOLD * 100}% — using AI fallback for better accuracy`);
-    } else if (!rapidOcrText) {
+    } else if (!rapidOcrText && isPdf) {
       logger.info('[OCR] AI-first mode: attempting AI extraction with OpenDataLoader text');
     }
 
@@ -1855,7 +1865,7 @@ export async function analyzeInvoice(fileBuffer: Buffer, _mimeType: string) {
         logger.info('[OCR] Bank info missing from text extraction — trying vision-based extraction for bank details...');
         try {
           const geminiOCR = (await import('./geminiOCRService')).geminiOCRService;
-          if (geminiOCR.isAvailable()) {
+          if (isPdf && geminiOCR.isAvailable()) {
             const bankResult = await geminiOCR.extractFromPDF(fileBuffer, extracted.vendor_name);
             if (bankResult && (bankResult.bank_name || bankResult.swift_code || bankResult.account_number)) {
               logger.info(`[OCR] Vision bank fallback succeeded — bank_name: "${bankResult.bank_name}", swift: "${bankResult.swift_code}", account: "${bankResult.account_number}"`);

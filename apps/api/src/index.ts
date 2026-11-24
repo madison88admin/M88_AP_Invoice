@@ -190,7 +190,7 @@ app.get('/health/engines', async (req, res) => {
       openai: {
         available: openaiOCRService.isAvailable(),
         configured: !!process.env.OPENAI_API_KEY,
-        model: process.env.OPENAI_OCR_MODEL || 'gpt-6-astra',
+        model: process.env.OPENAI_OCR_MODEL || 'gpt-6.1-sol',
         primary: openaiOCRService.isAvailable(),
       },
       gemini: {
@@ -255,7 +255,7 @@ const startServer = async () => {
     } else if (!openaiAvailable) {
       logger.warn('⚠️  OPENAI_API_KEY is set but OpenAI OCR is disabled by configuration.');
     } else {
-      logger.info(`✅ OpenAI primary OCR enabled (model: ${process.env.OPENAI_OCR_MODEL || 'gpt-6-astra'}, PDF detail: ${process.env.OPENAI_OCR_PDF_DETAIL || 'auto'})`);
+      logger.info(`✅ OpenAI primary OCR enabled (model: ${process.env.OPENAI_OCR_MODEL || 'gpt-6.1-sol'}, PDF detail: ${process.env.OPENAI_OCR_PDF_DETAIL || 'auto'})`);
     }
 
     if (!geminiConfigured) {

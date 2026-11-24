@@ -2,7 +2,8 @@ import { Request, Response, NextFunction } from 'express';
 import { checkEmailDuplicate, generateFileHash, getDuplicateReplacementDecision, isHardDuplicate, supersedeInvoiceForReplacement } from '../services/emailDuplicateService';
 import { createJob, completeJob, failJob, cleanupOldJobs } from '../services/jobStore';
 import { analyzeInvoice } from '../services/ocrService';
-import { matchVendor } from '../services/vendorMatchingService';
+import { getUnknownVendorPlaceholder, matchVendor } from '../services/vendorMatchingService';
+import { recordEmailIntakeEvent } from '../services/emailIntakeMonitoringService';
 import { getVendorPaymentTermDefault, preferExtractedPaymentTerms } from '../services/vendorDefaultsService';
 import { validateInvoice } from '../services/validationService';
 import { buildMultiInvoiceSourceMetadata, detectMultiInvoice, splitPdfByPageRanges } from '../services/multiInvoiceDetector';
@@ -44,6 +45,47 @@ function buildInvoiceLinesData(lineItems: any[] | undefined, mpoNumber: string |
 }
 
 /**
+ * Resolve a supplier without ever allowing a missing required vendor relation
+ * to abort intake. A real vendor match is returned as MATCHED; an unknown or
+ * conflicting bank-master match is routed to the single seeded placeholder
+ * and remains EXCEPTION_FLAGGED for Accounting review. The placeholder is
+ * deliberately not treated as a successful match, so it can never auto-pass
+ * validation or payment approval.
+ */
+async function resolveIntakeVendor(
+  vendorName: string | null | undefined,
+  beneficiaryName?: string | null,
+): Promise<{ vendorId: string; vendorMatched: boolean; matchConfidence?: number; matchType?: string }> {
+  let vendorMatch: Awaited<ReturnType<typeof matchVendor>> = null;
+  try {
+    vendorMatch = await matchVendor(vendorName, beneficiaryName);
+  } catch (error) {
+    logger.warn('[EmailIntake] Vendor match failed; routing to review placeholder:', error);
+  }
+
+  if (vendorMatch?.vendor_id) {
+    return {
+      vendorId: vendorMatch.vendor_id,
+      vendorMatched: true,
+      matchConfidence: vendorMatch.confidence,
+      matchType: vendorMatch.match_type,
+    };
+  }
+
+  const placeholderId = await getUnknownVendorPlaceholder();
+  if (!placeholderId) {
+    throw new Error('UNKNOWN VENDOR placeholder is unavailable; invoice was not committed and requires intake recovery');
+  }
+
+  return {
+    vendorId: placeholderId,
+    vendorMatched: false,
+    matchConfidence: 0,
+    matchType: 'unmatched_review',
+  };
+}
+
+/**
  * Process a single invoice buffer: OCR → duplicate check → vendor match → DB save → validation.
  * Used for both single invoices and individual splits from multi-invoice PDFs.
  *
@@ -69,6 +111,8 @@ async function processSingleEmailInvoice(
 }> {
   const partLabel = splitIndex !== undefined ? ` [part ${splitIndex + 1}]` : '';
   let replacementParentId: string | null = null;
+  let recoveryStoragePath: string | undefined;
+  let recoveryInvoiceNumber: string | undefined;
 
   try {
     // Step 1: Pre-OCR duplicate check (Level 1: email message ID, Level 2: file hash)
@@ -96,6 +140,7 @@ async function processSingleEmailInvoice(
       const uploadedPath = await uploadToStorage(fileBuffer, fileName, mimeType);
       if (uploadedPath) {
         storagePath = uploadedPath;
+        recoveryStoragePath = uploadedPath;
         logger.info(`[${requestId}] Invoice uploaded to VPS storage${partLabel}: ${storagePath}`);
       }
     } catch (storageError) {
@@ -104,6 +149,7 @@ async function processSingleEmailInvoice(
 
     // Step 2: OCR extraction
     const ocrResult: any = await analyzeInvoice(fileBuffer, mimeType);
+    recoveryInvoiceNumber = typeof ocrResult.invoice_number === 'string' ? ocrResult.invoice_number : undefined;
     logger.info(`[${requestId}] OCR completed${partLabel}: ${ocrResult.invoice_number}, vendor: ${ocrResult.vendor_name}`);
 
     // This legacy email controller writes directly with prisma, so it must
@@ -146,16 +192,12 @@ async function processSingleEmailInvoice(
     }
 
     // Step 4: Vendor matching
-    let vendorId: string | undefined;
-    try {
-      const vendorMatch = await matchVendor(
-        ocrResult.vendor_name,
-        (ocrResult as any).bank_info?.beneficiary_name || (ocrResult as any).beneficiary_name
-      );
-      vendorId = vendorMatch?.vendor_id;
-    } catch {
-      logger.warn(`[${requestId}] Vendor not found${partLabel}: ${ocrResult.vendor_name}`);
-    }
+    const resolvedVendor = await resolveIntakeVendor(
+      ocrResult.vendor_name,
+      (ocrResult as any).bank_info?.beneficiary_name || (ocrResult as any).beneficiary_name,
+    );
+    const vendorId = resolvedVendor.vendorId;
+    const vendorMatched = resolvedVendor.vendorMatched;
 
     // Step 5: Determine approval tier
     const tier = determineApprovalTier(ocrResult.total_amount || 0);
@@ -221,6 +263,10 @@ async function processSingleEmailInvoice(
         ocr_confidence_score: ocrResult.ocr_confidence_score || undefined,
         ocr_raw_data: {
           ...ocrResult,
+          vendor_match_status: vendorMatched ? 'MATCHED' : 'REVIEW_REQUIRED',
+          vendor_match_type: resolvedVendor.matchType,
+          vendor_match_confidence: resolvedVendor.matchConfidence,
+          vendor_match_reason: vendorMatched ? undefined : 'No safe active vendor/bank-master match; Accounting mapping required',
           email_internet_message_id: emailMetadata.internetMessageId,
           email_conversation_id: emailMetadata.conversationId,
           email_sender: emailMetadata.senderEmail,
@@ -236,7 +282,13 @@ async function processSingleEmailInvoice(
         account_number: (ocrResult as any).bank_info?.account_number || (ocrResult as any).account_number || undefined,
         qb_memo: qbMemo,
         qb_account_class: ocrResult.qb_account_class,
-        status: (vendorId ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,
+        bank_match_status: vendorMatched ? 'MATCHED_VENDOR_MASTER' : 'UNMATCHED_VENDOR_REVIEW',
+        bank_match_details: vendorMatched ? undefined : {
+          reason: 'No safe active vendor/bank-master match',
+          source_vendor_name: ocrResult.vendor_name || null,
+          beneficiary_name: (ocrResult as any).bank_info?.beneficiary_name || (ocrResult as any).beneficiary_name || null,
+        },
+        status: (vendorMatched ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,
         source: InvoiceSource.EMAIL as any,
         approval_tier: tier,
         payment_terms: preferExtractedPaymentTerms(ocrResult.payment_terms, await getVendorPaymentTermDefault(vendorId)),
@@ -299,7 +351,7 @@ async function processSingleEmailInvoice(
 
     // Step 12: Exception if vendor not matched
     const exceptions: string[] = [];
-    if (!vendorId) {
+    if (!vendorMatched) {
       await prisma.exception.create({
         data: {
           invoice_id: invoice.id,
@@ -311,7 +363,7 @@ async function processSingleEmailInvoice(
     }
 
     // Step 13: Auto-trigger validation
-    if (vendorId && invoice.status === InvoiceStatus.RECEIVED as any) {
+    if (vendorMatched && invoice.status === InvoiceStatus.RECEIVED as any) {
       try {
         const validationResult = await validateInvoice(invoice.id);
         logger.info(`[${requestId}] Auto-validation${partLabel}: ${validationResult.passed ? 'PASSED' : 'FAILED'} (${validationResult.exceptions.length} exceptions)`);
@@ -335,6 +387,23 @@ async function processSingleEmailInvoice(
     };
   } catch (error: any) {
     logger.error(`[${requestId}] Email invoice processing failed${partLabel}:`, error);
+    if (recoveryStoragePath) {
+      await recordEmailIntakeEvent({
+        source: 'POWER_AUTOMATE',
+        stage: 'FAILED',
+        status: 'FAILED',
+        fileName,
+        error: error.message || String(error),
+        metadata: {
+          storage_path: recoveryStoragePath,
+          invoice_number: recoveryInvoiceNumber,
+          recovery_required: true,
+          retryable: true,
+          request_id: requestId,
+          split_index: splitIndex,
+        },
+      });
+    }
     return {
       success: false,
       error: error.message || String(error),
@@ -366,6 +435,8 @@ async function processSingleManualInvoice(
 }> {
   const partLabel = splitIndex !== undefined ? ` [part ${splitIndex + 1}]` : '';
   let replacementParentId: string | null = null;
+  let recoveryStoragePath: string | undefined;
+  let recoveryInvoiceNumber: string | undefined;
 
   try {
     // Check file hash duplicate
@@ -388,6 +459,7 @@ async function processSingleManualInvoice(
       const uploadedPath = await uploadToStorage(fileBuffer, fileName, mimeType);
       if (uploadedPath) {
         storagePath = uploadedPath;
+        recoveryStoragePath = uploadedPath;
         logger.info(`[${requestId}] Invoice uploaded to VPS storage${partLabel}: ${storagePath}`);
       }
     } catch (storageError) {
@@ -396,6 +468,7 @@ async function processSingleManualInvoice(
 
     // OCR
     const ocrResult: any = await analyzeInvoice(fileBuffer, mimeType);
+    recoveryInvoiceNumber = typeof ocrResult.invoice_number === 'string' ? ocrResult.invoice_number : undefined;
     logger.info(`[${requestId}] OCR completed${partLabel}: ${ocrResult.invoice_number}, vendor: ${ocrResult.vendor_name}`);
 
     const classification = ocrResult.document_classification || classifyInvoiceDocument({
@@ -436,16 +509,12 @@ async function processSingleManualInvoice(
     }
 
     // Vendor match
-    let vendorId: string | undefined;
-    try {
-      const vendorMatch = await matchVendor(
-        ocrResult.vendor_name,
-        (ocrResult as any).bank_info?.beneficiary_name || (ocrResult as any).beneficiary_name
-      );
-      vendorId = vendorMatch?.vendor_id;
-    } catch {
-      logger.warn(`[${requestId}] Vendor not found${partLabel}: ${ocrResult.vendor_name}`);
-    }
+    const resolvedVendor = await resolveIntakeVendor(
+      ocrResult.vendor_name,
+      (ocrResult as any).bank_info?.beneficiary_name || (ocrResult as any).beneficiary_name,
+    );
+    const vendorId = resolvedVendor.vendorId;
+    const vendorMatched = resolvedVendor.vendorMatched;
 
     const tier = determineApprovalTier(ocrResult.total_amount || 0);
     const fileHash = generateFileHash(fileBuffer);
@@ -497,10 +566,28 @@ async function processSingleManualInvoice(
         normalized_invoice_number: normalizeInvoiceReference(ocrResult.invoice_number) || undefined,
         line_items_signature: Array.isArray((ocrResult as any).line_items) ? JSON.stringify((ocrResult as any).line_items) : undefined,
         ocr_confidence_score: ocrResult.ocr_confidence_score || undefined,
-        ocr_raw_data: { ...ocrResult, manual_upload_by: uploadedBy, multi_invoice_split_index: splitIndex, multi_invoice_source: multiInvoiceSource } as any,
+        ocr_raw_data: {
+          ...ocrResult,
+          vendor_match_status: vendorMatched ? 'MATCHED' : 'REVIEW_REQUIRED',
+          vendor_match_type: resolvedVendor.matchType,
+          vendor_match_confidence: resolvedVendor.matchConfidence,
+          vendor_match_reason: vendorMatched ? undefined : 'No safe active vendor/bank-master match; Accounting mapping required',
+          manual_upload_by: uploadedBy,
+          multi_invoice_split_index: splitIndex,
+          multi_invoice_source: multiInvoiceSource,
+        } as any,
         qb_memo: qbMemo,
-        status: (vendorId ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,
-        source: 'MANUAL' as any,
+        bank_match_status: vendorMatched ? 'MATCHED_VENDOR_MASTER' : 'UNMATCHED_VENDOR_REVIEW',
+        bank_match_details: vendorMatched ? undefined : {
+          reason: 'No safe active vendor/bank-master match',
+          source_vendor_name: ocrResult.vendor_name || null,
+          beneficiary_name: (ocrResult as any).bank_info?.beneficiary_name || (ocrResult as any).beneficiary_name || null,
+        },
+        status: (vendorMatched ? InvoiceStatus.RECEIVED : InvoiceStatus.EXCEPTION_FLAGGED) as any,
+        // Keep the manual upload source aligned with the Prisma InvoiceSource
+        // enum. 'MANUAL' is not a valid enum value and caused Prisma to reject
+        // the insert after the PDF had already been uploaded to storage.
+        source: InvoiceSource.MANUAL_UPLOAD as any,
         approval_tier: tier,
         payment_terms: preferExtractedPaymentTerms(ocrResult.payment_terms, await getVendorPaymentTermDefault(vendorId)),
         pdf_path: storagePath || undefined,
@@ -544,7 +631,7 @@ async function processSingleManualInvoice(
     });
 
     const exceptions: string[] = [];
-    if (!vendorId) {
+    if (!vendorMatched) {
       await prisma.exception.create({
         data: {
           invoice_id: invoice.id,
@@ -555,7 +642,7 @@ async function processSingleManualInvoice(
       exceptions.push('VENDOR_NOT_FOUND');
     }
 
-    if (vendorId) {
+    if (vendorMatched) {
       try {
         const validationResult = await validateInvoice(invoice.id);
         if (!validationResult.passed) {
@@ -576,6 +663,23 @@ async function processSingleManualInvoice(
     };
   } catch (error: any) {
     logger.error(`[${requestId}] Manual invoice processing failed${partLabel}:`, error);
+    if (recoveryStoragePath) {
+      await recordEmailIntakeEvent({
+        source: 'MANUAL_UPLOAD',
+        stage: 'FAILED',
+        status: 'FAILED',
+        fileName,
+        error: error.message || String(error),
+        metadata: {
+          storage_path: recoveryStoragePath,
+          invoice_number: recoveryInvoiceNumber,
+          recovery_required: true,
+          retryable: true,
+          request_id: requestId,
+          split_index: splitIndex,
+        },
+      });
+    }
     return {
       success: false,
       error: error.message || String(error),

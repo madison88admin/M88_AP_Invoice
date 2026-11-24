@@ -5,6 +5,7 @@ Runs on port 8500. Called by Node.js OCR pipeline.
 import os
 import time
 import logging
+import io
 from typing import Optional
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
@@ -44,7 +45,13 @@ async def health():
 
 @app.post("/extract", response_model=ExtractResult)
 async def extract_pdf(file: UploadFile = File(...)):
-    """Extract text from PDF using RapidOCR (pdf2image → OCR each page)."""
+    """Extract text from PDF or image using RapidOCR.
+
+    The Node watcher sends the original MIME type.  Older versions always
+    passed every upload through pdf2image, which raised Invalid XRef errors for
+    PNG/JPEG attachments.  Keep PDF conversion for PDFs and decode image
+    attachments directly with Pillow.
+    """
     start = time.time()
     file_bytes = await file.read()
 
@@ -52,11 +59,23 @@ async def extract_pdf(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Empty file")
 
     try:
-        from pdf2image import convert_from_bytes
         import numpy as np
+        content_type = (file.content_type or "").lower()
+        file_name = (file.filename or "").lower()
+        is_pdf = content_type == "application/pdf" or file_name.endswith(".pdf")
+
+        if is_pdf:
+            from pdf2image import convert_from_bytes
+            images = convert_from_bytes(file_bytes, dpi=300)
+        else:
+            from PIL import Image
+            try:
+                image = Image.open(io.BytesIO(file_bytes)).convert("RGB")
+            except Exception as image_error:
+                raise HTTPException(status_code=400, detail=f"Unsupported image payload: {image_error}")
+            images = [image]
 
         ocr = get_rapid_ocr()
-        images = convert_from_bytes(file_bytes, dpi=300)
         all_text = []
         total_conf = 0.0
         page_count = len(images)

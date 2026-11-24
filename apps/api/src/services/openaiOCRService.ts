@@ -158,7 +158,7 @@ export class OpenAIOCRService {
 
   constructor() {
     this.apiKey = process.env.OPENAI_API_KEY?.trim() || null;
-    this.model = process.env.OPENAI_OCR_MODEL?.trim() || 'gpt-6-astra';
+    this.model = process.env.OPENAI_OCR_MODEL?.trim() || 'gpt-6.1-sol';
     this.timeoutMs = Math.max(10_000, Number(process.env.OPENAI_OCR_TIMEOUT_MS) || 120_000);
     const detail = process.env.OPENAI_OCR_PDF_DETAIL;
     this.pdfDetail = detail === 'low' || detail === 'high' ? detail : 'auto';
@@ -174,6 +174,8 @@ export class OpenAIOCRService {
     if (!this.apiKey) return null;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+    const startedAt = Date.now();
+    let httpStatus: number | null = null;
     try {
       const response = await fetch('https://api.openai.com/v1/responses', {
         method: 'POST',
@@ -181,13 +183,18 @@ export class OpenAIOCRService {
         body: JSON.stringify(payload),
         signal: controller.signal,
       });
+      httpStatus = response.status;
       if (!response.ok) {
-        const body = await response.text().catch(() => '');
-        logger.error(`[OpenAI OCR] API returned ${response.status}: ${body.slice(0, 300)}`);
+        await response.text().catch(() => '');
+        logger.info(`OPENAI_USAGE ${JSON.stringify({ system: 'ap-invoice', recordedAt: new Date().toISOString(), model: this.model, status: 'error', httpStatus, latencyMs: Date.now() - startedAt })}`);
+        logger.error(`[OpenAI OCR] API returned ${response.status}`);
         return null;
       }
-      return await response.json();
+      const data: any = await response.json();
+      logger.info(`OPENAI_USAGE ${JSON.stringify({ system: 'ap-invoice', recordedAt: new Date().toISOString(), model: this.model, status: 'success', httpStatus, responseId: typeof data?.id === 'string' ? data.id : null, inputTokens: data?.usage?.input_tokens ?? null, outputTokens: data?.usage?.output_tokens ?? null, totalTokens: data?.usage?.total_tokens ?? null, latencyMs: Date.now() - startedAt })}`);
+      return data;
     } catch (error) {
+      logger.info(`OPENAI_USAGE ${JSON.stringify({ system: 'ap-invoice', recordedAt: new Date().toISOString(), model: this.model, status: 'error', httpStatus, error: error instanceof Error ? error.message.slice(0, 160) : 'unknown', latencyMs: Date.now() - startedAt })}`);
       logger.error('[OpenAI OCR] request failed:', error instanceof Error ? error.message : String(error));
       return null;
     } finally {
@@ -258,7 +265,7 @@ export class OpenAIOCRService {
       ])
       : ['', []];
     const classificationFeedback = formatClassificationFeedbackPrompt(classificationExamples);
-    const prompt = `${fewShot ? `${fewShot}\n\n` : ''}${classificationFeedback ? `${classificationFeedback}\n\n` : ''}${EXTRACTION_PROMPT}\n\nFor invoice_number, total_amount, and invoice_date, also return field_evidence: page number (1-based), a short exact snippet from that page, and the nearby printed label. Return null for evidence components you cannot read; never invent a page, snippet, or label. Keep the normal flattened field values unchanged. HEADER CLASSIFICATION IS MANDATORY: use the visible first-page title and document purpose; return UNKNOWN when unreadable. Never default to INVOICE. Reviewer examples are supporting evidence only and must not override this file's visible content. The rule engine will decide final routing.`;
+    const prompt = `${fewShot ? `${fewShot}\n\n` : ''}${classificationFeedback ? `${classificationFeedback}\n\n` : ''}${EXTRACTION_PROMPT}\n\nACCURACY RULES: Read the document itself; do not infer missing values from vendor history, prior examples, filenames, or other fields. Identify the supplier from the issuer/seller block, not the bill-to, ship-to, consignee, or customer block. Extract invoice_number only from a value explicitly labeled as invoice number/reference; never substitute a PO, MPO, order, shipment, AWB, customs, or packing-list number. Extract total_amount from the final amount payable/total due, not subtotal, unit price, tax alone, or a shipment value. Return currency only when shown on the document; do not assume USD. Keep dates tied to their printed labels and return null when ambiguous. Preserve leading zeros and meaningful punctuation in identifiers. If the document is a supporting/customs/shipping document or classification evidence is unclear, classify its actual document_type and do not call it an invoice just because it contains amounts or supplier names.\n\nFor invoice_number, total_amount, and invoice_date, also return field_evidence: page number (1-based), a short exact snippet from that page, and the nearby printed label. Return null for evidence components you cannot read; never invent a page, snippet, or label. Keep the normal flattened field values unchanged. HEADER CLASSIFICATION IS MANDATORY: use the visible first-page title and document purpose; return UNKNOWN when unreadable. Never default to INVOICE. Reviewer examples are supporting evidence only and must not override this file's visible content. The rule engine will decide final routing.`;
     const content: any[] = [{ type: 'input_text', text: prompt }];
     if (isImage) {
       content.push({ type: 'input_image', image_url: `data:${normalizedMime};base64,${base64}`, detail: 'high' });

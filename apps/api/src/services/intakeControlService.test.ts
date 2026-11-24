@@ -14,6 +14,19 @@ import {
 import { classifySameNumberMatch } from './duplicateDetectionService';
 
 describe('intake controls', () => {
+  it('reconciles provider line-total names without converting unread lines to zero', () => {
+    for (const key of ['amount', 'line_total', 'total_amount', 'line_amount', 'total']) {
+      expect(reconcileInvoice({currency:'USD', total_amount:2644.8, line_items:[{[key]:2644.8}]}).state).toBe('PASS');
+    }
+    expect(reconcileInvoice({currency:'USD', total_amount:2644.8, line_items:[{description:'unread'}]}).state).toBe('NOT_APPLICABLE');
+  });
+
+  it('does not treat remittance terms as itemized invoice fees', () => {
+    const r = reconcileInvoice({currency:'USD',total_amount:2644.8,line_items:[{total_amount:2644.8}],
+      raw_text:'All bank charges outside Hong Kong are for the account of the buyer.\nPlease use invoice number 256451 as a reference.'});
+    expect(r.state).toBe('PASS');
+    expect(r.missingTerms).toEqual([]);
+  });
   it('normalizes exact duplicate keys without fuzzy matching', () => {
     expect(normalizeInvoiceNumber('  sc-26-01977 ')).toBe('SC-26-01977');
     expect(normalizeSwift(' abcd hk hh  ')).toBe('ABCDHKHH');

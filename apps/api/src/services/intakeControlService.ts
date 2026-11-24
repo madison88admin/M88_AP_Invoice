@@ -108,9 +108,12 @@ export function normalizeAmount(value: unknown, currency = 'USD'): number | null
 }
 
 function explicitTerm(rawText: string, labels: RegExp): number | null | undefined {
-  if (!labels.test(rawText)) return undefined;
-  const match = rawText.match(new RegExp(`${labels.source}[^0-9-]*([0-9][0-9,.]*)`, 'i'));
-  if (!match) return null;
+  // Remittance prose such as "bank charges are borne by the buyer" is not
+  // an invoice charge line and must not borrow digits from the next paragraph.
+  const label = new RegExp(`^(?:${labels.source})\\s*[:$€£ ]*(?:USD|HKD|EUR|PHP|GBP)?\\s*[:$€£ ]*([0-9][0-9,.]*)?\\s*$`, 'i');
+  const match = rawText.split(/\r?\n/).map(line => line.trim()).map(line => line.match(label)).find(Boolean);
+  if (!match) return new RegExp(`(?:^|\\n|\\d\\s+)(?:${labels.source})\\s*:?\\s*$`, 'i').test(rawText) ? null : undefined;
+  if (!match[1]) return null;
   const raw = match[1];
   if (/^0(?:[.,]0+)?$/.test(raw)) return 0;
   return normalizeAmount(raw);
@@ -150,11 +153,11 @@ export function reconcileInvoice(result: any): ReconciliationResult {
   }
 
   const lineItems = Array.isArray(result?.line_items) ? result.line_items : [];
-  const lineSum = lineItems.length > 0
-    ? lineItems.reduce((sum: number, line: any) => {
-      const amount = normalizeAmount(line?.amount ?? line?.line_total ?? line?.total, currency);
-      return amount === null ? sum : sum + amount;
-    }, 0)
+  const lineAmounts = lineItems.map((line: any) =>
+    normalizeAmount(line?.amount ?? line?.line_total ?? line?.total_amount ?? line?.line_amount ?? line?.total, currency));
+  // An unread line cannot silently contribute zero to a complete invoice sum.
+  const lineSum = lineAmounts.length > 0 && lineAmounts.every((amount: number | null) => amount !== null)
+    ? lineAmounts.reduce((sum: number, amount: number) => sum + amount, 0)
     : null;
   const subtotal = normalizeAmount(result?.subtotal, currency);
   const expectedBase = subtotal ?? lineSum;

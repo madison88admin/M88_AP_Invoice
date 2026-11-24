@@ -21,7 +21,7 @@ export function hasStrongNonInvoiceHeading(text: unknown): boolean {
   // A payable heading before the supporting-document title indicates an
   // invoice that merely references a packing list (for example, "Packing List
   // No."), so keep that invoice eligible.
-  const payableHeading = firstPage.search(/(?:^|\n)\s*(?:proforma\s+|sales\s+)?invoice\b|(?:^|\n)\s*(?:debit|credit)\s+note\b/i);
+  const payableHeading = firstPage.search(/(?:^|\n)\s*(?:(?:proforma|sales|tax|commercial)\s+)?invoice\b|\binvoice\s*(?:no\.?|number|#)\s*[:.]|(?:^|\n)\s*(?:debit|credit)\s+note\b/i);
   return payableHeading < 0 || marker < payableHeading;
 }
 

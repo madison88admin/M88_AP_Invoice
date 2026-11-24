@@ -21,13 +21,8 @@ function normalizeVendorName(name: string): string {
     .replace(/^\s*PT\.?\s+/, '')
     .replace(/CO\.?,?\s*LTD\.?/gi, '')
     .replace(/\bLTD\.?/gi, '')
-    .replace(/LIMITED/gi, '')
-    .replace(/CORPORATION/gi, '')
-    .replace(/INC\.?/gi, '')
-    .replace(/LLC/gi, '')
-    .replace(/PTE\.?/gi, '')
-    .replace(/SDN\.?/gi, '')
-    .replace(/BHD\.?/gi, '')
+    .replace(/\b(?:LIMITED|CORPORATION|INC|LLC|PTE|SDN|BHD)\b\.?/gi, '')
+    .replace(/[.,()]/g, ' ')
     .replace(/-/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -78,7 +73,8 @@ async function matchVendorByName(vendorName: string): Promise<VendorMatchResult 
 
   try {
     // Step 1: Exact match on Vendor.name (with normalization)
-    const allVendors = await prisma.vendor.findMany();
+    const allVendors = (await prisma.vendor.findMany({ where: { is_active: true } }))
+      .filter((vendor: any) => vendor.is_active !== false);
     
     const rankVendor = (vendor: any) => {
       const bankCompleteness = [vendor.beneficiary_name, vendor.bank_name, vendor.account_number, vendor.swift_code]

@@ -1,4 +1,5 @@
 import PDFParser from 'pdf2json';
+import { extractPdfFallbackText } from './pdfTextFallbackService';
 import { InvoiceType, InvoiceCategory, PaymentTerms, BillToEntity, OrderType, SignatoryRole, SignatureType } from '@ap-invoice/shared';
 import { parsePOReference, matchSignerToRole, TOP_10_BRANDS } from '@ap-invoice/shared';
 import { logger } from '../utils/logger';
@@ -293,38 +294,7 @@ async function extractTextFromPDF(fileBuffer: Buffer): Promise<string> {
     logger.warn('[OCR] OpenDataLoader extraction failed, falling back to pdf2json:', e instanceof Error ? e.message : String(e));
   }
 
-  // Fallback: pdf2json
-  return new Promise((resolve, reject) => {
-    const pdfParser = new (PDFParser as any)(null, 1);
-    
-    const safeDecode = (str: string): string => {
-      try { return decodeURIComponent(str); } catch { return str; }
-    };
-    
-    pdfParser.on('pdfParser_dataReady', (pdfData: any) => {
-      try {
-        const text = pdfData.Pages
-          .map((page: any) => 
-            page.Texts
-              .map((t: any) => safeDecode(t.R[0].T))
-              .join(' ')
-          )
-          .join('\n');
-        console.log('[OCR] Text extracted, length:', text.length);
-        console.log('[OCR] First 300 chars:', text.substring(0, 300));
-        resolve(text);
-      } catch (e) {
-        reject(e);
-      }
-    });
-
-    pdfParser.on('pdfParser_dataError', (err: any) => {
-      console.error('[OCR] PDF parse error:', err);
-      reject(err);
-    });
-
-    pdfParser.parseBuffer(fileBuffer);
-  });
+  return extractPdfFallbackText(fileBuffer);
 }
 
 async function extractPdfPageTextsForEvidence(fileBuffer: Buffer): Promise<string[]> {
@@ -610,9 +580,10 @@ async function extractInvoiceFieldsFromText(text: string, _fileBuffer?: Buffer) 
 
   // amount — multiple patterns for different layouts and brands
   const amountPatterns = [
+    /T\s*OTAL\s*(?:\(USD\)|USD)\s*[:$ ]*([\d,]+\.\d{2,4})(?!\d)/i,
     /TOTAL\s*\(USD\)\s*([\d,]+\.\d{2,4})/i,
     /TOTAL\s*USD\s*([\d,]+\.\d{2,4})/i,
-    /TOTAL\s*USD[\s\S]{0,150}([\d,]+\.\d{2,4})/i, // TOTAL USD followed by amount within 150 chars (handles different cells)
+    /TOTAL\s*USD[^\d\n]{0,30}([\d,]+\.\d{2,4})(?!\d)/i,
     /TOTAL\s*USD/i, // Match TOTAL USD, then find amount nearby
     /TOTAL\s*(?:AMOUNT)?[:\s]*([\d,]+\.\d{2,4})/i,
     /Grand\s*Total[:\s]*([\d,]+\.\d{2,4})/i,

@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { hasStrongNonInvoiceHeading, isObviouslyNonInvoiceFilename } from './nonInvoiceSuppression';
 
 describe('non-invoice filename suppression', () => {
+  it('distinguishes a flattened invoice with a packing reference from a packing-list header', () => {
+    expect(hasStrongNonInvoiceHeading('SUPPLIER LIMITED Invoice No.: INV-123 Date: 2026-11-23 Packing List No.: PL-123')).toBe(false);
+    expect(hasStrongNonInvoiceHeading('SUPPLIER LIMITED PACKING LIST Invoice No.: INV-123 Date: 2026-11-23')).toBe(true);
+    expect(hasStrongNonInvoiceHeading('TAX INVOICE\nPacking List No.: PL-123')).toBe(false);
+  });
   it('suppresses obvious shipment/supporting documents', () => {
     expect(isObviouslyNonInvoiceFilename('PT BSN_Packing List_123.pdf')).toBe(true);
     expect(isObviouslyNonInvoiceFilename('carrier_AWB_123.pdf')).toBe(true);

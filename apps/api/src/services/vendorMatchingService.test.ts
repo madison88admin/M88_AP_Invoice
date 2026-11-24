@@ -36,6 +36,17 @@ beforeEach(() => {
 });
 
 describe('vendor matching financial controls', () => {
+  it('normalizes Micro-Pak legal punctuation while preserving supplier words', async () => {
+    vendorFindMany.mockResolvedValue([vendor({name:'MICRO-PAK LIMITED'})]);
+    await expect(matchVendor('Micro-Pak Ltd.')).resolves.toMatchObject({match_type:'exact',vendor_id:'vendor-1'});
+    vendorFindMany.mockResolvedValue([vendor({name:'VINCENT MATERIALS LIMITED'})]);
+    await expect(matchVendor('Vincent Materials Ltd.')).resolves.toMatchObject({match_type:'exact'});
+  });
+
+  it('does not assign an inactive-only supplier', async () => {
+    vendorFindMany.mockResolvedValue([vendor({is_active:false})]);
+    await expect(matchVendor('Checkpoint Systems Limited')).resolves.toBeNull();
+  });
   it('matches a single normalized vendor record', async () => {
     vendorFindMany.mockResolvedValue([vendor()]);
 

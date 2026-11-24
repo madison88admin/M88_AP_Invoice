@@ -48,6 +48,12 @@ vi.mock('./openDataLoaderService', () => ({
 }));
 
 describe('extractInvoiceFields amount extraction (BSN column layout)', () => {
+  it('reads the entire Micro-Pak currency total after a dollar sign', async () => {
+    vi.mocked((await import('./openDataLoaderService')).extractTextWithOpenDataLoader)
+      .mockResolvedValueOnce('MICRO-PAK LIMITED\nINVOICE\nInvoice No.: 256451\nTOTAL USD $2,644.80\nAll bank charges are for the buyer');
+    const result = await extractInvoiceFields(Buffer.from('fake-pdf'));
+    expect(result.amount).toBe(2644.8);
+  });
   beforeEach(() => {
     capturedLogs.length = 0;
   });

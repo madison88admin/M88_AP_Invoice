@@ -15,6 +15,7 @@ export interface InvoicePageRange {
 
 export interface MultiInvoiceDetectionResult {
   isMultiInvoice: boolean;
+  hasIsolatedInvoice?: boolean;
   invoiceCount: number;
   pageRanges: InvoicePageRange[];
   totalPages: number;
@@ -53,21 +54,33 @@ function normalizePageText(text: string): string {
 /**
  * Extract text per page from a PDF buffer using pdf2json.
  */
-function extractTextPerPage(fileBuffer: Buffer): Promise<string[]> {
+function extractTextPerPage(fileBuffer: Buffer): Promise<Array<{ text: string; lines: string[] }>> {
   return new Promise((resolve, reject) => {
     const pdfParser = new (PDFParser as any)(null, 1);
 
     pdfParser.on('pdfParser_dataReady', (pdfData: any) => {
       try {
-        const pages: string[] = pdfData.Pages.map((page: any) =>
-          normalizePageText(page.Texts.map((t: any) => {
+        const pages = pdfData.Pages.map((page: any) => {
+          const tokens = page.Texts.map((t: any) => {
+            let text = t.R[0].T;
             try {
-              return decodeURIComponent(t.R[0].T);
+              text = decodeURIComponent(text);
             } catch {
-              return t.R[0].T;
+              // Keep the original text when URI decoding fails.
             }
-          }).join(' '))
-        );
+            return { x: Number(t.x), y: Number(t.y), text: String(text) };
+          }) as Array<{ x: number; y: number; text: string }>;
+          const rows: Array<{ y: number; tokens: typeof tokens }> = [];
+          for (const token of [...tokens].sort((a, b) => a.y - b.y)) {
+            const row = rows[rows.length - 1];
+            if (row && token.y - row.y <= 0.15) row.tokens.push(token);
+            else rows.push({ y: token.y, tokens: [token] });
+          }
+          return {
+            text: normalizePageText(tokens.map(token => token.text).join(' ')),
+            lines: rows.map(row => row.tokens.sort((a, b) => a.x - b.x).map(token => token.text.trim()).join(' ').trim()),
+          };
+        });
         resolve(pages);
       } catch (e) {
         reject(e);
@@ -247,7 +260,12 @@ export async function detectMultiInvoice(fileBuffer: Buffer): Promise<MultiInvoi
   let pages: string[] = [];
 
   try {
-    pages = await extractTextPerPage(fileBuffer);
+    const extracted = await extractTextPerPage(fileBuffer);
+    const isolated = isolateStandaloneInvoice(extracted);
+    if (isolated) {
+      return { isMultiInvoice: false, hasIsolatedInvoice: true, invoiceCount: 1, pageRanges: [isolated], totalPages: extracted.length };
+    }
+    pages = extracted.map(page => page.text);
     pages = await enrichWeakPagesWithOCR(fileBuffer, pages);
   } catch (err) {
     logger.warn('[MultiInvoiceDetector] Failed to extract text per page:', err);
@@ -363,6 +381,27 @@ export async function detectMultiInvoice(fileBuffer: Buffer): Promise<MultiInvoi
     invoiceCount: pageRanges.length,
     pageRanges,
     totalPages: pages.length,
+  };
+}
+
+/** Only remove pages with explicit supporting-document headers. Keep ambiguous
+ * and continuation pages together for the existing classifier to review. */
+export function isolateStandaloneInvoice(pages: Array<{ text: string; lines: string[] }>): InvoicePageRange | null {
+  if (pages.length < 2) return null;
+  const isSupport = ({ lines }: typeof pages[number]) => lines.slice(0, 22)
+    .some(line => /^(?:sales contract|packing list)$/i.test(line));
+  const nonSupport = pages.map((page, index) => ({ page, index })).filter(({ page }) => !isSupport(page));
+  if (nonSupport.length !== 1) return null;
+  const [{ page, index }] = nonSupport;
+  const header = page.lines.slice(0, 22);
+  const reference = header.map(line => line.match(/\b(?:sales\s+)?invoice\s*(?:no\b|number\b|#)[.\s:]*([a-z\d][a-z\d/-]{2,30})/i)?.[1])
+    .find(number => number && isValidInvoiceNumber(number));
+  const hasTotal = page.lines.some(line => /\bt\s*otal\s+(?:usd|hkd|eur|php|gbp)\s*[:$€£ ]*\d/i.test(line));
+  if (!reference || !header.some(line => /^(?:sales )?invoice$/i.test(line))
+    || !page.lines.some(line => /\bpage\s*:?\s*1\s+of\s+1\b/i.test(line)) || !hasTotal) return null;
+  return {
+    startPage: index, endPage: index, invoiceNumber: reference,
+    vendorName: null, amount: null, pageText: page.text,
   };
 }
 

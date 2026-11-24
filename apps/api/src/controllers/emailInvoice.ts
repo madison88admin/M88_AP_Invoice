@@ -17,6 +17,7 @@ import { classifyInvoiceDocument } from '../services/structuredInvoiceService';
 import { getPayableBlockReason } from '../services/payableDocumentGuard';
 import { ensureInvoiceBankSnapshot } from '../services/invoiceBankSnapshotService';
 import { normalizeInvoiceReference, createDuplicateRevisionReviewFromCandidate } from '../services/accountingControlService';
+import { createInvoiceOnceByFileHash } from '../services/exactFileIntakeService';
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
 
@@ -224,9 +225,15 @@ async function processSingleEmailInvoice(
       brand_tier = BrandTier.OTHER;
     }
 
-    // Step 9: Create invoice with email metadata
-    const invoice = await prisma.invoice.create({
-      data: {
+    // Step 9: Create invoice with email metadata through the same atomic
+    // file-hash/business-key guard used by the Power Automate file watcher.
+    // Resent emails can have a new Message-ID or slightly different PDF bytes;
+    // those must still reuse the existing active invoice instead of creating a
+    // second AP row after approval.
+    const parsedMpo = ocrResult.mpo_number
+      ? parseMPOReference(ocrResult.mpo_number)
+      : { baseMpo: null, orderSequence: null, materialCode: null };
+    const invoiceData: any = {
         invoice_number: ocrResult.invoice_number,
         ...(replacementParentId ? { parent_invoice_id: replacementParentId, revision: 1 } : {}),
         invoice_date: ocrResult.invoice_date,
@@ -251,6 +258,9 @@ async function processSingleEmailInvoice(
         brand_tier: brand_tier,
         season: ocrResult.season,
         mpo_number: ocrResult.mpo_number,
+        mpo_base_number: parsedMpo.baseMpo || undefined,
+        mpo_order_sequence: parsedMpo.orderSequence || undefined,
+        material_code: parsedMpo.materialCode || undefined,
         customer_po_number: ocrResult.customer_po_number,
         bill_to_entity: (ocrResult.bill_to_entity || 'MADISON_88_LTD') as any,
         is_handwritten: ocrResult.is_handwritten || false,
@@ -298,8 +308,22 @@ async function processSingleEmailInvoice(
         ...(buildInvoiceLinesData((ocrResult as any).line_items, ocrResult.mpo_number) ? {
           invoice_lines: buildInvoiceLinesData((ocrResult as any).line_items, ocrResult.mpo_number),
         } : {}),
-      },
-    });
+    };
+    const saved = await createInvoiceOnceByFileHash(invoiceData, { vendor: true, invoice_lines: true });
+    const invoice = saved.invoice;
+    if (!saved.created) {
+      const reason = saved.duplicateType === 'BUSINESS_KEY'
+        ? `Duplicate invoice ${invoice.invoice_number} for the same vendor was already captured; existing record reused.`
+        : `Identical PDF was already captured as ${invoice.invoice_number}; existing record reused.`;
+      logger.warn(`[${requestId}] Email duplicate blocked${partLabel}: ${reason}`);
+      await recordEmailIntakeEvent({
+        source: 'POWER_AUTOMATE', stage: 'DUPLICATE', status: 'BLOCKED', fileName,
+        invoiceId: invoice.id,
+        error: reason,
+        metadata: { duplicate_level: saved.duplicateType || 'FILE_HASH', existing_invoice_id: invoice.id, existing_invoice_number: invoice.invoice_number, file_hash: fileHash, request_id: requestId },
+      });
+      return { success: false, duplicate: true, duplicateLevel: saved.duplicateType || 'FILE_HASH', invoiceId: invoice.id, invoiceNumber: invoice.invoice_number, status: 'DUPLICATE_BLOCKED', error: reason };
+    }
     const duplicateCandidate = replacementParentId ? null : (postOcrDuplicate.isDuplicate ? postOcrDuplicate : preOcrDuplicate);
     if (duplicateCandidate?.isDuplicate && duplicateCandidate.existingInvoiceId) {
       await createDuplicateRevisionReviewFromCandidate({
@@ -755,7 +779,7 @@ export const emailInvoiceUpload = async (
         if (isPdf) {
           try {
             const detection = await detectMultiInvoice(fileBuffer);
-            if (detection.isMultiInvoice && detection.invoiceCount > 1) {
+            if (detection.hasIsolatedInvoice || detection.isMultiInvoice) {
               logger.info(`[${requestId}] Multi-invoice PDF detected: ${detection.invoiceCount} invoices in ${fileName}. Splitting...`);
 
               const splitBuffers = await splitPdfByPageRanges(fileBuffer, detection.pageRanges);
@@ -882,7 +906,7 @@ export const manualInvoiceUpload = async (
         if (isPdf) {
           try {
             const detection = await detectMultiInvoice(fileBuffer);
-            if (detection.isMultiInvoice && detection.invoiceCount > 1) {
+            if (detection.hasIsolatedInvoice || detection.isMultiInvoice) {
               logger.info(`[${requestId}] Multi-invoice PDF detected in manual upload: ${detection.invoiceCount} invoices. Splitting...`);
 
               const splitBuffers = await splitPdfByPageRanges(fileBuffer, detection.pageRanges);

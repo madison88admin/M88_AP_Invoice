@@ -1108,7 +1108,7 @@ export const uploadMadisonInvoice = async (
     if (mimeType === 'application/pdf' || req.file.originalname.toLowerCase().endsWith('.pdf')) {
       try {
         const detection = await detectMultiInvoice(fileBuffer);
-        if (detection.isMultiInvoice && detection.invoiceCount > 1) {
+        if (detection.hasIsolatedInvoice || detection.isMultiInvoice) {
           console.log(`[MultiInvoice] Detected ${detection.invoiceCount} invoices in PDF — splitting...`);
           logger.info(`[${requestId}] Multi-invoice PDF detected: ${detection.invoiceCount} invoices`);
 

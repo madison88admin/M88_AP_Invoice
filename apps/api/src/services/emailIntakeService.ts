@@ -612,7 +612,7 @@ async function processAttachment(attachment: any, message: any): Promise<void> {
     if (isPdf) {
       try {
         const detection = await detectMultiInvoice(buffer);
-        if (detection.isMultiInvoice && detection.invoiceCount > 1) {
+        if (detection.hasIsolatedInvoice || detection.isMultiInvoice) {
           logger.info(`[EmailIntake] Multi-invoice PDF detected: ${detection.invoiceCount} invoices in ${attachment.name}. Splitting...`);
           
           const splitBuffers = await splitPdfByPageRanges(buffer, detection.pageRanges);

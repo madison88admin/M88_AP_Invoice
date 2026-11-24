@@ -689,7 +689,7 @@ async function processFileInternal(filePath: string, fileName: string, intakeId:
   // document inputs and go directly to the image-capable OCR path.
   if (contentType === 'application/pdf') try {
     const detection = await detectMultiInvoice(fileBuffer);
-    if (detection.isMultiInvoice && detection.invoiceCount > 1) {
+    if (detection.hasIsolatedInvoice || detection.isMultiInvoice) {
       logger.info(`[File Watcher] Multi-invoice PDF detected: ${detection.invoiceCount} invoices in ${fileName}. Splitting...`);
 
       const splitBuffers = await splitPdfByPageRanges(fileBuffer, detection.pageRanges);

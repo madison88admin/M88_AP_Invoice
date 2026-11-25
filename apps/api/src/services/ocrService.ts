@@ -468,6 +468,15 @@ async function extractInvoiceFieldsFromText(text: string, _fileBuffer?: Buffer) 
     }
   }
 
+  // Trimco proformas label the payable document identifier as `SO Number`.
+  // The same page also contains `Reference: THK-PO-...`; that customer PO
+  // must never win as the invoice number. Prefer the explicit SO label before
+  // the generic proforma-token fallback below.
+  const explicitProformaSo = /\bSO\s*NUMBER\s*[:#]?\s*([A-Z0-9][A-Z0-9\-/]*)/i.exec(text);
+  if (/PROFORMA\s*INVOICE/i.test(text.replace(/\s+/g, '')) && explicitProformaSo) {
+    invoice_number = explicitProformaSo[1].trim().toUpperCase();
+  }
+
   // Proforma-invoice layouts detach the number from its "P/I NO." /
   // "ORDER NO." labels — pdf2json flattening interleaves column text
   // ("P/I NO. UNIT PRICE DENVER CO, 80205 ... A40319 DATE") and OCR engines
@@ -497,6 +506,8 @@ async function extractInvoiceFieldsFromText(text: string, _fileBuffer?: Buffer) 
 
   // invoice_date — multiple date formats
   const datePatterns = [
+    /SO\s*ISSUE\s*DATE[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
+    /SO\s*ISSUE\s*DATE[:\s]*(\d{4}[-\/.]\d{1,2}[-\/.]\d{1,2})/i,
     /INVOICE\s*DATE[:\s]*(\d{1,2}-[A-Z]{3}-\d{2,4})/i, // DD-Mon-YYYY and DD-Mon-YY (e.g. "Invoice Date 11-Sep-26" — Super Dry Marine)
     /INVOICE\s*DATE[:\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
     /INVOICE\s*DATE[:\s]*(\d{4}-\d{2}-\d{2})/i,
@@ -694,6 +705,19 @@ async function extractInvoiceFieldsFromText(text: string, _fileBuffer?: Buffer) 
         break;
       }
     }
+  }
+
+  // Trimco's summary is rendered as a column header followed by values:
+  // `Sales Subtotal Amount ... Total Amount 52,701.06 ...`. Capture the first
+  // money value after that explicit subtotal label so financial details are
+  // complete even when the AI response leaves subtotal null.
+  let subtotal: number | undefined;
+  const subtotalLabel = /SALES\s+SUBTOTAL\s+AMOUNT([\s\S]{0,220})/i.exec(text);
+  const subtotalTail = subtotalLabel?.[1] || '';
+  const subtotalMatch = subtotalTail.match(/(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2,4}/);
+  if (subtotalMatch) {
+    const parsedSubtotal = Number(subtotalMatch[0].replace(/,/g, ''));
+    if (Number.isFinite(parsedSubtotal) && parsedSubtotal > 0) subtotal = parsedSubtotal;
   }
 
   // Fallback to prose-based patterns if standard patterns don't match
@@ -988,10 +1012,11 @@ async function extractInvoiceFieldsFromText(text: string, _fileBuffer?: Buffer) 
   const result = {
     vendor_name: vendor_name,
     invoice_number: invoice_number,
-    invoice_date: toISODateFromMonthName(invoice_date) || invoice_date,
-    due_date: toISODateFromMonthName(due_date) || due_date,
+    invoice_date: toISODateFromMonthName(invoice_date) || safeISODate(invoice_date) || invoice_date,
+    due_date: toISODateFromMonthName(due_date) || safeISODate(due_date) || due_date,
     amount: amount,
     grand_total: grand_total,
+    subtotal,
     currency: currencyMatch?.[1] || 'USD',
     po_reference: po_reference,
     mpo_number: mpo_number,
@@ -1398,6 +1423,16 @@ function isValidDate(dateStr: string | undefined): boolean {
 function safeISODate(value: unknown): string {
   const raw = String(value || '').trim();
   if (!raw) return '';
+
+  const ymd = raw.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$/);
+  if (ymd) {
+    const [, year, month, day] = ymd;
+    const parsed = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+    if (parsed.getUTCFullYear() === Number(year) && parsed.getUTCMonth() === Number(month) - 1 && parsed.getUTCDate() === Number(day)) {
+      return parsed.toISOString().slice(0, 10);
+    }
+    return '';
+  }
 
   const dmy = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
   if (dmy) {
@@ -1940,10 +1975,17 @@ export async function analyzeInvoice(fileBuffer: Buffer, _mimeType: string) {
     extracted.due_date,
     classificationText,
   );
+  // Always adopt the normalized ISO values. Previously only the locale-swap
+  // correction path wrote them back, so valid DMY strings such as
+  // `17/11/2026` later became `Invalid Date` when persisted.
+  if (datePair.invoice_date && datePair.invoice_date !== extracted.invoice_date) {
+    extracted.invoice_date = datePair.invoice_date;
+  }
+  if (datePair.due_date && datePair.due_date !== extracted.due_date) {
+    extracted.due_date = datePair.due_date;
+  }
   if (datePair.corrected) {
     logger.warn(`[OCR] ${datePair.reason}`);
-    extracted.invoice_date = datePair.invoice_date || extracted.invoice_date;
-    extracted.due_date = datePair.due_date || extracted.due_date;
   }
 
   logger.info(`[OCR] Final extraction — engine: ${ocrEngine}, vendor: "${extracted.vendor_name}", invoice#: "${extracted.invoice_number}", amount: ${extracted.amount}`);

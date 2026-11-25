@@ -57,6 +57,12 @@ const AVERY_VN = [
 // Scanned (image-only) Combine invoice: no embedded text layer at all.
 const _SCANNED = '';
 
+const TRIMCO_PROFORMA = [
+  'Proforma Invoice Invoice Address Madison 88 Ltd. SO Number THK-SO-359055-1 SO Issue Date 17/11/2026',
+  'Trimco Contact Lily Lee Wong Reference THK-PO-432208 Customer Ref MPO016397',
+  'Sales Subtotal Amount Total Quantity VAT Total charges Currency Total Amount 52,701.06 448,180.00 0.00 USD 52,701.06',
+].join(' ');
+
 describe('extractInvoiceFields date extraction — parked-manual-review regression batch', () => {
   // NOTE: extractInvoiceFields returns invoice_date/due_date. Month-name
   // dates are normalized to ISO YYYY-MM-DD at capture time (glued OCR tokens
@@ -94,6 +100,14 @@ describe('extractInvoiceFields date extraction — parked-manual-review regressi
     expect(result.invoice_number).toBe('17778374');
     expect(result.invoice_date).toBe('2026-09-15');
     expect(result.due_date).toBe('2026-10-15');
+  });
+
+  it('prefers Trimco SO Number and captures DMY SO Issue Date and subtotal', async () => {
+    state.text = TRIMCO_PROFORMA;
+    const result = await extractInvoiceFields(Buffer.from('fake'));
+    expect(result.invoice_number).toBe('THK-SO-359055-1');
+    expect(result.invoice_date).toBe('2026-11-17');
+    expect(result.subtotal).toBe(52701.06);
   });
 
   it('captures the RapidOCR-squashed "DATE:11SEPT,2026" (no space after colon/comma, or day-month)', async () => {
@@ -143,7 +157,7 @@ describe('extractInvoiceFields date extraction — parked-manual-review regressi
       'USD2,359.60',
     ].join('\n');
     const result = await extractInvoiceFields(Buffer.from('fake'));
-    expect(result.invoice_date).toBe('2026.07.20');
+    expect(result.invoice_date).toBe('2026-07-20');
     const d = new Date(result.invoice_date as string);
     expect(d.getFullYear()).toBe(2026);
     expect(d.getMonth()).toBe(6);
@@ -163,7 +177,7 @@ describe('extractInvoiceFields date extraction — parked-manual-review regressi
       'USD55.00',
     ].join('\n');
     const result = await extractInvoiceFields(Buffer.from('fake'));
-    expect(result.invoice_date).toBe('9/7/2026');
+    expect(result.invoice_date).toBe('2026-07-09');
   });
 
   it('errors on scanned (image-only) text instead of fabricating a date', async () => {

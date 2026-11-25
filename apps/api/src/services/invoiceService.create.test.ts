@@ -130,16 +130,18 @@ describe('createInvoice OCR input sanitation', () => {
     }));
   });
 
-  it('rejects an invoice when the subtotal is blank', async () => {
-    await expect(createInvoice({
+  it('derives the subtotal when the extracted total has no separate non-bank charges', async () => {
+    await createInvoice({
       invoice_number: 'MISSING-SUBTOTAL-TEST',
       vendor_id: 'sml-private',
       vendor_name_raw: 'PT. SML INDONESIA PRIVATE',
       total_amount: 1250.5,
       subtotal: null,
       invoice_type: 'INVOICE',
-    }, 'joy-user', 'PURCHASING_COORDINATOR')).rejects.toMatchObject({ statusCode: 400 });
-    expect(invoiceCreate).not.toHaveBeenCalled();
+    }, 'joy-user', 'PURCHASING_COORDINATOR');
+    expect(invoiceCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ subtotal: 1250.5 }),
+    }));
   });
 
   it('blocks a normalized duplicate while allowing a different MPO as a separate invoice', async () => {

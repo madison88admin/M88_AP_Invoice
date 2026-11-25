@@ -1,4 +1,5 @@
 import prisma from '../config/database';
+import { resolveInvoiceSubtotal } from './financialDetailsService';
 
 const ACTIVE_INVOICE_STATUSES = ['CANCELLED', 'REJECTED'];
 const REVISION_ALLOWED_STATUSES = new Set([
@@ -38,9 +39,19 @@ export async function findActiveBusinessMatch(data: any, client: any = prisma): 
   const unknownVendor = vendorId === '00000000-0000-0000-0000-000000000000';
 
   const normalized = normalizeBusinessReference(data.normalized_invoice_number || invoiceNumber);
+  const unknownVendorId = '00000000-0000-0000-0000-000000000000';
+  // Include the shared UNKNOWN VENDOR placeholder alongside the resolved
+  // vendor (and, for an unknown incoming vendor, all vendor IDs).  A supplier
+  // can be captured once with a master ID and later with the placeholder when
+  // matching was temporarily unavailable; vendor_id alone must not let that
+  // second copy through.  The name corroboration below prevents unrelated
+  // suppliers that happen to reuse an invoice number from being blocked.
+  const vendorScope = unknownVendor
+    ? undefined
+    : { OR: [{ vendor_id: vendorId }, ...(vendorName ? [{ vendor_id: unknownVendorId }] : [])] };
   const candidates = await client.invoice.findMany({
     where: {
-      vendor_id: vendorId,
+      ...(vendorScope || {}),
       status: { notIn: ACTIVE_INVOICE_STATUSES as any },
       OR: [
         { invoice_number: invoiceNumber },
@@ -72,7 +83,8 @@ export async function findActiveBusinessMatch(data: any, client: any = prisma): 
     // The UNKNOWN VENDOR placeholder is shared by unrelated suppliers. Never
     // let it turn a same-number invoice from another supplier into a duplicate;
     // require the OCR supplier name to corroborate the match.
-    if (unknownVendor) {
+    const candidateIsUnknownVendor = String(candidate.vendor_id || '') === unknownVendorId;
+    if (unknownVendor || candidateIsUnknownVendor) {
       // The placeholder is shared by unrelated suppliers. If OCR did not
       // produce a supplier name (or the existing row has none), there is not
       // enough identity evidence to call this a duplicate. Never block an
@@ -132,19 +144,29 @@ export async function findExactFileMatch(hash: string, client: any = prisma): Pr
  * deduplicate on message ID alone: one email can contain several invoices.
  */
 export async function createInvoiceOnceByFileHash(data: any, include?: any, client: any = prisma): Promise<{ invoice: any; created: boolean; duplicateType?: 'FILE_HASH' | 'BUSINESS_KEY' }> {
-  const hash = String(data.invoice_hash || '').trim().toLowerCase();
+  const subtotalResolution = resolveInvoiceSubtotal(data);
+  const normalizedData = subtotalResolution.subtotal !== null
+    ? {
+        ...data,
+        subtotal: subtotalResolution.subtotal,
+        ocr_raw_data: data.ocr_raw_data && typeof data.ocr_raw_data === 'object'
+          ? { ...data.ocr_raw_data, financial_details_resolution: subtotalResolution }
+          : { financial_details_resolution: subtotalResolution },
+      }
+    : data;
+  const hash = String(normalizedData.invoice_hash || '').trim().toLowerCase();
   if (!/^[a-f0-9]{64}$/i.test(hash)) throw new Error('A valid PDF content hash is required before creating an intake invoice');
   return client.$transaction(async (tx: any) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${hash}))`;
     const existing = await findExactFileMatch(hash, tx);
     if (existing) return { invoice: existing, created: false, duplicateType: 'FILE_HASH' };
-    const businessLockKey = `${String(data.vendor_id || '').trim()}:${normalizeBusinessReference(data.normalized_invoice_number || data.invoice_number)}`;
-    if (data.invoice_number && data.vendor_id) {
+    const businessLockKey = `${String(normalizedData.vendor_id || '').trim()}:${normalizeBusinessReference(normalizedData.normalized_invoice_number || normalizedData.invoice_number)}`;
+    if (normalizedData.invoice_number && normalizedData.vendor_id) {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${businessLockKey}))`;
-      const businessMatch = await findActiveBusinessMatch(data, tx);
+      const businessMatch = await findActiveBusinessMatch(normalizedData, tx);
       const isChangedCoordinatorRevision = Boolean(
         businessMatch
-        && data.parent_invoice_id === businessMatch.id
+        && normalizedData.parent_invoice_id === businessMatch.id
         && businessMatch.invoice_hash
         && businessMatch.invoice_hash !== hash
         && REVISION_ALLOWED_STATUSES.has(String(businessMatch.status || '').toUpperCase()),
@@ -153,7 +175,7 @@ export async function createInvoiceOnceByFileHash(data: any, include?: any, clie
         return { invoice: businessMatch, created: false, duplicateType: 'BUSINESS_KEY' };
       }
     }
-    const invoice = await tx.invoice.create({ data: { ...data, invoice_hash: hash }, ...(include ? { include } : {}) });
+    const invoice = await tx.invoice.create({ data: { ...normalizedData, invoice_hash: hash }, ...(include ? { include } : {}) });
     return { invoice, created: true };
   }, { timeout: 15000 });
 }

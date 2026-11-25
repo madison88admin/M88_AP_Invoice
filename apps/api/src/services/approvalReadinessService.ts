@@ -1,3 +1,5 @@
+import { resolveInvoiceSubtotal } from './financialDetailsService';
+
 export type ApprovalMissingField = { field: string; label: string; lineNumber?: number };
 
 export interface ApprovalReadinessResult {
@@ -15,39 +17,49 @@ export function isInvoiceChargeLine(line: any): boolean {
   if (explicitType === 'CHARGE' || explicitType === 'FEE' || explicitType === 'TAX') return true;
   const description = String(line?.description || line?.material_name || '').trim();
   if (!description) return false;
+  // Some supplier invoices label a fixed bank fee simply as "Bank Admin"
+  // without the words charge/fee. Treat that exact label (and its common
+  // expanded form) as a charge so approval does not require product quantity
+  // or unit price for a non-product financial line.
+  if (/^bank\s+admin(?:istration)?(?:\s+(?:charge|fee|cost|surcharge))?$/i.test(description)
+    || /\badministrative\s+(?:charge|fee)\b/i.test(description)
+    || /\badmin(?:istration)?\s+(?:charge|fee)\b/i.test(description)) return true;
   return /^(?:bank|wire|remittance|transfer|delivery|shipping|freight|courier|handling|setup|sample|finance|service|customs)\s+(?:charge|fee|cost|surcharge)|^(?:tax|vat|gst|ppn)(?:\s|$)|\b(?:bank|wire|remittance|transfer|delivery|shipping|freight|courier|handling|setup|sample|finance)\s+(?:charge|fee|cost|surcharge)\b/i.test(description);
 }
 
 /** Canonical server-side gate. This must be called by every approval entry point. */
 export function getApprovalReadiness(invoice: any): ApprovalReadinessResult {
   const missing: ApprovalMissingField[] = [];
+  const subtotalResolution = resolveInvoiceSubtotal(invoice);
+  const readinessInvoice = blank(invoice?.subtotal) && subtotalResolution.subtotal !== null
+    ? { ...invoice, subtotal: subtotalResolution.subtotal }
+    : invoice;
   const required: Array<[string, string]> = [
     ['vendor_id', 'Vendor'], ['invoice_number', 'Invoice Number'], ['invoice_date', 'Invoice Date'],
     ['currency', 'Currency'], ['total_amount', 'Total Amount'], ['subtotal', 'Invoice Subtotal (excludes bank charges)'], ['brand', 'Brand'], ['season', 'Season'],
   ];
   for (const [field, label] of required) {
-    const value = invoice[field];
+    const value = readinessInvoice[field];
     if (field === 'total_amount' || field === 'subtotal'
       ? !Number.isFinite(Number(value)) || Number(value) <= 0
       : blank(value)) {
       missing.push({ field, label });
     }
   }
-  if (blank(invoice.payment_terms) && blank(invoice.due_date)) {
+  if (blank(readinessInvoice.payment_terms) && blank(readinessInvoice.due_date)) {
     missing.push({ field: 'payment_terms_or_due_date', label: 'Payment Terms or Due Date' });
   }
-  if (blank(invoice.raw_file_url) && blank(invoice.pdf_path)) {
+  if (blank(readinessInvoice.raw_file_url) && blank(readinessInvoice.pdf_path)) {
     missing.push({ field: 'original_pdf', label: 'Original PDF' });
   }
 
-  const lines = Array.isArray(invoice.invoice_lines) ? invoice.invoice_lines : [];
+  const lines = Array.isArray(readinessInvoice.invoice_lines) ? readinessInvoice.invoice_lines : [];
   const advisory: ApprovalMissingField[] = [];
-  const poBacked = !blank(invoice.mpo_number) || !blank(invoice.mpo_base_number) || lines.length > 0;
-  // Accounting requires a financial breakdown before endorsement. Do not let
-  // legacy/advisory policy mode route a PO-backed invoice with no lines onward.
-  if (poBacked && lines.length === 0) {
-    missing.push({ field: 'invoice_lines', label: 'Financial Details breakdown' });
-  }
+  // Financial Details line breakdown is informative when available, but is no
+  // longer a hard approval prerequisite. Legacy invoices and charge-only or
+  // header-only supplier documents may legitimately have no normalized lines;
+  // the core invoice fields above remain mandatory. Any lines that are present
+  // are still validated below so incomplete extracted lines cannot silently pass.
   for (const [index, line] of lines.entries()) {
     const lineNumber = Number(line.line_number || index + 1);
     const chargeLine = isInvoiceChargeLine(line);
@@ -64,7 +76,7 @@ export function getApprovalReadiness(invoice: any): ApprovalReadinessResult {
     if (chargeLine) continue;
     // MPO base: if missing per line but invoice-level mpo_number exists, make it advisory
     if (blank(line.mpo_base_number)) {
-      if (!blank(invoice.mpo_number) || !blank(invoice.mpo_base_number)) {
+      if (!blank(readinessInvoice.mpo_number) || !blank(readinessInvoice.mpo_base_number)) {
         advisory.push({ field: `invoice_lines.${lineNumber}.mpo_base_number`, label: 'Base MPO', lineNumber });
       } else {
         missing.push({ field: `invoice_lines.${lineNumber}.mpo_base_number`, label: 'Base MPO', lineNumber });

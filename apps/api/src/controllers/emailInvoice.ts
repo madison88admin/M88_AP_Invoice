@@ -18,6 +18,7 @@ import { getPayableBlockReason } from '../services/payableDocumentGuard';
 import { ensureInvoiceBankSnapshot } from '../services/invoiceBankSnapshotService';
 import { normalizeInvoiceReference, createDuplicateRevisionReviewFromCandidate } from '../services/accountingControlService';
 import { createInvoiceOnceByFileHash, findActiveBusinessMatch, findExactFileMatch } from '../services/exactFileIntakeService';
+import { resolveInvoiceSubtotal } from '../services/financialDetailsService';
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
 
@@ -172,12 +173,13 @@ async function processSingleEmailInvoice(
     if (payableBlockReason) {
       return { success: false, status: 'REVIEW_REQUIRED', error: payableBlockReason };
     }
-    const parsedSubtotal = Number(ocrResult?.subtotal);
-    if (!Number.isFinite(parsedSubtotal) || parsedSubtotal <= 0) {
+    const subtotalResolution = resolveInvoiceSubtotal(ocrResult);
+    const parsedSubtotal = subtotalResolution.subtotal;
+    if (parsedSubtotal === null || parsedSubtotal <= 0) {
       return {
         success: false,
         status: 'REVIEW_REQUIRED',
-        error: 'Invoice subtotal is missing or invalid (subtotal excluding bank charges). No invoice record was created.',
+        error: 'Invoice subtotal is missing or cannot be safely derived from the extracted financial details. No invoice record was created.',
       };
     }
 
@@ -281,6 +283,7 @@ async function processSingleEmailInvoice(
         ocr_confidence_score: ocrResult.ocr_confidence_score || undefined,
         ocr_raw_data: {
           ...ocrResult,
+          financial_details_resolution: subtotalResolution,
           vendor_match_status: vendorMatched ? 'MATCHED' : 'REVIEW_REQUIRED',
           vendor_match_type: resolvedVendor.matchType,
           vendor_match_confidence: resolvedVendor.matchConfidence,
@@ -521,6 +524,15 @@ async function processSingleManualInvoice(
       return { success: false, status: 'REVIEW_REQUIRED', error: payableBlockReason };
     }
 
+    const subtotalResolution = resolveInvoiceSubtotal(ocrResult);
+    if (subtotalResolution.subtotal === null) {
+      return {
+        success: false,
+        status: 'REVIEW_REQUIRED',
+        error: 'Invoice subtotal is missing or cannot be safely derived from the extracted financial details. No invoice record was created.',
+      };
+    }
+
     // Business duplicate check
     const bizDup = await checkEmailDuplicate(fileBuffer, undefined, {
       vendorName: ocrResult.vendor_name,
@@ -631,8 +643,10 @@ async function processSingleManualInvoice(
         normalized_invoice_number: normalizeInvoiceReference(ocrResult.invoice_number) || undefined,
         line_items_signature: Array.isArray((ocrResult as any).line_items) ? JSON.stringify((ocrResult as any).line_items) : undefined,
         ocr_confidence_score: ocrResult.ocr_confidence_score || undefined,
+        subtotal: subtotalResolution.subtotal || undefined,
         ocr_raw_data: {
           ...ocrResult,
+          financial_details_resolution: subtotalResolution,
           vendor_match_status: vendorMatched ? 'MATCHED' : 'REVIEW_REQUIRED',
           vendor_match_type: resolvedVendor.matchType,
           vendor_match_confidence: resolvedVendor.matchConfidence,

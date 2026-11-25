@@ -23,6 +23,7 @@ import { checkEmailDuplicate, generateFileHash, getDuplicateReplacementDecision,
 import { findActiveBusinessMatch, findExactFileMatch } from './exactFileIntakeService';
 import { getPayableBlockReason, isValidCommercialInvoice } from './payableDocumentGuard';
 import { normalizeInvoiceReference, createDuplicateRevisionReviewFromCandidate } from './accountingControlService';
+import { resolveInvoiceSubtotal } from './financialDetailsService';
 
 const clientId = process.env.GRAPH_API_CLIENT_ID || '';
 const clientSecret = process.env.GRAPH_API_CLIENT_SECRET || '';
@@ -298,6 +299,16 @@ type AtomicIntakeEvent = {
  * unless the invoice row committed successfully.
  */
 async function createInvoiceAndIntakeEvent(invoiceData: any, event: AtomicIntakeEvent): Promise<any> {
+  const subtotalResolution = resolveInvoiceSubtotal(invoiceData);
+  if (subtotalResolution.subtotal !== null) {
+    invoiceData = {
+      ...invoiceData,
+      subtotal: subtotalResolution.subtotal,
+      ocr_raw_data: invoiceData.ocr_raw_data && typeof invoiceData.ocr_raw_data === 'object'
+        ? { ...invoiceData.ocr_raw_data, financial_details_resolution: subtotalResolution }
+        : { financial_details_resolution: subtotalResolution },
+    };
+  }
   return prisma.$transaction(async (tx) => {
     let replacementParentId: string | null = null;
     // Serialize the exact-file check per hash so two concurrent intake

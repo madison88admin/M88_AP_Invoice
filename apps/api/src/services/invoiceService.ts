@@ -16,6 +16,8 @@ import { getVendorPaymentTermDefault, preferExtractedPaymentTerms } from './vend
 import { captureInvoiceBankSnapshotRevision, ensureInvoiceBankSnapshot } from './invoiceBankSnapshotService';
 import { normalizeInvoiceReference } from './accountingControlService';
 import { findActiveBusinessMatch } from './exactFileIntakeService';
+import { collapseOperationalInvoices, operationalInvoiceWhere } from './operationalInvoiceView';
+import { resolveInvoiceSubtotal } from './financialDetailsService';
 
 // Keep update/read endpoints safe during a rolling deploy where the API may
 // briefly load an older shared-package build.  Older builds did not export the
@@ -194,10 +196,24 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
   if (parsedAmount === null || parsedAmount <= 0) {
     throw new AppError('Total amount must be a positive number', 400);
   }
-  const parsedSubtotal = safeOptionalNumber(subtotal);
+  const subtotalResolution = resolveInvoiceSubtotal({
+    subtotal,
+    total_amount: parsedAmount,
+    tax_amount,
+    discount_amount,
+    freight_charges,
+    additional_charges,
+    bank_charges,
+    line_items,
+  });
+  const parsedSubtotal = subtotalResolution.subtotal;
   if (parsedSubtotal === null || parsedSubtotal <= 0) {
     throw new AppError('Invoice subtotal is required before the invoice can proceed. Enter the subtotal excluding bank charges.', 400);
   }
+
+  const persistedOcrRawData = ocr_raw_data && typeof ocr_raw_data === 'object'
+    ? { ...ocr_raw_data, financial_details_resolution: subtotalResolution }
+    : { financial_details_resolution: subtotalResolution };
 
   if (!isValidInvoiceType(invoice_type)) {
     throw new AppError(`Invalid invoice type: ${invoice_type}`, 400);
@@ -340,7 +356,7 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
       status: (isAccountingPreapproved ? InvoiceStatus.PENDING_ACCOUNTING : InvoiceStatus.RECEIVED) as any,
       current_approver_role: null,
       po_validation: po_validation || undefined,
-      ocr_raw_data: ocr_raw_data || undefined,
+      ocr_raw_data: persistedOcrRawData,
       bank_name: bank_name || undefined,
       swift_code: swift_code || undefined,
       account_number: account_number || undefined,
@@ -548,6 +564,10 @@ export const getInvoices = async (filters: any, userRole?: string) => {
   // them deliberately by applying the explicit CANCELLED status filter.
   if (!filters.status) {
     where.status = { not: InvoiceStatus.CANCELLED };
+    Object.assign(where, operationalInvoiceWhere());
+    // operationalInvoiceWhere intentionally only adds read-side duplicate
+    // predicates; retain the status predicate already built above.
+    where.status = { not: InvoiceStatus.CANCELLED };
   }
 
   if (filters.status) {
@@ -653,7 +673,7 @@ export const getInvoices = async (filters: any, userRole?: string) => {
   const visibleInvoices = userRole === 'PURCHASING_MANAGER'
     ? invoices.filter(managerMaySeeReturnedInvoice)
     : invoices;
-  return visibleInvoices.map(applyVendorDisplayFallbacks);
+  return collapseOperationalInvoices(visibleInvoices).map(applyVendorDisplayFallbacks);
 };
 
 export const getInvoiceById = async (id: string) => {

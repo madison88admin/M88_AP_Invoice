@@ -131,6 +131,45 @@ describe('exact-file intake commit boundary', () => {
     expect(result.created).toBe(true);
     expect(create).toHaveBeenCalledTimes(1);
   });
+  it('cross-matches an UNKNOWN VENDOR copy to the mapped supplier by corroborated name', async () => {
+    const tx = {
+      $executeRaw: vi.fn(),
+      invoice: {
+        findMany: vi.fn().mockResolvedValue([{
+          id: 'mapped-existing', invoice_number: 'INVP0272176', status: 'EXCEPTION_FLAGGED',
+          vendor_id: 'nilorn-id', vendor_name_raw: 'NILORN EAST ASIA LTD.',
+          normalized_invoice_number: 'INVP272176', mpo_number: null,
+          mpo_base_number: null, mpo_order_sequence: null, material_code: null,
+          customer_po_number: null, invoice_hash: 'old-hash', total_amount: 44.04,
+          invoice_date: new Date('2026-11-24T00:00:00.000Z'), currency: 'USD',
+        }]),
+      },
+    };
+    await expect(findActiveBusinessMatch({
+      invoice_number: 'INVP0272176', normalized_invoice_number: 'INVP272176',
+      vendor_id: '00000000-0000-0000-0000-000000000000', vendor_name_raw: 'Nilorn East Asia Limited',
+      total_amount: 44.04, invoice_date: new Date('2026-11-24T00:00:00.000Z'), currency: 'USD',
+    }, tx)).resolves.toMatchObject({ id: 'mapped-existing' });
+    expect(tx.invoice.findMany.mock.calls[0][0].where.vendor_id).toBeUndefined();
+  });
+  it('cross-matches a mapped vendor copy to an UNKNOWN VENDOR record by corroborated name', async () => {
+    const tx = {
+      invoice: {
+        findMany: vi.fn().mockResolvedValue([{
+          id: 'unknown-existing', invoice_number: 'INV-3', status: 'RECEIVED',
+          vendor_id: '00000000-0000-0000-0000-000000000000', vendor_name_raw: 'SUPPLIER C LTD',
+          normalized_invoice_number: 'INV3', mpo_number: null, mpo_base_number: null,
+          mpo_order_sequence: null, material_code: null, customer_po_number: null,
+          invoice_hash: 'old-hash', total_amount: 12, invoice_date: new Date('2026-11-20'), currency: 'USD',
+        }]),
+      },
+    };
+    await expect(findActiveBusinessMatch({
+      invoice_number: 'INV-3', normalized_invoice_number: 'INV3', vendor_id: 'supplier-c-id',
+      vendor_name_raw: 'Supplier C Limited', total_amount: 12,
+      invoice_date: new Date('2026-11-20'), currency: 'USD',
+    }, tx)).resolves.toMatchObject({ id: 'unknown-existing' });
+  });
   it('does not block an unknown supplier when OCR has no vendor evidence', async () => {
     const tx = {
       invoice: {

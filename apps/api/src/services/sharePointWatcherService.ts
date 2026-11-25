@@ -36,6 +36,7 @@ import prisma from '../config/database';
 import { classifyInvoiceDocument } from './structuredInvoiceService';
 import { getPayableBlockReason } from './payableDocumentGuard';
 import { findActiveBusinessMatch, findExactFileMatch } from './exactFileIntakeService';
+import { resolveInvoiceSubtotal } from './financialDetailsService';
 
 let watcherInterval: NodeJS.Timeout | null = null;
 let isProcessing = false;
@@ -203,6 +204,7 @@ async function processIncomingFile(file: { id: string; name: string; size: numbe
   // Step 7: Save to database
   let invoiceId: string | null = null;
   try {
+    const subtotalResolution = resolveInvoiceSubtotal(ocrResult);
     // The watcher performs an early duplicate check, but the old direct insert
     // was still vulnerable to two polling workers racing between that check
     // and INSERT. Keep the check and write in one locked transaction.
@@ -249,7 +251,7 @@ async function processIncomingFile(file: { id: string; name: string; size: numbe
         bank_charges: ocrResult.bank_charges || 0,
         freight_charges: ocrResult.freight_charges || 0,
         additional_charges: ocrResult.additional_charges || 0,
-        subtotal: ocrResult.subtotal || undefined,
+        subtotal: subtotalResolution.subtotal || undefined,
         tax_amount: (ocrResult as any).tax_amount || undefined,
         discount_amount: (ocrResult as any).discount_amount || undefined,
         ship_to: (ocrResult as any).ship_to || undefined,
@@ -276,7 +278,7 @@ async function processIncomingFile(file: { id: string; name: string; size: numbe
         normalized_invoice_number: normalizeInvoiceReference(ocrResult.invoice_number) || undefined,
         line_items_signature: Array.isArray((ocrResult as any).line_items) ? JSON.stringify((ocrResult as any).line_items) : undefined,
         ocr_confidence_score: ocrResult.ocr_confidence_score || undefined,
-        ocr_raw_data: ocrResult as any,
+        ocr_raw_data: { ...ocrResult, financial_details_resolution: subtotalResolution } as any,
         beneficiary_name: (ocrResult as any).bank_info?.beneficiary_name || (ocrResult as any).beneficiary_name || undefined,
         bank_name: (ocrResult as any).bank_info?.bank_name || (ocrResult as any).bank_name || undefined,
         swift_code: (ocrResult as any).bank_info?.swift_code || (ocrResult as any).swift_code || undefined,

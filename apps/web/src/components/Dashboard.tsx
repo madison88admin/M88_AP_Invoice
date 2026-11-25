@@ -52,6 +52,24 @@ const COORDINATOR_CANCELLATION_STATUSES = new Set([
   'PENDING_COORDINATOR',
 ]);
 
+// Legacy invoice rows may have a total amount but no persisted subtotal. Keep
+// the edit form aligned with the API's safe fallback so users do not need to
+// re-key Financial Details merely to correct an older row. Bank charges are
+// intentionally excluded because they are added later by payment scheduling.
+function displaySubtotalForEdit(invoice: any): number | '' {
+  const explicit = Number(invoice?.subtotal);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  const total = Number(invoice?.total_amount);
+  if (!Number.isFinite(total) || total <= 0) return '';
+  const tax = Number(invoice?.tax_amount || 0);
+  const freight = Number(invoice?.freight_charges || 0);
+  const additional = Number(invoice?.additional_charges || 0);
+  const discount = Number(invoice?.discount_amount || 0);
+  const candidate = Number((total - tax - freight - additional + discount).toFixed(2));
+  if (!Number.isFinite(candidate) || candidate <= 0) return '';
+  return candidate;
+}
+
 function canFinalizeInvoiceCancellation(invoice: any, user: any) {
   if (!invoice || !user || invoice.status === InvoiceStatus.CANCELLED) return false;
   const isAdmin = ['IT_ADMIN', 'SUPERADMIN', 'ADMIN'].includes(user.role)
@@ -1102,7 +1120,7 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
       swift_code: invoice.swift_code || '',
       account_number: invoice.account_number || '',
       beneficiary_name: (invoice as any).beneficiary_name || '',
-      subtotal: invoice.subtotal || '',
+      subtotal: displaySubtotalForEdit(invoice),
       tax_amount: invoice.tax_amount || '',
       discount_amount: invoice.discount_amount || '',
       bank_charges: invoice.bank_charges || '',

@@ -12,19 +12,42 @@ describe('getApprovalReadiness', () => {
     expect(result.missing.map(m => m.field)).toEqual(expect.arrayContaining(['original_pdf', 'invoice_lines.1.material_code']));
   });
 
-  it('blocks PO-backed invoices without a financial breakdown', () => {
+  it('allows PO-backed invoices without a financial breakdown', () => {
     const invoice = complete();
     delete (invoice as any).invoice_lines;
     const result = getApprovalReadiness(invoice);
-    expect(result.ready).toBe(false);
-    expect(result.missing.map(m => m.field)).toContain('invoice_lines');
+    expect(result.ready).toBe(true);
+    expect(result.missing).toEqual([]);
   });
 
-  it('blocks approval when the invoice subtotal is blank or non-positive', () => {
-    for (const subtotal of [null, undefined, 0, '']) {
-      const result = getApprovalReadiness({ ...complete(), subtotal });
-      expect(result.ready).toBe(false);
-      expect(result.missing.map(m => m.field)).toContain('subtotal');
-    }
+  it('derives a missing subtotal from the total when no non-bank charges are present', () => {
+    const result = getApprovalReadiness({ ...complete(), subtotal: null });
+    expect(result.ready).toBe(true);
+    expect(result.missing).toEqual([]);
+  });
+
+  it.each(['Bank Admin', 'Bank Administration', 'Bank Admin Fee', 'Administrative Fee'])('treats %s as a charge line without requiring quantity or unit price', (description) => {
+    const invoice = {
+      ...complete(),
+      subtotal: 197,
+      total_amount: 197,
+      invoice_lines: [
+        { line_number: 1, mpo_base_number: 'MPO1', material_code: 'MAT1', quantity: 6000, unit_price: 0.027, line_amount: 162 },
+        { line_number: 2, description, line_amount: 35 },
+      ],
+    };
+    const result = getApprovalReadiness(invoice);
+    expect(result.ready).toBe(true);
+    expect(result.missing).toEqual([]);
+  });
+
+  it('does not classify an ordinary product description containing Admin as a charge', () => {
+    const invoice = { ...complete(), invoice_lines: [
+      { line_number: 1, mpo_base_number: 'MPO1', material_code: 'MAT1', quantity: 1, unit_price: 20, line_amount: 20 },
+      { line_number: 2, description: 'Admin Kit', material_code: 'KIT1', line_amount: 35 },
+    ] };
+    const result = getApprovalReadiness(invoice);
+    expect(result.ready).toBe(false);
+    expect(result.missing.map(m => m.field)).toEqual(expect.arrayContaining(['invoice_lines.2.quantity', 'invoice_lines.2.unit_price']));
   });
 });

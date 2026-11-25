@@ -21,6 +21,8 @@ describe('non-invoice filename suppression', () => {
     expect(isObviouslyNonInvoiceFilename("Forwarder's Billing Invoice Expeditors.pdf")).toBe(true);
     expect(isObviouslyNonInvoiceFilename('Invoice INV-123.pdf')).toBe(false);
     expect(isObviouslyNonInvoiceFilename('Debit Note UJDB26-921.pdf')).toBe(false);
+    expect(isObviouslyNonInvoiceFilename('SalesOrder_THK-SO-359055-1.pdf')).toBe(false);
+    expect(isObviouslyNonInvoiceFilename('Quotation_12345.pdf')).toBe(false);
   });
 
   it('recognizes a packing-list title even when the page contains an invoice reference', () => {

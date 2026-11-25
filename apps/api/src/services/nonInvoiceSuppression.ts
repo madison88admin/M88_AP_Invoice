@@ -1,9 +1,10 @@
 /**
  * Filename-only suppression for documents that are explicitly excluded from
- * the AP invoice intake. OCR still decides ambiguous files that only contain
- * generic invoice-like wording.
+ * the AP invoice intake. Order/proforma/quotation filenames are deliberately
+ * not included here: a legitimate payable document can be named after its
+ * sales order, and the OCR/header classifier must decide its document type.
  */
-const OBVIOUS_NON_INVOICE_HINTS = /\b(?:statement|packing\s*(?:list|slip)|delivery\s*(?:note|receipt)|purchase\s*order|sales\s*order|order\s*confirmation|quotation|quote|remittance|receipt|shipping\s*document|shipment\s*document|air\s*way\s*bill|airway\s*bill|awb|bill\s*of\s*lading|cargo\s*manifest|waybill|layout|tech\s*pack|bill\s*stub|account\s*information|artwork|care\s*label|hangtag|barcode|rfid\s*sticker|polybag\s*sticker|shipping\s*label|trim\s*(?:received|receipt|sample)|forwarder(?:['’]s|s)?\s+billing\s+invoice|expeditors?\s+billing\s+invoice|forwarder(?:['’]s|s)?\s+invoice|expeditors?\s+invoice)\b/i;
+const OBVIOUS_NON_INVOICE_HINTS = /\b(?:statement|packing\s*(?:list|slip)|delivery\s*(?:note|receipt)|remittance|receipt|shipping\s*document|shipment\s*document|air\s*way\s*bill|airway\s*bill|awb|bill\s*of\s*lading|cargo\s*manifest|waybill|tech\s*pack|bill\s*stub|account\s*information|artwork|care\s*label|hangtag|barcode|rfid\s*sticker|polybag\s*sticker|shipping\s*label|trim\s*(?:received|receipt|sample)|forwarder(?:['’]s|s)?\s+billing\s+invoice|expeditors?\s+billing\s+invoice|forwarder(?:['’]s|s)?\s+invoice|expeditors?\s+invoice)\b/i;
 
 /**
  * Detect a document title in OCR text before trusting an invoice-like field.

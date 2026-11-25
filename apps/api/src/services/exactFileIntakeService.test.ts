@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('../config/database', () => ({ default: {} }));
-import { createInvoiceOnceByFileHash, findExactFileMatch } from './exactFileIntakeService';
+import { createInvoiceOnceByFileHash, findActiveBusinessMatch, findExactFileMatch } from './exactFileIntakeService';
 const hash = 'a'.repeat(64);
 
 describe('exact-file intake commit boundary', () => {
@@ -130,6 +130,23 @@ describe('exact-file intake commit boundary', () => {
     }, undefined, client);
     expect(result.created).toBe(true);
     expect(create).toHaveBeenCalledTimes(1);
+  });
+  it('does not block an unknown supplier when OCR has no vendor evidence', async () => {
+    const tx = {
+      invoice: {
+        findMany: vi.fn().mockResolvedValue([{
+          id: 'existing', invoice_number: 'INV-2', status: 'RECEIVED',
+          vendor_id: '00000000-0000-0000-0000-000000000000', vendor_name_raw: 'SUPPLIER A',
+          normalized_invoice_number: 'INV2', mpo_number: null, mpo_base_number: null,
+          mpo_order_sequence: null, material_code: null, customer_po_number: null,
+          invoice_hash: 'old-hash', total_amount: 50, invoice_date: new Date('2026-11-20'), currency: 'USD',
+        }]),
+      },
+    };
+    await expect(findActiveBusinessMatch({
+      invoice_number: 'INV-2', normalized_invoice_number: 'INV2',
+      vendor_id: '00000000-0000-0000-0000-000000000000',
+    }, tx)).resolves.toBeNull();
   });
   it('fails closed without a content hash or when the lock/database fails', async () => {
     const tx = { $executeRaw: vi.fn().mockRejectedValue(new Error('database unavailable')), invoice: { create: vi.fn() } };

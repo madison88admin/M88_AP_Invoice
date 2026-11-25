@@ -35,6 +35,7 @@ import {
 import prisma from '../config/database';
 import { classifyInvoiceDocument } from './structuredInvoiceService';
 import { getPayableBlockReason } from './payableDocumentGuard';
+import { findActiveBusinessMatch, findExactFileMatch } from './exactFileIntakeService';
 
 let watcherInterval: NodeJS.Timeout | null = null;
 let isProcessing = false;
@@ -202,7 +203,37 @@ async function processIncomingFile(file: { id: string; name: string; size: numbe
   // Step 7: Save to database
   let invoiceId: string | null = null;
   try {
-    const invoice = await prisma.invoice.create({
+    // The watcher performs an early duplicate check, but the old direct insert
+    // was still vulnerable to two polling workers racing between that check
+    // and INSERT. Keep the check and write in one locked transaction.
+    let racedDuplicate: any = null;
+    const invoice = await prisma.$transaction(async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${fileHash}))`;
+      const exact = await findExactFileMatch(fileHash, tx);
+      if (exact) {
+        racedDuplicate = exact;
+        return exact;
+      }
+      if (ocrResult.invoice_number && vendorId) {
+        const businessLockKey = `${String(vendorId).trim()}:${String(normalizeInvoiceReference(ocrResult.invoice_number) || ocrResult.invoice_number).trim().toUpperCase().replace(/[^A-Z0-9]/g, '')}`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${businessLockKey}))`;
+        const businessMatch = await findActiveBusinessMatch({
+          invoice_number: ocrResult.invoice_number,
+          normalized_invoice_number: normalizeInvoiceReference(ocrResult.invoice_number),
+          vendor_id: vendorId,
+          vendor_name_raw: ocrResult.vendor_name,
+          mpo_number: ocrResult.mpo_number,
+          customer_po_number: ocrResult.customer_po_number,
+          total_amount: ocrResult.total_amount,
+          currency: ocrResult.currency,
+          invoice_date: ocrResult.invoice_date,
+        }, tx);
+        if (businessMatch) {
+          racedDuplicate = businessMatch;
+          return businessMatch;
+        }
+      }
+      return tx.invoice.create({
       data: {
         invoice_number: ocrResult.invoice_number,
         invoice_date: ocrResult.invoice_date,
@@ -264,7 +295,14 @@ async function processIncomingFile(file: { id: string; name: string; size: numbe
         ...(ocrResult.date_range_end ? { date_range_end: new Date(ocrResult.date_range_end) } : {}),
       },
       include: { vendor: true },
+      });
     });
+    if (racedDuplicate) {
+      logger.info(`[SharePoint Watcher] Duplicate blocked at commit: ${fileName} → ${racedDuplicate.invoice_number}`);
+      await safeMoveByName(fileName, FOLDER_PROCESSING, FOLDER_DUPLICATES);
+      await createAuditLog(racedDuplicate.id, 'WATCHER_DUPLICATE', `Duplicate blocked at commit for ${fileName}; existing invoice ${racedDuplicate.invoice_number}`);
+      return;
+    }
     await ensureInvoiceBankSnapshot(invoice.id, 'sharepoint-watcher');
     invoiceId = invoice.id;
 

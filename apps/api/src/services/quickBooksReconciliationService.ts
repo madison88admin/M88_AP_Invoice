@@ -263,28 +263,39 @@ export async function importQuickBooksRows(rows: QuickBooksImportRow[], actorId:
         select: { id: true, name: true },
       });
       if (vendor) {
-        const existingQbInvoice = await db.invoice.findFirst({ where: { invoice_number: row.invoice_number, vendor_id: vendor.id, source_document_type: 'QUICKBOOKS_ONLY' }, select: { id: true, ap_record_id: true, invoice_number: true, vendor_name_raw: true, total_amount: true, currency: true } });
         const amount = row.open_balance ?? row.amount ?? 0;
-        invoice = existingQbInvoice || await db.invoice.create({
-          data: {
-            invoice_number: row.invoice_number,
-            vendor_id: vendor.id,
-            vendor_name_raw: row.vendor_name,
-            total_amount: amount,
-            currency: row.currency || 'USD',
-            invoice_type: 'INVOICE' as any,
-            invoice_template_type: 'NO_DATA' as any,
-            status: InvoiceStatus.EXCEPTION_FLAGGED as any,
-            workflow_status: 'ACCOUNTING_REVIEW',
-            source: 'PORTAL' as any,
-            source_document_type: 'QUICKBOOKS_ONLY',
-            duplicate_review_reason: matchedVendor ? null : 'QuickBooks-only invoice requires Accounting vendor verification',
-            qb_open_balance: amount,
-            qb_balance_as_of: reportAsOf,
-            invoice_date: row.invoice_date ? new Date(row.invoice_date) : undefined,
-            due_date: row.due_date ? new Date(row.due_date) : undefined,
-          },
-          select: { id: true, ap_record_id: true, invoice_number: true, vendor_name_raw: true, total_amount: true, currency: true },
+        // QB-only materialization is also an intake write. Serialize the
+        // import identity so concurrent/retried reports cannot create two
+        // exception rows for the same vendor/reference.
+        invoice = await db.$transaction(async (tx: any) => {
+          const importLockKey = `QB:${String(vendor.id).trim()}:${normalize(row.invoice_number)}`;
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${importLockKey}))`;
+          const existingQbInvoice = await tx.invoice.findFirst({
+            where: { invoice_number: row.invoice_number, vendor_id: vendor.id, source_document_type: 'QUICKBOOKS_ONLY' },
+            select: { id: true, ap_record_id: true, invoice_number: true, vendor_name_raw: true, total_amount: true, currency: true },
+          });
+          if (existingQbInvoice) return existingQbInvoice;
+          return tx.invoice.create({
+            data: {
+              invoice_number: row.invoice_number,
+              vendor_id: vendor.id,
+              vendor_name_raw: row.vendor_name,
+              total_amount: amount,
+              currency: row.currency || 'USD',
+              invoice_type: 'INVOICE' as any,
+              invoice_template_type: 'NO_DATA' as any,
+              status: InvoiceStatus.EXCEPTION_FLAGGED as any,
+              workflow_status: 'ACCOUNTING_REVIEW',
+              source: 'PORTAL' as any,
+              source_document_type: 'QUICKBOOKS_ONLY',
+              duplicate_review_reason: matchedVendor ? null : 'QuickBooks-only invoice requires Accounting vendor verification',
+              qb_open_balance: amount,
+              qb_balance_as_of: reportAsOf,
+              invoice_date: row.invoice_date ? new Date(row.invoice_date) : undefined,
+              due_date: row.due_date ? new Date(row.due_date) : undefined,
+            },
+            select: { id: true, ap_record_id: true, invoice_number: true, vendor_name_raw: true, total_amount: true, currency: true },
+          });
         });
       } else {
         // Keep the reconciliation exception auditable without materializing a

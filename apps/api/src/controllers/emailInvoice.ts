@@ -17,7 +17,7 @@ import { classifyInvoiceDocument } from '../services/structuredInvoiceService';
 import { getPayableBlockReason } from '../services/payableDocumentGuard';
 import { ensureInvoiceBankSnapshot } from '../services/invoiceBankSnapshotService';
 import { normalizeInvoiceReference, createDuplicateRevisionReviewFromCandidate } from '../services/accountingControlService';
-import { createInvoiceOnceByFileHash } from '../services/exactFileIntakeService';
+import { createInvoiceOnceByFileHash, findActiveBusinessMatch, findExactFileMatch } from '../services/exactFileIntakeService';
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
 
@@ -568,7 +568,40 @@ async function processSingleManualInvoice(
       brand_tier = BrandTier.OTHER;
     }
 
-    const invoice = await prisma.invoice.create({
+    // The legacy manual-upload path used to run its duplicate check before a
+    // non-atomic insert. Two simultaneous uploads could therefore both pass
+    // the check and create two active AP rows. Serialize the exact file hash
+    // and normalized supplier invoice identity around the insert as well.
+    let racedDuplicate: any = null;
+    const invoice = await prisma.$transaction(async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${fileHash}))`;
+      if (!replacementParentId) {
+        const exact = await findExactFileMatch(fileHash, tx);
+        if (exact) {
+          racedDuplicate = exact;
+          return exact;
+        }
+        if (ocrResult.invoice_number && vendorId) {
+          const businessLockKey = `${String(vendorId).trim()}:${String(normalizeInvoiceReference(ocrResult.invoice_number) || ocrResult.invoice_number).trim().toUpperCase().replace(/[^A-Z0-9]/g, '')}`;
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${businessLockKey}))`;
+          const businessMatch = await findActiveBusinessMatch({
+            invoice_number: ocrResult.invoice_number,
+            normalized_invoice_number: normalizeInvoiceReference(ocrResult.invoice_number),
+            vendor_id: vendorId,
+            vendor_name_raw: ocrResult.vendor_name,
+            mpo_number: ocrResult.mpo_number,
+            customer_po_number: ocrResult.customer_po_number,
+            total_amount: ocrResult.total_amount,
+            currency: ocrResult.currency,
+            invoice_date: ocrResult.invoice_date,
+          }, tx);
+          if (businessMatch) {
+            racedDuplicate = businessMatch;
+            return businessMatch;
+          }
+        }
+      }
+      return tx.invoice.create({
       data: {
         invoice_number: ocrResult.invoice_number,
         ...(replacementParentId ? { parent_invoice_id: replacementParentId, revision: 1 } : {}),
@@ -629,7 +662,21 @@ async function processSingleManualInvoice(
           invoice_lines: buildInvoiceLinesData((ocrResult as any).line_items, ocrResult.mpo_number),
         } : {}),
       },
+      });
     });
+    if (racedDuplicate) {
+      const reason = `Duplicate blocked: invoice ${racedDuplicate.invoice_number || ocrResult.invoice_number} for the same vendor was already captured; existing record reused.`;
+      logger.warn(`[${requestId}] Manual-upload duplicate blocked${partLabel}: ${reason}`);
+      return {
+        success: false,
+        duplicate: true,
+        duplicateLevel: racedDuplicate.invoice_hash === fileHash ? 'FILE_HASH' : 'BUSINESS_KEY',
+        invoiceId: racedDuplicate.id,
+        invoiceNumber: racedDuplicate.invoice_number,
+        status: 'DUPLICATE_BLOCKED',
+        error: reason,
+      };
+    }
     const duplicateCandidate = replacementParentId ? null : (bizDup.isDuplicate ? bizDup : dupCheck);
     if (duplicateCandidate?.isDuplicate && duplicateCandidate.existingInvoiceId) {
       await createDuplicateRevisionReviewFromCandidate({

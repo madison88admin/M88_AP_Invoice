@@ -72,8 +72,14 @@ export async function findActiveBusinessMatch(data: any, client: any = prisma): 
     // The UNKNOWN VENDOR placeholder is shared by unrelated suppliers. Never
     // let it turn a same-number invoice from another supplier into a duplicate;
     // require the OCR supplier name to corroborate the match.
-    if (unknownVendor && vendorName
-      && normalizeVendorIdentity(vendorName) !== normalizeVendorIdentity(candidate.vendor_name_raw)) continue;
+    if (unknownVendor) {
+      // The placeholder is shared by unrelated suppliers. If OCR did not
+      // produce a supplier name (or the existing row has none), there is not
+      // enough identity evidence to call this a duplicate. Never block an
+      // unknown supplier solely on invoice number in that case.
+      if (!vendorName || !candidate.vendor_name_raw
+        || normalizeVendorIdentity(vendorName) !== normalizeVendorIdentity(candidate.vendor_name_raw)) continue;
+    }
     // A different MPO/PO is a legitimate separate payable item even when a
     // supplier reuses the same invoice number. Keep that existing behavior.
     const incomingMpo = data.mpo_base_number || data.mpo_number || data.mpo_order_sequence;

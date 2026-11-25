@@ -19,7 +19,15 @@ vi.mock('../config/database', () => ({
     payment: { updateMany: paymentUpdateMany },
     vendor: { findMany: vendorFindMany, findFirst: vendorFindFirst, create: vendorCreate },
     quickBooksReconciliation: { findFirst: reconciliationFindFirst, findMany: reconciliationFindMany, create: reconciliationCreate },
-    $transaction: (operations: Promise<unknown>[]) => Promise.all(operations),
+    $transaction: (operationOrCallback: Promise<unknown>[] | ((tx: any) => Promise<unknown>)) => {
+      if (typeof operationOrCallback === 'function') {
+        return operationOrCallback({
+          $executeRaw: vi.fn(),
+          invoice: { findFirst: invoiceFindFirst, create: invoiceCreate },
+        });
+      }
+      return Promise.all(operationOrCallback);
+    },
   },
 }));
 

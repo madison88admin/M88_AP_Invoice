@@ -34,4 +34,10 @@ describe('resolveInvoiceSubtotal', () => {
     });
     expect(result).toMatchObject({ subtotal: null, source: 'UNRESOLVED', reviewRecommended: true });
   });
+
+  it('does not persist a subtotal that rounds to zero', () => {
+    expect(resolveInvoiceSubtotal({ total_amount: 0.004 })).toMatchObject({
+      subtotal: null, source: 'UNRESOLVED', reason: 'total_below_cent', reviewRecommended: true,
+    });
+  });
 });

@@ -27,13 +27,18 @@ const closeEnough = (a: number, b: number, tolerance = 0.02): boolean => Math.ab
 
 export function resolveInvoiceSubtotal(input: any): FinancialSubtotalResolution {
   const explicit = toNumber(input?.subtotal);
-  if (explicit !== null && explicit > 0) {
-    return { subtotal: roundMoney(explicit), source: 'EXTRACTED', reviewRecommended: false, reason: 'explicit_subtotal' };
+  const roundedExplicit = explicit === null ? null : roundMoney(explicit);
+  if (roundedExplicit !== null && roundedExplicit > 0) {
+    return { subtotal: roundedExplicit, source: 'EXTRACTED', reviewRecommended: false, reason: 'explicit_subtotal' };
   }
 
   const total = toNumber(input?.total_amount ?? input?.amount);
   if (total === null || total <= 0) {
     return { subtotal: null, source: 'UNRESOLVED', reviewRecommended: true, reason: 'missing_total_amount' };
+  }
+  const roundedTotal = roundMoney(total);
+  if (roundedTotal <= 0) {
+    return { subtotal: null, source: 'UNRESOLVED', reviewRecommended: true, reason: 'total_below_cent' };
   }
 
   const tax = toNumber(input?.tax_amount) ?? 0;
@@ -68,9 +73,9 @@ export function resolveInvoiceSubtotal(input: any): FinancialSubtotalResolution 
       const number = toNumber(value);
       return number !== null && Math.abs(number) > 0.005;
     });
-  if (!hasNonBankComponents && (!hasLineAmounts || closeEnough(lineSum, total))) {
+  if (!hasNonBankComponents && (!hasLineAmounts || closeEnough(lineSum, roundedTotal))) {
     return {
-      subtotal: roundMoney(total),
+      subtotal: roundedTotal,
       source: 'DERIVED_FROM_TOTAL',
       reviewRecommended: false,
       reason: 'total_used_when_no_non_bank_components',

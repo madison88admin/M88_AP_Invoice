@@ -18,6 +18,11 @@ function sameReference(left: unknown, right: unknown): boolean {
   return Boolean(a && b && a === b);
 }
 
+function normalizeVendorIdentity(value: unknown): string {
+  return String(value ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+    .replace(/(?:LIMITED|LTD|INCORPORATED|INC|CORPORATION|CORP|COMPANY|CO)$/i, '');
+}
+
 /**
  * Find one active invoice with the same business identity. Exact file hashes
  * are not enough because the same PDF is often re-exported with a different
@@ -29,6 +34,8 @@ export async function findActiveBusinessMatch(data: any, client: any = prisma): 
   const invoiceNumber = String(data?.invoice_number || '').trim();
   const vendorId = String(data?.vendor_id || '').trim();
   if (!invoiceNumber || !vendorId) return null;
+  const vendorName = String(data?.vendor_name_raw || data?.vendor_name || '').trim();
+  const unknownVendor = vendorId === '00000000-0000-0000-0000-000000000000';
 
   const normalized = normalizeBusinessReference(data.normalized_invoice_number || invoiceNumber);
   const candidates = await client.invoice.findMany({
@@ -54,20 +61,47 @@ export async function findActiveBusinessMatch(data: any, client: any = prisma): 
       material_code: true,
       customer_po_number: true,
       invoice_hash: true,
+      total_amount: true,
+      invoice_date: true,
+      currency: true,
     },
     take: 20,
   });
 
   for (const candidate of candidates) {
+    // The UNKNOWN VENDOR placeholder is shared by unrelated suppliers. Never
+    // let it turn a same-number invoice from another supplier into a duplicate;
+    // require the OCR supplier name to corroborate the match.
+    if (unknownVendor && vendorName
+      && normalizeVendorIdentity(vendorName) !== normalizeVendorIdentity(candidate.vendor_name_raw)) continue;
     // A different MPO/PO is a legitimate separate payable item even when a
     // supplier reuses the same invoice number. Keep that existing behavior.
     const incomingMpo = data.mpo_base_number || data.mpo_number || data.mpo_order_sequence;
     const existingMpo = candidate.mpo_base_number || candidate.mpo_number || candidate.mpo_order_sequence;
     if (incomingMpo && existingMpo && !sameReference(incomingMpo, existingMpo)) continue;
+    // The same supplier invoice and same MPO is the same payable identity even
+    // when a forwarded/re-exported PDF carries a different customer-PO label.
+    // Customer-PO text is often populated from a different document section and
+    // must not allow a second AP row through in that case.
+    if (incomingMpo && existingMpo && sameReference(incomingMpo, existingMpo)) return candidate;
     if (data.customer_po_number && candidate.customer_po_number
       && !sameReference(data.customer_po_number, candidate.customer_po_number)) continue;
     if (data.material_code && candidate.material_code
       && !sameReference(data.material_code, candidate.material_code)) continue;
+    // If the MPO was not extracted consistently, the combination of normalized
+    // invoice reference, vendor, amount, currency and invoice date is still a
+    // strong duplicate identity. Only apply this fallback when all corroborating
+    // fields exist; a same-number/different-MPO invoice remains eligible.
+    const sameAmount = data.total_amount != null && candidate.total_amount != null
+      && Math.abs(Number(data.total_amount) - Number(candidate.total_amount)) < 0.01;
+    const sameCurrency = data.currency && candidate.currency
+      && String(data.currency).toUpperCase() === String(candidate.currency).toUpperCase();
+    const incomingDate = data.invoice_date ? new Date(data.invoice_date) : null;
+    const existingDate = candidate.invoice_date ? new Date(candidate.invoice_date) : null;
+    const sameDate = Boolean(incomingDate && existingDate
+      && !Number.isNaN(incomingDate.getTime()) && !Number.isNaN(existingDate.getTime())
+      && incomingDate.toISOString().slice(0, 10) === existingDate.toISOString().slice(0, 10));
+    if (sameAmount && sameCurrency && sameDate) return candidate;
     return candidate;
   }
   return null;

@@ -81,6 +81,56 @@ describe('exact-file intake commit boundary', () => {
     expect(result.created).toBe(true);
     expect(create).toHaveBeenCalledTimes(1);
   });
+  it('blocks the same MPO even when a forwarded copy has a different customer PO label', async () => {
+    const tx = {
+      $executeRaw: vi.fn(),
+      invoice: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        findMany: vi.fn().mockResolvedValue([{
+          id: 'existing', invoice_number: 'IA00514009', status: 'PENDING_MANAGER',
+          vendor_id: 'checkpoint-id', vendor_name_raw: 'CHECKPOINT SYSTEMS LIMITED',
+          normalized_invoice_number: 'IA514009', mpo_number: 'MPO016339',
+          mpo_base_number: 'MPO016339', mpo_order_sequence: null,
+          material_code: null, customer_po_number: 'PO003110', invoice_hash: 'old-hash',
+          total_amount: 1351.62, invoice_date: new Date('2026-11-23T00:00:00.000Z'), currency: 'USD',
+        }]),
+      },
+    };
+    const client = { $transaction: (fn: any) => fn(tx) };
+    const result = await createInvoiceOnceByFileHash({
+      invoice_hash: 'e'.repeat(64), invoice_number: 'IA00514009',
+      normalized_invoice_number: 'IA514009', vendor_id: 'checkpoint-id',
+      vendor_name_raw: 'CHECKPOINT SYSTEMS LIMITED', mpo_number: 'MPO016339',
+      customer_po_number: 'TNF F27 OCT BUY_MPO016339_ML_INDONESIA',
+      total_amount: 1351.62, invoice_date: new Date('2026-11-23T00:00:00.000Z'), currency: 'USD',
+    }, undefined, client);
+    expect(result).toMatchObject({ created: false, duplicateType: 'BUSINESS_KEY', invoice: { id: 'existing' } });
+  });
+  it('does not cross-match unrelated suppliers that share the UNKNOWN VENDOR placeholder', async () => {
+    const create = vi.fn().mockResolvedValue({ id: 'new' });
+    const tx = {
+      $executeRaw: vi.fn(),
+      invoice: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        findMany: vi.fn().mockResolvedValue([{
+          id: 'existing', invoice_number: 'INV-1', status: 'RECEIVED',
+          vendor_id: '00000000-0000-0000-0000-000000000000', vendor_name_raw: 'SUPPLIER A',
+          normalized_invoice_number: 'INV1', mpo_number: 'MPO000001',
+          mpo_base_number: 'MPO000001', mpo_order_sequence: null,
+          material_code: null, customer_po_number: null, invoice_hash: 'old-hash',
+        }]),
+        create,
+      },
+    };
+    const client = { $transaction: (fn: any) => fn(tx) };
+    const result = await createInvoiceOnceByFileHash({
+      invoice_hash: 'f'.repeat(64), invoice_number: 'INV-1', normalized_invoice_number: 'INV1',
+      vendor_id: '00000000-0000-0000-0000-000000000000', vendor_name_raw: 'SUPPLIER B',
+      mpo_number: 'MPO000001',
+    }, undefined, client);
+    expect(result.created).toBe(true);
+    expect(create).toHaveBeenCalledTimes(1);
+  });
   it('fails closed without a content hash or when the lock/database fails', async () => {
     const tx = { $executeRaw: vi.fn().mockRejectedValue(new Error('database unavailable')), invoice: { create: vi.fn() } };
     const client = { $transaction: (fn: any) => fn(tx) };

@@ -345,6 +345,10 @@ export function intakeReviewReason(ocrResult: any, fileName = ''): string | null
     return 'Invoice number could not be extracted';
   }
   if (!Number.isFinite(amount) || amount <= 0) return 'A valid non-zero invoice amount could not be extracted';
+  const subtotal = Number(ocrResult?.subtotal);
+  if (!Number.isFinite(subtotal) || subtotal <= 0) {
+    return 'Invoice subtotal is missing or invalid (subtotal excluding bank charges)';
+  }
   if (!ocrResult?.invoice_date) return 'Invoice date could not be extracted';
   // Non-USD handling is policy-driven (INTAKE_CURRENCY_MODE / vendor allowlists).
   // 'park' keeps the old behavior; 'exception'/'auto' create the invoice and let

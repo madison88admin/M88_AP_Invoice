@@ -31,6 +31,7 @@ describe('fileWatcherService.intakeReviewReason — body classification beats fi
     invoice_number: 'INV-123',
     invoice_date: '2026-09-28',
     total_amount: 100,
+    subtotal: 100,
     currency: 'USD',
   };
 
@@ -154,6 +155,9 @@ describe('fileWatcherService.intakeReviewReason — body classification beats fi
     expect(
       intakeReviewReason({ ...baseValidInvoice, total_amount: 0 }, 'plain.pdf')
     ).toMatch(/A valid non-zero invoice amount/);
+    expect(
+      intakeReviewReason({ ...baseValidInvoice, subtotal: null }, 'plain.pdf')
+    ).toMatch(/subtotal is missing or invalid/i);
   });
 });
 

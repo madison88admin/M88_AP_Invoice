@@ -171,6 +171,10 @@ export function intakeReviewReason(ocrResult: any, fileName: string, subject = '
   }
   const amount = Number(ocrResult?.total_amount);
   if (!Number.isFinite(amount) || amount <= 0) return 'A valid positive total amount was not extracted.';
+  const subtotal = Number(ocrResult?.subtotal);
+  if (!Number.isFinite(subtotal) || subtotal <= 0) {
+    return 'Invoice subtotal is missing or invalid (subtotal excluding bank charges). The document was routed to review and no invoice record was created.';
+  }
   if (ocrResult?.invoice_date_extracted === false && !validTaxInvoice) return 'Invoice date was not confidently extracted from a labeled date field.';
   const confidence = Number(ocrResult?.ocr_confidence_score);
   const threshold = Number(process.env.OCR_CONFIDENCE_THRESHOLD || 0.60);

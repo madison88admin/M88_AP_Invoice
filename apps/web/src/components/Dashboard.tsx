@@ -1166,6 +1166,7 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
         { field: 'invoice_date', label: 'Invoice Date' },
         { field: 'due_date', label: 'Due Date' },
         { field: 'total_amount', label: 'Amount' },
+        { field: 'subtotal', label: 'Invoice Subtotal (excludes bank charges)' },
         { field: 'currency', label: 'Currency' },
         { field: 'brand', label: 'Brand' },
         { field: 'season', label: 'Season' },
@@ -1174,7 +1175,7 @@ export default function Dashboard({ mode = 'dashboard' }: { mode?: 'dashboard' |
       ];
       const missing = requiredFields.filter(({ field }) => {
         const value = editFormData[field];
-        if (field === 'total_amount') return !Number.isFinite(Number(value)) || Number(value) <= 0;
+        if (field === 'total_amount' || field === 'subtotal') return !Number.isFinite(Number(value)) || Number(value) <= 0;
         return value === null || value === undefined || String(value).trim() === '';
       });
       if (missing.length > 0) {

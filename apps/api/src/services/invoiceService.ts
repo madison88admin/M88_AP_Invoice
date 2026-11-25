@@ -15,6 +15,7 @@ import { Prisma } from '@prisma/client';
 import { getVendorPaymentTermDefault, preferExtractedPaymentTerms } from './vendorDefaultsService';
 import { captureInvoiceBankSnapshotRevision, ensureInvoiceBankSnapshot } from './invoiceBankSnapshotService';
 import { normalizeInvoiceReference } from './accountingControlService';
+import { findActiveBusinessMatch } from './exactFileIntakeService';
 
 // Keep update/read endpoints safe during a rolling deploy where the API may
 // briefly load an older shared-package build.  Older builds did not export the
@@ -193,6 +194,10 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
   if (parsedAmount === null || parsedAmount <= 0) {
     throw new AppError('Total amount must be a positive number', 400);
   }
+  const parsedSubtotal = safeOptionalNumber(subtotal);
+  if (parsedSubtotal === null || parsedSubtotal <= 0) {
+    throw new AppError('Invoice subtotal is required before the invoice can proceed. Enter the subtotal excluding bank charges.', 400);
+  }
 
   if (!isValidInvoiceType(invoice_type)) {
     throw new AppError(`Invalid invoice type: ${invoice_type}`, 400);
@@ -255,26 +260,33 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
   const masterPaymentTerms = await getVendorPaymentTermDefault(resolvedVendorId);
   const effectivePaymentTerms = preferExtractedPaymentTerms(payment_terms, masterPaymentTerms);
 
-  const existingInvoice = await prisma.invoice.findFirst({
-    where: {
-      invoice_number: {
-        equals: String(invoice_number).trim(),
-        mode: 'insensitive',
-      },
-      vendor_id: resolvedVendorId,
-      invoice_type: invoice_type as any,
-    },
-    select: { id: true, status: true },
-  });
-  if (existingInvoice) {
-    throw new AppError(`The same vendor, invoice number, and document type already exists (status: ${existingInvoice.status})`, 409);
-  }
-
   const parsedMpo = parseMPOReference(mpo_number);
+  const normalizedInvoiceNumber = normalizeInvoiceReference(invoice_number);
 
-  const invoice = await prisma.invoice.create({
+  // Manual/API uploads must use the same normalized, MPO-aware business-key
+  // guard as email intake. The advisory lock and insert live in one
+  // transaction so two concurrent uploads cannot both pass the check.
+  const invoice = await prisma.$transaction(async (tx: any) => {
+    const businessLockKey = `${String(resolvedVendorId).trim()}:${normalizedInvoiceNumber || String(invoice_number).trim().toUpperCase().replace(/[^A-Z0-9]/g, '')}`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${businessLockKey}))`;
+    const existingInvoice = await findActiveBusinessMatch({
+      invoice_number: String(invoice_number).trim(),
+      normalized_invoice_number: normalizedInvoiceNumber,
+      vendor_id: resolvedVendorId,
+      mpo_number,
+      mpo_base_number: parsedMpo.baseMpo,
+      mpo_order_sequence: parsedMpo.orderSequence,
+      material_code: material_code || parsedMpo.materialCode,
+      customer_po_number,
+    }, tx);
+    if (existingInvoice) {
+      throw new AppError(`The same vendor invoice is already active (${existingInvoice.invoice_number}, status: ${existingInvoice.status})`, 409);
+    }
+
+    return tx.invoice.create({
     data: {
       invoice_number: String(invoice_number).trim(),
+      normalized_invoice_number: normalizedInvoiceNumber || undefined,
       invoice_date: safeDate(invoice_date),
       due_date: safeDate(due_date),
       invoice_received_date: safeDate(invoice_received_date),
@@ -291,7 +303,7 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
       bank_charges: safeOptionalNumber(bank_charges) || 0,
       freight_charges: safeOptionalNumber(freight_charges) || 0,
       additional_charges: safeOptionalNumber(additional_charges) || 0,
-      subtotal: safeOptionalNumber(subtotal),
+      subtotal: parsedSubtotal,
       tax_amount: safeOptionalNumber(tax_amount),
       discount_amount: safeOptionalNumber(discount_amount),
       ship_to: ship_to || null,
@@ -373,7 +385,8 @@ export const createInvoice = async (invoiceData: any, userId: string, userRole?:
       invoice_lines: true,
       payments: true,
     },
-  });
+    });
+  }, { timeout: 15000 });
 
   await ensureInvoiceBankSnapshot(invoice.id, userId);
 

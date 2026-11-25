@@ -172,6 +172,14 @@ async function processSingleEmailInvoice(
     if (payableBlockReason) {
       return { success: false, status: 'REVIEW_REQUIRED', error: payableBlockReason };
     }
+    const parsedSubtotal = Number(ocrResult?.subtotal);
+    if (!Number.isFinite(parsedSubtotal) || parsedSubtotal <= 0) {
+      return {
+        success: false,
+        status: 'REVIEW_REQUIRED',
+        error: 'Invoice subtotal is missing or invalid (subtotal excluding bank charges). No invoice record was created.',
+      };
+    }
 
     // Step 3: Post-OCR duplicate check (Level 3: business key)
     const postOcrDuplicate = await checkEmailDuplicate(fileBuffer, undefined, {
@@ -249,7 +257,7 @@ async function processSingleEmailInvoice(
         bank_charges: ocrResult.bank_charges || 0,
         freight_charges: ocrResult.freight_charges || 0,
         additional_charges: ocrResult.additional_charges || 0,
-        subtotal: ocrResult.subtotal || undefined,
+        subtotal: parsedSubtotal,
         invoice_type: (ocrResult.invoice_type || InvoiceType.INVOICE) as any,
         order_type: ocrResult.order_type as any,
         order_type_detail: (ocrResult as any).order_type === 'OTHER' ? (ocrResult as any).order_type_detail : undefined,

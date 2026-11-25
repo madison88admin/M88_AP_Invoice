@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { getApprovalReadiness } from './approvalReadinessService';
 
-const complete = () => ({ vendor_id: 'v1', invoice_number: 'INV-UAT', invoice_date: new Date(), currency: 'USD', total_amount: 20, brand: 'BRAND', season: 'SS27', due_date: new Date(), pdf_path: 'invoices/a.pdf', mpo_number: 'MPO1', invoice_lines: [{ line_number: 1, mpo_base_number: 'MPO1', material_code: 'MAT1', quantity: 2, unit_price: 10, line_amount: 20 }] });
+const complete = () => ({ vendor_id: 'v1', invoice_number: 'INV-UAT', invoice_date: new Date(), currency: 'USD', total_amount: 20, subtotal: 20, brand: 'BRAND', season: 'SS27', due_date: new Date(), pdf_path: 'invoices/a.pdf', mpo_number: 'MPO1', invoice_lines: [{ line_number: 1, mpo_base_number: 'MPO1', material_code: 'MAT1', quantity: 2, unit_price: 10, line_amount: 20 }] });
 
 describe('getApprovalReadiness', () => {
   it('accepts a complete PO invoice', () => expect(getApprovalReadiness(complete())).toEqual({ ready: true, missing: [], advisory: [] }));
@@ -18,5 +18,13 @@ describe('getApprovalReadiness', () => {
     const result = getApprovalReadiness(invoice);
     expect(result.ready).toBe(false);
     expect(result.missing.map(m => m.field)).toContain('invoice_lines');
+  });
+
+  it('blocks approval when the invoice subtotal is blank or non-positive', () => {
+    for (const subtotal of [null, undefined, 0, '']) {
+      const result = getApprovalReadiness({ ...complete(), subtotal });
+      expect(result.ready).toBe(false);
+      expect(result.missing.map(m => m.field)).toContain('subtotal');
+    }
   });
 });

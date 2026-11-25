@@ -23,11 +23,13 @@ export function getApprovalReadiness(invoice: any): ApprovalReadinessResult {
   const missing: ApprovalMissingField[] = [];
   const required: Array<[string, string]> = [
     ['vendor_id', 'Vendor'], ['invoice_number', 'Invoice Number'], ['invoice_date', 'Invoice Date'],
-    ['currency', 'Currency'], ['total_amount', 'Total Amount'], ['brand', 'Brand'], ['season', 'Season'],
+    ['currency', 'Currency'], ['total_amount', 'Total Amount'], ['subtotal', 'Invoice Subtotal (excludes bank charges)'], ['brand', 'Brand'], ['season', 'Season'],
   ];
   for (const [field, label] of required) {
     const value = invoice[field];
-    if (field === 'total_amount' ? !Number.isFinite(Number(value)) || Number(value) <= 0 : blank(value)) {
+    if (field === 'total_amount' || field === 'subtotal'
+      ? !Number.isFinite(Number(value)) || Number(value) <= 0
+      : blank(value)) {
       missing.push({ field, label });
     }
   }

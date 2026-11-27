@@ -1,0 +1,7 @@
+[Unit]
+Description=AP Invoice watcher stale-processing guard
+After=ap-invoice-api.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ap-invoice-watcher-guard.sh

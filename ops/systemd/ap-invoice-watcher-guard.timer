@@ -1,0 +1,11 @@
+[Unit]
+Description=Run AP Invoice watcher stale-processing guard
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+Unit=ap-invoice-watcher-guard.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

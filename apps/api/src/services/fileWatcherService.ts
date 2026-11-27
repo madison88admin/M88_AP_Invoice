@@ -454,8 +454,13 @@ function recoverStuckFilesPeriodic(): void {
       const stat = fs.statSync(processingPath);
       if (!stat.isFile()) continue;
 
-      // Only recover files older than 10 minutes
-      const ageMs = now - stat.mtimeMs;
+      // Use the change time for the processing-age clock. A file move from
+      // SFTP/incoming preserves its original mtime, so mtime-only recovery
+      // can incorrectly treat a newly claimed file as stuck immediately.
+      // ctime changes when the watcher claims the file and is therefore the
+      // correct start point for the 10-minute recovery threshold.
+      const processingStartedAt = Math.max(stat.ctimeMs, stat.mtimeMs);
+      const ageMs = now - processingStartedAt;
       if (ageMs < STUCK_THRESHOLD_MS) continue;
 
       // Move back to incoming (handle name collision)
